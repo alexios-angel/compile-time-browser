@@ -630,6 +630,18 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
             return std::string{text};
         }
+        // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`
+        //     (CSS Color 4 §4.2), and so is a `calc(90%)` the cascade folded.
+        //     `calc-numbers` asks for it by name.
+        if (property == "opacity") {
+            const std::string_view given = trim(text, html_whitespace);
+            float share = 0;
+            if (given.ends_with('%') &&
+                std::from_chars(given.data(), given.data() + given.size() - 1, share).ec ==
+                    std::errc{}) {
+                return number_text(share / 100.0f);
+            }
+        }
         // 5. Everything else is a keyword or a list, and its computed value IS
         //    its specified text.
         return collapse_keyword(text);

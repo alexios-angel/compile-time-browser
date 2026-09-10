@@ -227,6 +227,15 @@ struct folded_value {
 [[nodiscard]] folded_value fold_math(std::string_view value, const length_context & ctx,
                                      math_context accepts = math_context::any);
 
+// A FOLDED VALUE CLAMPED TO ZERO FROM BELOW. CSS Values 4 §10.10: a math
+// function's result outside the property's range is clamped at computed-value
+// time, so `tab-size: calc(2 * -4)` is 0 where a literal `-8` is a syntax
+// error. The property table says which properties are non-negative; this only
+// knows what a folded value looks like. A lone negative number, dimension or
+// percentage becomes the zero of its unit; anything else is handed back as it
+// came.
+[[nodiscard]] std::string non_negative(std::string_view folded);
+
 // Worth a look at all? A substring test for the math function names, so a
 // `--custom: calc-ish-name` costs one wasted parse and nothing else.
 [[nodiscard]] bool may_have_math(std::string_view value) noexcept;

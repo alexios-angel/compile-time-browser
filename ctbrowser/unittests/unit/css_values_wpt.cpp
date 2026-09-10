@@ -111,6 +111,36 @@ void test_a_clamp_with_an_absent_bound_is_a_comparison() {
              std::string{"clamp(2em, 4px, 6em)"});
 }
 
+// calc-numbers and calc-rounds-to-integer: a math function's result is clamped
+// to the property's range at computed-value time, and an <integer> property
+// refuses a <number-token> that is not one while rounding a calc() that is.
+void test_the_range_of_a_property_is_applied_when_computed() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::non_negative;
+    CHECK_EQ(non_negative("-8"), std::string{"0"});
+    CHECK_EQ(non_negative("-8px"), std::string{"0px"});
+    CHECK_EQ(non_negative("-8%"), std::string{"0%"});
+    CHECK_EQ(non_negative("8"), std::string{"8"});
+    CHECK_EQ(non_negative("-8px -8px"), std::string{"-8px -8px"});
+    {
+        fixture f;
+        f.load("<p id=a></p>", "p { tab-size: calc(2 * -4); width: calc(1px * -10) }");
+        expect_value(f, f.find_id("a"), "tab-size", "0", "tab-size has a floor at zero");
+        expect_value(f, f.find_id("a"), "width", "0px", "and so does width");
+    }
+    {
+        fixture f;
+        f.load("<p id=a></p>", "p { orphans: calc(10.1); widows: 3 }");
+        expect_value(f, f.find_id("a"), "orphans", "10", "an integer property rounds its calc");
+        expect_value(f, f.find_id("a"), "widows", "3", "widows is a property");
+    }
+    CHECK(!check_declaration("orphans", "1e1").valid);
+    CHECK(!check_declaration("widows", "10.1").valid);
+    CHECK(check_declaration("orphans", "calc(1e1)").valid);
+    CHECK(!check_declaration("column-span", "10").valid);
+    CHECK(check_declaration("column-span", "all").valid);
+}
+
 } // namespace
 
 int main() {
@@ -118,5 +148,6 @@ int main() {
     test_infinity_and_nan_are_clamped_when_computed();
     test_the_evaluator_at_zero_and_around_a_step();
     test_a_clamp_with_an_absent_bound_is_a_comparison();
+    test_the_range_of_a_property_is_applied_when_computed();
     REPORT("css_values_wpt");
 }

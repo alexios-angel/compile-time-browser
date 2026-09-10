@@ -215,12 +215,31 @@ math_context math_context_of(std::string_view property) noexcept {
     }
     // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
     // `properties/table.cpp` marks `k::integer` - kept here rather than asked of that
-    // table because this file must not depend on it, and two names are cheaper to
-    // repeat than a dependency is to add. Adding a third belongs in both.
-    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order")) {
+    // table because this file must not depend on it, and four names are cheaper
+    // to repeat than a dependency is to add. Adding a fifth belongs in both.
+    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order") ||
+        ascii_iequals(property, "orphans") || ascii_iequals(property, "widows")) {
         return math_context::integer;
     }
     return math_context::any;
+}
+
+std::string non_negative(std::string_view folded) {
+    const token_stream ts = tokenize(folded);
+    const css_token * lone = nullptr;
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::whitespace) { continue; }
+        if (t.type == token_type::eof) { break; }
+        if (lone != nullptr) { return std::string{folded}; } // two values: not this file's
+        lone = &t;
+    }
+    if (lone == nullptr || lone->number >= 0) { return std::string{folded}; }
+    switch (lone->type) {
+    case token_type::number: return "0";
+    case token_type::percentage: return "0%";
+    case token_type::dimension: return "0" + ascii_lower_copy(ts.unit_of(*lone));
+    default: return std::string{folded};
+    }
 }
 
 bool math_uses_percentage(std::string_view value) {

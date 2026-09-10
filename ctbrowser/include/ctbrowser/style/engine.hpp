@@ -19,6 +19,7 @@
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/selector.hpp>
 
@@ -976,6 +977,15 @@ public:
                     return;
                 }
                 value = std::move(done.text);
+                // ...AND CLAMPED TO THE PROPERTY'S RANGE, CSS Values 4 §10.10:
+                // `tab-size: calc(2 * -4)` computes to 0 where a literal `-8`
+                // never got past the grammar. `calc-numbers` asks for exactly
+                // that, and the table already knows which properties have a
+                // floor at zero.
+                if (const css::property_syntax * known = css::find_property(property);
+                    known != nullptr && known->nonnegative) {
+                    value = css::non_negative(value);
+                }
             }
             // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
             // every `em` in every other declaration needed the answer first. Emit
