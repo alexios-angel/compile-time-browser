@@ -1476,13 +1476,15 @@ public:
 
     // COLLECT AT EVERY SAFEPOINT, FOR TESTS. Phase 4.
     //
-    // The only thing that collects in an ordinary run is `collect_if_due`, once
-    // per tick, from the browser's frame loop - so a collection NEVER happens
-    // while script is running. That makes every `is_safepoint` flag in
-    // aot_helpers.def a claim about a collector that does not yet run there,
-    // and it makes a rooting bug in a compiled body impossible to reach: the
-    // value in the C++ local the collector cannot see is never given a chance
-    // to be freed.
+    // Until 2026-09-10 the only thing that collected in an ordinary run was
+    // `collect_if_due`, once per tick, from the browser's frame loop - so a
+    // collection NEVER happened while script was running. That made every
+    // `is_safepoint` flag in aot_helpers.def a claim about a collector that
+    // did not yet run there, and it made a rooting bug in a compiled body
+    // impossible to reach: the value in the C++ local the collector cannot
+    // see was never given a chance to be freed. `safepoint()` now collects
+    // when the heap is due, but only at a call boundary - so most rows are
+    // still never a real collection point outside this mode.
     //
     // Which is why the master plan calls a forced-GC mode the highest-value
     // test in this phase. It is a TEST MODE and says so - it collects the whole
@@ -1509,11 +1511,24 @@ public:
     // declared with the collector's root walk further down, after call_frame.
     void record_step(instruction in);
 
-    // A point where the ABI says a collection may happen. Does nothing unless
-    // stress is on, so this is one predictable not-taken branch on the paths
-    // that call it.
+    // A point where the ABI says a collection may happen. Under stress it
+    // always does; otherwise only when the heap has grown past the threshold
+    // `collect_if_due` keeps - the tick's rule, applied inside a turn, so a
+    // synchronous script that never yields is bounded the way a page on a
+    // timer is. Before 2026-09-10 this was stress-only, and seven WPT
+    // reflection files - thousands of subtests in ONE top-level script - grew
+    // until a 4 GB address-space cap killed the process. One compare on the
+    // path that calls it: `invoke`, every C++ entry into JavaScript - which is
+    // what `Function.prototype.apply` is, and what testharness.js runs every
+    // subtest through. An interpreted JS-to-JS call is deliberately NOT one:
+    // ctcompile/test/EscapeCycle.cpp pins that `churn(1000)` collects exactly
+    // once under stress and returns with its 4,000 dead nodes unswept.
     void safepoint() {
-        if (gc_stress_) { (void)collect(); }
+        if (gc_stress_) [[unlikely]] {
+            (void)collect();
+            return;
+        }
+        (void)collect_if_due();
     }
 
     // HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
@@ -1523,8 +1538,11 @@ public:
     [[nodiscard]] std::size_t collections() const noexcept { return collections_; }
 
     // Collect if the heap has grown enough to be worth it. Called once per
-    // tick, so a long-running page's garbage is bounded instead of accumulating
-    // for the life of the document.
+    // tick, and from `safepoint()` at every call boundary, so a long-running
+    // page's garbage is bounded instead of accumulating for the life of the
+    // document - or of one synchronous script. The threshold doubles with the
+    // survivors, so the work is amortised O(1) per allocation and the heap
+    // peaks at about twice the live set.
     std::size_t collect_if_due() {
         if (live_objects_ < collect_threshold_) { return 0; }
         const std::size_t freed = collect();

@@ -112,6 +112,15 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // Below the copy, `registers_` holds every argument and the collector
     // traces it in full, which is also where a real collector would run: at the
     // point where the frame it is about to enter is describable.
+    //
+    // THE CALLEE AND THE RECEIVER ARE ROOTED TOO, because the frame that will
+    // carry them is not pushed yet and this is no longer a stress-only
+    // collection point. `drain_microtasks` pops a job before calling it, so a
+    // settled promise's reaction can be reachable from nothing but `callable`
+    // here; JSON.parse's reviver gets a wrapper that exists only in a C++
+    // local as `this_value`. Two pushes on `temporaries_` per entry.
+    const rooted keep_callee{*this, callable};
+    const rooted keep_this{*this, this_value};
     safepoint();
     // A COMPILED BODY, IF THIS FUNCTION HAS ONE, asked in the same place the
     // interpreter asks. AFTER the argument fill, because that window is what
