@@ -872,7 +872,6 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // kept there, exactly as note_callback_fault keeps it: a listener that
         // faults on every event has one bug, not a thousand.
         const bool handled = dispatch_error_value(fault, thrown);
-        ++callback_faults_;
         if (!handled && callback_error_.empty()) { callback_error_ = fault; }
     };
     // THE LIST IS COPIED BEFORE ANY OF IT RUNS, which is what the DOM says and

@@ -647,7 +647,7 @@ life of the page — every later callback was refused, the page stopped respondi
 to everything, and nothing anywhere said why. It is now surfaced through
 `browser::script_error()` and cleared, which is what a browser does; and
 `run_script` no longer erases a fault it did not cause. `dom_bindings::
-callback_error()` and `callback_faults()` are the direct read.
+callback_error()` is the direct read.
 
 **The canvas gained** `setTransform`/`transform`/`getTransform`, `ellipse`,
 `bezierCurveTo`/`quadraticCurveTo`, `Path2D` with `fill(path)`/`stroke(path)`,
@@ -797,7 +797,6 @@ between a file appearing and the whole export API being a no-op with no message.
 
     page.set_download_directory("build/downloads");  // empty means the CWD
     page.downloads();                                // every export, recorded
-    page.set_download_hook(...);                     // told as it happens
 
 The bytes come from the asset registry, which is where `createObjectURL` put
 them, so this needs no knowledge of blobs. A `download` attribute is a NAME and

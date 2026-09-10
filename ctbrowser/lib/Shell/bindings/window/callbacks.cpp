@@ -124,7 +124,6 @@ void dom_bindings::note_callback_fault(std::string_view source) {
     // The FIRST one is kept: a loop that faults every frame would otherwise
     // replace the original diagnosis with the thousandth copy of it.
     if (callback_error_.empty()) { callback_error_ = message; }
-    ++callback_faults_;
 }
 
 double dom_bindings::next_callback_ms() const {

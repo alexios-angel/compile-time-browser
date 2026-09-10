@@ -177,7 +177,6 @@ bool browser::save_download(const std::string & href, const std::string & sugges
         }
     }
     downloads_.push_back(download_record{name, where.string(), bytes.size(), written});
-    if (download_hook_) { download_hook_(downloads_.back()); }
     return true;
 }
 

@@ -53,7 +53,6 @@ public:
     // which is what makes `assets/sprites.bmp` resolve both from a source
     // checkout and from a build directory beside it.
     void set_base_path(std::filesystem::path base) { base_ = std::move(base); }
-    [[nodiscard]] const std::filesystem::path & base_path() const { return base_; }
 
     // WHAT A LEADING `/` MEANS. Empty by default, and then it means what it has
     // always meant here: a path from the root of this filesystem.
@@ -68,7 +67,7 @@ public:
     // is exactly the document root a server would have been serving.
     //
     // NOT a general URL feature and deliberately not in the URL parser: it is a
-    // property of where the bytes come from, the same question base_path
+    // property of where the bytes come from, the same question the base path
     // answers for a relative name. tools/wpt/run-wpt.py sets it through
     // CTBROWSER_DOC_ROOT; nothing else in the tree sets it at all.
     void set_document_root(std::filesystem::path root) { document_root_ = std::move(root); }

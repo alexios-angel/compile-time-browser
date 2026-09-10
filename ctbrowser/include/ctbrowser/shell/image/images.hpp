@@ -103,7 +103,6 @@ public:
     using decode_fn = std::function<paint::bitmap(std::span<const std::byte>, std::string_view)>;
 
     void set_decoder(decode_fn decoder) { decoder_ = std::move(decoder); }
-    [[nodiscard]] bool has_decoder() const noexcept { return static_cast<bool>(decoder_); }
 
     // Loads at most once per name: two <img src="x"> and a script loadImage("x")
     // share one decode and one bitmap.

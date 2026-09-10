@@ -327,7 +327,6 @@ public:
     // which is a detail of when scripts run. Stage 2 of docs/plans/angle.md
     // keeps both back ends alive, and this is how a caller chooses.
     void prefer_angle_webgl(bool on) noexcept { prefer_angle_webgl_ = on; }
-    [[nodiscard]] bool angle_webgl_preferred() const noexcept { return prefer_angle_webgl_; }
     [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
     // A <link rel=stylesheet> that did not resolve. Separate from
@@ -429,10 +428,6 @@ public:
     }
     [[nodiscard]] const std::vector<download_record> & downloads() const noexcept {
         return downloads_;
-    }
-    // Told as it happens, for an embedder that wants to report or redirect one.
-    void set_download_hook(std::function<void(const download_record &)> hook) {
-        download_hook_ = std::move(hook);
     }
 
     // REAL TIME, if the embedder wants it. Without one, `Date.now()` is a fixed
@@ -1548,7 +1543,6 @@ private:
     std::function<double()> clock_;
     std::filesystem::path download_directory_;
     std::vector<download_record> downloads_;
-    std::function<void(const download_record &)> download_hook_;
 
     // Put the element with that id at the top of the viewport, clamped the same
     // way a scroll is - an anchor near the end of a short page cannot scroll

@@ -97,7 +97,6 @@ public:
     // the program still running inside it. So it records the request and the
     // browser drains it between ticks.
     [[nodiscard]] bool reload_requested() const noexcept { return reload_requested_; }
-    void clear_reload_request() noexcept { reload_requested_ = false; }
     // What `location` reports. The browser sets it; the page can only read it,
     // because assigning to location.href is a navigation and the engine has none.
     void observe_location(std::string href, std::string hash);
@@ -219,10 +218,9 @@ public:
     [[nodiscard]] double next_callback_ms() const;
 
     [[nodiscard]] std::size_t pending_animation_frames() const noexcept;
-    // The first fault a timer or animation-frame callback raised, and how many
-    // there have been. Empty when the page's callbacks are running cleanly.
+    // The first fault a timer or animation-frame callback raised. Empty when
+    // the page's callbacks are running cleanly.
     [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
-    [[nodiscard]] std::size_t callback_faults() const noexcept { return callback_faults_; }
     // --- the WebGL back end, stage 2 of docs/plans/angle.md -------------------
     //
     // BEFORE THE PAGE RUNS. A context is made when a page asks for one, and its
@@ -230,7 +228,6 @@ public:
     // this decides for contexts made from here on and says nothing about any
     // that exist.
     void prefer_angle(bool on) { angle_preferred_ = on; }
-    [[nodiscard]] bool angle_preferred() const noexcept { return angle_preferred_; }
     // Every GL call a page made that the ANGLE path does not forward yet,
     // gathered from all its contexts. EMPTY is the claim a test makes; a
     // backend that silently dropped calls would paint something plausible.
@@ -1638,7 +1635,6 @@ private:
     // the same answer here as it would in a browser.
     value webgl2_prototype_;
     std::string callback_error_;
-    std::size_t callback_faults_ = 0;
     bool reload_requested_ = false;
     asset_registry * assets_ = nullptr;
     image_store * images_ = nullptr;
