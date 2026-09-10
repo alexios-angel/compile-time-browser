@@ -222,6 +222,10 @@ ctbrowser_test(unit/bootstrap_layout)
 # foreign one, a name that SERIALISES against a name that parses - and each of
 # those used to have one answer where two belong.
 ctbrowser_test(unit/element_attrs)
+# The `blocking` attribute as a DOMTokenList on link, script and style, and
+# the one ordering the engine has for it: a stylesheet applies before the
+# first frame. See lib/Shell/bindings/element/views.cpp.
+ctbrowser_test(unit/render_blocking)
 # Event handlers: where an exception thrown by a listener goes, and what an
 # `on...` IDL attribute is. Its own file rather than more of event_listeners
 # because every case in it dispatches from inside a `try` ON PURPOSE - a throw
