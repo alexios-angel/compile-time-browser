@@ -9,8 +9,13 @@ cardinality only with independent actual-instance membership/absence and a
 bounded complete candidate census. **a03cc3fd** executes 23 native programs,
 38 typed observations, 26 mutations, six refusal/repair families and a 128-call
 saved-leaf lifetime. Focused type/escape checks pass **9/9**, owner/host/provider
-checks **5/5**, and presence lit **1/1**. The complete gate is pending with all
-fourteen code/test inputs frozen and committed; see `HANDOFF.md`.
+checks **5/5**, and presence lit **1/1**. The interrupted complete gate is now
+recovered: the remaining **354/354 CTests pass in 2262.99 seconds**, accounting
+for **512/517 overall** across the original and resumed runs, with **all 372
+compiler tests** and **166/166 lit cases** passing. The five recorded browser
+failures are unchanged in the preserved prefix. All fourteen committed inputs
+match the devbox; **413 native programs and 43 lifetime families** pass.
+See `HANDOFF.md` for the distinction between recovered and fresh evidence.
 
 The continuation returns to Bootstrap's actual Data fragment. Fresh explicit
 source contracts, both native modes and a separately fingerprinted contract
@@ -64,6 +69,16 @@ inside Data.set and callback/error effects remain separate obligations. Keep
 source evaluation, future argument variation, unknown effects and conservative
 work limits. Full native Bootstrap and direct browser API integration remain
 unfinished.
+
+The interrupted root/table companion probe is now measured too. Its ten sources
+preserve every original allocation/read/call; four evaluated-Number companions
+admit **4/4 in both modes** and execute **32 GCC/Clang binaries** without Script.
+The six object-key/later-object cases remain **0/4**. The future observer agrees
+with Node and the interpreter; three Node mutations distinguish its expected result. These controls
+reuse existing root/table allocations; they do not discharge **2507446b**'s extra
+allocation or **20d4806e**'s fresh object-argument ownership. Fresh exact Data
+measurements retain all counts and observations above. Recovered artifacts:
+`/tmp/ctcompile-data-resume-exact/` and `/tmp/ctcompile-data-resume-root-keys/`.
 
 Artifacts: `/tmp/ctcompile-bootstrap-next-boundary/{sources,results,future}.json`,
 `/tmp/ctcompile-mutation-exact-probe/`, and

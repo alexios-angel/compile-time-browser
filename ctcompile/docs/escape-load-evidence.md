@@ -3130,3 +3130,39 @@ observed opaque arguments provide no completion or native effect permission.
 Evidence: the matching `.log`, `.rec`, `.claims`, `-node.json` and `-audit.json`.
 All five multiplication code/test hashes remain frozen; the full suite is still
 pending at this checkpoint.
+
+
+**Mixed multiplication full-gate recovery, 2026-09-10.** The pending
+**a1ce9b02** gate was resumed before new implementation. The predecessor's
+recorded build check reports **241 steps and zero warnings**. Its recovered
+CTest log and checkpoint contain **158/163 passes**, including all eighteen
+compiler tests in that prefix and the five established browser failures:
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+The original lit stdout reports **166/166 in 1423.29 seconds**, but its CTest
+completion was interrupted. The unchanged rebuild reports no work; `ctest -F`
+then passes the remaining **354/354 in 2262.99 seconds**, including a complete
+lit rerun: **166/166 in 1486.64 seconds** (CTest **1486.85**). Together these
+runs validate **512/517 tests**, all **372 compiler checks** and **140/145**
+browser checks. This is combined recovery evidence; no single full-run elapsed
+time was measured.
+
+All eight escape checks pass in the resumed run; arrays take **0.64 seconds**
+and the fixture **0.53**. Mixed Mul repeats **57 rows, 43 live states and 3369
+retention cutoffs**. The source checker confirms **12 literal sites, 21 instances,
+ten retained and three independent Errors**. Fixture precision remains
+**99/135**, with **705 claims, 722 observed sites, eighteen unclaimed and zero
+violations, partial or pending claims**. All four actual escape oracles report
+zero violations; corpus precision remains **0/64, 0/16 and 0/20**, with p5's
+existing single partial unchanged.
+
+All fourteen code/test hashes match the committed, frozen, local and devbox
+inputs; the five escape files remain exactly **0b25968b**. The resumed artifact
+census verifies **413 native programs, 1652 fresh GCC/Clang executables and 86
+sanitized binaries across 43 lifetime families**. Stable clang-format **22.1.8**
+passes all **745 files**. The earlier focused results, failure/correction record
+and measured next Div boundary above remain preserved.
+
+Evidence: `/tmp/ctcompile-mul-recovery-audit.json`,
+`/tmp/ctcompile-recovered-gate/Temporary/LastTest.log.tmp`,
+`/tmp/ctcompile-data-resume-full.log` and
+`/tmp/ctcompile-data-resume-full-detail.log`.

@@ -6,6 +6,50 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Interrupted mutation gate recovered, 2026-09-10
+
+Resumed the pending **a1ce9b02** gate from the **05:22:09 UTC** journal and
+its interrupted **13:50** recovery. The checkout was clean. The original local
+`/tmp` evidence was lost after reboot; the devbox retained **163 completed CTests**
+(**158 pass**, the same five recorded browser failures) and an incomplete CTest
+trailer after **166/166 lit passes**. All **14 code/test inputs** match committed,
+local and devbox bytes. Older codex-wip/CallDirectOp and source-split repairs were
+already gated ancestors; no missing implementation was discarded.
+
+`tools/remote-build.sh all` reports **no work to do**. Resuming CTest from its
+checkpoint passes the remaining **354/354 tests in 2262.99 seconds**, including
+lit in **1486.85 seconds**. Together the two runs account for **512/517 CTests**
+and **all 372 compiler tests**. This is a recovered complete gate, not a new
+517-test run; no combined wall time is claimed. The five failures are `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`. The original build's
+recorded **241 steps without warnings** is preserved separately.
+
+The new artifact census verifies **413 native programs**, **1652 fresh GCC/Clang
+binaries**, and **86 sanitized binaries across 43 lifetime families**. Fourteen
+source hashes match again after the run. Ten inspected C++ variants retain their
+real Map/size/field operations without Script symbols. Stable clang-format
+**22.1.8** passes **745 files**; bundled 23 retains the nine recorded differences.
+No browser/runtime source changed.
+
+The interrupted postfull probe is also complete. Exact Data browser/CommonJS/AMD
+remain **0/7, 0/7, 0/8** with **19/19/20** matching typed observations; ordinary
+publication remains **0/7**. Ten root/table object-key probes and their future
+observer agree with Node and the interpreter. Four evaluated-Number controls
+admit **4/4 in both modes** and execute **32 standalone GCC/Clang binaries**:
+they preserve the original root/table reads and Map calls. Their six object-key
+or later-object counterparts remain **0/4**; three future-observer mutations
+distinguish the expected result. The allocation-preserving **2507446b** control
+still independently refuses the unused extra allocation.
+
+Continue **20d4806e**, the fresh-object `t.has(e)` argument. Prove its actual/formal
+identity and ordinary owner through the existing host seam and native object-key
+carrier. Do not treat a primitive alternative, first invocation or startup
+prefix as object ownership. Field-bearing/named objects, nested Data Maps and
+callback effects remain separate obligations. Full native Bootstrap is unfinished.
+Evidence: `/tmp/ctcompile-recovered-gate/`, `/tmp/ctcompile-data-resume-full.log`,
+`/tmp/ctcompile-data-resume-full-detail.log`, and
+`/tmp/ctcompile-data-resume-{inventory,cpp-audit,devbox-hashes}.json`.
+
 ## Known Map mutation sizes and mixed BigInt multiplication, 2026-09-10
 
 Resumed interrupted iteration 6 from the **04:24:48–04:27:51 UTC**
@@ -55,10 +99,9 @@ checker corruptions reject**. All **169 historical named functions** and
 **7/8 in 10.45 seconds**; only old Mul refusal expectations needed the measured,
 source-preserving promotions before the corrected gate above.
 
-The complete monorepo gate is running with all **14 code/test inputs frozen
-and committed**. Its result is pending; earlier complete measurements below are
-not a result for this revision. Artifacts: `/tmp/ctcompile-mutation-full.log`
-and `/tmp/ctcompile-mutation-final-frozen.json`.
+The complete monorepo gate was pending at this checkpoint with all **14 code/test
+inputs frozen and committed**. The recovery above completes it; the original local
+`/tmp/ctcompile-mutation-*` gate artifacts were lost after reboot.
 
 **Next: actual Bootstrap Data ownership and object-valued Map arguments.**
 Fresh explicit contracts preserve exact browser/CommonJS/AMD sources
