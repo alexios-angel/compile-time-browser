@@ -1,0 +1,194 @@
+// THE DISPATCH RULES dom/events FOUND MISSING, one case per behaviour: where an
+// event's path crosses a shadow boundary and where it stops, what `target` and
+// `window.event` read on each side of that boundary, that a detached tree's
+// events reach neither the document nor the window, and where `offsetX` is
+// measured from.
+//
+// Each case names the WPT file it stands in for. They are here rather than in
+// event_listeners because every one is about the PATH - which objects an event
+// visits and what it looks like at each - where that file is about what a
+// listener does once reached.
+
+#include <ctbrowser.hpp>
+
+#include "check.hpp"
+
+#include <string>
+#include <vector>
+
+using ctbrowser::shell::browser;
+using ctbrowser::shell::browser_options;
+
+namespace {
+
+constexpr const char * page_html = R"(<!DOCTYPE html>
+<html><head><title>events</title>
+<style>body { margin: 8px; padding: 0; }</style>
+</head><body>
+<div id=target>hello</div>
+</body></html>)";
+
+// ONE EXPRESSION, EVALUATED AFTER THE PAGE HAS LAID OUT. `frame()` is what
+// makes `box_of` answer, and the offsetX case needs a box to measure from; the
+// rest do not care and share the helper so there is one.
+[[nodiscard]] std::string answer(const std::string & expression) {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_html);
+    (void)page.frame();
+    const std::string source = "try { console.log(String(" + expression +
+                               ")); } catch (e) { console.log('threw:' + e.name); }";
+    if (!page.run_script(source)) { return "<did not run: " + page.script_error() + ">"; }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
+    return logged.back();
+}
+
+void is(const std::string & expression, const std::string & expected) {
+    const std::string got = answer(expression);
+    CHECK_EQ(got, expected);
+    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+}
+
+// The tree Event-dispatch-listener-order.window.js builds: a detached
+// <section> holding a <div> host, whose closed shadow tree holds <p><span>.
+// Every node on both sides gets a capturing and a bubbling listener that logs
+// its nodeName, and the target is the innermost <span>.
+constexpr const char * listener_order_setup =
+    "var hostParent = document.createElement('section'),"
+    "    host = hostParent.appendChild(document.createElement('div')),"
+    "    shadowRoot = host.attachShadow({mode: 'closed'}),"
+    "    targetParent = shadowRoot.appendChild(document.createElement('p')),"
+    "    target = targetParent.appendChild(document.createElement('span')),"
+    "    path = [hostParent, host, shadowRoot, targetParent, target], result = [];"
+    "path.forEach(function (node) {"
+    "    node.addEventListener('test', function () { result.push('bubbling ' + node.nodeName); });"
+    "    node.addEventListener('test', function () { result.push('capturing ' + node.nodeName); },"
+    "                          true);"
+    "});";
+
+// --- the path through a shadow tree ---------------------------------------
+
+void test_a_composed_event_crosses_the_shadow_boundary() {
+    // Event-dispatch-listener-order.window.js. The path used to stop at the
+    // shadow root, so the host and its parent heard nothing.
+    is(std::string{"(function () {"} + listener_order_setup +
+           " target.dispatchEvent(new CustomEvent('test', {bubbles: true, composed: true}));"
+           " return result.join(','); })()",
+       "capturing SECTION,capturing DIV,capturing #document-fragment,capturing P,"
+       "capturing SPAN,bubbling SPAN,bubbling P,bubbling #document-fragment,bubbling DIV,"
+       "bubbling SECTION");
+}
+
+void test_an_uncomposed_event_stops_at_the_shadow_root() {
+    // DOM's "get the parent" for a shadow root: null unless composed.
+    is(std::string{"(function () {"} + listener_order_setup +
+           " target.dispatchEvent(new CustomEvent('test', {bubbles: true}));"
+           " return result.join(','); })()",
+       "capturing #document-fragment,capturing P,capturing SPAN,bubbling SPAN,bubbling P,"
+       "bubbling #document-fragment");
+}
+
+void test_the_target_is_retargeted_at_the_host() {
+    // relatedTarget.window.js and shadow-relatedTarget.html both read `target`
+    // from outside the tree. The span sees itself; the host sees ITSELF, at
+    // phase AT_TARGET; and after the dispatch the target is the host, because
+    // that is the last shadow-adjusted target and it is in the light tree.
+    is("(function () {"
+       " var host = document.body.appendChild(document.createElement('div'));"
+       " var root = host.attachShadow({mode: 'open'});"
+       " var span = root.appendChild(document.createElement('span'));"
+       " var seen = [];"
+       " span.addEventListener('t', function (e) {"
+       "     seen.push((e.target === span) + ':' + e.eventPhase); });"
+       " host.addEventListener('t', function (e) {"
+       "     seen.push((e.target === host) + ':' + e.eventPhase); });"
+       " var e = new Event('t', {composed: true});"
+       " span.dispatchEvent(e);"
+       " seen.push(e.target === host);"
+       " return seen.join(','); })()",
+       "true:2,true:2,true");
+    // A host hears a NON-BUBBLING composed event too - its shadow-adjusted
+    // target is itself, so it is a target and not a bystander.
+    is("(function () {"
+       " var host = document.createElement('div');"
+       " var root = host.attachShadow({mode: 'open'});"
+       " var span = root.appendChild(document.createElement('span'));"
+       " var heard = 0;"
+       " host.addEventListener('t', function () { ++heard; });"
+       " span.dispatchEvent(new Event('t', {composed: true}));"
+       " return heard; })()",
+       "1");
+    // And an event that never left the shadow tree has NO target afterwards:
+    // concept-event-dispatch's clearTargets, which is what keeps a closed
+    // tree's nodes off an object the light tree can read.
+    is("(function () {"
+       " var host = document.createElement('div');"
+       " var root = host.attachShadow({mode: 'closed'});"
+       " var span = root.appendChild(document.createElement('span'));"
+       " var e = new Event('t');"
+       " span.dispatchEvent(e);"
+       " return e.target; })()",
+       "null");
+}
+
+void test_window_event_is_hidden_inside_a_shadow_tree() {
+    // event-global.html: a listener on a node whose root is a shadow root does
+    // not see `window.event`; the host's listener does.
+    is("(function () {"
+       " var host = document.createElement('div');"
+       " var root = host.attachShadow({mode: 'closed'});"
+       " var span = root.appendChild(document.createElement('span'));"
+       " var seen = [];"
+       " span.addEventListener('t', function (e) { seen.push(window.event === undefined); });"
+       " host.addEventListener('t', function (e) { seen.push(window.event === e); });"
+       " span.dispatchEvent(new Event('t', {composed: true, bubbles: true}));"
+       " seen.push(window.event === undefined);"
+       " return seen.join(','); })()",
+       "true,true,true");
+}
+
+// --- a detached tree ---------------------------------------------------------
+
+void test_a_detached_tree_reaches_neither_document_nor_window() {
+    // The DOM chain runs parent to parent and the document's parent is the
+    // window; a root that is not the document has no parent. The same element
+    // inserted into the body reaches both.
+    is("(function () {"
+       " var heard = 0, f = function () { ++heard; };"
+       " document.addEventListener('t', f);"
+       " window.addEventListener('t', f);"
+       " var d = document.createElement('div');"
+       " d.dispatchEvent(new Event('t', {bubbles: true}));"
+       " var before = heard;"
+       " document.body.appendChild(d);"
+       " d.dispatchEvent(new Event('t', {bubbles: true}));"
+       " return before + ',' + heard; })()",
+       "0,2");
+}
+
+// --- offsetX -----------------------------------------------------------------
+
+void test_offset_x_is_measured_from_the_target_box() {
+    // mouse-event-retarget.html: `clientX: 50` on a div at the body's 8px
+    // margin is offsetX 42. It used to be a copy of clientX.
+    is("(function () {"
+       " var seen = '';"
+       " var target = document.getElementById('target');"
+       " target.addEventListener('click', function (e) {"
+       "     seen = e.offsetX + ',' + e.offsetY; });"
+       " target.dispatchEvent(new MouseEvent('click', {clientX: 50, clientY: 20}));"
+       " return seen; })()",
+       "42,12");
+}
+
+} // namespace
+
+int main() {
+    test_a_composed_event_crosses_the_shadow_boundary();
+    test_an_uncomposed_event_stops_at_the_shadow_root();
+    test_the_target_is_retargeted_at_the_host();
+    test_window_event_is_hidden_inside_a_shadow_tree();
+    test_a_detached_tree_reaches_neither_document_nor_window();
+    test_offset_x_is_measured_from_the_target_box();
+    REPORT("events_wpt");
+}

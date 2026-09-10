@@ -228,6 +228,11 @@ ctbrowser_test(unit/element_attrs)
 # unwinds to the innermost handler anywhere below it, so containment is what is
 # under test and the harness has to provide the thing it is contained from.
 ctbrowser_test(unit/event_handlers)
+# The dispatch PATH, one case per rule dom/events found missing: a composed
+# event crosses a shadow boundary and an uncomposed one stops at the root, the
+# target and window.event as seen from each side of it, a detached tree that
+# reaches neither document nor window, and offsetX measured from the target.
+ctbrowser_test(unit/events_wpt)
 # CharacterData and the constructible node interfaces. Its own file because
 # every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
 # byte offset answers `substringData(39, 2)` wrongly only once the text stops
