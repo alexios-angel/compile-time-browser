@@ -257,6 +257,12 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
             // may share a qualified name in different namespaces, and the FIRST
             // is the one the name answers with.
             if (map.find(qualified) != nullptr) { continue; }
+            // AND ANYTHING THE PROTOTYPE CHAIN ANSWERS - WebIDL's named property
+            // visibility, for an interface without [LegacyOverrideBuiltIns]:
+            // an attribute called `toString` must leave `attributes.toString`
+            // the function it inherits. The own named properties were erased
+            // above, so what this finds is the chain and nothing else.
+            if (!cx.lookup_property(value::object(&map), qualified).is_undefined()) { continue; }
             const value * indexed = map.find(std::to_string(i));
             if (indexed == nullptr) { continue; }
             map.set(qualified, *indexed);
