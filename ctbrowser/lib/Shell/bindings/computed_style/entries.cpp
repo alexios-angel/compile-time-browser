@@ -661,13 +661,19 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`
         //     (CSS Color 4 §4.2), and so is a `calc(90%)` the cascade folded.
         //     `calc-numbers` asks for it by name.
+        //     ...AND CLAMPED TO [0, 1], which is the property's range: a
+        //     `calc(log(0))` the cascade folded to a very negative number is
+        //     `0` here, and `opacity: 2` is `1`. exp-log-serialize asks for the
+        //     first.
         if (property == "opacity") {
             const std::string_view given = trim(text, html_whitespace);
-            float share = 0;
-            if (given.ends_with('%') &&
-                std::from_chars(given.data(), given.data() + given.size() - 1, share).ec ==
-                    std::errc{}) {
-                return number_text(share / 100.0f);
+            const bool percent = given.ends_with('%');
+            float number = 0;
+            const char * end = given.data() + given.size() - (percent ? 1 : 0);
+            if (std::from_chars(given.data(), end, number).ec == std::errc{} &&
+                (percent || end == given.data() + given.size())) {
+                if (percent) { number /= 100.0f; }
+                return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
         // 5. Everything else is a keyword or a list, and its computed value IS

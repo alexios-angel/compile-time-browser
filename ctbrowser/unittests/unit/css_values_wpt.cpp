@@ -4,9 +4,11 @@
 // asked and got wrong: what a value COMPUTES to, and what the evaluator does
 // at the edges of its number line.
 
+#include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "cssom_probe.hpp"
 #include "style_fixture.hpp"
 
 #include <limits>
@@ -281,6 +283,33 @@ void test_attr_substitution() {
     }
 }
 
+// The getComputedStyle half, through a page: a position resolved against the
+// writing mode, an opacity as a number in [0, 1], a custom property with its
+// substitutions performed, and a background-position given its second half.
+void test_what_a_page_reads_back() {
+    using ctbrowser::shell::browser;
+    using ctbrowser::shell::browser_options;
+    using ctbrowser_test::logged;
+    browser page{browser_options{400, 200}};
+    page.load_html(R"html(<html><body>
+    <div style="writing-mode: horizontal-tb; direction: rtl">
+      <div id=t data-n="10" style="object-position: x-start; opacity: 90%;
+           --x: attr(data-n px) 11px; background-position: calc(100% - 100% + 20em);
+           tab-size: calc(2 * -4)"></div>
+    </div>
+    <script>
+        const cs = getComputedStyle(document.getElementById('t'));
+        console.log('read=' + cs.objectPosition + '|' + cs.opacity + '|' +
+                    cs.getPropertyValue('--x') + '|' + cs.backgroundPosition + '|' + cs.tabSize);
+        document.getElementById('t').style.opacity = 'calc(log(0))';
+        console.log('clamped=' + cs.opacity);
+    </script></body></html>)html");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "read="),
+             std::string{"read=100% 50%|0.9|10px 11px|calc(0% + 320px) 50%|0"});
+    CHECK_EQ(logged(page, "clamped="), std::string{"clamped=0"});
+}
+
 } // namespace
 
 int main() {
@@ -292,5 +321,6 @@ int main() {
     test_typed_arithmetic();
     test_the_tree_counting_functions();
     test_attr_substitution();
+    test_what_a_page_reads_back();
     REPORT("css_values_wpt");
 }
