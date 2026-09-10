@@ -125,6 +125,51 @@ void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
        "no,false");
 }
 
+// --- innerText / outerText getters -------------------------------------------
+
+// getter.html's shape: markup into a connected container, then the first
+// child's innerText, JSON-encoded so a newline or a tab is visible.
+[[nodiscard]] std::string inner_text_of(const std::string & markup) {
+    return answer("(function () { var h = document.getElementById('host');"
+                  " h.innerHTML = " +
+                  markup +
+                  "; var e = h.querySelector('#target') || h.firstChild;"
+                  " return JSON.stringify(e.innerText); })()");
+}
+
+void test_inner_text_collapses_whitespace_and_breaks_at_blocks() {
+    CHECK_EQ(inner_text_of("'<div> abc  def\\n ghi '"), "\"abc def ghi\"");
+    CHECK_EQ(inner_text_of("'<div>abc <br> def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<div>abc</div>def'"), "\"123\\nabc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div><p>abc<p>def'"), "\"abc\\n\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>abc<div></div><div></div>def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<span>abc</span>def'"), "\"123abcdef\"");
+    CHECK_EQ(inner_text_of("'<div>abc <input> def'"), "\"abc  def\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=display:inline-block> abc </span>def'"),
+             "\"123abcdef\"");
+}
+
+void test_inner_text_reads_the_inline_style_it_can_see() {
+    CHECK_EQ(inner_text_of("'<pre> abc\\n  def '"), "\" abc\\n  def \"");
+    CHECK_EQ(inner_text_of("'<div style=white-space:pre-line>abc  \\n  def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=display:none>abc'"), "\"123\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=visibility:hidden>abc'"), "\"123\"");
+    CHECK_EQ(inner_text_of("'<div style=text-transform:uppercase>abc'"), "\"ABC\"");
+    // Not rendered - a `display: none` container - is textContent, verbatim.
+    CHECK_EQ(inner_text_of("'<div style=display:none>abc  def'"), "\"abc  def\"");
+    CHECK_EQ(inner_text_of("'<div><table><tr><td>abc<td>def<tr><td>ghi</table>'"),
+             "\"abc\\tdef\\nghi\"");
+    // A replaced element has no text, and outerText reads the same as innerText.
+    CHECK_EQ(inner_text_of("'<textarea>abc'"), "\"\"");
+    is("(function () { var h = document.getElementById('host'); h.innerHTML = '<p>a<br>b';"
+       " return JSON.stringify(h.firstChild.outerText); })()",
+       "\"a\\nb\"");
+    // Detached: textContent, since nothing renders it.
+    is("(function () { var d = document.createElement('div'); d.innerHTML = 'a  b';"
+       " return JSON.stringify(d.innerText); })()",
+       "\"a  b\"");
+}
+
 } // namespace
 
 int main() {
@@ -132,5 +177,7 @@ int main() {
     test_nonce_is_a_slot_in_front_of_the_attribute();
     test_an_anchor_reports_the_parts_of_its_url();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
+    test_inner_text_collapses_whitespace_and_breaks_at_blocks();
+    test_inner_text_reads_the_inline_style_it_can_see();
     REPORT("html_dom_wpt");
 }

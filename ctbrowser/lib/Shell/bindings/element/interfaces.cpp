@@ -206,6 +206,385 @@ void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak &
     }
 }
 
+// --- innerText, THE GETTER HALF: the "inner text collection steps", HTML 3.2.7
+//
+// The specification walks the element's descendants and reads FOUR computed
+// properties - `display`, `white-space`, `visibility` and `text-transform` -
+// to decide what a text node contributes and where a line break goes. This
+// engine lays out on a FRAME rather than on demand, so the box tree a getter
+// could ask describes the page before the script's own mutations, and
+// `container.innerHTML = x; e.innerText` - the shape of every getter test -
+// would answer about the page as it was. What is read instead is the
+// element's own `style` attribute over the UA sheet's per-tag defaults, which
+// is what a browser computes for those four properties on nearly every
+// element of nearly every page.
+// ponytail: author stylesheets are not consulted - `.table { display: table }`
+// is invisible here, and text-transform is ASCII (the engine's rule, see
+// core/algorithms.hpp). The upgrade is a layout flush a binding can ask for.
+
+struct text_style {
+    bool preserve = false;        // white-space: pre / pre-wrap / break-spaces
+    bool preserve_breaks = false; // white-space: pre-line
+    bool hidden = false;          // visibility: hidden / collapse
+    int transform = 0;            // +1 uppercase, -1 lowercase
+};
+
+// One property of a `style="..."` attribute, lowercased, or "" when it is not
+// declared. The split declarations.cpp seeds `el.style` with, and the same
+// ceiling: a `;` inside a string ends a declaration, which none of the four
+// keyword properties read here can contain.
+[[nodiscard]] std::string inline_declaration(std::string_view style, std::string_view property) {
+    std::size_t at = 0;
+    while (at < style.size()) {
+        std::size_t end = style.find(';', at);
+        if (end == std::string_view::npos) { end = style.size(); }
+        const std::string_view declared = style.substr(at, end - at);
+        const std::size_t colon = declared.find(':');
+        if (colon != std::string_view::npos &&
+            ascii_iequals(trim(declared.substr(0, colon), html_whitespace), property)) {
+            return ascii_lower_copy(trim(declared.substr(colon + 1), html_whitespace));
+        }
+        at = end + 1;
+    }
+    return {};
+}
+
+// The UA sheet's `display` for an HTML tag. Every foreign element is inline.
+[[nodiscard]] std::string_view default_display(std::string_view tag) {
+    if (lists_token("script style template noscript head title meta link base area param source "
+                    "track datalist rp col colgroup",
+                    tag)) {
+        return "none";
+    }
+    if (lists_token("html body div p h1 h2 h3 h4 h5 h6 ul ol li dl dt dd pre listing xmp plaintext "
+                    "blockquote address article aside footer header hr main nav section figure "
+                    "figcaption fieldset legend form details summary dialog center dir menu "
+                    "optgroup option hgroup search frameset frame",
+                    tag)) {
+        return "block";
+    }
+    if (tag == "table") { return "table"; }
+    if (tag == "tr") { return "table-row"; }
+    if (tag == "td" || tag == "th") { return "table-cell"; }
+    if (tag == "caption") { return "table-caption"; }
+    if (lists_token("tbody thead tfoot", tag)) { return "table-row-group"; }
+    if (lists_token("input button select textarea img video audio canvas iframe object embed "
+                    "meter progress",
+                    tag)) {
+        return "inline-block";
+    }
+    return "inline";
+}
+
+// The elements whose CONTENTS are never text: a replaced element, and the
+// widgets whose children are not what they render.
+constexpr std::string_view replaced_tags =
+    "img input textarea iframe audio video canvas object embed meter progress";
+
+class inner_text_collector {
+public:
+    inner_text_collector(const read_txn & txn, atom_table & atoms)
+        : txn_(txn), atoms_(atoms), style_(atoms.intern("style")), type_(atoms.intern("type")),
+          hidden_(atoms.intern("hidden")), open_(atoms.intern("open")) {}
+
+    [[nodiscard]] std::string_view tag_of(node_id node) const {
+        return atoms_.text(txn_.tag(node).value_or(atom{}));
+    }
+    [[nodiscard]] bool is_html(node_id node) const {
+        return txn_.element_ns(node) == node_ns::html;
+    }
+    [[nodiscard]] std::string_view own_style(node_id node) const {
+        return txn_.attribute_value(node, style_);
+    }
+
+    // The element's computed `display` keyword, as far as an inline style over
+    // the UA sheet can say. A float or an out-of-flow position makes any
+    // display block-level, which is the one place `display` is not the whole
+    // answer and the corpus tests it on a <span>.
+    [[nodiscard]] std::string display_of(node_id node) const {
+        const std::string_view style = own_style(node);
+        const std::string_view tag = tag_of(node);
+        const bool html = is_html(node);
+        // `noscript` is `display: none !important` while scripting is on, and
+        // a <template>'s children are its contents, which live elsewhere.
+        if (html && (tag == "noscript" || tag == "template")) { return "none"; }
+        std::string display = inline_declaration(style, "display");
+        if (display.empty()) {
+            if (html &&
+                (txn_.has_attribute(node, hidden_) ||
+                 (tag == "input" && ascii_iequals(txn_.attribute_value(node, type_), "hidden")))) {
+                return "none";
+            }
+            display = html ? std::string{default_display(tag)} : std::string{"inline"};
+        }
+        if (display == "none") { return display; }
+        const std::string floated = inline_declaration(style, "float");
+        const std::string position = inline_declaration(style, "position");
+        if (floated == "left" || floated == "right" || position == "absolute" ||
+            position == "fixed") {
+            return "block";
+        }
+        return display;
+    }
+
+    // Is this element (or any ancestor) `display: none`? The specification's
+    // "not being rendered", which sends the getter to textContent instead.
+    [[nodiscard]] bool unrendered(node_id node) const {
+        for (node_id at = node; at && txn_.kind(at).value_or(node_kind::text) == node_kind::element;
+             at = txn_.parent(at)) {
+            if (display_of(at) == "none") { return true; }
+        }
+        return false;
+    }
+
+    // The three inherited properties as this element leaves them for its
+    // children: its own inline declarations over what it inherited.
+    [[nodiscard]] text_style style_under(node_id node, text_style inherited) const {
+        const std::string_view style = own_style(node);
+        const std::string white_space = inline_declaration(style, "white-space");
+        if (!white_space.empty()) {
+            inherited.preserve =
+                white_space == "pre" || white_space == "pre-wrap" || white_space == "break-spaces";
+            inherited.preserve_breaks = white_space == "pre-line";
+        } else if (is_html(node) &&
+                   lists_token("pre listing xmp plaintext textarea", tag_of(node))) {
+            inherited.preserve = true;
+            inherited.preserve_breaks = false;
+        }
+        const std::string visibility = inline_declaration(style, "visibility");
+        if (visibility == "hidden" || visibility == "collapse") {
+            inherited.hidden = true;
+        } else if (visibility == "visible") {
+            inherited.hidden = false;
+        }
+        const std::string transform = inline_declaration(style, "text-transform");
+        if (transform == "uppercase") {
+            inherited.transform = 1;
+        } else if (transform == "lowercase") {
+            inherited.transform = -1;
+        } else if (transform == "none") {
+            inherited.transform = 0;
+        }
+        return inherited;
+    }
+
+    // What the target inherits: its ancestors' styles applied root-first, then
+    // its own - the target's `white-space: pre` governs its text too.
+    [[nodiscard]] text_style inherited_style(node_id target) const {
+        std::vector<node_id> chain;
+        for (node_id at = target;
+             at && txn_.kind(at).value_or(node_kind::text) == node_kind::element;
+             at = txn_.parent(at)) {
+            chain.push_back(at);
+        }
+        text_style style;
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            style = style_under(*it, style);
+        }
+        return style;
+    }
+
+    // The children of `node`, under `style`. Where the walk starts for the
+    // target, whose own display contributes nothing - "No tab on table-cell
+    // itself", "No newline on table-row itself".
+    void collect_children(node_id node, const text_style & style) {
+        if (is_html(node) && lists_token(replaced_tags, tag_of(node))) { return; }
+        const bool closed_details =
+            is_html(node) && tag_of(node) == "details" && !txn_.has_attribute(node, open_);
+        for (const node_id child : txn_.children(node)) {
+            if (closed_details && !(is_html(child) && tag_of(child) == "summary")) { continue; }
+            collect(child, style);
+        }
+    }
+
+    // The items, joined: this is the CSS white-space processing the
+    // specification defers to, done on the flat list - a collapsible run is
+    // one space, dropped at the start of a line and before a break, and a run
+    // of required line breaks is the longest of them, never at either end.
+    [[nodiscard]] std::string finish() const {
+        std::string out;
+        bool pending_space = false;
+        bool line_start = true;
+        int pending_breaks = 0;
+        const auto flush_breaks = [&] {
+            if (pending_breaks > 0 && !out.empty()) {
+                out.append(static_cast<std::size_t>(pending_breaks), '\n');
+            }
+            pending_breaks = 0;
+        };
+        for (const text_item & item : items_) {
+            switch (item.kind) {
+            case text_item::collapsible:
+                for (const char c : item.text) {
+                    if (html_whitespace.find(c) != std::string_view::npos) {
+                        if (!line_start) { pending_space = true; }
+                        continue;
+                    }
+                    flush_breaks();
+                    if (pending_space) { out += ' '; }
+                    pending_space = false;
+                    line_start = false;
+                    out += c;
+                }
+                break;
+            case text_item::preserved:
+                if (item.text.empty()) { break; }
+                flush_breaks();
+                if (pending_space) { out += ' '; }
+                pending_space = false;
+                out += item.text;
+                line_start = item.text.back() == '\n';
+                break;
+            case text_item::separator:
+                pending_space = false;
+                flush_breaks();
+                out += item.text;
+                line_start = true;
+                break;
+            case text_item::open:
+                // An atomic inline is a box of its own: a space before it is
+                // real, and its own leading and trailing spaces are not.
+                flush_breaks();
+                if (pending_space) { out += ' '; }
+                pending_space = false;
+                line_start = true;
+                break;
+            case text_item::close:
+                pending_space = false;
+                line_start = false;
+                break;
+            case text_item::required:
+                pending_space = false;
+                line_start = true;
+                pending_breaks = std::max(pending_breaks, item.breaks);
+                break;
+            }
+        }
+        return out;
+    }
+
+private:
+    struct text_item {
+        enum {
+            collapsible,
+            preserved,
+            separator,
+            open,
+            close,
+            required
+        } kind = collapsible;
+        std::string text;
+        int breaks = 0;
+    };
+
+    void collect(node_id node, const text_style & inherited) {
+        const node_kind kind = txn_.kind(node).value_or(node_kind::comment);
+        if (kind == node_kind::text) {
+            if (inherited.hidden) { return; }
+            std::string text{txn_.text(node)};
+            if (inherited.transform > 0) { ascii_upper_in_place(text); }
+            if (inherited.transform < 0) { text = ascii_lower_copy(text); }
+            if (inherited.preserve) {
+                items_.push_back({text_item::preserved, std::move(text), 0});
+            } else if (inherited.preserve_breaks) {
+                // pre-line: a newline is a forced break, everything else collapses.
+                std::size_t at = 0;
+                while (at <= text.size()) {
+                    const std::size_t nl = text.find('\n', at);
+                    const std::size_t stop = nl == std::string::npos ? text.size() : nl;
+                    items_.push_back({text_item::collapsible, text.substr(at, stop - at), 0});
+                    if (nl == std::string::npos) { break; }
+                    items_.push_back({text_item::separator, "\n", 0});
+                    at = nl + 1;
+                }
+            } else {
+                items_.push_back({text_item::collapsible, std::move(text), 0});
+            }
+            return;
+        }
+        if (kind != node_kind::element) { return; }
+        const std::string display = display_of(node);
+        if (display == "none") { return; }
+        const bool html = is_html(node);
+        const std::string_view tag = tag_of(node);
+        if (html && tag == "br") {
+            items_.push_back({text_item::separator, "\n", 0});
+            return;
+        }
+        const text_style style = style_under(node, inherited);
+        // "If node is a p element, append 2" - by TAG, whatever its display;
+        // the corpus asks for the blank lines around a `display: inline-block`
+        // <p> by name. Otherwise a block-level box is a line of its own.
+        const int breaks =
+            html && tag == "p"                                                                ? 2
+            : lists_token("block table flex grid list-item flow-root table-caption", display) ? 1
+                                                                                              : 0;
+        const bool atomic = breaks == 0 && (display.starts_with("inline-") ||
+                                            (html && lists_token(replaced_tags, tag)));
+        if (breaks > 0) { items_.push_back({text_item::required, {}, breaks}); }
+        if (atomic) { items_.push_back({text_item::open, {}, 0}); }
+        collect_children(node, style);
+        if (display == "table-cell" && !last_of_kind(node, "table-cell")) {
+            items_.push_back({text_item::separator, "\t", 0});
+        }
+        if (display == "table-row" && !last_row(node)) {
+            items_.push_back({text_item::separator, "\n", 0});
+        }
+        if (atomic) { items_.push_back({text_item::close, {}, 0}); }
+        if (breaks > 0) { items_.push_back({text_item::required, {}, breaks}); }
+    }
+
+    // Is there a later sibling element of this display? The specification
+    // asks about boxes - "the last table-cell box of its enclosing table-row
+    // box" - and a sibling in the same row is that box.
+    [[nodiscard]] bool last_of_kind(node_id node, std::string_view display) const {
+        bool after = false;
+        for (const node_id sibling : txn_.children(txn_.parent(node))) {
+            if (sibling == node) {
+                after = true;
+                continue;
+            }
+            if (after && txn_.kind(sibling).value_or(node_kind::text) == node_kind::element &&
+                display_of(sibling) == display) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // ...and a row's table is one level further up: the rows of a later row
+    // group are still rows of this table.
+    [[nodiscard]] bool last_row(node_id node) const {
+        if (!last_of_kind(node, "table-row")) { return false; }
+        const node_id group = txn_.parent(node);
+        if (!group || display_of(group) != "table-row-group") { return true; }
+        bool after = false;
+        for (const node_id sibling : txn_.children(txn_.parent(group))) {
+            if (sibling == group) {
+                after = true;
+                continue;
+            }
+            if (!after || txn_.kind(sibling).value_or(node_kind::text) != node_kind::element) {
+                continue;
+            }
+            for (const node_id row : txn_.children(sibling)) {
+                if (txn_.kind(row).value_or(node_kind::text) == node_kind::element &&
+                    display_of(row) == "table-row") {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    const read_txn & txn_;
+    atom_table & atoms_;
+    atom style_;
+    atom type_;
+    atom hidden_;
+    atom open_;
+    std::vector<text_item> items_;
+};
+
 } // namespace
 
 namespace detail {
@@ -396,17 +775,8 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // and it reads no layout at all, which is why the two halves of this
     // property can be separated. innertext-setter.html is 126 subtests of it.
     //
-    // THE GETTERS ARE NOT HERE, and reading either still answers `undefined`.
-    // `innerText` is the RENDERED text: the specification's first step is "if
-    // this is not being rendered, return this's descendant text content" and
-    // every step after it reads the box tree - `display`, `white-space`, a
-    // ::before, a table cell's tab. This engine lays out on a FRAME rather than
-    // on demand, so the boxes a getter would walk here are the ones from before
-    // the script's own mutations: `container.innerHTML = x; e.innerText` would
-    // answer about the page as it was. Answering out of textContent instead
-    // would be a different property wearing this one's name. What the getter
-    // needs first is a layout flush a binding can ask for, and that is
-    // browser.cpp's to give.
+    // THE GETTER is the other half and reads no layout either - see
+    // inner_text_collector above for what it reads instead, and why.
     if (const value html_interface = interface_prototype("HTMLElement");
         html_interface.is_object()) {
         auto * proto = static_cast<script::object_object *>(html_interface.as_heap());
@@ -524,11 +894,36 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             mutated();
             return value::undefined();
         };
+        // THE GETTER, shared by both names: `outerText` reads exactly what
+        // `innerText` reads. "If this is not being rendered, return this's
+        // descendant text content" - and an element that is not connected, or
+        // is under a `display: none`, is not rendered. See inner_text_collector.
+        const auto rendered_text = [this](context & c, std::span<value>) {
+            const node_id id = receiver(c);
+            if (!id) { return value::undefined(); }
+            bool not_rendered = false;
+            std::string text;
+            {
+                const auto txn = doc_->read();
+                inner_text_collector collector{txn, *atoms_};
+                if (!is_document_root(txn, root_of_tree(txn, id, true)) ||
+                    collector.unrendered(id)) {
+                    not_rendered = true;
+                } else {
+                    collector.collect_children(id, collector.inherited_style(id));
+                    text = collector.finish();
+                }
+            }
+            // Outside the read above: text_content opens one of its own.
+            return c.string(not_rendered ? text_content(id) : text);
+        };
         proto->define_accessor(
-            "innerText", value::undefined(),
+            "innerText",
+            value::object(cx.allocate<script::native_object>("innerText", rendered_text)),
             value::object(cx.allocate<script::native_object>("innerText", set_inner_text)));
         proto->define_accessor(
-            "outerText", value::undefined(),
+            "outerText",
+            value::object(cx.allocate<script::native_object>("outerText", rendered_text)),
             value::object(cx.allocate<script::native_object>("outerText", set_outer_text)));
 
         // --- translate, HTML 3.2.6.3 ---------------------------------------
