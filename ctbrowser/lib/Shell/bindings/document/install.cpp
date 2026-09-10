@@ -39,7 +39,15 @@ void dom_bindings::install_document(context & cx) {
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
-        return create_html_element(c, name);
+        if (!doc_->xml()) { return create_html_element(c, name); }
+        // AN XML DOCUMENT, DOM 4.5 steps 3-5: the local name is kept AS
+        // WRITTEN - only an HTML document lowercases - and the namespace is
+        // HTML only when the content type is application/xhtml+xml, null
+        // otherwise. `new Document().createElement("DIV").localName` is "DIV"
+        // and its constructor is Element, not HTMLElement.
+        const std::string type = content_type_.empty() ? "application/xhtml+xml" : content_type_;
+        const node_ns kind = type == "application/xhtml+xml" ? node_ns::html : node_ns::other;
+        return wrap(c, doc_->create_element(atoms_->intern(name), kind));
     });
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
@@ -797,10 +805,18 @@ void dom_bindings::install_document(context & cx) {
         cx.define_global("document", document_);
     } else {
         // WHAT `install_navigation` WOULD HAVE SET, for a document that has no
-        // browsing context to get it from. `defaultView` is null by the
-        // specification's own words, and the three names for the address are
-        // "about:blank" because that is what a document created by script has.
+        // browsing context to get it from. `defaultView` and `location` are
+        // null by the specification's own words, and the three names for the
+        // address are "about:blank" because that is what a document created
+        // by script has.
         doc->set("defaultView", value::null());
+        doc->set("location", value::null());
+        // AND ITS INTERFACE. The primary is linked to Document.prototype by
+        // install_dom_interfaces, which a secondary never runs - it adopted
+        // the table instead - so `made instanceof Document` was false.
+        if (const value proto = interface_prototype("Document"); proto.is_object()) {
+            doc->prototype = proto;
+        }
         for (const char * name : {"URL", "documentURI", "baseURI"}) {
             doc->set(name, cx.string("about:blank"));
         }
