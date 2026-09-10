@@ -41,6 +41,7 @@ struct analyzer {
                           llvm::SmallVectorImpl<mlir::Operation *> & calls);
     bool capturedMapParameters(ctjs::FuncOp function, bool prepared,
                                llvm::ArrayRef<mlir::Operation *> calls,
+                               const llvm::DenseSet<mlir::Operation *> & familyCalls,
                                const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
                                HostMethodParameters & result);
     PrimitiveAlternatives entryCategories(

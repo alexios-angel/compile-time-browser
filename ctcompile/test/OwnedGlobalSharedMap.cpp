@@ -3867,7 +3867,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     for (const char * method : {"get", "delete"}) {
         variant(replaced(source, "#ctjs.string<\"has\">",
                          std::string("#ctjs.string<\"") + method + "\">"),
-                false, "object-key authority is limited to the independently checked has use");
+                true, "a captured Map can read or delete the exact empty object key");
     }
     for (const bool key : {false, true}) {
         auto storing = replaced(source, "#ctjs.string<\"has\">", "#ctjs.string<\"set\">");
@@ -3876,8 +3876,21 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                            "    %stored = ctjs.call %method(%state, " +
                                std::string(key ? "%entryKey, %zero" : "%zero, %entryKey") +
                                ")\n    %found = ctjs.constant #ctjs.boolean<false>\n");
-        variant(storing, false, "a borrowed has argument cannot be retained as a Map key or value");
+        variant(storing, key, "only the captured Map may retain the empty object as a key");
     }
+    const std::string retain = "    %setKey = ctjs.constant #ctjs.string<\"set\">\n"
+                               "    %setter = ctjs.get_property %state[%setKey]\n"
+                               "    %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                               "    %stored = ctjs.call %setter(%state, %entryKey, %one)\n";
+    variant(replaced(source, has, retain + has), true,
+            "retaining an object key preserves its identity for the later has");
+    variant(replaced(replaced(source, has, retain + has), "#ctjs.string<\"has\">",
+                     "#ctjs.string<\"get\">"),
+            true, "a read after set keeps the exact object key's scalar payload");
+    variant(replaced(repeat("%actual", ""), has, retain + has), true,
+            "later calls may overwrite a retained key without creating an ownership cycle", 2);
+    variant(replaced(repeat("%other", "    %other = ctjs.create_object\n"), has, retain + has),
+            true, "separate object actuals remain distinct retained Map keys", 2);
     variant(replaced(source, has,
                      "    %unknown = ctjs.load_global \"unknown\"\n"
                      "    %escaped = ctjs.call %unknown(%state, %entryKey)\n" +
@@ -3947,6 +3960,89 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     if (exact.proved()) { evidence(*module, host, exact, 1); }
     std::printf("object-key owner %s: %u rows and all %u incomplete budgets checked\n",
                 prepared ? "prepared" : "source", rows, completion);
+}
+
+void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string & source,
+                                  bool prepared) {
+    using ctcompile::ctnative::PrimitiveAlternatives;
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    const auto variant = [&](const std::string & text, bool expected, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "retained sibling key fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() == expected && owner.proved() == expected, message);
+        if (host.proved() != expected || owner.proved() != expected) {
+            std::fprintf(stderr, "retained sibling key %s: host=%s owner=%s\n",
+                         prepared ? "prepared" : "source", host.reason().str().c_str(),
+                         owner.reason().str().c_str());
+        }
+        if (!expected) {
+            check(host.callables().empty() && empty(*module, owner),
+                  "an unsafe sibling exposes no partial key owner");
+        } else if (owner.proved()) {
+            const auto & table = *owner.roots().front().methodTable;
+            check(table.methods.size() == 2 && table.calls.size() == 2 && table.capturedMap &&
+                      table.capturedMap->parameters.size() == 2,
+                  "the complete two-method family owns one captured Map");
+            if (table.calls.size() == 2) {
+                const auto & first = table.calls[0].arguments;
+                const auto & second = table.calls[1].arguments;
+                check(first.size() == 1 && second.size() == 1 && first[0].object &&
+                          second[0].object && first[0].alternatives == PrimitiveAlternatives{} &&
+                          second[0].alternatives == PrimitiveAlternatives{},
+                      "both siblings independently prove their actual object identity");
+            }
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "retained key analysis preserves every source operation");
+    };
+    variant(source, true, "one local empty object may reach both exact captured-Map siblings");
+    const std::string observation = "    ctjs.store_global \"trace\", %answer\n";
+    variant(
+        replaced(source, observation, "    ctjs.set_property %actual[%key], %u\n" + observation),
+        false, "a later key write invalidates the complete family owner");
+    variant(replaced(source, observation,
+                     "    ctjs.store_global \"escapedKey\", %actual\n" + observation),
+            false, "a named object still requires a separate global owner");
+    variant(replaced(source, "%state, %entryKey, %value)", "%state, %entryKey, %entryKey)"), false,
+            "key ownership cannot authorize retaining the same object as a payload");
+    variant(replaced(source, "    ctjs.return %u\n  }\n}\n",
+                     "    ctjs.set_property %entryKey[%setKey], %state\n"
+                     "    ctjs.return %u\n  }\n}\n"),
+            false, "a sibling cannot create a key-to-Map ownership cycle");
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    if (!module) { return; }
+    const auto contract = requested(*module);
+    OwnedGlobalRoots owner(*module, contract);
+    if (!owner.proved()) { return; }
+    const auto calls = owner.roots().front().methodTable->calls;
+    auto second = calls[1];
+    const unsigned actualIndex = prepared ? 4u : 2u;
+    const auto actual = second.call->getOperand(actualIndex);
+    second.call->setOperand(actualIndex, second.read.getObject());
+    check(!OwnedGlobalRoots(*module, contract).proved() &&
+              !OwnedGlobalRoots(*module, requested(*module)).proved(),
+          "stale facts and fresh fingerprints cannot substitute the owning table for a key");
+    second.call->setOperand(actualIndex, actual);
+    const unsigned completion = owner.steps();
+    for (unsigned budget = 0; budget < completion; budget += std::max(1u, completion / 24)) {
+        OwnedGlobalRoots limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  empty(*module, limited),
+              "incomplete sibling census budgets withhold the entire owning family");
+    }
+    check(!OwnedGlobalRoots(*module, contract, completion - 1).proved() &&
+              OwnedGlobalRoots(*module, contract, completion).proved(),
+          "the exact sibling owner completion budget is required");
+    std::printf("retained sibling key %s: 5 rows, live edit and budget boundary %u checked\n",
+                prepared ? "prepared" : "source", completion);
 }
 
 void checkSharedMap(mlir::MLIRContext & context) {
@@ -4026,6 +4122,29 @@ void checkSharedMap(mlir::MLIRContext & context) {
                          "    ctjs.return %found");
     for (const bool prepared : {false, true}) {
         checkObjectKeyArguments(context, prepared ? prepare(objectKey) : objectKey, prepared);
+    }
+    auto retained = source;
+    for (const char * name : {"get$3", "put$4"}) {
+        const auto signature = std::string("@") + name +
+                               "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value";
+        retained = replaced(retained, signature, signature + ", %entryKey: !ctjs.value");
+    }
+    retained = replaced(retained, "    %entryKey = ctjs.constant #ctjs.string<\"x\">\n", "");
+    retained = replaced(retained,
+                        "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                        "    %size = ctjs.get_property %state[%key]\n"
+                        "    ctjs.return %size",
+                        "    %key = ctjs.constant #ctjs.string<\"has\">\n"
+                        "    %method = ctjs.get_property %state[%key]\n"
+                        "    %found = ctjs.call %method(%state, %entryKey)\n"
+                        "    ctjs.return %found");
+    retained = replaced(retained, "    %putResult = ctjs.call %putter(%owned)",
+                        "    %actual = ctjs.create_object\n"
+                        "    %putResult = ctjs.call %putter(%owned, %actual)");
+    retained =
+        replaced(retained, "ctjs.call %getter(%owned)", "ctjs.call %getter(%owned, %actual)");
+    for (const bool prepared : {false, true}) {
+        checkRetainedObjectKeyFamily(context, prepared ? prepare(retained) : retained, prepared);
     }
     auto three = replaced(source, "    ctjs.return %table",
                           "    %hasMethod = ctjs.create_closure %callee[5] this %u captures %cell\n"

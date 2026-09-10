@@ -546,12 +546,14 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // invocation supplies result evidence; cycles cannot authorize themselves.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
-    std::size_t invocationCount = 0;
+    llvm::DenseSet<mlir::Operation *> familyInvocations;
     for (const auto & invocations : familyCalls) {
-        if (!step()) { return {}; }
-        invocationCount += invocations.size();
+        for (mlir::Operation * invocation : invocations) {
+            if (!step()) { return {}; }
+            familyInvocations.insert(invocation);
+        }
     }
-    while (completed.size() != invocationCount) {
+    while (completed.size() != familyInvocations.size()) {
         bool progress = false;
         for (unsigned index = 0; index < result.parameters.size(); ++index) {
             if (!step()) { return {}; }
@@ -560,8 +562,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 if (!step()) { return {}; }
                 if (completed.contains(invocation)) { continue; }
                 HostMethodParameters parameters{member, {}};
-                if (!capturedMapParameters(member, prepared, {invocation}, completedResults,
-                                           parameters)) {
+                if (!capturedMapParameters(member, prepared, {invocation}, familyInvocations,
+                                           completedResults, parameters)) {
                     continue;
                 }
                 // Provisional reads/calls never escape into the family plan.
@@ -590,7 +592,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         auto & parameters = result.parameters[index];
         PrimitiveAlternatives alternatives;
         if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
-                                   completedResults, parameters) ||
+                                   familyInvocations, completedResults, parameters) ||
             !capturedMapBody(parameters.function, prepared, primitiveContents, parameters, result,
                              alternatives)) {
             return {};
@@ -771,6 +773,7 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
 
 bool analyzer::capturedMapParameters(
     ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
+    const llvm::DenseSet<mlir::Operation *> & familyCalls,
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
     HostMethodParameters & result) {
     const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
@@ -791,22 +794,20 @@ bool analyzer::capturedMapParameters(
                     !dominance.properlyDominates(made.getOperation(), operation)) {
                     return false;
                 }
-                // This is a borrowed identity, not a startup value or a schema.
-                // Every use must be an argument to this completely enumerated
-                // method; its body below permits only Map.has on object formals.
+                // Every use must be an explicit argument in this Map's exact
+                // invocation census. Every sibling body independently permits
+                // object formals only as keys, so a Map can retain a key but
+                // the key cannot retain the Map or acquire an outgoing edge.
                 for (mlir::OpOperand & use : actual.getUses()) {
                     if (!step() || !dominance.dominates(actual, use.getOwner())) { return false; }
                     if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
                     auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                     if ((!directUse && !callUse) ||
-                        use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u)) {
+                        use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u) ||
+                        !familyCalls.contains(use.getOwner())) {
                         return false;
                     }
-                    auto callee = directUse ? directUse.getCalleeValue() : callUse.getCallee();
-                    auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
-                    auto write = read ? currentWrite(read) : ctjs::SetPropertyOp{};
-                    if (!write || callable(write.getValue()) != function) { return false; }
                 }
                 objects.push_back(function.getBody().front().getArgument(
                     (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size())));

@@ -51,9 +51,10 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// Finite primitive categories or borrowed empty object keys, proved over the
+// Finite primitive categories or empty object keys, proved over the
 // complete current call census. Object positions have no primitive alternatives;
-// their actual allocation and allowed uses are checked independently.
+// their actual allocation and allowed uses are checked independently. Only the
+// captured Map may retain a key; the key has no outgoing ownership edges.
 struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
