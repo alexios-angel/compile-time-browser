@@ -673,6 +673,115 @@ private:
     bool mutation_delivery_queued_ = false;
     // END mutation observers
 
+    // BEGIN web animations (bindings/animations.cpp)
+    //
+    // THE SLICE OF WEB ANIMATIONS `css/css-values` OBSERVES: `element.animate`
+    // makes an Animation over a KeyframeEffect, the page seeks it - `pause()`
+    // then `currentTime = t` is what interpolation-testcommon.js does - and
+    // reads the animated property back through getComputedStyle. So the model
+    // is the specification's timing model over ONE clock (`now_ms_`, which is
+    // also `document.timeline.currentTime`) and the effect value is an OVERLAY
+    // on the cascade's text for that element: computed_style_entries asks
+    // `animated_values` before it asks the style map, and every rule downstream
+    // - a percentage against its containing block, an inset's used value - runs
+    // on the interpolated text exactly as it would on a declared one.
+    //
+    // WHAT THIS DOES NOT DO, named: nothing RENDERS an animation - the overlay
+    // exists for getComputedStyle and paint never sees it; no `finish`/`cancel`
+    // events fire and the finished promise settles when a SEEK reaches the end,
+    // not when the clock does; `composite: add/accumulate` is treated as
+    // replace; colours, transforms and lists interpolate discretely. Lengths,
+    // percentages, calc() and numbers interpolate, which is what the targeted
+    // tests exercise.
+public:
+    // The animated properties of one element as (css name, text) pairs, at the
+    // element's animations' CURRENT time. `underlying` answers the cascade's
+    // text for a property, which is the missing endpoint of a one-keyframe
+    // effect; `font_size` is the basis an `em` in a keyframe resolves against.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> animated_values(
+        node_id id, float font_size,
+        const std::function<std::string_view(std::string_view)> & underlying) const;
+    // Changes whenever ANY animated answer might: an animation was made,
+    // seeked, paused or cancelled, or the clock moved while one is live. Zero
+    // while no animation exists, so a page without animations never re-derives
+    // a cached computed style on its account.
+    [[nodiscard]] std::uint64_t animation_stamp() const noexcept;
+
+private:
+    struct animation_keyframe {
+        double offset = 1;         // the COMPUTED offset, once the missing ones are filled
+        bool offset_given = false; // `getKeyframes()` reports `offset: null` for a computed one
+        std::string easing = "linear";
+        std::string composite = "auto";
+        std::vector<std::pair<std::string, std::string>> values; // css name -> text
+    };
+    struct effect_timing {
+        double delay = 0;
+        double end_delay = 0;
+        double duration = 0;
+        double iterations = 1;
+        double iteration_start = 0;
+        std::string fill = "auto";
+        std::string direction = "normal";
+        std::string easing = "linear";
+    };
+    struct keyframe_effect_record {
+        value self;
+        node_id target;
+        std::string composite = "replace";
+        effect_timing timing;
+        std::vector<animation_keyframe> keyframes;
+    };
+    struct animation_record {
+        value self;
+        std::size_t effect = static_cast<std::size_t>(-1);            // into effects_
+        double start_time = std::numeric_limits<double>::quiet_NaN(); // NaN: unresolved
+        double hold_time = std::numeric_limits<double>::quiet_NaN();
+        double playback_rate = 1;
+        value finished; // the `finished` promise
+        bool finished_settled = false;
+    };
+    static constexpr std::size_t no_record = static_cast<std::size_t>(-1);
+
+    // `Animation`, `KeyframeEffect`, `DocumentTimeline`, `document.timeline`,
+    // `document.getAnimations`, and `animate`/`getAnimations` on
+    // Element.prototype. Called from install_dom_interfaces, which is where
+    // that prototype exists; a second call is a no-op.
+    void install_animations(context & cx);
+    [[nodiscard]] std::size_t animation_index(value v) const;
+    [[nodiscard]] std::size_t effect_index(value v) const;
+    // `new KeyframeEffect(target, keyframes, options)` and `new Animation(effect)`,
+    // shared with `element.animate`, which is the two of them plus `play()`.
+    [[nodiscard]] value make_keyframe_effect(context & cx, node_id target, value keyframes,
+                                             value options);
+    [[nodiscard]] value make_animation(context & cx, std::size_t effect);
+    // The two dictionaries. Both throw a TypeError HAVING RETURNED false.
+    [[nodiscard]] bool read_timing(context & cx, value options, effect_timing & into);
+    [[nodiscard]] bool read_keyframes(context & cx, value keyframes,
+                                      std::vector<animation_keyframe> & into);
+    // The timing model, Web Animations §4.4-4.5. `current_time` is NaN when
+    // unresolved; `play_state` is one of idle/running/paused/finished.
+    [[nodiscard]] double animation_current_time(const animation_record & a) const noexcept;
+    void set_animation_current_time(animation_record & a, double t);
+    [[nodiscard]] std::string_view play_state(const animation_record & a) const noexcept;
+    [[nodiscard]] double effect_end_time(const keyframe_effect_record & e) const noexcept;
+    // Settle the finished promise when the animation is in the finished state,
+    // and bump the stamp; every state change ends here.
+    void update_finished_state(context & cx, std::size_t index);
+    void sync_animation_roots();
+    // The animations whose effect targets `id` - or any descendant of it with
+    // `subtree` - that are not idle, in creation order.
+    [[nodiscard]] std::vector<std::size_t> animations_on(node_id id, bool subtree) const;
+
+    std::vector<keyframe_effect_record> effects_;
+    std::vector<animation_record> animations_;
+    value animation_prototype_;
+    value keyframe_effect_prototype_;
+    value timeline_;
+    script::native_object * animation_interface_ = nullptr;
+    std::uint64_t animation_generation_ = 0;
+    // END web animations
+
     // BEGIN style sheets (bindings/stylesheets/)
 public:
     // THE CSSOM'S OWN COPY OF THE AUTHOR'S SHEETS, and why it is a copy.
