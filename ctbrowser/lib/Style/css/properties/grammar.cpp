@@ -39,10 +39,10 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 23> math_functions{
-    "calc", "min",  "max",   "clamp", "round", "mod",       "rem",     "abs",
-    "sign", "sin",  "cos",   "tan",   "asin",  "acos",      "atan",    "atan2",
-    "pow",  "sqrt", "hypot", "log",   "exp",   "calc-size", "progress"};
+constexpr std::array<std::string_view, 25> math_functions{
+    "calc",  "min", "max", "clamp",     "round",    "mod",           "rem",          "abs", "sign",
+    "sin",   "cos", "tan", "asin",      "acos",     "atan",          "atan2",        "pow", "sqrt",
+    "hypot", "log", "exp", "calc-size", "progress", "sibling-index", "sibling-count"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
@@ -406,8 +406,17 @@ namespace detail {
     // It asks whether the SECOND token closes the first rather than counting to
     // three, because two tokens is also what an unterminated `calc(1px` has and
     // that one is a value: EOF closes it.
+    //
+    // ...EXCEPT FOR THE TREE-COUNTING FUNCTIONS, whose argument list is empty by
+    // definition: `z-index: sibling-index()` is the whole of CSS Values 5
+    // §tree-counting's example.
+    const std::string_view fn = function_name(ts, first);
+    const bool takes_nothing =
+        ascii_iequals(fn, "sibling-index") || ascii_iequals(fn, "sibling-count");
     if (found.significant.size() < 2) { return false; }
-    if (ts.tokens[found.significant[1]].type == token_type::close_paren) { return false; }
+    if (!takes_nothing && ts.tokens[found.significant[1]].type == token_type::close_paren) {
+        return false;
+    }
     // The matching `)` must be the last significant token; anything after it is
     // a second value. A function left OPEN at the end of the value is closed by
     // EOF and is therefore also the whole value.

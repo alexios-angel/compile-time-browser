@@ -652,6 +652,11 @@ public:
         // inherited or not, so `display: inherit` has to be able to read a property
         // that never travels on its own. The inherited half alone cannot answer that.
         const inherited_ptr & from = parent ? parent->inherited : no_inherited_;
+        // Where this element sits among its siblings, for `sibling-index()` and
+        // `sibling-count()`: facts the traversal already gathered for
+        // `:nth-child`, handed to every math function this element folds.
+        sibling_index_ = self.sibling_index;
+        sibling_count_ = self.sibling_count;
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
         collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -1083,6 +1088,8 @@ public:
         ctx.root_font_size = root_font_size_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
+        ctx.sibling_index = sibling_index_;
+        ctx.sibling_count = sibling_count_;
         return ctx;
     }
 
@@ -1597,6 +1604,11 @@ private:
     // resolved first, so by the time anything else asks, it is right. It replaces
     // a hardcoded 16 in layout/values.hpp.
     float root_font_size_ = 16.0f;
+    // The element being resolved, among its siblings: set by resolve() from the
+    // facts the traversal gathered, read by font_context() for the tree-counting
+    // functions. Zero outside a resolve, which leaves them unresolved.
+    std::uint32_t sibling_index_ = 0;
+    std::uint32_t sibling_count_ = 0;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;

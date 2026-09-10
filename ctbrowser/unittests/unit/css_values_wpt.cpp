@@ -141,6 +141,82 @@ void test_the_range_of_a_property_is_applied_when_computed() {
     CHECK(check_declaration("column-span", "all").valid);
 }
 
+// typed_arithmetic and getComputedStyle-calc-mixed-units-003: two dimensions
+// multiply and divide into a type of their own, and a type no property takes is
+// still a syntax error as the whole answer.
+void test_typed_arithmetic() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::evaluate_math;
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::math_outcome;
+    length_context ctx;
+    ctx.font_size = 10.0f;
+    ctx.root_font_size = 10.0f;
+    const auto number = [&](std::string_view expression) {
+        const auto answer = evaluate_math(expression, ctx);
+        CHECK(answer.outcome == math_outcome::resolved);
+        return answer.value.px;
+    };
+    CHECK_EQ(number("min(1em, 110px / 10px * 1px)"), 10.0);
+    CHECK_EQ(number("max(1em + 2px, 110px / 10px * 1px)"), 12.0);
+    CHECK_EQ(number("3 + sign(10px / 1rem - sign(1em + 1px))"), 3.0);
+    CHECK_EQ(number("10em / 1px"), 100.0);
+    CHECK_EQ(number("1px * 3deg / 1deg / 1px"), 3.0);
+    // A percentage rides through a product as a percentage of the basis.
+    CHECK_EQ(fold_math("calc(20% * 0.5em / 1px)", ctx, math_context::length).text,
+             std::string{"100%"});
+    CHECK_EQ(fold_math("calc(1px * 10em / 0em)", ctx, math_context::length).text,
+             std::string{"33554432px"});
+    // ...and one that would need the basis twice, or as a divisor, waits.
+    CHECK(evaluate_math("10% * 10%", ctx).outcome == math_outcome::unresolved);
+    CHECK(evaluate_math("52px * 1px / 10%", ctx).outcome == math_outcome::unresolved);
+    CHECK(evaluate_math("10% / 1px", ctx).outcome == math_outcome::unresolved);
+    // calc-unit-analysis: an area and an inverse length are still invalid.
+    CHECK(evaluate_math("calc(2px * 1px)", ctx).outcome == math_outcome::invalid);
+    CHECK(evaluate_math("calc(20 / 0.75rem)", ctx).outcome == math_outcome::invalid);
+    CHECK(evaluate_math("(1% * 1deg) / 1px", ctx).outcome == math_outcome::invalid);
+    CHECK_EQ(check_declaration("margin-left", "calc(110px / 10px * 1px)").serialized,
+             std::string{"calc(11px)"});
+    CHECK(!check_declaration("width", "calc(2px * 1px)").valid);
+}
+
+// tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
+// files: sibling-index() and sibling-count() resolve in the cascade, where the
+// element is, and nowhere else.
+void test_the_tree_counting_functions() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::simplify_math;
+    length_context third;
+    third.sibling_index = 3;
+    third.sibling_count = 5;
+    CHECK_EQ(fold_math("calc(sibling-index() * 2)", third, math_context::integer).text,
+             std::string{"6"});
+    CHECK_EQ(fold_math("foo calc(sibling-count())", third, math_context::any).text,
+             std::string{"foo 5"});
+    CHECK_EQ(fold_math("calc(10% + 100px * sibling-index())", third, math_context::length).text,
+             std::string{"calc(10% + 300px)"});
+    // No element, no answer: the specified value keeps the function.
+    CHECK_EQ(fold_math("calc(sibling-index())", length_context{}, math_context::integer).text,
+             std::string{"calc(sibling-index())"});
+    CHECK_EQ(simplify_math("calc(1px * sibling-index( ))"),
+             std::string{"calc(1px * sibling-index())"});
+    CHECK(!check_declaration("left", "calc(1px * sibling-index(100px))").valid);
+    {
+        fixture f;
+        f.load("<div><p></p><p id=a></p><p></p></div>",
+               "#a { z-index: calc(sibling-index()); order: calc(sibling-count() * 2);"
+               "     left: calc(10% + 100px * sibling-index()) }");
+        expect_value(f, f.find_id("a"), "z-index", "2", "the second of three");
+        expect_value(f, f.find_id("a"), "order", "6", "of three");
+        expect_value(f, f.find_id("a"), "left", "calc(10% + 200px)", "inside a sum");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -149,5 +225,7 @@ int main() {
     test_the_evaluator_at_zero_and_around_a_step();
     test_a_clamp_with_an_absent_bound_is_a_comparison();
     test_the_range_of_a_property_is_applied_when_computed();
+    test_typed_arithmetic();
+    test_the_tree_counting_functions();
     REPORT("css_values_wpt");
 }

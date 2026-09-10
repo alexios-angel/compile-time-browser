@@ -52,6 +52,12 @@ struct length_context {
     float root_font_size = 16.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
+    // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
+    // are - what `sibling-index()` and `sibling-count()` answer (CSS Values 5
+    // §tree-counting). Zero means "no element here", which is every context
+    // but the cascade's, and leaves both functions unresolved.
+    std::uint32_t sibling_index = 0;
+    std::uint32_t sibling_count = 0;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2

@@ -24,9 +24,10 @@ namespace {
 // `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
 // function: this file cannot evaluate it, and a name here is a promise to try.
 constexpr std::string_view math_names[] = {
-    "progress(", "clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(", "acos(",
-    "atan(",     "sign(",  "calc(",  "min(",   "max(",   "mod(",  "rem(",  "abs(",
-    "pow(",      "log(",   "exp(",   "sin(",   "cos(",   "tan("};
+    "sibling-index(", "sibling-count(", "progress(", "clamp(", "atan2(", "hypot(",
+    "round(",         "sqrt(",          "asin(",     "acos(",  "atan(",  "sign(",
+    "calc(",          "min(",           "max(",      "mod(",   "rem(",   "abs(",
+    "pow(",           "log(",           "exp(",      "sin(",   "cos(",   "tan("};
 
 } // namespace
 

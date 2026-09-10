@@ -102,7 +102,7 @@ namespace detail {
     };
     for (const fixed & one : table) {
         if (ascii_iequals(one.unit, unit)) {
-            out.type = one.type;
+            out.set_type(one.type);
             out.value = value * one.factor;
             return out;
         }
@@ -116,7 +116,7 @@ namespace detail {
     // double the day `folded()` in `style/engine.hpp` folds through
     // `canonical_dimension_text`.
     if (const std::optional<float> px = unit_to_px(static_cast<float>(value), unit, ctx)) {
-        out.type = numeric_type::length;
+        out.set_type(numeric_type::length);
         out.value = *px;
         return out;
     }
@@ -138,13 +138,13 @@ namespace detail {
         const std::optional<term> fixed = canonical_term(value, unit, length_context{});
         if (!fixed) { return std::nullopt; }
         term out;
-        out.type = fixed->type;
-        add_symbol(out, canonical_unit(out.type), fixed->value);
+        out.dims = fixed->dims;
+        add_symbol(out, canonical_unit(out.type()), fixed->value);
         return out;
     }
     if (!is_known_unit(unit)) { return std::nullopt; }
     term out;
-    out.type = ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length;
+    out.set_type(ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length);
     add_symbol(out, ascii_lower_copy(unit), value);
     return out;
 }
