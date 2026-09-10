@@ -1751,6 +1751,55 @@ if (primitiveMixedSubUnknownError instanceof TypeError && primitiveMixedSubUnkno
     typeof primitiveMixedSubSavedError.stack === "string") primitiveMixedSubTrace += 32;
 if (primitiveMixedSubTrace !== 63) throw "mixed BigInt subtraction independent TypeError witness";
 
+// --- MIXED BIGINT MUL: INDEPENDENT TYPEERROR, ORIGINAL OPERANDS -----------
+function primitiveMixedMulEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 1n : 1;
+    var numeric = input * 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+function primitiveMixedMulRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var input = choice ? 1n : 1;
+    var numeric = input * 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved, numeric: numeric };
+}
+function primitiveMixedMulOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var numeric = input * 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+var primitiveMixedMulNormal = primitiveMixedMulEarly(false);
+var primitiveMixedMulSaved = primitiveMixedMulRetained(false);
+var primitiveMixedMulUnknown = primitiveMixedMulOpaque(1);
+H.push(primitiveMixedMulNormal); H.push(primitiveMixedMulSaved); H.push(primitiveMixedMulUnknown);
+function primitiveMixedMulCatch(fn, input) {
+    try { return fn(input); }
+    catch (error) { H.push(error); return error; }
+}
+var primitiveMixedMulError = primitiveMixedMulCatch(primitiveMixedMulEarly, true);
+var primitiveMixedMulSavedError = primitiveMixedMulCatch(primitiveMixedMulRetained, true);
+var primitiveMixedMulUnknownError = primitiveMixedMulCatch(primitiveMixedMulOpaque, 1n);
+var primitiveMixedMulTrace = 0;
+if (primitiveMixedMulNormal.numeric === 1 && primitiveMixedMulNormal.source.held === void 0 &&
+    primitiveMixedMulNormal.target.held === void 0) primitiveMixedMulTrace += 1;
+if (primitiveMixedMulError instanceof TypeError && primitiveMixedMulError.name === "TypeError") primitiveMixedMulTrace += 2;
+if (primitiveMixedMulSaved.numeric === 1 && primitiveMixedMulSaved.saved.id === 1 &&
+    primitiveMixedMulSaved.source.held === void 0 && primitiveMixedMulSaved.target.held === void 0) primitiveMixedMulTrace += 4;
+if (primitiveMixedMulSavedError instanceof TypeError && primitiveMixedMulSavedError !== primitiveMixedMulError) primitiveMixedMulTrace += 8;
+if (primitiveMixedMulUnknown.numeric === 1) primitiveMixedMulTrace += 16;
+if (primitiveMixedMulUnknownError instanceof TypeError && primitiveMixedMulUnknownError !== primitiveMixedMulError &&
+    primitiveMixedMulUnknownError !== primitiveMixedMulSavedError &&
+    typeof primitiveMixedMulError.message === "string" &&
+    typeof primitiveMixedMulSavedError.stack === "string") primitiveMixedMulTrace += 32;
+if (primitiveMixedMulTrace !== 63) throw "mixed BigInt multiplication independent TypeError witness";
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());
