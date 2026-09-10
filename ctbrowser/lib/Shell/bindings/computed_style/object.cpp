@@ -35,6 +35,11 @@ namespace {
 struct computed_cache {
     std::vector<std::pair<std::string, std::string>> entries;
     std::uint64_t stamp = 0;
+    // ...AND THE ANIMATIONS, which change what an element computes to without
+    // touching the document: a seek, a pause, or the clock moving under a
+    // running one. Zero for a page that has none, so the stamp above is the
+    // whole test there.
+    std::uint64_t animations = 0;
 };
 
 // DOES `getComputedStyle`'s SECOND ARGUMENT NAME A PSEUDO-ELEMENT?
@@ -81,6 +86,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     const auto cached = std::make_shared<computed_cache>();
     cached->entries = computed_style_entries(id);
     cached->stamp = doc_->version();
+    cached->animations = animation_stamp();
 
     // THE LIVE READ, and the flush it needs.
     //
@@ -109,13 +115,14 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // is written to be deleted the moment that exists.
     const auto refresh = [this, id, cached](context & c) {
         const std::uint64_t now = doc_->version();
-        if (now == cached->stamp) { return; }
+        if (now == cached->stamp && animation_stamp() == cached->animations) { return; }
         const value flush = c.global("getComputedStyle");
         if (flush.is_kind(script::heap_kind::native)) {
             (void)c.call(flush, std::span<const value>{});
         }
         cached->entries = computed_style_entries(id);
         cached->stamp = doc_->version();
+        cached->animations = animation_stamp();
     };
     const auto answer = [cached](std::string_view name) -> std::string {
         for (const auto & [key, text] : cached->entries) {
