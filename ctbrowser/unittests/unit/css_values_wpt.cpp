@@ -9,6 +9,7 @@
 #include "check.hpp"
 #include "style_fixture.hpp"
 
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -69,10 +70,40 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(simplify_math("calc(1 / 0)"), std::string{"calc(infinity)"});
 }
 
+// round-function, signed-zero and signs-abs-computed: the step's sign is
+// ignored and defaults to 1, the two zeros stay distinct through min(), max(),
+// clamp() and mod(), and a specified `-0em` keeps its sign.
+void test_the_evaluator_at_zero_and_around_a_step() {
+    using ctbrowser::style::css::evaluate_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_outcome;
+    using ctbrowser::style::css::simplify_math;
+    const length_context ctx;
+    const auto number = [&](std::string_view expression) {
+        const auto answer = evaluate_math(expression, ctx);
+        CHECK(answer.outcome == math_outcome::resolved);
+        return answer.value.px;
+    };
+    CHECK_EQ(number("round(15px, -10px)"), 20.0);
+    CHECK_EQ(number("round(15, -10)"), 20.0);
+    CHECK_EQ(number("round(1.5)"), 2.0);
+    CHECK_EQ(number("round(down, 1.5)"), 1.0);
+    CHECK(evaluate_math("round(1.5px)", ctx).outcome == math_outcome::invalid);
+    // The sign of a zero, read the way the corpus reads it: through 1 / sign().
+    CHECK_EQ(number("1 / sign(min(0, -0))"), -std::numeric_limits<double>::infinity());
+    CHECK_EQ(number("1 / sign(max(-0, 0))"), std::numeric_limits<double>::infinity());
+    CHECK_EQ(number("1 / sign(clamp(-0, 0, 0))"), std::numeric_limits<double>::infinity());
+    CHECK_EQ(number("1 / sign(mod(-1, -1))"), -std::numeric_limits<double>::infinity());
+    CHECK_EQ(number("1 / sign(mod(1, -1))"), -std::numeric_limits<double>::infinity());
+    CHECK_EQ(number("1 / sign(rem(-1, 1))"), -std::numeric_limits<double>::infinity());
+    CHECK_EQ(simplify_math("sign(sign(-0em))"), std::string{"sign(sign(-0em))"});
+}
+
 } // namespace
 
 int main() {
     test_a_position_computes_to_percentages();
     test_infinity_and_nan_are_clamped_when_computed();
+    test_the_evaluator_at_zero_and_around_a_step();
     REPORT("css_values_wpt");
 }

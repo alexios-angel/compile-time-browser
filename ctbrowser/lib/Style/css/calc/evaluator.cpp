@@ -16,6 +16,20 @@ using namespace detail;
 
 namespace {
 
+// ORDERING WITH A SIGNED ZERO. `min(0, -0)` is -0 and `max(-0, 0)` is 0: CSS
+// Values 4 §10.9 keeps the two zeros distinct and `signed-zero` reads them back
+// through `1 / sign(...)`. std::min and std::max cannot tell them apart -
+// `-0 < 0` is false - so the comparison functions order through this instead.
+[[nodiscard]] bool less(double a, double b) noexcept {
+    return a < b || (a == 0.0 && b == 0.0 && std::signbit(a) && !std::signbit(b));
+}
+[[nodiscard]] double smaller(double a, double b) noexcept {
+    return less(b, a) ? b : a;
+}
+[[nodiscard]] double larger(double a, double b) noexcept {
+    return less(a, b) ? b : a;
+}
+
 // A term whose whole magnitude is in ONE slot, so a non-linear function can be
 // applied to it. `10px` and `10%` both qualify; `calc(10px + 10%)` does not,
 // because `abs()` of it depends on a containing block nobody has yet.
@@ -125,7 +139,12 @@ enum class round_to : std::uint8_t {
         default: return negative ? -0.0 : 0.0;
         }
     }
-    const double n = a / b;
+    // THE STEP'S SIGN IS IGNORED: the integer multiples of -10 are the integer
+    // multiples of 10, so `round(15px, -10px)` is 20px like `round(15px, 10px)`
+    // - and dividing by the signed step turned the half-way rule upside down,
+    // answering 10px. `round-function` asks both spellings.
+    const double step = std::fabs(b);
+    const double n = a / step;
     double stepped = 0.0;
     switch (how) {
     case round_to::up: stepped = std::ceil(n); break;
@@ -136,7 +155,7 @@ enum class round_to : std::uint8_t {
     // std::round takes -2.5 to -3 and CSS takes it to -2.
     case round_to::nearest: stepped = std::floor(n + 0.5); break;
     }
-    return stepped * b;
+    return stepped * step;
 }
 
 // §10.6. `mod` takes the sign of the DIVISOR and `rem` the sign of the dividend,
@@ -149,7 +168,10 @@ enum class round_to : std::uint8_t {
         // opposite, so `mod(-0, infinity)` is NaN.
         return std::signbit(a) == std::signbit(b) ? a : std::nan("");
     }
-    return a - b * std::floor(a / b);
+    const double result = a - b * std::floor(a / b);
+    // A ZERO RESULT STILL TAKES THE DIVISOR'S SIGN. `mod(1, -1)` is -0 and not
+    // 0, which `1 / sign(mod(1, -1))` can tell apart and `signed-zero` does.
+    return result == 0.0 ? std::copysign(0.0, b) : result;
 }
 
 [[nodiscard]] double rem_one(double a, double b) {
@@ -567,7 +589,7 @@ private:
                 best = std::nan("");
                 break;
             }
-            best = kind == compare::smallest ? std::min(best, v) : std::max(best, v);
+            best = kind == compare::smallest ? smaller(best, v) : larger(best, v);
         }
         return with_scalar(args->front(), best);
     }
@@ -616,7 +638,7 @@ private:
         if (std::isnan(bound[0]) || std::isnan(bound[1]) || std::isnan(bound[2])) {
             return with_scalar(*middle, std::nan(""));
         }
-        return with_scalar(*middle, std::max(bound[0], std::min(bound[1], bound[2])));
+        return with_scalar(*middle, larger(bound[0], smaller(bound[1], bound[2])));
     }
 
     // round( <rounding-strategy>?, A, B )
@@ -645,8 +667,15 @@ private:
                 ++at_;
             }
         }
-        const std::optional<std::vector<term>> args = arguments(2, 2);
+        std::optional<std::vector<term>> args = arguments(1, 2);
         if (!args) { return std::nullopt; }
+        // THE STEP DEFAULTS TO THE NUMBER 1, CSS Values 4 §10.5 - so `round(1.5)`
+        // is 2 and `round(1.5px)` is a type error, a length rounded to a number.
+        if (args->size() == 1) {
+            term one;
+            one.value = 1.0;
+            args->push_back(one);
+        }
         if (!uniform(*args)) { return std::nullopt; }
         return with_scalar(args->front(),
                            round_one(how, scalar_of((*args)[0]), scalar_of((*args)[1])));
