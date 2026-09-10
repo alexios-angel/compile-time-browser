@@ -263,6 +263,12 @@ ctbrowser_test(unit/character_data)
 # other test in this directory measures. A rung that makes a shadow tree render
 # has to keep those true.
 ctbrowser_test(unit/shadow_dom)
+# The Node method surface against dom/nodes: the viable-sibling rule of
+# before/after/replaceWith, replaceChild's checks, the document object as a
+# Node, moveBefore, the namespace lookups on every node, normalize, a live
+# element.getElementsByTagName, template.content and getElementById on a
+# fragment. One case per rule the corpus found the OTHER answer to.
+ctbrowser_test(unit/dom_nodes_wpt)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the

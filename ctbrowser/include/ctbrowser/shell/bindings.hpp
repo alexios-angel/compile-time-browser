@@ -417,6 +417,13 @@ private:
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
     [[nodiscard]] node_id node_from(context & cx, value v);
+    // "Convert nodes into a node", DOM 4.2.5: the arguments of one of those
+    // methods as ONE node - the node itself for one argument, a fragment holding
+    // them all (which MOVES each out of the tree) for several.
+    [[nodiscard]] node_id convert_nodes(context & cx, std::span<value> args);
+    // "Viable next/previous sibling", DOM 4.2.7: the first sibling of `self` in
+    // that direction that is not one of `args`. Empty when there is none.
+    [[nodiscard]] node_id viable_sibling(node_id self, std::span<value> args, bool forward);
     // THE EXACT NAMESPACE OF AN ELEMENT, as a string. Derived from `element_ns`
     // for everything the parser built - there are only two answers there - and
     // read from `namespaces_` for an element `createElementNS` put in some other
@@ -1855,6 +1862,10 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // What EVERY DocumentFragment has and an element does not: `getElementById`
+    // scoped to the fragment, DOM 4.2.6 NonElementParentNode. A ShadowRoot and a
+    // <template>'s contents are both fragments and both get it from here.
+    void install_fragment_members(context & cx, script::object_object & obj, node_id root);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
