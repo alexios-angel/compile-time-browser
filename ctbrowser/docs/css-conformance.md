@@ -43,7 +43,17 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. Where the two suites stand — 2026-09-10
+## 2. Where the two suites stand — 2026-09-10, evening
+
+Engine at `8ca744a1`, same instrument: `css/cssom` **75** PASS / 99 FAIL / 5
+TIMEOUT / 13 HARNESS_ERROR, subtests 1,196 PASS / 463 FAIL — unchanged from
+the morning row. `css/css-values` **80** PASS / 173 FAIL / 2 TIMEOUT / 16
+HARNESS_ERROR, subtests **3,898 PASS** / 3,067 FAIL: two files fewer and 95
+subtests more, because `element.animate` now exists and the Web Animations
+leg of the interpolation tests runs for the first time — see
+`docs/wpt.md` for the two named files.
+
+## 2-morning. Where the two suites stood — 2026-09-10, morning
 
 Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
 per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f830fbd3` on

@@ -14,7 +14,41 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-10
+## The baseline — 2026-09-10, evening
+
+**432 of the 1,090 tests that ran, which is 39.6%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `8ca744a1` on
+`ctbrowser-wpt` — browser gate 151/151 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 129 | 148 | 21 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 82 | 126 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **432** | **564** | **43** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,331 PASS, 8,218 FAIL, 727 NOTRUN, 48 TIMEOUT.**
+
+Against `f830fbd3` (the morning row below): +10 files, +206 subtests. Named,
+because a PASS-set diff of the two JSON files says exactly which:
+`dom/events` +10 — `Event-dispatch-listener-order`, `Event-dispatch-throwing`,
+`EventTarget-add-listener-platform-object`, `EventTarget-dispatchEvent`,
+`synthetic-events-cancelable`, the four `webkit-*-event` files and
+`window-event-restored-after-throwing-onerror` — which is the events port
+(`4f3fdc50`), the listener fence actually compiling (`c282145e`), the
+shadow-aware dispatch path (`8ca744a1`) and `customElements` (`1e9a8275`,
+the platform-object test defines one). `dom/nodes` +1 `slotchange-events`
+(customElements), `html/dom` +1 `blocking-idl-attr` (`cb6fa020`).
+**`css/css-values` −2**: `interpolate-size-{max,min}-height-composition`
+went PASS → FAIL because `element.animate` now exists (`8606ed50`), so their
+Web Animations leg runs instead of being skipped as unsupported — they were
+passing by not testing, and composition (`add`/`accumulate`) is not
+implemented. The subtest count went up 95 in that suite all the same.
+
+## The baseline — 2026-09-10, morning
 
 **422 of the 1,090 tests that ran, which is 38.7%**, and still not one crash.
 Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
