@@ -41,7 +41,7 @@ if(CTCOMPILE_ENABLE_MLIR)
                    -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/PDLL
                    "-DINCLUDES=${_pdll_includes}"
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-pdll-guard.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/PDLL/check-pdll-guard.cmake)
 endif()
 
 # === THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS ===
@@ -112,7 +112,7 @@ if(COMMAND ctcompile_add_native_unit AND COMMAND ctcompile_add_compile_clean)
     DEPENDS "${_values_module}" ctjs-translate
     COMMENT "Emitting native-values-fixture.emitc.mlir to C++ for the VM-linked control"
     VERBATIM)
-  add_executable(ctcompile-test-native-values-vm-linked NativeVmLinked.cpp "${_values_cpp}")
+  add_executable(ctcompile-test-native-values-vm-linked Runtime/Reference/NativeVmLinked.cpp "${_values_cpp}")
   target_link_libraries(ctcompile-test-native-values-vm-linked PRIVATE ctbrowser::ctbrowser)
   target_compile_features(ctcompile-test-native-values-vm-linked PRIVATE cxx_std_23)
   target_compile_options(ctcompile-test-native-values-vm-linked PRIVATE

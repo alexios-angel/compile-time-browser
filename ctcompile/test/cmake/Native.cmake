@@ -13,7 +13,7 @@
 # file, built wherever the type oracle is: the answer side of the gate should
 # not depend on the compiler side existing, and a lowering author wants it on a
 # box with no LLVM too.
-add_executable(ctcompile-test-native-reference NativeReference.cpp)
+add_executable(ctcompile-test-native-reference Runtime/Reference/NativeReference.cpp)
 target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-reference)
 
@@ -73,7 +73,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
       DEPENDS "${_native_module}" ctjs-translate
       COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
       VERBATIM)
-    add_executable(ctcompile-test-native-vm-linked NativeVmLinked.cpp "${_native_cpp}")
+    add_executable(ctcompile-test-native-vm-linked Runtime/Reference/NativeVmLinked.cpp "${_native_cpp}")
     target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
     target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
     # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
@@ -374,8 +374,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # and this fails, which is precisely what did NOT happen when two of them
   # were - the three vendor bundles were already at zero and had nothing left
   # to lose.
-  ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
-  ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
+  ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Differential/differential.js" 2 56 10 0)
+  ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/launcher.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 19 0 21 208)
   ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 39 0 41 328)

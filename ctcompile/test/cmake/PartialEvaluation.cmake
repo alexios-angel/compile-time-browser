@@ -44,8 +44,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_dispatch_cpp "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.generated.cpp")
   add_custom_command(OUTPUT "${_dispatch_inc}"
     COMMAND ${CMAKE_COMMAND} -DSOURCE=${_dispatch_js} -DOUTPUT=${_dispatch_inc}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
-    DEPENDS "${_dispatch_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake" VERBATIM)
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
+    DEPENDS "${_dispatch_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake" VERBATIM)
   add_custom_command(OUTPUT "${_dispatch_cpp}"
     COMMAND ${CMAKE_COMMAND}
       -DTRANSLATE=$<TARGET_FILE:ctjs-translate> -DOPT=$<TARGET_FILE:ctjs-opt>

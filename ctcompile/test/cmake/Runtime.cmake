@@ -21,7 +21,7 @@
 # compiled arm never crossed C++ -> VM, VM -> AOT or AOT -> VM: the interpreter
 # did not run at all.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_app_js "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js")
+  set(_app_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/launcher.js")
 
   # The driver reads the same file the pipeline compiles, for the reason spelled
   # out over differential.js above.
@@ -29,8 +29,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   add_custom_command(
     OUTPUT "${_app_inc}"
     COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_app_js} -DOUTPUT=${_app_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
-    DEPENDS "${_app_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
+    DEPENDS "${_app_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
     COMMENT "Embedding launcher.js for the launcher driver"
     VERBATIM)
 
@@ -49,9 +49,9 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DSOURCE=${_app_js}
             "-DENTRIES="
             -DOUTPUT=${_app_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
     DEPENDS "${_app_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
     COMMENT "Compiling launcher.js through the EmitC backend"
     VERBATIM)
 
@@ -66,8 +66,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOUTPUT=${_app_table}
             -DTABLE=ctc_launcher_entries
             -DSOURCE_NAME=launcher.js
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/aot-entry-table.cmake"
-    DEPENDS "${_app_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/aot-entry-table.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
+    DEPENDS "${_app_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
     COMMENT "Writing the entry table for launcher.js"
     VERBATIM)
 
@@ -84,13 +84,13 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   # THE BLINDED ARM, and it is the same source file. Nothing generated is linked
   # into it, so it can only interpret - which is what makes the counters the
   # compiled arm reports mean anything at all.
-  add_executable(ctcompile-test-launcher-vm LauncherApp.cpp "${_app_inc}")
+  add_executable(ctcompile-test-launcher-vm Runtime/Launcher/LauncherApp.cpp "${_app_inc}")
   target_include_directories(ctcompile-test-launcher-vm PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-launcher-vm PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-launcher-vm)
 
   add_executable(ctcompile-test-launcher-aot
-    LauncherApp.cpp "${_app_cpp}" "${_app_table}" "${_app_inc}")
+    Runtime/Launcher/LauncherApp.cpp "${_app_cpp}" "${_app_table}" "${_app_inc}")
   target_include_directories(ctcompile-test-launcher-aot PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   # THE TABLE'S NAME IS A BUILD PARAMETER, not a fixed symbol, because an
   # application with several compiled scripts has one table each and they cannot
@@ -105,7 +105,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                    -DVM=$<TARGET_FILE:ctcompile-test-launcher-vm>
                    -DAOT=$<TARGET_FILE:ctcompile-test-launcher-aot>
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-launcher.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/check-launcher.cmake)
 endif()
 
 # --- PHASE 18, WIDENED: a real page from ctbrowser/examples ------------------
@@ -129,8 +129,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   add_custom_command(
     OUTPUT "${_page_js}"
     COMMAND "${CMAKE_COMMAND}" -DPAGE=${_page_html} -DOUTPUT=${_page_js}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/extract-inline-script.cmake"
-    DEPENDS "${_page_html}" "${CMAKE_CURRENT_SOURCE_DIR}/extract-inline-script.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/extract-inline-script.cmake"
+    DEPENDS "${_page_html}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/extract-inline-script.cmake"
     COMMENT "Extracting invaders.html's script"
     VERBATIM)
 
@@ -144,9 +144,9 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DSOURCE=${_page_js}
             "-DENTRIES="
             -DOUTPUT=${_page_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
     DEPENDS "${_page_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
     COMMENT "Compiling invaders.html's script through the EmitC backend"
     VERBATIM)
 
@@ -158,8 +158,8 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
             -DOUTPUT=${_page_table}
             -DTABLE=ctc_invaders_entries
             -DSOURCE_NAME=invaders.html
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/aot-entry-table.cmake"
-    DEPENDS "${_page_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/aot-entry-table.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
+    DEPENDS "${_page_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
     COMMENT "Writing the entry table for invaders.html"
     VERBATIM)
 
@@ -173,13 +173,13 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
     CTCOMPILE_LAUNCHER_PAGE="${_page_html}"
     CTCOMPILE_LAUNCHER_ASSET_ROOT="${CTBROWSER_MONOREPO_ROOT}/ctbrowser")
 
-  add_executable(ctcompile-test-launcher-page-vm LauncherPage.cpp)
+  add_executable(ctcompile-test-launcher-page-vm Runtime/Launcher/LauncherPage.cpp)
   target_compile_definitions(ctcompile-test-launcher-page-vm PRIVATE ${_page_defs})
   target_link_libraries(ctcompile-test-launcher-page-vm PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-launcher-page-vm)
 
   add_executable(ctcompile-test-launcher-page-aot
-    LauncherPage.cpp "${_page_cpp}" "${_page_table}")
+    Runtime/Launcher/LauncherPage.cpp "${_page_cpp}" "${_page_table}")
   target_compile_definitions(ctcompile-test-launcher-page-aot PRIVATE ${_page_defs}
     CTCOMPILE_LAUNCHER_AOT=1 CTCOMPILE_LAUNCHER_TABLE=ctc_invaders_entries)
   target_link_libraries(ctcompile-test-launcher-page-aot PRIVATE ctbrowser::ctbrowser)
@@ -190,7 +190,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                    -DVM=$<TARGET_FILE:ctcompile-test-launcher-page-vm>
                    -DAOT=$<TARGET_FILE:ctcompile-test-launcher-page-aot>
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-launcher-page.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/check-launcher-page.cmake)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ endif()
 # before there is a lowering to ask it of. That also means it keeps running on
 # a machine with no LLVM, which is where the `<generator>` fact it prints
 # matters most.
-add_executable(ctcompile-test-native-generator NativeGenerator.cpp)
+add_executable(ctcompile-test-native-generator Runtime/NativeGenerator.cpp)
 target_link_libraries(ctcompile-test-native-generator PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-generator)
 add_test(NAME ctcompile_native_generator COMMAND ctcompile-test-native-generator)
@@ -247,7 +247,7 @@ if(CTCOMPILE_LLVM_TBLGEN AND CTCOMPILE_PYTHON AND TARGET Boost::json AND TARGET 
     COMMENT "Emitting the standard-library map from StdLibMap.td"
     VERBATIM)
 
-  add_executable(ctcompile-test-stdlib_map StdLibMap.cpp "${_stdlib_inc}")
+  add_executable(ctcompile-test-stdlib_map Runtime/StdLibMap.cpp "${_stdlib_inc}")
   target_include_directories(ctcompile-test-stdlib_map PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-stdlib_map
     PRIVATE ctbrowser::script Boost::json Boost::regex)

@@ -149,8 +149,8 @@ set(_cyc_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.js.inc")
 add_custom_command(
   OUTPUT "${_cyc_inc}"
   COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_js} -DOUTPUT=${_cyc_inc}
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
-  DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
+  DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
   COMMENT "Embedding escape-cycle.js for the driver"
   VERBATIM)
 set(_cyc_sources Analysis/Escape/EscapeCycle.cpp "${_cyc_inc}")
@@ -172,8 +172,8 @@ if(TARGET ctjs-translate)
   add_custom_command(
     OUTPUT "${_cyc_mlir_inc}"
     COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_mlir} -DOUTPUT=${_cyc_mlir_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
-    DEPENDS "${_cyc_mlir}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
+    DEPENDS "${_cyc_mlir}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
     COMMENT "Embedding the ctjs module of escape-cycle.js for the driver"
     VERBATIM)
   list(APPEND _cyc_sources "${_cyc_mlir_inc}")
@@ -306,7 +306,7 @@ add_test(NAME ctcompile_frame_ends_citations
          COMMAND ${CMAKE_COMMAND}
                  -DDEF=${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/JavaScript/FrameEnds.def
                  -DROOT=${CTBROWSER_MONOREPO_ROOT}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check-def-citations.cmake)
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/check-def-citations.cmake)
 
 # === PHASE 55 CLOSED: the escape claims over four corpora ===
 #
@@ -385,15 +385,15 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_aot_return_cpp "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.generated.cpp")
   add_custom_command(OUTPUT "${_aot_return_inc}"
     COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_aot_return_js} -DOUTPUT=${_aot_return_inc}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
-    DEPENDS "${_aot_return_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake" VERBATIM)
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
+    DEPENDS "${_aot_return_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake" VERBATIM)
   add_custom_command(OUTPUT "${_aot_return_cpp}"
     COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
       -DOPT=$<TARGET_FILE:ctjs-opt> -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
       -DSOURCE=${_aot_return_js} "-DENTRIES=oracleReturn;oracleLocal;oracleCtor"
-      -DOUTPUT=${_aot_return_cpp} -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+      -DOUTPUT=${_aot_return_cpp} -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
     DEPENDS "${_aot_return_js}" ctjs-translate ctjs-opt
-      "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake" VERBATIM)
+      "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake" VERBATIM)
   set_source_files_properties("${_aot_return_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
   add_executable(ctcompile-test-escape-oracle-aot-return
