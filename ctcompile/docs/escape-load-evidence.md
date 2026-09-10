@@ -2954,3 +2954,21 @@ observed opaque actuals, result values, completion and native effects remain
 separate obligations. Evidence: the matching `.log`, `.rec` and `.claims`, plus
 `/tmp/ctcompile-after-bigint-plus-boundary-node.json`. No further implementation
 or full-suite completion is claimed here.
+
+
+**Unary Plus full-gate completion, 2026-09-10.** The final devbox build completes
+**241 steps without warnings**; the single full run passes **512/517 CTests in
+2102.19 seconds**, including all **372 compiler tests** and **166/166 lit cases
+in 1306.16 seconds** (CTest **1306.24**). Only the five established browser
+failures remain, with byte-identical output. All eight escape tests pass again
+(arrays **0.53**, fixture **0.45 seconds**): Plus **24 rows / 17 live states /
+1461 budget cutoffs**, fixture **673 claims / 684 observed / 12 unclaimed**,
+precision **97/131**, and zero violations, partial or pending claims. All four
+escape oracles report zero violations; corpus precision and p5's existing
+partial remain unchanged. All **14 code/test hashes** match frozen inputs,
+local files, committed code and the devbox. The initial compile failure,
+**60 rejected checker corruptions**, historical source bytes and measured mixed
+subtraction boundary remain preserved. Evidence:
+`/tmp/ctcompile-delete-finish-full{,-detail}.log`,
+`/tmp/ctcompile-delete-finish-devbox-hashes.json` and
+`/tmp/ctcompile-bigint-plus-full-audit.json`.

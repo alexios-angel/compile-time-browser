@@ -6,7 +6,13 @@
 21 native programs, six refusal/repair families and a 128-call saved-size/object
 lifetime. All ten historical continuation sources preserve their bytes. The
 focused gate passes **14/14 CTests in 231.66 seconds** and **1/1 presence lit in
-0.95 seconds**; the full suite is running, not yet a measured pass.
+0.95 seconds**. The full warning-free build passes **all 372 compiler CTests**
+and **166/166 lit cases**, including **370 native programs/41 lifetime
+families**. Overall **512/517 CTests pass in 2102.19 seconds**; the five browser
+failure outputs are unchanged. All fourteen code/test hashes match committed,
+local and devbox files. Native corpus coverage remains Bootstrap **19/574**,
+p5 **39/4754**, Phaser **45/7725** in both modes; exact Data remains **0/7,
+0/7 and 0/8**. `HANDOFF.md` records the detailed measurements.
 
 The next exact source leaves one key on each branch but different keys:
 

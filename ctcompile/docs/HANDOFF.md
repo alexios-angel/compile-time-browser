@@ -53,9 +53,25 @@ a wide snapshot and **1461 work cutoffs**. The fixture has **673 claims/684
 observed sites/12 unclaimed**, **97/131 precision**, and zero violations;
 **60 checker corruptions reject**. Historical sources remain intact.
 
-**Full devbox gate is running on the committed code/test inputs.** The complete
-suite, integrated execution count and fresh corpus coverage are pending; the
-focused results above do not claim a full-suite pass.
+The complete full devbox build finishes **241 steps without warnings** and
+passes **512/517 CTests in 2102.19 seconds**, including **all 372 compiler
+checks**. All **166/166 lit cases** pass in **1306.16 seconds** (CTest
+**1306.24**), including **370 native programs/41 lifetime families**. The only
+failures are the established browser tests `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`; all five failure outputs are
+byte-identical to the preceding full gate. This is one full-suite run, with no
+compiler correction or second full gate afterward.
+
+All **14 frozen code/test hashes** match committed, local and devbox files.
+The final artifact census verifies **1480 fresh GCC/Clang binaries** and **82
+sanitized binaries** from this run. Ten inspected explicit/deduced C++ variants
+retain evaluated sizes, real delete/set/clear calls and ordinary owners without
+Script symbols; the two present-object witnesses retain actual lookups followed
+by their field reads. All five type and four escape oracles report zero
+violations. Fixture precision is **97/131**; corpus precisions remain **0/64,
+0/16 and 0/20**, with the existing p5 partial unchanged. Fresh native coverage
+remains **19/574 Bootstrap, 39/4754 p5 and 45/7725 Phaser** in both modes, with
+zero pruned; exact Bootstrap Data remains **0/7, 0/7 and 0/8**.
 
 **Next native boundary: equal cardinality across different branch keys.**
 Twelve fresh typed Node/interpreter probes, two future observers and six
@@ -81,6 +97,8 @@ Evidence: `/tmp/ctcompile-delete-finish-{build,proofs,lowering,execution}.log`,
 `/tmp/ctcompile-after-delete-size-final/{sources,results,mutations}.json`,
 `/tmp/ctcompile-after-bigint-plus-boundary.{log,rec,claims}` and
 `ctcompile/docs/escape-load-evidence.md`.
+Full evidence: `/tmp/ctcompile-delete-finish-full{,-detail}.log`,
+`/tmp/ctcompile-delete-finish-{audit,inventory,cpp-audit,devbox-hashes}.json`.
 
 ## Exact finite saved Map sizes and BigInt comparisons, 2026-09-09
 
