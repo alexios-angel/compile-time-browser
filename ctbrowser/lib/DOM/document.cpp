@@ -200,6 +200,16 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
     for (node_id at = parent; at; at = find(at)->parent.load(std::memory_order_acquire)) {
         if (at == child) { return std::unexpected{dom_error::would_cycle}; }
     }
+    // "If child is node, set child to node's next sibling" - DOM 4.2.3. A node
+    // inserted before ITSELF stays where it is; detaching first and then
+    // looking for a reference that is no longer in the list appended it to the
+    // end instead, which `Node-insertBefore.html` asserts by name.
+    if (before == child) {
+        const child_list * siblings = parent_node->children.load(std::memory_order_acquire);
+        const auto self = std::ranges::find(siblings->items, child);
+        before = self == siblings->items.end() || self + 1 == siblings->items.end() ? node_id{}
+                                                                                    : *(self + 1);
+    }
     detach_locked(child_node, child);
 
     const child_list * stale = parent_node->children.load(std::memory_order_acquire);
@@ -319,6 +329,25 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
     publish(n->text, static_cast<const text_block *>(new text_block{std::string{value}}));
     bump_version();
     return {};
+}
+
+node_id document::template_content(node_id element) const {
+    const std::lock_guard lock{stripe_of(element)};
+    for (const auto & [held, fragment] : template_contents_) {
+        if (held == element) { return fragment; }
+    }
+    return node_id{};
+}
+
+void document::set_template_content(node_id element, node_id fragment) {
+    const std::lock_guard lock{stripe_of(element)};
+    for (auto & [held, current] : template_contents_) {
+        if (held == element) {
+            current = fragment;
+            return;
+        }
+    }
+    template_contents_.emplace_back(element, fragment);
 }
 
 std::size_t document::collect() {
