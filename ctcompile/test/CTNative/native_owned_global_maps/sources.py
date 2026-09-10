@@ -2765,13 +2765,14 @@ def zero_size_cases():
             'else { state.has(key); }'), int(flag == 'true'), 9, False,
             ('else { state.has(key); }', 'else { state.clear(); state.has(key); }', both_name))
         # Intersecting the known-key lists produces no common entries although
-        # every runtime path is nonempty. Only a later real clear repairs it.
+        # every runtime path is nonempty. Equal cardinality now proves saved
+        # one independently; a later real clear instead establishes zero.
         intersect = source.replace('state.clear();',
             'state.clear(); if (flag) { state.set(1, item); } else { state.set(2, item); }')
         repaired = intersect.replace('} const zero = state.size;', '} state.clear(); const zero = state.size;')
         repair_name = 'zero_size_cleared_join_' + flag
         add(repair_name, repaired, 1, 11)
-        add('zero_size_empty_intersection_' + flag, intersect, 0, 10, False,
+        add('zero_size_empty_intersection_' + flag, intersect, 0, 10, True,
             ('} const zero = state.size;', '} state.clear(); const zero = state.size;', repair_name))
         joined = source.replace('const zero = state.size;', 'const zero = flag ? state.size : 0;')
         joined_name = 'zero_size_joined_zero_' + flag
