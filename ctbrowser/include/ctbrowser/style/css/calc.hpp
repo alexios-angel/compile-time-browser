@@ -6,26 +6,7 @@
 
 // `calc()`, and the unit table every relative length goes through.
 //
-// WHY THIS IS A RUNG OF ITS OWN. Bootstrap has 134 calc() expressions and until
-// now none of them evaluated: the value reached layout as the text `calc(var(x) *
-// .5)`, parse_length gave up on the leading `c`, and the property was silently
-// nothing. `.container { padding: calc(var(--bs-gutter-x) * .5) }` is the one
-// that mattered most - the parity report attributed a +12px shift on 27 of 40
-// elements of the smallest fixture to it, because a missing horizontal padding
-// moves every descendant and then everything is measured against the wrong basis.
-//
-// WHAT THE SHAPES ACTUALLY ARE. Counted over bootstrap.css rather than guessed:
-// 34 are `-1 * var(x)` or `-.5 * var(x)`, 14 are `Nrem + Nvw`, 16 involve `em`,
-// 7 are `var(x) - var(y)`, and exactly 2 carry a percentage. So the work is in
-// multiplication by a number and in addition of two absolute lengths - which is
-// to say, in having real bases for `rem`, `em` and `vw` rather than in the
-// expression grammar. There is no min(), max() or clamp() anywhere in the file.
-//
-// THEY ARE HERE ANYWAY, since 2026-09-03, and Bootstrap is the reason the
-// omission lasted: a corpus of one says nothing about the rest of the web, and
-// `width: clamp(1rem, 2vw, 3rem)` is ordinary CSS that this front end silently
-// handed to layout as text it cannot read - which is a zero, not a gap. The
-// comparison functions are CSS Values 4 §10.3 and they are the same recursive
+// The comparison functions are CSS Values 4 §10.3 and they are the same recursive
 // descent as the rest, with one addition: an argument list, and a third outcome
 // for the case a comparison genuinely cannot be decided here (see math_outcome).
 //
@@ -61,10 +42,8 @@ struct length_context {
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
-// gives calc() a type algebra over SIX base types, not two, and modelling only
-// "number or length" is why `rotate: calc(10deg + 5deg)` and
-// `transition-delay: calc(1s / 2)` were syntax errors here: the evaluator asked
-// `unit_to_px` for `deg`, got nothing, and called the whole expression invalid.
+// gives calc() a type algebra over SIX base types, not two: `rotate: calc(10deg +
+// 5deg)` and `transition-delay: calc(1s / 2)` are values.
 //
 // Each has ONE canonical unit and every member of the family converts to it, so
 // a term carries a plain number and this tag rather than the author's unit. That
@@ -95,20 +74,17 @@ enum class numeric_type : std::uint8_t {
 // A value that may carry a percentage it could not resolve. `px` alone is the
 // ordinary case; `has_percent` is the `calc(100% - 12px)` one.
 //
-// `is_number` is the OTHER half of calc's type system, and leaving it out was a
-// defect rather than a simplification: CSS Values 3 §8.1 says a math function
-// resolves to a `<number>` as readily as to a `<length>`, so `opacity: calc(2 /
-// 4)`, `z-index: calc(1 + 1)`, `tab-size: calc(2 * 3)` and `rgb(calc(0),
-// calc(255), calc(0))` are all valid - and every one of them was DROPPED by this
-// engine, because the evaluator answered "not a length" and the cascade read
-// that as "not a value". When `is_number` is set, `px` carries the number and
+// `is_number` is the OTHER half of calc's type system: CSS Values 3 §8.1 says a
+// math function resolves to a `<number>` as readily as to a `<length>`, so
+// `opacity: calc(2 / 4)`, `z-index: calc(1 + 1)` and `rgb(calc(0), calc(255),
+// calc(0))` are all valid. When `is_number` is set, `px` carries the number and
 // the unit is nothing at all.
 //
-// `px` IS A DOUBLE and the name is now a half-truth kept for its callers: it is
-// the value in `type`'s canonical unit, which is pixels only when `type` is
-// `length`. It was widened from `float` because `pow(20, 4)` and `3e+9px` are
-// both in the corpus and both lose their last digits at 24 bits of mantissa,
-// and because every intermediate of a trig or exponential function is worse.
+// `px` IS A DOUBLE and the name is a half-truth kept for its callers: it is the
+// value in `type`'s canonical unit, which is pixels only when `type` is `length`.
+// A double because `pow(20, 4)` and `3e+9px` both lose their last digits at 24
+// bits of mantissa, and every intermediate of a trig or exponential function is
+// worse.
 struct calc_result {
     double px = 0.0;
     double percent = 0.0;
@@ -128,8 +104,7 @@ struct calc_result {
 //                `min(10px, 5%)` needs a containing block, which is a used-value
 //                question; CSS Values 4 §10.11 says its computed value is the
 //                function as written. So the text is kept and the declaration is
-//                left alone - which is also exactly what this engine did before
-//                it could parse the function at all, so nothing can regress.
+//                left alone.
 //   invalid      not arithmetic: `1px + 2`, `2px * 3px`, an unmodelled unit, a
 //                missing operator. The declaration is invalid and the cascade
 //                drops it.
@@ -147,9 +122,7 @@ struct math_answer {
 // WHAT KIND OF NUMBER THE PROPERTY WILL TAKE. A `<number>` answer is a valid
 // value for `opacity` and a syntax error for `width`, and the evaluator cannot
 // tell the two apart on its own - so the cascade, which knows the property,
-// says. Without this, teaching calc() to answer with a number would have made
-// `width: calc(2 * 3)` mean `6px`, which is neither what CSS says (invalid) nor
-// what this engine did before (invalid).
+// says: `width: calc(2 * 3)` is invalid, not `6px`.
 enum class math_context : std::uint8_t {
     // A number and a length are both plausible somewhere in this value - a
     // colour channel, a font-feature axis, `opacity`, a transform. The default,
@@ -207,13 +180,11 @@ enum class math_context : std::uint8_t {
 
 // A folded value, and whether every calc() in it actually evaluated.
 //
-// The flag is not a nicety. `.row { margin-top: calc(-1 * var(--bs-gutter-y)) }`
-// with a gutter of `0` multiplies a number by a number and gets a NUMBER, which
-// is not a length - so the declaration is invalid and `margin-top` takes its
-// initial 0, which is what Chrome reports. Leaving the text in place instead put
-// the string `calc(-1 * 0)` in front of layout, whose parse_length cannot read it
-// and answers `auto`; that was 24 differences on one fixture, and `auto` is a
-// worse answer than nothing because nothing at least means "initial value".
+// The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a
+// gutter of `0` multiplies a number by a number and gets a NUMBER, which is not a
+// length - so the declaration is invalid and `margin-top` takes its initial 0,
+// which is what Chrome reports. Leaving the text in place would hand layout
+// `calc(-1 * 0)`, which it reads as `auto`.
 struct folded_value {
     std::string text;
     bool ok = true;
@@ -226,10 +197,8 @@ struct folded_value {
 // declaration.
 //
 // A COMPARISON FUNCTION NEVER MAKES A DECLARATION INVALID. `min()`, `max()` and
-// `clamp()` either fold or keep their text with `ok` intact, because before this
-// engine could read them at all they were kept verbatim - so "leave it alone" is
-// the one answer that cannot be a regression, and `min(10px, 5%)` is a perfectly
-// valid declaration whose computed value IS the function as written.
+// `clamp()` either fold or keep their text with `ok` intact: `min(10px, 5%)` is a
+// perfectly valid declaration whose computed value IS the function as written.
 [[nodiscard]] folded_value fold_math(std::string_view value, const length_context & ctx,
                                      math_context accepts = math_context::any);
 
@@ -252,11 +221,10 @@ struct folded_value {
 // EVERY: a math function is simplified WHEREVER IT SITS, not only when it is the
 // whole value. `transform: rotate(acos(1))` is `rotate(calc(0deg))` and
 // `background-image: image-set(url("") calc(1x * NaN))` is `image-set(url("")
-// calc(NaN * 1dppx))` in every browser. Testing "is the whole value one math
-// function" instead left ~290 `css/css-values` assertions reading back the
-// author's text: the corpus tests these functions through `transform`,
-// `background-image` and `scale`, which are properties whose grammar this engine
-// does not model at all - so the simplification has to be independent of it.
+// calc(NaN * 1dppx))` in every browser. The corpus tests these functions through
+// `transform`, `background-image` and `scale`, which are properties whose grammar
+// this engine does not model at all - so the simplification has to be independent
+// of it.
 //
 // SPECIFIED: the answer keeps a `calc()` around it, because that is what
 // distinguishes `width: calc(96px)` from `width: 96px` after the fact.
@@ -276,8 +244,7 @@ struct folded_value {
 // "would a browser drop the declaration on sight". `round(nearest, 1px)` is
 // missing its step, `calc(7px * up)` multiplies by a keyword and
 // `rotate(calc((0.25turn error)))` has two values where one belongs; all three
-// are in `css/css-values` as `test_invalid_value`, and all three used to be
-// stored verbatim by `el.style` because nothing asked.
+// are in `css/css-values` as `test_invalid_value`.
 //
 // It looks INSIDE other functions, which the fold deliberately does not have to:
 // the malformed calc above is an argument of `rotate()`, and `transform` is a

@@ -1,14 +1,9 @@
 # ctbrowser.dom - the WHATWG tokenizer and tree builder, and the document as a slab.
 #
 # Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
+# ${CTBROWSER_INCLUDE_DIR}. Dependencies are found in cmake/dependencies.cmake.
 
 # --- ctbrowser.dom -------------------------------------------------------
-# Its own WHATWG tokenizer and tree builder. This wrapped cthtml's value parser
-# at first; the conformant one replaced it, and with it the last reason the DOM
-# needed a parser from outside.
 add_library(ctbrowser-dom)
 target_sources(ctbrowser-dom
   PRIVATE

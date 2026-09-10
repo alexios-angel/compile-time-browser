@@ -5,16 +5,9 @@
 #include <string_view>
 #include <vector>
 
-// CSS Syntax Level 3, §4: the tokenizer.
-//
-// WHY THERE IS ONE NOW. The submodule this replaced had no tokenizer at all -
-// `strip_css_comments` over the whole input, then a scan for `{`, `}`, `;` and
-// the first `:`. Nothing was aware that a quote opens a string, so a `;` inside
-// `content: "a;b"` ended the declaration, a `}` inside a string desynchronised
-// the brace scanner for the rest of the file, and `content: "/*"` ate everything
-// to the next `*/`. Bootstrap survives all three by luck - its data URIs are
-// percent-encoded and it has no braces in strings - which is exactly the kind of
-// luck that stops holding on the next stylesheet.
+// CSS Syntax Level 3, §4: the tokenizer. A real one, so that a `;` inside
+// `content: "a;b"` does not end the declaration and a `}` inside a string does
+// not desynchronise the rest of the file.
 //
 // ONE POOL PER STREAM. Every token's text is an offset into `token_stream::pool`,
 // which is the §3.3-preprocessed input: CRLF/CR/FF -> LF, NUL -> U+FFFD. Doing

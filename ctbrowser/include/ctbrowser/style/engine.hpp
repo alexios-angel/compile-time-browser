@@ -23,13 +23,8 @@
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/selector.hpp>
 
-// Style resolution.
-//
-// The shape of the work is different from the previous engine's, not just the speed. the previous
-// engine asked for ONE PROPERTY at a time and rescanned the sheet for each: layout would ask for
-// `display`, then `width`, then `margin`, then `color`, and every one of those walked every rule.
-// This resolves an element ONCE, producing its whole computed style, and layout then reads
-// properties out of a small vector.
+// Style resolution. An element is resolved ONCE, producing its whole computed style,
+// and layout then reads properties out of a small vector.
 //
 // Matching is a pure function of (document snapshot, element) - it writes
 // nothing shared except the intern table - which is what lets it run across
@@ -89,14 +84,9 @@ struct element_facts {
 };
 
 // One element the traversal has already reached, kept so that matching can ask
-// about it without going back to the tree.
-//
-// THE POINT OF STORING THESE. `matches` used to call `facts_of` for every ancestor
-// of every candidate rule, and facts_of interns the element's id and every one of
-// its classes - each intern taking a shared_mutex. For an element twelve deep with
-// four classes and forty candidate rules that is up to 2,400 lock acquisitions to
-// answer questions the traversal had already answered on its way down. The DFS
-// visits exactly the chain matching needs, so it keeps it.
+// about it without going back to the tree: facts_of interns the element's id and
+// every class under a shared_mutex, and the DFS visits exactly the chain matching
+// needs.
 //
 // It is also the only way to answer `+` and `~` at all: a sibling combinator needs
 // the FACTS of a previous sibling, and there is no previous-sibling link in the
@@ -126,10 +116,8 @@ public:
     // changed, so a caller can skip re-resolving when a mouse move lands on the
     // same element it was already on - which is most mouse moves.
     //
-    // State lives HERE rather than on the node. It is a style input, not
-    // document content, and putting it on the node is exactly what left the previous engine's
-    // node struct carrying UI caches that layout and paint both had opinions
-    // about.
+    // State lives HERE rather than on the node: it is a style input, not document
+    // content.
     bool set_state(node_id id, std::uint32_t bits, bool on);
 
     [[nodiscard]] std::uint32_t state_of(node_id id) const;
@@ -158,15 +146,12 @@ public:
     // DROP EVERY RULE OF ONE ORIGIN, so the author's half can be rebuilt without
     // rebuilding the engine and re-parsing the user-agent sheet beside it.
     //
-    // A page can change what its author styles ARE - it can append a `<style>`,
-    // rewrite one's text, or reach the CSSOM - and `add_sheet` only ever appends,
-    // so before this the only way to unsay a rule was to throw the whole engine
-    // away. It filters the rule index, which is what matching consults; the
-    // compiled selectors and declarations those rules pointed at STAY in their
-    // vectors and are simply unreachable, because every other rule's indices
-    // point into the same two and renumbering them would be the expensive half of
-    // a rebuild. A page that edits its stylesheet in a loop therefore grows, and
-    // that is the trade recorded rather than hidden.
+    // It filters the rule index, which is what matching consults; the compiled
+    // selectors and declarations those rules pointed at STAY in their vectors and
+    // are simply unreachable, because every other rule's indices point into the
+    // same two and renumbering them would be the expensive half of a rebuild. A
+    // page that edits its stylesheet in a loop therefore grows, and that is the
+    // trade recorded rather than hidden.
     void clear_origin(std::uint8_t origin);
 
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
@@ -201,13 +186,7 @@ public:
     // a `padding-left` written after it sorts later and wins, and one written
     // BEFORE it is overwritten - which is what CSS says and what reading
     // "shorthand, then longhand if present" gets backwards.
-    //
-    // Before this, only the shorthand was read at all: `summary { padding-left:
-    // 18px }` and `ul { padding-left: 40px }` were in the UA sheet and did
-    // nothing, so a disclosure triangle was drawn on top of its own label and
-    // list markers sat outside the page.
-    // Split a value on top-level whitespace. `at most four` because that is the
-    // longest side list; `border` asks for three and takes them in any order.
+
     // A shorthand's parts, up to `limit`. The splitting itself is
     // core/algorithms.hpp's, because paint needs the same rule with commas.
     [[nodiscard]] static std::vector<std::string_view> value_parts(std::string_view value,
@@ -256,15 +235,9 @@ public:
 
     [[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
     expand_shorthand(std::string_view property, std::string_view value) {
-        // `border` FIRST, because it is the one Bootstrap actually writes - 34 times -
-        // and it produced NOTHING before: paint reads `border-width` and
-        // `border-color`, and the shorthand set neither, so every card, input, table
-        // and button border was invisible.
-        //
-        // It could not be expanded at all until var() resolved: `border:
-        // var(--bs-border-width) solid var(--bs-border-color)` has an unknowable
-        // component count before substitution, which is why this now runs at cascade
-        // time rather than when a rule is recorded.
+        // `border: var(--bs-border-width) solid var(--bs-border-color)` has an
+        // unknowable component count before substitution, which is why this runs at
+        // cascade time rather than when a rule is recorded.
         if (property == "border") {
             const std::vector<std::string_view> parts = value_parts(value, 3);
             if (parts.empty()) { return {}; }
@@ -301,11 +274,9 @@ public:
             return out;
         }
         // `border-width`, `border-style` and `border-color` are THEMSELVES
-        // shorthands over the four sides, with margin's 1-to-4-value syntax.
-        // Bootstrap's `.table-bordered` is `border-width: 0 var(--bs-border-width)`
-        // - no horizontal edges, a vertical one on each side - and read as a
-        // single length that is `0`, so every column separator in every bordered
-        // table was missing.
+        // shorthands over the four sides, with margin's 1-to-4-value syntax:
+        // `border-width: 0 var(--bs-border-width)` is no horizontal edges and a
+        // vertical one on each side.
         for (const std::string_view which : {"width", "style", "color"}) {
             if (property != std::string("border-") + std::string{which}) { continue; }
             const std::vector<std::string_view> parts = value_parts(value, 4);
@@ -324,17 +295,10 @@ public:
                     {property, top}};
         }
         // THE PER-SIDE FORM, `border-top` and its three siblings, which is the same
-        // grammar aimed at one edge. Bootstrap writes it for every divider it
-        // draws - a `.card-header`'s bottom rule, a `.card-footer`'s top one, the
-        // line under a navbar - and none of them appeared, because a shorthand
-        // that expands to nothing sets nothing.
-        //
-        // Its longhands are `border-<side>-{width,style,color}`, and layout and
-        // paint both read those in preference to the uniform trio - which is the
-        // only honest expansion. Setting the uniform ones as well "so it draws"
-        // was tried and was worse than nothing: a `border-bottom` then inset the
-        // box on all four sides and drew a full ring, which cost 8 differences on
-        // one fixture and 18 on another.
+        // grammar aimed at one edge. Its longhands are `border-<side>-{width,style,color}`,
+        // and layout and paint both read those in preference to the uniform trio. Do
+        // NOT set the uniform ones as well "so it draws": a `border-bottom` then
+        // insets the box on all four sides and draws a full ring.
         for (const std::string_view side : {"top", "right", "bottom", "left"}) {
             if (property != std::string("border-") + std::string{side}) { continue; }
             const std::vector<std::string_view> parts = value_parts(value, 3);
@@ -357,12 +321,9 @@ public:
                     {intern_side(prefix + "style"), style},
                     {intern_side(prefix + "color"), colour}};
         }
-        // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ. Bootstrap's grid is built
-        // on it - `.col { flex: 1 0 0 }` - and a `.flex-grow-0` utility written after
-        // it has to win. A flex algorithm reading the shorthand directly would
-        // reintroduce exactly the source-order bug this whole expansion mechanism
-        // exists to prevent, so the longhands are produced here and flex will only
-        // ever see those.
+        // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ: `.col { flex: 1 0 0 }` and
+        // a `.flex-grow-0` utility written after it has to win, so the longhands are
+        // produced here and flex only ever sees those.
         //
         // THE SHORTHAND'S DEFAULTS ARE NOT THE LONGHANDS' INITIAL VALUES, which is
         // the part that is easy to get wrong: `flex-basis` initial is `auto`, but
@@ -599,10 +560,8 @@ public:
         });
         for (const filed_rule & r : filed) { visit(r); }
     }
-    // How many COMPILED SELECTORS are retained. Observable because the count is a
-    // correctness property, not just a size: it must be one per selector that can
-    // match, and the front end this replaced compiled one per DECLARATION and kept
-    // the dead ones. On Bootstrap that was 6,289 where 2,965 exist.
+    // How many COMPILED SELECTORS are retained: one per selector that can match,
+    // never one per declaration.
     [[nodiscard]] std::size_t selector_count() const noexcept { return selectors_.size(); }
     [[nodiscard]] style_table & styles() noexcept { return table_; }
 
@@ -611,23 +570,10 @@ public:
 
     // Which properties INHERIT. Not the whole CSS list - the ones a consumer in this
     // tree can produce a value for, plus custom properties, caught by the `--` prefix
-    // rather than by name.
-    //
-    // `font-size` IS ABSENT ON PURPOSE, and it is the one real gap here. Its computed
-    // value is an absolute length, so inheriting the TEXT would let `1.5em` compound
-    // against each descendant's own size instead of being resolved once. box_builder
-    // already resolves it correctly against the parent's px as it builds the box tree,
-    // so leaving it there is right until the unit-folding rung moves that resolution
-    // into the cascade - at which point this list gains it and box_builder loses a
-    // parameter. The same argument covers any inherited property carrying a relative
-    // unit: `letter-spacing: 0.1em` would compound, and nothing reads it.
+    // rather than by name. `font-size` inherits as the px the pre-pass in resolve()
+    // computed, so a relative unit never compounds down the tree.
     [[nodiscard]] static bool inherits(std::string_view property) {
         if (property.starts_with("--")) { return true; }
-        // `font-size` was missing from this list, and its absence was invisible for
-        // as long as nothing in the cascade needed it: layout threaded the inherited
-        // size through box_builder as a function parameter instead. It stopped being
-        // invisible the moment `em` had to resolve, because `p { font-size: 2em }`
-        // inside a 20px parent doubled 16 rather than 20.
         static constexpr std::string_view names[] = {
             "border-collapse", "border-spacing", "caption-side",    "color",
             "cursor",          "direction",      "empty-cells",     "font-family",
@@ -697,10 +643,6 @@ public:
         //   revert    treated as `unset`. Doing it properly needs the value the
         //             PREVIOUS origin would have produced, which means keeping the
         //             cascade's intermediate states rather than folding as it goes
-        //
-        // Before this they reached layout as the literal strings, and
-        // `display: inherit` silently became `block` because parse_display mapped
-        // everything it did not know to that.
         const auto put = [&out, &parent, this](const declaration & d) {
             std::string value = d.value;
             const std::string_view property = atoms_->text(d.property);
@@ -719,17 +661,10 @@ public:
                 return;
             } else if (value == "initial") {
                 // ON A CUSTOM PROPERTY `initial` IS THE GUARANTEED-INVALID VALUE,
-                // not an empty one, and the difference is the whole of Bootstrap
-                // 5.3's theming layer. It writes `--bs-table-bg-type: initial` as
-                // a SENTINEL that `var(--bs-table-bg-type, <fallback>)` has to
-                // fall through, and `.table-striped` then overrides it with a real
-                // colour. Storing an empty string instead made the var() a valid
-                // EMPTY substitution, so every table cell's box-shadow lost its
-                // colour and no stripe, hover or active row was ever painted.
-                //
-                // An empty custom property - `--bs-btn-font-family: ;` - is a
-                // different thing and stays a valid empty substitution. Bootstrap
-                // ships seventeen of those too, and S4a's tests pin them.
+                // not an empty one: `--bs-table-bg-type: initial` is a SENTINEL that
+                // `var(--bs-table-bg-type, <fallback>)` has to fall through, where an
+                // empty custom property - `--bs-btn-font-family: ;` - is a valid
+                // empty substitution.
                 //
                 // The declaration is KEPT, holding the sentinel, rather than
                 // erased: erasing it would let an ancestor's value show through,
@@ -771,12 +706,10 @@ public:
         // priority is identical between them - and expansion happening in pass two
         // keeps source order for free: a shorthand's longhands land at the shorthand's
         // position in the fold, so a longhand written after it still wins and one
-        // written before it is still overwritten. That is the property
-        // test_shorthands_expand exists to pin, and it is why expansion used to happen
-        // when a rule was RECORDED. It has to move here now, because a shorthand's
-        // component count is unknowable before substitution:
-        // `border: var(--w) solid var(--c)` cannot be split into longhands until the
-        // var()s are gone.
+        // written before it is still overwritten. Expansion cannot happen earlier,
+        // when a rule is recorded, because a shorthand's component count is
+        // unknowable before substitution: `border: var(--w) solid var(--c)` cannot be
+        // split into longhands until the var()s are gone.
         const auto fold = [&](const auto & apply) {
             bool spliced = false;
             for (const rule & r : matches_) {
@@ -838,11 +771,6 @@ public:
         // convenience: `padding: calc(.5em + 1rem)` and `font-size: 1.25em` in the
         // same rule resolve their `em` against different numbers, and a single pass
         // cannot produce both.
-        //
-        // Bootstrap makes this load-bearing rather than theoretical: 14 of its
-        // font-size declarations are in `em`, 15 are `calc(Nrem + Nvw)` fluid type,
-        // and both were previously unreadable - parse_length gave up on the `c` and
-        // the element silently kept its parent's size.
         float parent_font_size = 16.0f;
         if (parent && parent->inherited) {
             for (const declaration & d : parent->inherited->declarations) {
@@ -958,16 +886,14 @@ public:
                 value = *done;
             }
             // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
-            // argument as the shorthands, and for a sharper reason: 34 of
-            // Bootstrap's calcs are `-1 * var(x)`, so before substitution there is
-            // no arithmetic to do, and `border: calc(var(w) * 2) solid red` cannot
+            // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
+            // before substitution, and `border: calc(var(w) * 2) solid red` cannot
             // be split into longhands until its components are single tokens.
             if (css::may_have_math(value)) {
                 // WHAT THE PROPERTY WILL TAKE, passed down, because the evaluator
-                // answers with numbers now and only the cascade knows whether one
-                // is a value here. `opacity: calc(2 / 4)` is `0.5`; `width:
-                // calc(2 * 3)` is a syntax error, and both used to be thrown away
-                // for want of somewhere to ask the question.
+                // answers with numbers and only the cascade knows whether one is a
+                // value here: `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)`
+                // is a syntax error.
                 css::folded_value done =
                     css::fold_math(value, lengths, css::math_context_of(property));
                 if (!done.ok) {
@@ -979,15 +905,6 @@ public:
                     // also remove the earlier declaration it beat. One that never
                     // contained a var() is invalid at PARSE time, so the earlier
                     // declaration simply wins and this one is dropped.
-                    //
-                    // Bootstrap hits the first case on every `.row`:
-                    // `margin-top: calc(-1 * var(--bs-gutter-y))` with a gutter of
-                    // `0` is a number times a number, which is a NUMBER, and a
-                    // number is not a length. Chrome reports the initial `0px`;
-                    // keeping the text reported `auto`, on 24 elements of one
-                    // fixture. That case still lands here, but by the
-                    // math_context::length rule rather than by the evaluator
-                    // refusing to answer with a number at all.
                     if (had_var) { unset(); }
                     return;
                 }
@@ -1015,19 +932,14 @@ public:
             //
             // It happens here rather than in layout because this is the only place
             // that knows all three bases at once: the element's own font size, the
-            // ROOT's, and the viewport. layout/values.hpp multiplied every `rem` by
-            // a hardcoded 16 and treated `vh`, `vw` and `pt` as pixels outright,
-            // because a length arriving as text had nothing else to go on.
+            // ROOT's, and the viewport.
             //
-            // A BARE NUMBER IS LEFT ALONE, which is the case that makes this need
-            // its own function rather than a flag: `line-height: 1.5` is not 1.5px.
+            // A BARE NUMBER IS LEFT ALONE: `line-height: 1.5` is not 1.5px.
             //
             // EVERY DIMENSION FAMILY, not only lengths. `transition-delay: 12ms`
             // computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
-            // 6.4-6.5), and folding lengths alone meant a `round(10ms, 6ms)` that
-            // HAD been folded no longer equalled the raw `12ms` beside it - which
-            // is exactly what `test_math_used` compares. `canonical_dimension_text`
-            // is a superset of the length case and still answers `96px` for `1in`.
+            // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
+            // and still answers `96px` for `1in`.
             const auto folded = [&](std::string text) {
                 if (auto canonical = css::canonical_dimension_text(text, lengths)) {
                     return std::move(*canonical);
@@ -1169,9 +1081,7 @@ public:
     //
     // EVERY ELEMENT MATCHING ONE OF `list`, in document order. The same traversal
     // resolve_all runs and the same `matches_from` a rule goes through, so a
-    // selector cannot mean one thing in a stylesheet and another in a script -
-    // which is exactly what it did while `dom_bindings::query` had a matcher of
-    // its own that gave up on any selector containing a space.
+    // selector cannot mean one thing in a stylesheet and another in a script.
     //
     // It is a WALK rather than a lookup through the rule index on purpose: the
     // index is keyed by a selector's rightmost compound and this list is not in
@@ -1189,14 +1099,11 @@ public:
                                               std::span<const compiled_selector> list,
                                               bool first_only);
 
-    // WHETHER ONE ELEMENT MATCHES, without walking the document to find out.
-    //
-    // `matches` and `closest` are defined in terms of `select` in the Shell -
-    // ask for every match in the tree, then look for this element in the answer -
-    // which is O(document) per call and is what makes a page that calls
-    // `el.matches(s)` in a loop quadratic. Matching ONE element needs its
-    // ancestor chain and the earlier siblings at each step of it, and nothing
-    // else: this builds exactly that cursor and then runs the same matcher.
+    // WHETHER ONE ELEMENT MATCHES, without walking the document to find out - what
+    // `matches` and `closest` ask, per call, so `select` would make them
+    // O(document). Matching ONE element needs its ancestor chain and the earlier
+    // siblings at each step of it, and nothing else: this builds exactly that
+    // cursor and then runs the same matcher.
     [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
                                        std::span<const compiled_selector> list);
 
@@ -1251,13 +1158,9 @@ private:
     [[nodiscard]] const inline_block & inline_style_of(const read_txn & txn, node_id id);
     [[nodiscard]] atom style_name() const { return atoms_->intern("style"); }
 
-    // string_flat_map, so the lookup can be asked with the attribute's
-    // string_view. The plain flat_map's hasher is not transparent, so `find`
-    // took the key type - and the key here is the WHOLE `style="..."` text,
-    // well past any small-string buffer, so that temporary was a heap
-    // allocation per styled element per resolve. A hover re-resolves the entire
-    // document (browser::resolve_styles -> resolve_all), so it was one per
-    // element per interaction.
+    // string_flat_map, so the lookup can be asked with the attribute's string_view:
+    // the key is the WHOLE `style="..."` text, and a hover re-resolves the entire
+    // document.
     string_flat_map<inline_block> inline_cache_;
 
     // `'Press Start 2P'` -> `Press Start 2P`. A family name arrives with its
@@ -1606,13 +1509,11 @@ private:
     flat_map<std::uint64_t, std::uint32_t> states_;
     atom_table * atoms_;
     // Interned once. The font-size pre-pass compares against it per element per
-    // declaration, and interning takes a shared_mutex - doing it in the loop was
-    // measurably the wrong shape when the ancestor facts did the same thing.
+    // declaration, and interning takes a shared_mutex.
     atom font_size_;
     // The ROOT element's computed font size, which is what every `rem` in the
     // document resolves against. Recorded as the tree is descended - the root is
-    // resolved first, so by the time anything else asks, it is right. It replaces
-    // a hardcoded 16 in layout/values.hpp.
+    // resolved first, so by the time anything else asks, it is right.
     float root_font_size_ = 16.0f;
     // The element being resolved, among its siblings: set by resolve() from the
     // facts the traversal gathered, read by font_context() for the tree-counting

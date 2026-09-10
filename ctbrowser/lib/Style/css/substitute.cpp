@@ -440,9 +440,8 @@ public:
             out.assign(value);
             return true;
         }
-        // AN attr() WITHOUT AN ELEMENT IS LEFT AS WRITTEN, which is what every
-        // caller before this one got: the text survives and whoever reads it
-        // decides. Everything after it is still substituted.
+        // AN attr() WITHOUT AN ELEMENT IS LEFT AS WRITTEN: the text survives and
+        // whoever reads it decides. Everything after it is still substituted.
         if (found.is_attr && !*attributes_) {
             std::string result = text_between(s, 0, found.close + 1);
             std::string expanded_tail;

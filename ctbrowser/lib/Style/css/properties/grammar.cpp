@@ -1,12 +1,6 @@
 // The value grammar: the unit and function lists, the token scan, the
 // substitution and math-function rules, `<position>`, and one typed component
 // matched and serialised.
-//
-// One of three files carved out of a 1,155-line css/properties.cpp on
-// 2026-09-08. The public surface is include/ctbrowser/style/css/properties.hpp
-// and did not change; the helpers more than one of these files needs are
-// declared in internal.hpp beside this, with external linkage in
-// ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -69,10 +63,8 @@ constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
 // THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
 // substitutions. `CSS.supports` is "would this declaration be dropped", and a
 // value calling a function nothing here can evaluate WOULD be - so answering
-// true for `attr()`, `random-item()` or `type(*)` is a lie, and a measured one:
-// five `css/css-values` files guard their assertions on `CSS.supports` and went
-// from passing vacuously to running and failing when this function first
-// existed and said yes to everything (2026-09-07).
+// true for `attr()`, `random-item()` or `type(*)` is a lie: five `css/css-values`
+// files guard their assertions on `CSS.supports`.
 //
 // AN ALLOW-LIST rather than a list of what is missing, because the missing set
 // is the whole of CSS Values 5 and grows every month while this one grows only

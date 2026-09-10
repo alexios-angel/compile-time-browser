@@ -1,11 +1,5 @@
 // The property table - which properties exist, what each accepts and its
 // initial value - and the two spellings of a property's name.
-//
-// One of three files carved out of a 1,155-line css/properties.cpp on
-// 2026-09-08. The public surface is include/ctbrowser/style/css/properties.hpp
-// and did not change; the helpers more than one of these files needs are
-// declared in internal.hpp beside this, with external linkage in
-// ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 

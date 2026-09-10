@@ -10,11 +10,8 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// Selector matching, arranged so that most rules are never even considered.
-//
-// the previous engine asked `query(sheet, chain, property)` and that scanned EVERY entry in the
-// sheet - for every property, for every element, every frame. Two structures
-// fix that, and they are the two every production engine uses:
+// Selector matching, arranged so that most rules are never even considered. Two
+// structures do that, and they are the two every production engine uses:
 //
 // BUCKETING. A selector can only match an element if its RIGHTMOST simple
 // selector does. So rules are filed under that: `#nav a` under the tag `a`,
@@ -39,9 +36,7 @@ using ctbrowser::atom;
 
 // The pseudo-class state bits. CANONICAL HERE, because `compound::states` is the
 // field they live in and the selector parser is what writes it; style::engine
-// aliases them so callers can keep saying engine::state_hover. They were declared
-// in the engine and mirrored by hand in two other places, which is one edit away
-// from a selector requiring :hover and an element reporting :focus.
+// aliases them so callers can keep saying engine::state_hover.
 inline constexpr std::uint32_t state_hover = 1u << 0;
 inline constexpr std::uint32_t state_active = 1u << 1;
 inline constexpr std::uint32_t state_focus = 1u << 2;
@@ -101,13 +96,8 @@ inline constexpr std::uint32_t structural_last_of_type = 1u << 6;
 inline constexpr std::uint32_t structural_only_of_type = 1u << 7;
 // Not positional, but the same KIND of thing: a predicate on the element answered
 // from facts the traversal gathered, rather than from its name, its attributes or
-// transient UI state.
-//
-// `:disabled` and `:checked` used to be state bits alongside `:hover` - and NOTHING
-// EVER SET THEM. That was invisible while `:not()` was unsupported: the selector
-// simply never matched. Implementing `:not()` turned it into a wrong render, because
-// `.btn:not(:disabled)` then matched disabled buttons too, and Bootstrap writes that
-// eight times.
+// transient UI state - NOT state bits, which nothing sets for these, and
+// `.btn:not(:disabled)` would then match disabled buttons.
 inline constexpr std::uint32_t structural_disabled = 1u << 8;
 inline constexpr std::uint32_t structural_enabled = 1u << 9;
 inline constexpr std::uint32_t structural_checked = 1u << 10;
@@ -201,11 +191,8 @@ struct compound {
 // Specificity as the spec's (a, b, c) triple, packed so the cascade's comparison
 // stays one integer compare.
 //
-// Ten bits each, which is 1023 of any category before it saturates. The previous
-// arithmetic was `id*10000 + classes*100 + tag` and collapsed at a HUNDRED classes
-// - a selector with a hundred class conditions would have outranked one with an id.
-// No real sheet reaches either bound; the difference is that this one says where
-// its bound is.
+// Ten bits each, which is 1023 of any category before it saturates; no real sheet
+// reaches that.
 struct specificity {
     std::uint32_t packed = 0;
 

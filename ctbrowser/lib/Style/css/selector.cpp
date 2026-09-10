@@ -17,11 +17,8 @@ namespace {
 // Chrome restricts it to colour for privacy reasons, and "never matches" is the
 // honest subset rather than a gap.
 // The three pseudo-classes that are genuinely transient UI state, tracked per node
-// by the shell and cleared when the pointer moves.
-//
-// `:checked` and `:disabled` used to be here and are NOT any more: they are facts
-// about the element, and as state bits nothing ever set them - see the note beside
-// structural_disabled.
+// by the shell and cleared when the pointer moves. `:checked` and `:disabled` are
+// NOT among them: they are facts about the element - see structural_disabled.
 [[nodiscard]] std::uint32_t state_bit_of(std::string_view name) {
     if (ascii_iequals(name, "hover")) { return state_hover; }
     if (ascii_iequals(name, "active")) { return state_active; }
@@ -416,8 +413,7 @@ public:
             // Split on TOP-LEVEL commas only. A comma inside `:not(a, b)` is a
             // child of the function's component value and is never seen here,
             // which is the whole reason the prelude is parsed as component values
-            // rather than scanned as text - the old front end split on a bare
-            // comma and fragmented such a selector into two halves.
+            // rather than scanned as text.
             std::size_t end = at;
             while (end < prelude.size() && !is_comma(prelude[end])) { ++end; }
             emit(prelude.subspan(at, end - at));

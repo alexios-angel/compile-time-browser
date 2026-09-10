@@ -1,10 +1,7 @@
 #pragma once
 // Private to lib/Style/css/calc/. NOT installed and in no file set:
-// include/ctbrowser/style/css/calc.hpp declares the whole public surface -
-// evaluate_math, fold_math, simplify_math and the unit conversions - and this
-// exists only so the implementation can be more than one file: it was 1,810
-// lines in one until 2026-09-08. The includes are calc.cpp's, so every file
-// here sees exactly what that one saw.
+// include/ctbrowser/style/css/calc.hpp declares the whole public surface, and
+// this exists only so the implementation can be more than one file.
 
 #include <ctbrowser/style/css/calc.hpp>
 

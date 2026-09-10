@@ -50,12 +50,8 @@ using declaration_list = boost::container::small_vector<declaration, 8>;
     return true;
 }
 
-// `boost::hash_combine`, not a hand-rolled FNV-1a, and the reason is the one
-// core/containers.hpp already gives for using `boost::hash` over
-// `std::hash<std::string>`: FNV walks a string a BYTE AT A TIME, and
-// boost::hash mixes over word-sized chunks. This used to be an open-coded FNV
-// over every character of every value - the same weakness `std::_Hash_bytes`
-// was replaced for, three files away, on a measurement.
+// `boost::hash_combine`, not a hand-rolled FNV-1a: FNV walks a string a BYTE AT
+// A TIME, and boost::hash mixes over word-sized chunks (core/containers.hpp).
 //
 // It hashes exactly what `same_declarations` compares - the property atom and
 // the value bytes, in order - because a hash that reads less than equality does
@@ -82,14 +78,10 @@ using declaration_list = boost::container::small_vector<declaration, 8>;
 // alive. Inheritance makes an element's style depend on its parent's, so a single
 // combined list would give two <li> in different lists different styles and the
 // sharing rate would collapse to (inheritance contexts x own halves). Split, the
-// OWN half shares exactly as well as it did before inheritance existed - nothing
-// about it depends on the parent - and the inherited half shares per inheritance
-// CONTEXT, of which a Bootstrap page has a few dozen: `:root`, `body`, and one per
-// component that defines its own `--bs-*`.
-//
-// Bootstrap makes the economics stark: `:root` carries 128 custom properties, so a
-// page with 2,500 elements would hold 2,500 x 128 declarations if each got its own.
-// Interned, it is ONE object of 128 and 2,500 pointers to it.
+// OWN half shares exactly as well as if inheritance did not exist - nothing about
+// it depends on the parent - and the inherited half shares per inheritance
+// CONTEXT, of which a Bootstrap page has a few dozen: `:root` alone carries 128
+// custom properties, and interned that is ONE object and a pointer per element.
 class inherited_style {
 public:
     explicit inherited_style(declaration_list d) noexcept : declarations(std::move(d)) {}

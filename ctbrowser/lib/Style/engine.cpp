@@ -57,13 +57,8 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         // enumerator. So the two spellings do not look alike by the time a
         // declaration's text is reassembled: `url("f.ttf")` comes back with its
         // `url(` intact, while `url(f.ttf)` comes back as bare `f.ttf` with
-        // nothing left to recognise it by.
-        //
-        // Reading the text is what the old code did, and it searched for a
-        // literal `url(`. Every unquoted src therefore produced an empty source
-        // and the face was DROPPED ENTIRELY by the guard below - silently, and
-        // for the spelling most stylesheets actually use. Asking the tokens
-        // instead makes the two forms one case.
+        // nothing left to recognise it by. Asking the tokens instead makes the
+        // two forms one case.
         const auto src_url = [&]() -> std::string_view {
             const atom want = atoms_->intern_lower("src");
             for (const css::raw_declaration & d : sheet.declarations_of(face)) {
@@ -139,11 +134,8 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     }
 
     // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
-    // declaration). The old path compiled a selector once per DECLARATION - and
-    // pushed it before deciding whether to keep it - so Bootstrap produced ~6,289
-    // compiled selectors where ~2,965 exist, ~650 of them permanently retained for
-    // rules that were then rejected. Hoisting the push out of the declaration loop
-    // is the whole fix; the dead ones are simply never pushed.
+    // declaration): the push is outside the declaration loop, and a selector
+    // that can never match is never pushed.
     for (const css::raw_rule & r : sheet.rules) {
         for (const compiled_selector & compiled : sheet.selectors_of(r)) {
             if (compiled.parts.empty() || compiled.parts.front().never_matches) { continue; }
@@ -323,16 +315,9 @@ bool engine::element_matches(const read_txn & txn, node_id node,
         if (path_.size() <= depth) { path_.resize(depth + 1); }
         if (totals_.size() <= depth) { totals_.resize(depth + 1); }
         // The parent whose children occupy this level. Depth 0 is entered from
-        // `chain[0]`'s OWN parent, which for a document element is the document
-        // node - and that is what gives <html> a sibling count at all.
-        //
-        // IT USED TO BE `txn.root()` UNCONDITIONALLY, and for a DETACHED element
-        // that is a different tree: `document.createElement("div")` is not among
-        // the root's children, so the loop below ran to the end, `path_[0]` came
-        // out as the LAST element child of <html>, and
-        // `document.createElement("div").matches("div")` was answered about
-        // <body>. A silent wrong answer, and the reason `attachShadow`'s subtree
-        // matcher could not reuse this.
+        // `chain[0]`'s OWN parent - NOT `txn.root()`, because a DETACHED element
+        // is a different tree: `document.createElement("div").matches("div")`
+        // must not be answered about <body>.
         const node_id parent = depth == 0 ? txn.parent(chain[0]) : chain[depth - 1];
         if (!parent) {
             // A PARENTLESS SUBJECT IS AN ONLY CHILD. There is no level to walk,
@@ -391,12 +376,8 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
     const auto cached = inline_cache_.find(text);
     if (cached != inline_cache_.end()) { return cached->second; }
 
-    // A declaration list directly, no `*{...}` wrap. The wrap existed to avoid a
-    // declaration splitter that peeled `!important` off and threw the flag away -
-    // and that flag is the entire question of what a style attribute beats, which
-    // docs/style-layout.md spells out. The flag survives here either way, so the
-    // wrap is gone and a `}` inside an attribute value can no longer end the dummy
-    // rule early.
+    // A declaration list directly, no `*{...}` wrap: `!important` survives, and a
+    // `}` inside an attribute value cannot end a dummy rule early.
     inline_block parsed;
     const css::stylesheet sheet = css::parse_declaration_list(text, *atoms_);
     for (const css::raw_declaration & d : sheet.declarations) {

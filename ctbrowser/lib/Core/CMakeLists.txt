@@ -2,9 +2,7 @@
 # atoms, the thread pool, geometry, CPU time. Knows nothing about browsers.
 #
 # Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
+# ${CTBROWSER_INCLUDE_DIR}. Dependencies are found in cmake/dependencies.cmake.
 
 add_library(ctbrowser-core)
 target_sources(ctbrowser-core

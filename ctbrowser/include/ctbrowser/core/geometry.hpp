@@ -3,10 +3,9 @@
 #include <compare>
 #include <cstdint>
 
-// Layout geometry. Deliberately float, not the int32 pixels the previous engine used: a
-// fractional box model is required for zoom, device pixel ratios and
-// transforms, and rounding only at raster time is what keeps sub-pixel text
-// positioning possible.
+// Layout geometry. Deliberately float, not int32 pixels: a fractional box model
+// is required for zoom, device pixel ratios and transforms, and rounding only at
+// raster time is what keeps sub-pixel text positioning possible.
 
 namespace ctbrowser {
 

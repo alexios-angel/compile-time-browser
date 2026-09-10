@@ -84,16 +84,13 @@ void append_utf8(std::string & out, char32_t cp) {
     }
 }
 
-// §3.3. Into a copy, because that is what makes every later offset trustworthy -
-// and it replaces the whole-input comment strip this used to have, which changed
-// the offsets of everything after every comment.
+// §3.3. Into a copy, because that is what makes every later offset trustworthy.
 [[nodiscard]] std::string preprocess(std::string_view css) {
     std::string out;
     out.reserve(css.size());
     std::size_t at = 0;
-    // A UTF-8 BOM is not a name code point but nothing removed it before, so it
-    // became the leading characters of the first selector and killed exactly one
-    // rule - silently, since an unmatchable selector is not an error.
+    // A UTF-8 BOM is not a name code point; left in, it becomes the leading
+    // characters of the first selector and silently kills that rule.
     if (css.size() >= 3 && static_cast<unsigned char>(css[0]) == 0xEF &&
         static_cast<unsigned char>(css[1]) == 0xBB && static_cast<unsigned char>(css[2]) == 0xBF) {
         at = 3;

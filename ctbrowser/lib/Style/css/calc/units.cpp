@@ -1,11 +1,6 @@
 // calc() - the unit table: every unit the specification names, which of them
 // convert by a constant, one dimension in its family's canonical unit, and the
 // pixel bases every relative length goes through.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
