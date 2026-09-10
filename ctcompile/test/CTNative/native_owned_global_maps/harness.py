@@ -14,12 +14,13 @@ def standalone(args, output, name, value, compilers, nm):
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
         cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-        object_argument = name.startswith('object_argument_')
+        object_argument = name in object_argument_cases()
         size_signature = ("std::function<js_num(ctnative::nullable_string)>"
                           if name in nullable_host_result_sources()
                           else "std::function<bool()>" if name == "boolean_result"
                           else "std::function<js_num()>")
-        map_action = "ctnative::map_has(" if name == "boolean_result" or object_argument else "ctnative::map_size("
+        map_action = ("ctnative::map_has(" if name == "boolean_result"
+                      or (object_argument and name != 'parameter_object') else "ctnative::map_size(")
         if (owned.VM.search(cpp) or "std::shared_ptr<ctn_slot>" not in cpp
                 or (not object_argument and size_signature not in cpp) or map_action not in cpp
                 or not re.search(r"std::shared_ptr<ctnative::method_\w+>\s+slot\s*;", cpp)):
@@ -111,9 +112,10 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
-        if name in {'object_argument_exact', 'object_argument_siblings'}:
+        if name in {'object_argument_exact', 'object_argument_siblings', 'parameter_object'}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             observer = (retained_key_lifetime_cpp if name == 'object_argument_siblings'
+                        else parameter_object_lifetime_cpp if name == 'parameter_object'
                         else object_argument_lifetime_cpp)
             source.write_text(observer(cpp))
         if name in primitive_absence_sources():
@@ -169,7 +171,8 @@ def standalone(args, output, name, value, compilers, nm):
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
                                   "joined_size_saved_lifetime", "joined_mutation_saved_lifetime",
-                                  "object_argument_exact", "object_argument_siblings"} else 1
+                                  "object_argument_exact", "object_argument_siblings",
+                                  "parameter_object"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -209,5 +212,5 @@ def standalone(args, output, name, value, compilers, nm):
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {'object_argument_exact', 'object_argument_siblings'}:
+        if name in {'object_argument_exact', 'object_argument_siblings', 'parameter_object'}:
             object_argument_lifetime(args, cpp, name, mode, compilers[1])

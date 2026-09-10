@@ -78,8 +78,17 @@ def check_object_argument_observations(args, node, reference):
                                 capture_output=True, text=True, timeout=30)
         if not result.returncode and result.stdout == expected:
             raise RuntimeError(f'retained-key observer cannot distinguish {replacement}')
+    source = cases['parameter_object']['source']
+    old = 'state.set(key, 1);'
+    assert source.count(old) == 1
+    js = args.work / 'parameter-object-blinded.js'
+    js.write_text(source.replace(old, 'state.has(key);'))
+    result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                            capture_output=True, text=True, timeout=30)
+    if not result.returncode and result.stdout == 'trace=1\n':
+        raise RuntimeError('historical object setter observation cannot distinguish a skipped write')
     return dict(sources=len(cases), observations=len(cases) + 2,
-                mutations=len(mutations) + len(retained_mutations))
+                mutations=len(mutations) + len(retained_mutations) + 1)
 
 
 def check_object_argument_census(args, ir, name):
@@ -135,6 +144,8 @@ def check_object_argument_controls(args, saved):
     check_budgets(args, ir, config, 'object_argument_exact', functions=4)
     ir, config, _ = saved['object_argument_key_write']
     check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
+    ir, config, _ = saved['parameter_object']
+    check_budgets(args, ir, config, 'parameter_object', functions=5)
     for name, row in object_argument_cases().items():
         if row['admitted']:
             continue

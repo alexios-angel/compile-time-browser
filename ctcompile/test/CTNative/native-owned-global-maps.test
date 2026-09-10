@@ -1,6 +1,6 @@
 # RUN: python3 %S/native-owned-global-maps.py --translate ctjs-translate --opt ctjs-opt --work %t
 
-# A published setter takes independently proved primitive actuals while the
+# A published setter takes proved primitive or empty-object actuals while the
 # sibling getter retains its zero-argument signature. Saved typed C++ callables
 # receive new keys after startup and retain the same Map after owner release.
 # Missing, extra, mixed and unproved actuals must preserve every source call.
@@ -410,3 +410,8 @@
 # delete/clear and final Map destruction release them. Both output forms run
 # 128 future rounds, independent reentry and owner/table release under sanitizers.
 # Object payloads and later key mutations remain independent ownership refusals.
+
+# Historical parameter_object retains its exact source, five functions and five
+# calls. Its saved typed setter/getter execute 128 fresh and aliased future keys;
+# the Map retains keys after caller release, stays independent across reentry,
+# and releases every key when its final saved callable is destroyed.

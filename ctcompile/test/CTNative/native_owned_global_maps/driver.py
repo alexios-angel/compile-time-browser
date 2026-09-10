@@ -347,6 +347,8 @@ def main():
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
     for name, source in parameter_refusals().items():
+        if name in object_argument_sources():
+            continue
         _, rejected, count = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         failed = methods.refused(args, rejected, name, fresh, admitted=0 if count == 5 else None)
@@ -865,7 +867,7 @@ def main():
           f"{len(mutation_size_cases()) - len(mutation_size_sources())} uncertain mutation refusals retain "
           "exact repairs, fresh/stale forgeries and future key/flag observations; "
           "one saved-two mutation lifetime runs 128 future calls through final Map/leaf release; "
-          f"{len(object_argument_sources())} fresh empty-object argument programs preserve t.has(e); "
+          f"{len(object_argument_sources())} fresh empty-object argument programs preserve live Map calls; "
           f"{len(object_argument_cases()) - len(object_argument_sources())} argument/effect/carrier refusals remain; "
           "saved object-key getters distinguish same/alias/distinct keys over 128 future rounds, "
           "release borrowed arguments; saved siblings retain keys across caller release, overwrite, delete, "

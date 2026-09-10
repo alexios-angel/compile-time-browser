@@ -6,6 +6,7 @@ from .sources_globals import (
 from .sources_object_maps import (
     leaf_object_sources,
 )
+from .sources_nullable_maps import parameter_refusals
 from .sources_scalar_maps import (
     hashlib,
     json,
@@ -722,6 +723,13 @@ var trace = host.slot.get({});
     add('siblings', siblings, 15, 0, True, functions=7)
     add('sibling_mutation', siblings.replace('get(e) { return',
         'get(e) { e.value = 1; return'), 15, 0, functions=7)
+    # Keep the original five-function setter/getter refusal source and name.
+    historical = parameter_refusals()['parameter_object']
+    rows['parameter_object'] = dict(source=historical, expected_trace=1,
+        raw_calls=5, prepared_calls=5, functions=5, admitted=True, owner=True,
+        sha256=hashlib.sha256(historical.encode()).hexdigest())
+    assert rows['parameter_object']['sha256'] == (
+        '7b592b8354bb285a71e0b9fc72ab6f811c567156b1f6294f06bab9fcd0fa135c')
     assert rows['object_argument_key_write']['sha256'].startswith('7381e2fb')
     assert rows['object_argument_seeded']['sha256'].startswith('5eba229d')
     assert rows['object_argument_exact']['sha256'] == (

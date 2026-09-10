@@ -529,6 +529,7 @@ def object_argument_observer_source(source):
 
 def check_object_argument_calls(cpp, name, mode):
     source = object_argument_cases()[name]['source']
+    receiver = 'state' if name == 'parameter_object' else 't'
     entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
     arity = 2 if name == 'object_argument_two_formals' else 1
     signature = 'std::function<js_num(' + ', '.join(
@@ -541,8 +542,10 @@ def check_object_argument_calls(cpp, name, mode):
         raise RuntimeError(f'{name}/{mode}: changed live object allocations or callable actuals')
     for method in ('has', 'set', 'get', 'delete', 'clear'):
         emitted = len(re.findall(rf'ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
-        if emitted != len(re.findall(rf'\bt\.{method}\(', source)):
+        if emitted != len(re.findall(rf'\b{receiver}\.{method}\(', source)):
             raise RuntimeError(f'{name}/{mode}: changed live Map.{method} calls')
+    if name == 'parameter_object' and cpp.count('ctnative::map_size(') != 2:
+        raise RuntimeError(f'{name}/{mode}: lost the historical setter/getter size reads')
     if name == 'object_argument_seeded' and (
             'std::variant<double, std::shared_ptr<ctnative::identity_object>>' not in cpp):
         raise RuntimeError(f'{name}/{mode}: lost independent Number/Object key alternatives')
@@ -600,6 +603,7 @@ int main() {
 def object_argument_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f'{name}.{mode}.lifetime.cpp'
     observer = (retained_key_lifetime_cpp if name == 'object_argument_siblings'
+                else parameter_object_lifetime_cpp if name == 'parameter_object'
                 else object_argument_lifetime_cpp)
     source.write_text(observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
@@ -706,6 +710,54 @@ int main() {
     for (const auto & key : ctn_test_objects) {
         if (!key.expired()) { return 223; }
     }
+    return 0;
+}
+'''
+
+
+def parameter_object_lifetime_cpp(cpp):
+    return instrument_leaf_objects(cpp) + r'''
+int main() {
+    using Key = std::shared_ptr<ctnative::identity_object>;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 1 || ctn_test_objects[0].expired()) { return 230; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    static_assert(std::is_same_v<decltype(get), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(set), std::function<js_num(Key)>>);
+    static_assert(!std::is_invocable_v<decltype(set), int>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired() || get() != 1) { return 231; }
+    for (int call = 0; call < 128; ++call) {
+        auto key = ctn_test_make_leaf<ctnative::identity_object>();
+        auto alias = key;
+        std::weak_ptr key_lifetime = key;
+        const auto size = static_cast<js_num>(call + 2);
+        if (set(key) != size || set(alias) != size || get() != size) { return 232; }
+        key.reset(); alias.reset();
+        if (key_lifetime.expired()) { return 233; }
+    }
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_objects.size() != 130 || get() != 129 || g_host->slot->m_get() != 1 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 234; }
+    set = {};
+    if (ctn_test_maps[0].expired() || get() != 129) { return 235; }
+    for (const auto & key : ctn_test_objects) {
+        if (key.expired()) { return 236; }
+    }
+    get = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired() ||
+        ctn_test_objects.back().expired()) { return 237; }
+    for (std::size_t index = 0; index + 1 < ctn_test_objects.size(); ++index) {
+        if (!ctn_test_objects[index].expired()) { return 238; }
+    }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired() || !ctn_test_objects.back().expired()) { return 239; }
     return 0;
 }
 '''
