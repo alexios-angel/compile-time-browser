@@ -257,13 +257,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
             return make_sheet_object(c, at);
         });
-    getter(sheet_proto, "cssRules", [this](context & c, std::span<value>) {
+    // "If the origin-clean flag is unset, throw a SecurityError" - the first
+    // step of cssRules, insertRule and deleteRule alike, CSSOM 6.3.
+    const auto origin_dirty = [this](context & c) {
+        const css_sheet_record * sheet = receiver_sheet(c);
+        if (sheet == nullptr || sheet->origin_clean) { return false; }
+        throw_dom_exception(c, "SecurityError", "the stylesheet is not origin-clean");
+        return true;
+    };
+    getter(sheet_proto, "cssRules", [this, origin_dirty](context & c, std::span<value>) {
         // [SameObject]: `sheet.cssRules === sheet.cssRules` and
         // `sheet.cssRules === sheet.rules` are both asserted, so the list is
         // built once and REFRESHED rather than rebuilt.
         script::object_object * self = as_object(c.current_this());
         const css_sheet_record * sheet = receiver_sheet(c);
-        if (self == nullptr || sheet == nullptr) { return value::undefined(); }
+        if (self == nullptr || sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (const value * held = self->find(rules_key)) {
             refresh_rule_list(c, *held, sheet->rules);
             return *held;
@@ -281,9 +289,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                          return c.lookup_property(self, "cssRules");
                                      })),
                                  value::undefined(), script::attr_configurable);
-    method(sheet_proto, "insertRule", [this](context & c, std::span<value> args) {
+    method(sheet_proto, "insertRule", [this, origin_dirty](context & c, std::span<value> args) {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr) { return value::undefined(); }
+        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (args.empty()) {
             c.throw_error("TypeError", "insertRule requires a rule");
             return value::undefined();
@@ -371,9 +379,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         style_sheets_changed();
         return value::number(asked);
     });
-    method(sheet_proto, "deleteRule", [this](context & c, std::span<value> args) {
+    method(sheet_proto, "deleteRule", [this, origin_dirty](context & c, std::span<value> args) {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr) { return value::undefined(); }
+        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (args.empty()) {
             c.throw_error("TypeError", "deleteRule requires an index");
             return value::undefined();

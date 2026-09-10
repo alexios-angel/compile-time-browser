@@ -259,6 +259,27 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // `<style>` a script has just created and appended has no sheet until the
     // document is walked again, and `dom/events`' four animation tests do
     // exactly that - `document.head.appendChild(style); style.sheet.insertRule(...)`.
+    //
+    // ON THE PROTOTYPE, once, and not on each wrapper: it is an IDL attribute
+    // of HTMLStyleElement and HTMLLinkElement, and `assert_idl_attribute`
+    // asks for it in the prototype chain and not as an own property. The
+    // receiver names the node; a wrapper is only made after the interfaces
+    // are, so the fallback below is for an embedder that built none.
+    bool installed = false;
+    for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
+        script::object_object * proto = as_object(interface_prototype(name));
+        if (proto == nullptr) { continue; }
+        installed = true;
+        if (proto->find_accessor("sheet") != nullptr) { continue; }
+        proto->define_accessor("sheet",
+                               value::object(cx.allocate<script::native_object>(
+                                   "get sheet",
+                                   [this](context & c, std::span<value>) {
+                                       return sheet_object_of(c, handle_of(c.current_this()));
+                                   })),
+                               value::undefined(), script::attr_configurable);
+    }
+    if (installed) { return; }
     obj.define_accessor(
         "sheet",
         value::object(cx.allocate<script::native_object>(
