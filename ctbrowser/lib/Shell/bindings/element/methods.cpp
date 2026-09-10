@@ -20,35 +20,6 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
 
-    // THE `on...` HANDLER PROPERTIES, PRESENT AND NULL.
-    //
-    // A browser gives every element one of these per event, defaulting to null,
-    // and libraries FEATURE-DETECT with `'onwheel' in element`. Assignment
-    // already worked here - `el.onclick = fn` made a property - but `in`
-    // answered false, because the property did not exist until something wrote
-    // it. That is not a distinction a page can be expected to know about.
-    //
-    // IT COST A ZOOM. Babylon picks which wheel event to listen for with
-    //
-    //     "onwheel" in document.createElement("div") ? "wheel"
-    //       : document.onmousewheel !== undefined ? "mousewheel" : "DOMMouseScroll"
-    //
-    // so it fell all the way through to DOMMouseScroll - a Firefox-only name
-    // nothing here dispatches - and its ArcRotateCamera could be dragged and
-    // not zoomed. Every listener was attached, every event was sent, and the
-    // two sets had different names: the same shape as the pointerdown/mousedown
-    // fault this file already records.
-    //
-    // EXACTLY THE EVENTS THIS ENGINE CAN DISPATCH, and no more. A handler
-    // property for an event that never fires is a detection that answers yes
-    // and a page that then waits forever - which is worse than answering no.
-    for (const char * handler :
-         {"onclick", "onwheel", "onmousedown", "onmouseup", "onmousemove", "oncontextmenu",
-          "onpointerdown", "onpointerup", "onpointermove", "onkeydown", "onkeyup", "oninput",
-          "onchange", "onsubmit", "ontoggle", "onfocus", "onblur", "onload", "onerror"}) {
-        if (obj.find(handler) == nullptr) { obj.set(handler, value::null()); }
-    }
-
     // `element.click()` - CLICKING WITHOUT A MOUSE.
     //
     // It was absent, and that is how p5's save() reaches the outside world:

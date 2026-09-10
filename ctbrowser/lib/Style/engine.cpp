@@ -246,9 +246,12 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
             // A non-element does not occupy a depth - see resolve_subtree, which has
-            // to agree with this or `+` would mean two different things.
+            // to agree with this or `+` would mean two different things. It can
+            // still BE the root - a ShadowRoot is a fragment - and its children
+            // are the descendants a subtree search collects.
+            const bool below = collect || node == root;
             for (const node_id child : txn.children(node)) {
-                if (!self(self, child, depth, collect)) { return false; }
+                if (!self(self, child, depth, below)) { return false; }
             }
             return true;
         }

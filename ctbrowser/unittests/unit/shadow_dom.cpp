@@ -14,11 +14,10 @@
 // grafts the fragment into the tree to make it render, these are the assertions
 // that catch the light DOM changing shape underneath every other test.
 //
-// The second is that `shadowRoot.querySelector` answers AT ALL. The selector
-// engine walks from the document root, so a detached fragment is unreachable
-// from it; the cases below run a real selector against a subtree nothing else in
-// the engine can see. See subtree_matcher in lib/Shell/bindings/element/shadow.cpp for
-// what that costs and for the change to lib/Style that would retire it.
+// The second is that `shadowRoot.querySelector` answers AT ALL: the selector
+// engine's `select` walks from the top of the tree its root is in, and a
+// ShadowRoot is a fragment at the top of its own - the cases below run a real
+// selector against one, through the same matcher the cascade uses.
 
 #include <ctbrowser.hpp>
 

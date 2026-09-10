@@ -1633,14 +1633,6 @@ private:
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
-    // `querySelectorAll` INSIDE A DETACHED SUBTREE, which `query()` cannot
-    // answer: `style::engine::select` walks from `txn.root()` and a shadow root
-    // is not reachable from there, and `element_matches` anchors its cursor at
-    // depth 0 on the document node - so for a detached chain it measures the
-    // wrong element. See the definition in bindings/element/shadow.cpp for what this
-    // costs and for the one-line change to `style::engine` that would retire it.
-    [[nodiscard]] std::vector<node_id> select_in_subtree(std::string_view selector, node_id root,
-                                                         bool first_only, bool * invalid = nullptr);
 };
 
 } // namespace ctbrowser::shell
