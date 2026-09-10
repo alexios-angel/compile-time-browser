@@ -1,6 +1,57 @@
 # Next Bootstrap native boundary
 
-## Current continuation: exact size after deleting a proved key, 2026-09-09
+## Current continuation: equal branch cardinalities, 2026-09-09
+
+**e04810c8** completes exact saved sizes after deletion, and **b33125d1** gates
+21 native programs, six refusal/repair families and a 128-call saved-size/object
+lifetime. All ten historical continuation sources preserve their bytes. The
+focused gate passes **14/14 CTests in 231.66 seconds** and **1/1 presence lit in
+0.95 seconds**; the full suite is running, not yet a measured pass.
+
+The next exact source leaves one key on each branch but different keys:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key, flag) { const item = {value: 1}; state.set(key, item); state.clear(); state.set(1, item); state.set(2, item); if (flag) { state.delete(1); } else { state.delete(2); state.has(key); } const saved = state.size; state.clear(); state.set(1, item); state.set(3, item); return state.get(saved).value === 1 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7, false);
+```
+
+SHA-256: `2d1763ebbce40e07c852e21e89b45106e767f8a83432af6be650b59f7e3c20fc`.
+Five functions, **15 raw/prepared calls**, Number `trace=1`, and both structural
+arms are preserved. Both native modes refuse **0/5** with `property call lacks
+a current source getter proof`. The final lookup reads a real object's field;
+it cannot pass merely by mistaking a present read for absence. The current Map
+size is two, independently of the saved size one.
+
+The exact repair replaces only `const saved = state.size;` with
+`state.size; const saved = 1;`. SHA-256:
+`b0d72c4ef0d1b5017a8d041903d1bf14dde9d93cdf1e998ec5a31f28eb08b249`.
+It retains all fifteen calls, the evaluated size read and Number `trace=1`, and
+admits **5/5 in both modes**. The true-startup originals/repairs have the same
+admission results. Twelve typed Node/interpreter sources, two future observers
+and six discriminating mutations pass. Disjoint writes after clear expose the
+same join boundary with thirteen calls. Saving size inside each arm already
+admits; unequal size-one/size-two arms remain refused and distinguish both
+future observations.
+
+Continue a separately justified cardinality fact through the structural join.
+Both arms must establish the same exact size for the actual runtime Map; a
+union of possible keys or intersection of definite keys cannot substitute for
+that proof. Preserve the complete key census for membership queries, aliases,
+mutation invalidation, all arms, work limits and independent native rederivation.
+A saved scalar must still describe its actual read position. Full native
+Bootstrap and direct browser API integration remain unfinished.
+
+Measured artifacts: `/tmp/ctcompile-after-delete-size-final/` and
+`/tmp/ctcompile-delete-finish-execution.log`.
+
+## Previous continuation: exact size after deleting a proved key, 2026-09-09
 
 **9781743a** finishes the exact saved-one proof in the historical **544f425b**
 source: both modes admit **5/5** with all eight calls and Number `trace=0`

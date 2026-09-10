@@ -2889,3 +2889,68 @@ Evidence: `/tmp/ctcompile-map-one-full{,-detail}.log`, `.status`,
 `/tmp/ctcompile-map-one-full-hashes.json`,
 `/tmp/ctcompile-bigint-comparison-full-audit.json` and
 `/tmp/ctcompile-bigint-comparison-full-evidence-frozen.json`.
+
+
+**Known BigInt unary Plus: resumed and gated, 2026-09-10 (`61fe4e2d`).**
+The interrupted five-file increment from the **01:27:51 / 01:37:36 UTC**
+journals is complete. Plus accepts an independently proved original BigInt
+only for this whole-frame retention query: its TypeError has no edge to
+unpublished fresh locals. Every structural continuation remains checked;
+unknown original operands, calls, handlers and publication remain refused.
+The independent Number carrier does not establish successful completion,
+no-throw effects or native BigInt admission.
+
+Raw tests pass **24 rows, 17 stale/fresh live states and 1461 incomplete
+retention budgets**, including exact completion and the wide snapshot's
+additional **64 work units**. Original source/IR cases remain intact. The
+three previously measured function bodies are preserved byte-for-byte;
+the fixture retains all **81,403** historical bytes outside its new fragment.
+
+The source family measures **12 literal sites, 21 instances, 11 confined
+and ten retained**, plus three independent thrown Errors at pcs **24, 28
+and 17**, without source allocation claims. The early child's two instances
+are now proved confined; the saved-child and opaque-argument controls retain
+their conservative claims. Local Node observes Number `primitivePlusTrace=63`;
+the interpreter executes the same exact assertion in the fixture gate.
+The strict checker passes its recorded-data replay and rejects **60 independent
+source/evidence corruptions**, including Error coordinates, routes, retention,
+forged claims and invented source allocations.
+
+The resumed build first failed at the new test's mixed `TypedValue`/`Value`
+initializer list. Two explicit `mlir::Value` conversions repair the C++ syntax,
+with production and JavaScript unchanged. The corrected devbox build completes
+**19 steps without warnings**; all **14/14 focused CTests pass in 231.66
+seconds**, including all eight escape tests (arrays **0.52**, fixture **0.68**).
+Fixture precision is **97/131**, with **673 claims, 684 observed sites,
+12 unclaimed sites and zero violations, partial or pending claims**. This
+adds source coverage to the preceding **96/129** fixture. The three corpus
+precisions remain **0/64, 0/16 and 0/20**; all four escape oracles report zero
+violations, with p5's existing single partial unchanged. Stable clang-format
+**22.1.8 passes all 745 files**; bundled 23 retains nine baseline differences.
+Full-suite validation is pending at this checkpoint.
+
+Evidence: `/tmp/ctcompile-delete-resume-build.log`,
+`/tmp/ctcompile-delete-finish-{build,proofs}.log`,
+`/tmp/ctcompile-bigint-plus-fixture.{rec,claims}`,
+`/tmp/ctcompile-bigint-plus-checker-audit/audit.json`, and
+`/tmp/ctcompile-bigint-plus-code-{initial-frozen,frozen}.json`.
+
+
+**Measured next boundary: mixed BigInt/Number subtraction, 2026-09-10.**
+The unchanged `/tmp/ctcompile-after-bigint-plus-boundary.js` (SHA256
+`c71cb43f25792dc118b3c9bfeeeac0b38e3c219f83d0eee57a1067bd91092bd8`)
+uses `input - 0` in known Number/BigInt, saved-child and opaque-argument
+functions. All six calls agree between Node and the interpreter with Number
+`mixedSubTrace=63`: three normal returns and three TypeErrors. Its **12 literal
+sites / 21 instances / 11 confined / ten retained** and independent thrown
+Errors at pcs **25, 29 and 18** mirror the lifetime boundary above. All twelve
+compiler claims remain conservative (nine Stored, three Returned); the early
+child's two confined observations do not yet produce a proof. Only the
+multiple-handler driver is unimported; each measured function imports and runs
+twice. `bigint_binary` rejects mixed kinds before user conversion and supplies
+an independent Undefined carrier on failure. A future retention increment must
+prove both original categories and inspect every structural continuation;
+observed opaque actuals, result values, completion and native effects remain
+separate obligations. Evidence: the matching `.log`, `.rec` and `.claims`, plus
+`/tmp/ctcompile-after-bigint-plus-boundary-node.json`. No further implementation
+or full-suite completion is claimed here.

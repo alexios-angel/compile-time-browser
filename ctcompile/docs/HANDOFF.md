@@ -6,6 +6,82 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved Map sizes after deletion and BigInt unary Plus, 2026-09-09
+
+Resumed the **14 uncommitted compiler paths at 8b66e83c** identified by the
+**01:29:02**, **01:37:53** and **01:39:25 UTC** synchronization journal entries.
+The interrupted delete-size implementation, execution matrix and unary Plus
+proof are now committed. Older codex-wip recovery and source-split fixes were
+already ancestors. Three agents reviewed the independent proof, execution and
+escape paths; root serialized every devbox operation and commit. No browser or
+runtime source changed.
+
+**e04810c8** preserves the complete possible-key census through Map deletion,
+removing only keys proved SameValueZero-equal to the deleted key. Possible
+aliases stay in the upper bound and independently lose definite membership.
+Native presence rederives this for the actual runtime instance. Unknown initial
+contents, unequal branch states and exceeded 64-candidate budgets remain
+conservative; deletion cannot recover a discarded census. Immutable saved sizes
+retain the value at their actual read position through later mutations.
+
+The historical **d5a66fc6** delete-last and **aeaca3a0** delete-one-of-two sources
+now admit **5/5 in both modes**, preserving all ten calls and Number `trace=1`.
+The original formal-key **6aa0868a** and **adeaad91** also advance to **5/5**.
+**b33125d1** executes **21 native programs**, **31 typed Node/interpreter
+observations**, **17 discriminating mutations** and **six refusal/repair
+families**. GCC/Clang explicit/deduced output retains actual Map/size/field calls
+with no Script symbols. The saved-size/object lifetime runs **128 future calls**,
+both flags, owner/table release, independent reentry and final Map/leaf release
+under sanitizers. Budgets **4915/7523** check **30/32 cutoffs**. All **761 prior
+source rows across 61 helpers** and ten continuation sources retain their bytes.
+
+The corrected **19-step build is warning-free**. Focused CTests pass **14/14 in
+231.66 seconds**, including all eight escape checks; Map-presence lit passes
+**1/1 in 0.95 seconds**. Owner tests cover **31 rows and six live edits** per
+source/prepared form, with exhaustive deletion cutoffs **10244/10562 source**
+and **10079/10406 prepared**. Type inference covers **52 rows/12 live edits**.
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 reports the same
+nine preexisting differences. The inherited build failure was a new test's
+mixed `TypedValue`/`Value` initializer list; explicit `mlir::Value` conversions
+fixed it. The valid signed-zero and 64/65-candidate tests passed unchanged.
+
+**61fe4e2d** proves that unary Plus on an independently known BigInt raises an
+independent TypeError which cannot retain unpublished fresh locals. It grants
+no native BigInt carrier, successful-completion or effect proof; every
+structural continuation is still checked. Tests cover **24 rows/17 live states**,
+a wide snapshot and **1461 work cutoffs**. The fixture has **673 claims/684
+observed sites/12 unclaimed**, **97/131 precision**, and zero violations;
+**60 checker corruptions reject**. Historical sources remain intact.
+
+**Full devbox gate is running on the committed code/test inputs.** The complete
+suite, integrated execution count and fresh corpus coverage are pending; the
+focused results above do not claim a full-suite pass.
+
+**Next native boundary: equal cardinality across different branch keys.**
+Twelve fresh typed Node/interpreter probes, two future observers and six
+mutations agree. Source **2d1763eb** deletes key one on one arm and key two on
+the other, leaving size one on both arms. Its post-join saved size still refuses
+**0/5**, while evaluated-read/literal-one repair **b0d72c4e** admits **5/5**.
+Both preserve five functions, fifteen calls and Number `trace=1`. Both startup
+flags behave alike; analogous disjoint setters also refuse. Saving the exact
+size inside each arm already admits **5/5**. Unequal size-one/size-two arms
+remain refused with distinct observations. Continue the independent exact-size
+fact across structural joins without choosing a startup arm or inventing common
+key presence. `bootstrap-provider-next.md` contains the exact source.
+
+The next independent escape boundary is mixed BigInt/Number subtraction.
+Probe **c71cb43f** gives Node/VM Number `mixedSubTrace=63`, twelve literal sites,
+21 instances and three independent Errors; all twelve claims remain
+conservative. A future proof must preserve the VM's independent Undefined error
+carrier and cannot infer normal completion. Full native Bootstrap and direct
+browser API integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-delete-finish-{build,proofs,lowering,execution}.log`,
+`/tmp/ctcompile-delete-finish-frozen.json`,
+`/tmp/ctcompile-after-delete-size-final/{sources,results,mutations}.json`,
+`/tmp/ctcompile-after-bigint-plus-boundary.{log,rec,claims}` and
+`ctcompile/docs/escape-load-evidence.md`.
+
 ## Exact finite saved Map sizes and BigInt comparisons, 2026-09-09
 
 Continued the explicit **544f425b** saved-one boundary from the previous
