@@ -336,8 +336,9 @@
 # Unknown incoming contents, potentially equal formal keys, one writing arm,
 # unequal selected values and a possibly distinct extra write remain independent
 # refusals under current/fresh/stale reports, reruns and exact executed repairs.
-# Startup-only emptiness and deleting the last key keep their historical sources
-# and separate refusals; an additional real clear supplies each exact repair.
+# Startup-only emptiness keeps its historical sources and separate refusals;
+# an additional real clear supplies its exact repair. The unchanged formal-key
+# delete-last sources now execute through the independently proved deletion census.
 # Typed Node/interpreter observations distinguish saved from current sizes and
 # count duplicate/distinct writes independently of successful object lookup.
 # An own-field read independently requires the saved key to select the object.
@@ -349,3 +350,17 @@
 # independent entry reexecution. Weak observers check Map/leaf reclamation and
 # final separately retained leaf release under ASan/UBSan/leak checks. GCC/Clang,
 # explicit/deduced output and measured work cutoffs preserve the no-Script gate.
+# Exact cardinality after deleting a proved key preserves all ten continuation
+# source hashes and raw/prepared call counts, including the original formal-key
+# candidates. Literal/equal saved keys, repeated and disjoint deletes, captured
+# and fluent aliases keep each evaluated Map operation. Independent current
+# presence witnesses read the actual object's field at saved sizes zero and one.
+# Possible alias keys, possible surviving keys, one-deleting arms and unequal
+# selected sizes retain source-preserving refusals and exact admitted repairs
+# under fresh/stale reports, reruns and bounded proofs. Both startup flags are
+# checked structurally; saved two before deletion cannot become current one.
+# Typed Node/interpreter controls distinguish erased deletion, incorrect keys,
+# lost fields and stale/current sizes. A saved leaf selected using post-delete
+# zero survives later deletion/clear through 128 future native calls, both flags,
+# owner/table release, independent reentry and final Map/leaf destruction under
+# GCC/Clang explicit/deduced output and ASan/UBSan/leak checks, without Script.

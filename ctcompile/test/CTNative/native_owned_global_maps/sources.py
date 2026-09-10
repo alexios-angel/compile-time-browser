@@ -2885,8 +2885,8 @@ def one_size_cases():
             'if (flag) { state.set(2, item); }'), 0, 10, False,
             ('if (flag) { state.set(2, item); }', 'if (flag) { state.set(1, item); }', duplicate_name))
 
-    # Neither startup-only emptiness nor deleting the final possible key gains
-    # new authority here. A separately evaluated clear supplies each repair.
+    # Startup-only emptiness still needs a separately evaluated clear.
+    # Exact deletion now also proves the two unchanged historical formal-key sources.
     fresh = old['local_clear_zero_size_key']['source'].replace('state.set(key, item); state.clear(); ', '')
     deleted = old['local_clear_zero_size_key']['source'].replace('state.clear(); const zero',
         'state.clear(); state.set(key, item); state.delete(key); const zero')
@@ -2901,7 +2901,8 @@ def one_size_cases():
         read = 'state.size; const zero = 0;' if 'literal_repair' in name else 'const zero = state.size;'
         repaired_name = 'size_one_cleared_' + name
         add(repaired_name, source.replace(read, 'state.clear(); ' + read), 1, calls + 1)
-        add(name, source, 1, calls, False, (read, 'state.clear(); ' + read, repaired_name))
+        add(name, source, 1, calls, name.startswith('size_deleted_'),
+            (read, 'state.clear(); ' + read, repaired_name))
 
     lifetime = rows['size_one_distinct_branches_false']['source'].replace(
         'return state.get(zero) === void 0 ? 1 : 0;',
@@ -2914,3 +2915,118 @@ def one_size_cases():
 def one_size_sources():
     return {name: (row['source'], 'host', row['expected_trace'])
             for name, row in one_size_cases().items() if row['admitted']}
+
+
+# Every byte of the ten measured delete-size continuation sources is retained.
+DELETE_SIZE_HISTORY = {
+    'size_deleted_last': (10, '6aa0868a86f765f22c30b09cc9e8494d9847c8e5d4e8f1bbaf6f3df1bd96276e'),
+    'size_deleted_last_literal_repair': (10, 'adeaad915f06d7f5a186f589413f1556e671e6a5306b6e0afdf3cd4b184aa456'),
+    'size_deleted_last_cleared_repair': (11, '79587f9c4ad4c2bac6938a215324095d799c4878c2b99e90a9ab79b02be6822e'),
+    'size_deleted_literal_last': (10, 'd5a66fc6f63b8aeb3976e570a16f9eab2e3aa6302c520b1f9c9b45a9953d3f5f'),
+    'size_deleted_literal_last_zero_repair': (10, '315c5f00fd4cee28236efb7779f91865f4549ba6d8398616f5dd366c8f2aa224'),
+    'size_deleted_one_of_two': (10, 'aeaca3a032e3b77676839ab3318afc295fd73fe65ed8d010cf4e922e6b812c59'),
+    'size_deleted_one_of_two_literal_repair': (10, 'b1c69bca8625eaa824e2f44b2c1b870eef91d0e01671130783f13946f4d06ab8'),
+    'size_saved_two_before_delete': (10, '00e098c19fdcdc3da8389f4901a06232ba7f433058fa08ca294fd11f659f6e38'),
+    'size_deleted_both_branches_false': (12, 'f662d55b1ea0e8784b62f7ff006b1279b13260391d3279a7880372c93f3fb530'),
+    'size_deleted_both_branches_true': (12, '827b4258cf4cf8d807a4bc5460668c1025125487145865e7a22559448066b5df'),
+}
+
+
+def delete_size_cases():
+    rows = {}
+
+    def add(name, source, value, calls, admitted=True, repair=None):
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        if name in DELETE_SIZE_HISTORY:
+            assert (calls, digest) == DELETE_SIZE_HISTORY[name], name
+        row = dict(source=source, expected_trace=value, raw_calls=calls,
+                   prepared_calls=calls, sha256=digest, admitted=admitted)
+        if repair:
+            before, after, target = repair
+            assert source.count(before) == 1 and source.replace(before, after) == rows[target]['source'], name
+            row.update(removed_text=before, replacement_text=after, repair=target)
+        rows[name] = row
+
+    old = one_size_cases()
+    formal = old['size_deleted_last']['source']
+    add('size_deleted_last_cleared_repair', old['size_one_cleared_size_deleted_last']['source'], 1, 11)
+    for name in ('size_deleted_last', 'size_deleted_last_literal_repair'):
+        rows[name] = dict(old[name])
+        if name == 'size_deleted_last':
+            rows[name]['repair'] = 'size_deleted_last_cleared_repair'
+        else:
+            repair = old[name]['repair']
+            rows[repair] = dict(old[repair])
+    base = formal.replace('state.clear(); state.set(key, item); state.delete(key);',
+                          'state.clear(); state.set(1, item); state.delete(1);')
+    add('size_deleted_literal_last', base, 1, 10)
+    add('size_deleted_literal_last_zero_repair', base.replace('const zero = state.size;',
+        'state.size; const zero = 0;'), 1, 10)
+    two = base.replace('state.set(1, item); state.delete(1);',
+        'state.set(1, item); state.set(2, item); state.delete(1);').replace(
+        'const zero = state.size; state.set(1, item);', 'const zero = state.size;')
+    add('size_deleted_one_of_two', two, 1, 10)
+    add('size_deleted_one_of_two_literal_repair', two.replace('const zero = state.size;',
+        'state.size; const zero = 1;'), 1, 10)
+    add('size_saved_two_before_delete', two.replace('state.delete(1); const zero = state.size;',
+        'const zero = state.size; state.delete(2);'), 1, 10)
+    add('size_deleted_disjoint', base.replace('state.delete(1);', 'state.delete(9);'), 0, 10)
+    add('size_deleted_repeated', base.replace('state.delete(1);',
+        'state.delete(1); state.delete(1);'), 1, 11)
+    add('size_deleted_captured_alias', base.replace('state.delete(1); const zero = state.size;',
+        'const alias = state; alias.delete(1); const zero = alias.size;'), 1, 10)
+    add('size_deleted_fluent_alias', base.replace('state.set(1, item); state.delete(1);',
+        'const alias = state.set(1, item); alias.delete(1);'), 1, 10)
+    add('size_deleted_saved_key', base.replace('state.delete(1);',
+        'const one = state.size; state.delete(one);'), 1, 10)
+    add('size_deleted_possible_alias', base.replace('state.delete(1);', 'state.delete(key);'), 0, 10,
+        False, ('state.delete(key);', 'state.delete(1);', 'size_deleted_literal_last'))
+    add('size_deleted_possible_remaining_key', base.replace('state.clear(); state.set(1, item);',
+        'state.clear(); state.set(key, item); state.set(1, item);'), 0, 11, False,
+        ('state.clear(); state.set(key, item); state.set(1, item);',
+         'state.clear(); state.set(1, item);', 'size_deleted_literal_last'))
+
+    # Both witnesses force the independently proved current key to select a
+    # real object and read its field. A wrong cardinality cannot fake absence.
+    zero_field = base.replace('const zero = state.size; state.set(1, item);',
+        'const zero = state.size; state.set(0, item);').replace(
+        'return state.get(zero) === void 0 ? 1 : 0;',
+        'return state.get(zero).value === 1 ? 1 : 0;')
+    add('size_deleted_zero_present_field', zero_field, 1, 10)
+    one_field = two.replace('state.delete(1);', 'state.delete(2);').replace(
+        'return state.get(zero) === void 0 ? 1 : 0;',
+        'return state.get(zero).value === 1 ? 1 : 0;')
+    add('size_deleted_one_present_field', one_field, 1, 10)
+
+    for flag in ('false', 'true'):
+        branch = base.replace('set(key)', 'set(key, flag)').replace(
+            'host.slot.set(7)', 'host.slot.set(7, ' + flag + ')')
+        both = branch.replace('state.delete(1);',
+            'if (flag) { state.delete(1); } else { state.delete(1); state.has(key); }')
+        name = 'size_deleted_both_branches_' + flag
+        add(name, both, 1, 12)
+        add('size_deleted_one_branch_' + flag, both.replace(
+            'else { state.delete(1); state.has(key); }', 'else { state.has(key); }'),
+            int(flag == 'true'), 11, False,
+            ('else { state.has(key); }', 'else { state.delete(1); state.has(key); }', name))
+        joined = branch.replace('const zero = state.size;', 'const zero = flag ? state.size : 0;')
+        name = 'size_deleted_joined_equal_' + flag
+        add(name, joined, 1, 10)
+        add('size_deleted_joined_unequal_' + flag, joined.replace('flag ? state.size : 0;',
+            'flag ? state.size : 1;'), int(flag == 'true'), 10, False,
+            ('flag ? state.size : 1;', 'flag ? state.size : 0;', name))
+
+    lifetime = rows['size_deleted_both_branches_false']['source'].replace(
+        'state.set(1, item); return state.get(zero) === void 0 ? 1 : 0;',
+        'state.set(0, item); state.set(3, item); const saved = state.get(zero); '
+        'state.delete(0); state.clear(); state.set(2, item); '
+        'return saved === item ? (flag ? 2 : 1) : 0;')
+    add('size_deleted_saved_lifetime', lifetime, 1, 16)
+    for name, (calls, digest) in DELETE_SIZE_HISTORY.items():
+        assert (rows[name]['raw_calls'], rows[name]['sha256']) == (calls, digest), name
+    return rows
+
+
+def delete_size_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in delete_size_cases().items() if row['admitted']}

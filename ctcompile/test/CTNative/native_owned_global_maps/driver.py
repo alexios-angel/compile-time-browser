@@ -42,6 +42,7 @@ from .sources import (
     CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
     StringValue, string_field_cases, string_field_sources, STRING_FIELD_PROMOTED,
     zero_size_cases, zero_size_sources, one_size_cases, one_size_sources,
+    delete_size_cases, delete_size_sources,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -52,7 +53,7 @@ from .harness import (
     primitive_absence_observer_source,
     LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
     NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source, string_field_observer_source,
-    zero_size_observer_source, one_size_observer_source,
+    zero_size_observer_source, one_size_observer_source, delete_size_observer_source,
 )
 
 
@@ -1434,7 +1435,7 @@ def main():
         **numeric_entry_sources(),
         **scalar_global_sources(),
         **constant_global_sources(),
-        **string_field_sources(), **zero_size_sources(), **one_size_sources(),
+        **string_field_sources(), **zero_size_sources(), **one_size_sources(), **delete_size_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1450,6 +1451,7 @@ def main():
     check_string_field_observations(args, node, reference)
     check_zero_size_observations(args, node, reference)
     check_one_size_observations(args, node, reference)
+    check_delete_size_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -1684,6 +1686,7 @@ def main():
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      or name in constant_global_sources()
                      or name in string_field_sources() or name in zero_size_sources() or name in one_size_sources()
+                     or name in delete_size_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1720,6 +1723,7 @@ def main():
         check_string_field_census(args, ir, name)
         check_zero_size_census(args, ir, name)
         check_one_size_census(args, ir, name)
+        check_delete_size_census(args, ir, name)
         if name in primitive_absence_sources() and (
                 len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
                 or len(source_calls(ir.read_text())) != 10):
@@ -2099,6 +2103,8 @@ def main():
     check_zero_size_refusals(args, positives)
     check_leaf_object_forgeries(args, saved, ("local_clear_zero_size_key", "zero_size_saved_lifetime"))
     check_one_size_refusals(args, positives)
+    check_delete_size_refusals(args, positives)
+    check_leaf_object_forgeries(args, saved, ("size_deleted_literal_last", "size_deleted_saved_lifetime"))
     check_leaf_object_forgeries(args, saved, ("zero_size_read_after_write", "size_one_saved_lifetime"))
     check_historical_string_field_refusals(args, positives, node, reference)
     # A result contract does not narrow Map storage or supply an implemented
@@ -2274,7 +2280,7 @@ def main():
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
                  | numeric_entry_sources().keys() | scalar_global_sources().keys()
                  | constant_global_sources().keys() | string_field_sources().keys()
-                 | zero_size_sources().keys() | one_size_sources().keys()):
+                 | zero_size_sources().keys() | one_size_sources().keys() | delete_size_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -2305,7 +2311,8 @@ def main():
                  "constant_string", "constant_string_alias_chain",
                  "field_string_read", "field_string_lifetime",
                  "local_clear_zero_size_key", "zero_size_saved_lifetime",
-                 "zero_size_read_after_write", "size_one_saved_lifetime"):
+                 "zero_size_read_after_write", "size_one_saved_lifetime",
+                 "size_deleted_literal_last", "size_deleted_saved_lifetime"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2414,6 +2421,11 @@ def main():
           f"{len(one_size_cases()) - len(one_size_sources())} independent cardinality refusals retain "
           "fresh/stale forgeries, reruns and exact admitted repairs; a saved-one lifetime runs "
           "128 future calls/both flags, owner/table release, reentry and final Map/leaf destruction; "
+          f"{len(delete_size_sources())} delete-size programs preserve all ten continuation sources; "
+          "current object fields, aliases, structural arms and immutable sizes retain runtime operations; "
+          f"{len(delete_size_cases()) - len(delete_size_sources())} independent deletion refusals retain "
+          "fresh/stale forgeries and exact repairs; a saved deletion lifetime runs 128 future calls, "
+          "both flags, owner/table release, reentry and final Map/leaf destruction; "
           f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
           "six field refusal/repair families and six emitted field-tag controls remain independent; "
           "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
@@ -2954,3 +2966,116 @@ def check_one_size_observations(args, node, reference):
 }})();
 """
         observe(name + '-future', source, 7)
+
+
+def check_delete_size_census(args, ir, name):
+    if name not in delete_size_cases():
+        return
+    row = delete_size_cases()[name]
+    raw = (args.work / f'{name}.raw.mlir').read_text()
+    if (len(boundary.FUNCTION.findall(raw)) != 5
+            or len(source_calls(raw)) != row['raw_calls']
+            or len(source_calls(ir.read_text())) != row['prepared_calls']):
+        raise RuntimeError(f'{name}: changed exact deletion function/call census')
+
+
+def check_delete_size_refusals(args, positives):
+    check_exact_size_refusals(args, positives, delete_size_cases(), check_delete_size_census)
+
+
+def check_delete_size_observations(args, node, reference):
+    cases = delete_size_cases()
+    observations = mutations = 0
+
+    def observe(name, source, value):
+        nonlocal observations
+        js = args.work / f'{name}-delete-observed.js'
+        js.write_text(source)
+        expected = f'trace={value}\n'
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
+            raise RuntimeError(f'{name}: typed Node deletion observation changed')
+        if reference:
+            result = host.run([str(reference), str(js)])
+            if (result.stdout != expected
+                    or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
+                raise RuntimeError(f'{name}: interpreter lost deletion Number observation')
+        observations += 1
+        return expected
+
+    def distinguish(name, source, old, replacement, expected):
+        nonlocal mutations
+        assert source.count(old) == 1, (name, old)
+        js = args.work / f'{name}-delete-blind-{mutations}.js'
+        js.write_text(source.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected:
+            raise RuntimeError(f'{name}: deletion observer cannot distinguish {replacement}')
+        mutations += 1
+
+    for name, row in cases.items():
+        observe(name, row['source'], row['expected_trace'])
+    for name, old, replacement in (
+        ('size_deleted_literal_last', 'state.delete(1);', 'state.has(1);'),
+        ('size_deleted_literal_last', 'state.get(zero)', 'state.get(state.size)'),
+        ('size_deleted_literal_last_zero_repair', 'const zero = 0;', 'const zero = 1;'),
+        ('size_deleted_one_of_two', 'state.delete(1);', 'state.has(1);'),
+        ('size_saved_two_before_delete', 'state.get(zero)', 'state.get(state.size)'),
+        ('size_deleted_disjoint', 'state.delete(9);', 'state.delete(1);'),
+        ('size_deleted_zero_present_field', '{value: 1}', '{value: 2}'),
+        ('size_deleted_zero_present_field', 'state.get(zero)', 'state.get(state.size)'),
+        ('size_deleted_one_present_field', '{value: 1}', '{value: 2}'),
+        ('size_deleted_one_present_field', 'state.delete(2);', 'state.delete(1);'),
+        ('size_deleted_both_branches_false', 'else { state.delete(1); state.has(key); }',
+         'else { state.has(key); }'),
+        ('size_deleted_both_branches_true', 'if (flag) { state.delete(1); }',
+         'if (flag) { state.has(1); }'),
+    ):
+        row = cases[name]
+        distinguish(name, row['source'], old, replacement, f'trace={row["expected_trace"]}\n')
+
+    # Future invocations expose possible aliasing that the startup key seven
+    # alone cannot establish. Each branch's startup literal remains irrelevant
+    # to the independent complete-body proof.
+    for name, values in (
+        ('size_deleted_possible_alias', (0, 1, 0)),
+        ('size_deleted_possible_remaining_key', (0, 1, 0)),
+    ):
+        source = cases[name]['source'] + f"""
+(function() {{
+    const startup = trace;
+    const setter = host.slot.set;
+    const a = setter(1);
+    const b = setter(99);
+    trace = (typeof startup === 'number' && startup === {values[0]} ? 1 : 0) |
+            (typeof a === 'number' && a === {values[1]} ? 2 : 0) |
+            (typeof b === 'number' && b === {values[2]} ? 4 : 0);
+}})();
+"""
+        observe(name + '-future', source, 7)
+
+    name = 'size_deleted_saved_lifetime'
+    source = cases[name]['source']
+    observed, value = delete_size_observer_source(source)
+    expected = observe(name + '-future', observed, value)
+    for old, replacement in (
+        ('state.get(zero)', 'state.get(state.size)'),
+        ('const saved = state.get(zero);', 'const saved = void 0;'),
+        ('(flag ? 2 : 1)', '(flag ? 1 : 2)'),
+        ('state.delete(0);', 'state.has(0);'),
+        ('state.clear(); state.set(2, item);', 'state.has(key); state.set(2, item);'),
+    ):
+        if old == 'state.delete(0);':
+            # The original trailing clear deliberately makes this deletion
+            # unobservable; observe its result before that clear independently.
+            witnessed = source.replace('state.delete(0); state.clear();',
+                'const deleted = state.delete(0); state.clear();').replace(
+                'return saved === item ?', 'return deleted && saved === item ?')
+            check, _ = delete_size_observer_source(witnessed)
+            observe(name + '-delete-result', check, value)
+            distinguish(name + '-delete-result', check, 'const deleted = state.delete(0);',
+                        'const deleted = state.delete(2);', expected)
+            continue
+        assert source.count(old) == 1, (name, old)
+        distinguish(name + '-future', observed, old, replacement, expected)
+    return dict(sources=len(cases), observations=observations, mutations=mutations)
