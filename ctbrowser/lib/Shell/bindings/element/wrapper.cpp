@@ -40,10 +40,42 @@ value dom_bindings::wrap(context & cx, node_id id) {
     }
     install_element_methods(cx, *obj);
     install_element_views(cx, *obj, id);
-    // AFTER both, because two of the members a ShadowRoot needs - querySelector
-    // and querySelectorAll - REPLACE the general ones: the general pair cannot
-    // see a detached fragment at all. See install_shadow_root_members.
-    if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
+    {
+        const auto txn = doc_->read();
+        // AFTER both: a fragment's members are its own, and a ShadowRoot's
+        // come on top of a fragment's. See install_fragment_members.
+        const node_kind kind = txn.kind(id).value_or(node_kind::element);
+        if (kind == node_kind::document_fragment) {
+            install_fragment_members(cx, *obj, id);
+            if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
+        }
+        // `moveBefore` is a ParentNode method and a Text or Comment is not one -
+        // `"moveBefore" in textNode` is false, and `Node-moveBefore.html` asks.
+        // The other ParentNode methods stay where they have always been.
+        if (kind == node_kind::text || kind == node_kind::comment) {
+            (void)obj->erase("moveBefore");
+        }
+        // `template.content`, HTML 4.12.3: the DocumentFragment the parser put
+        // the element's children into - see document::template_content - and,
+        // for a template a script made, one created the first time it is asked
+        // for, because every template element has one. A READ-ONLY accessor,
+        // and the same fragment on every read.
+        if (txn.element_ns(id) == node_ns::html &&
+            atoms_->text(txn.tag(id).value_or(atom{})) == "template") {
+            obj->define_accessor("content",
+                                 value::object(cx.allocate<script::native_object>(
+                                     "content",
+                                     [this, id](context & c, std::span<value>) {
+                                         node_id contents = doc_->template_content(id);
+                                         if (!contents) {
+                                             contents = doc_->create_fragment();
+                                             doc_->set_template_content(id, contents);
+                                         }
+                                         return wrap(c, contents);
+                                     })),
+                                 value::undefined());
+        }
+    }
     refresh_element(cx, *obj, id);
     wrappers_.emplace(pack(id), obj);
     return wrapper;

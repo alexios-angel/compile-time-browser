@@ -1832,6 +1832,10 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // What EVERY DocumentFragment has and an element does not: `getElementById`
+    // scoped to the fragment, DOM 4.2.6 NonElementParentNode. A ShadowRoot and a
+    // <template>'s contents are both fragments and both get it from here.
+    void install_fragment_members(context & cx, script::object_object & obj, node_id root);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
