@@ -673,6 +673,86 @@ private:
     bool mutation_delivery_queued_ = false;
     // END mutation observers
 
+    // BEGIN custom elements (bindings/custom_elements.cpp)
+public:
+    // WHAT `mutated()` CALLS AFTER THE OBSERVERS. A definition covers every
+    // element with its name wherever the parser or a script put one, and the
+    // funnel does not say which node changed - so this walks the tree, upgrades
+    // any element a definition now covers, diffs the tracked ones against what
+    // they were (connected, parent, observed attributes) and RUNS the reactions
+    // before returning, which is what [CEReactions] means. Returns on the first
+    // line when nothing was ever defined.
+    void react_custom_elements();
+
+private:
+    struct custom_element_definition {
+        std::string name;
+        std::string local_name; // the `extends` name, or `name` itself
+        value constructor;
+        value prototype;
+        // The lifecycle callbacks, captured at define time as the
+        // specification says - a prototype edited afterwards changes nothing.
+        value connected;
+        value disconnected;
+        value adopted;
+        value attribute_changed;
+        value connected_move;
+        std::vector<std::string> observed_attributes;
+    };
+    // ONE UPGRADED OR CONSTRUCTED ELEMENT AS IT WAS, which is what a reaction
+    // is a difference from - the same shape record_mutations diffs against.
+    struct custom_element_state {
+        std::size_t definition = 0;
+        bool connected = false;
+        bool visited = false; // scratch for one scan
+        node_id parent;
+        std::vector<std::pair<atom, std::string>> attributes; // observed only
+    };
+    struct custom_element_reaction {
+        enum class kind : std::uint8_t {
+            upgrade,
+            connected,
+            disconnected,
+            connected_move,
+            attribute_changed
+        };
+        node_id target;
+        kind what = kind::upgrade;
+        // Strings rather than `value`s: a reaction waits in this queue while
+        // the ones before it run script, and nothing would root a heap string.
+        std::string name;
+        std::string old_value;
+        std::string new_value;
+        bool has_old = false;
+        bool has_new = false;
+    };
+
+    void install_custom_elements(context & cx);
+    // `document.createElement(name)`: a defined name is constructed through
+    // the author's class, anything else is a plain node wrapped.
+    [[nodiscard]] value create_html_element(context & cx, const std::string & name);
+    // The definition this element's (local name, `is`) pair belongs to, or
+    // npos.
+    [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id) const;
+    // The definition whose prototype is on this object's chain, or npos - how
+    // the HTMLElement constructor learns which class `super()` came from.
+    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
+    // One subtree in tree order: upgrade what is new, diff what is tracked.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected);
+    void scan_custom_elements();
+    void flush_custom_element_reactions();
+    void sync_custom_element_roots();
+
+    std::vector<custom_element_definition> custom_definitions_;
+    flat_map<std::uint64_t, custom_element_state> custom_elements_;
+    std::vector<custom_element_reaction> custom_reactions_;
+    flat_map<std::string, std::vector<value>> when_defined_;
+    // The CustomElementRegistry interface object, whose `retained` list roots
+    // every constructor, prototype, callback and pending promise above - the
+    // arrangement install_mutation_observer uses, for the same reason.
+    script::native_object * custom_elements_interface_ = nullptr;
+    // END custom elements
+
     // BEGIN style sheets (bindings/stylesheets/)
 public:
     // THE CSSOM'S OWN COPY OF THE AUTHOR'S SHEETS, and why it is a copy.

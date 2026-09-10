@@ -37,8 +37,9 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         // NOT a mutation: a created element is detached and changes nothing
-        // on screen until it is appended.
-        return wrap(c, doc_->create_element(atoms_->intern_lower(name)));
+        // on screen until it is appended. A DEFINED name is constructed
+        // through the author's class - see bindings/custom_elements.cpp.
+        return create_html_element(c, name);
     });
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
