@@ -57,53 +57,13 @@ foreach(source ${example-sources})
     set_tests_properties(example-${example} PROPERTIES ENVIRONMENT
       "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;CTBROWSER_TEST_FRAMES=30;CTBROWSER_NETWORK=0;CTBROWSER_SCREENSHOT=${CMAKE_BINARY_DIR}/shot-${example}.ppm")
 
-    # And for the two pages that exist to show what the ENGINE draws, compare
-    # the render to a golden. Exiting 0 is not evidence: a page renders with
-    # empty buttons, no caret, a <details> stuck open and every label glued to
-    # its control and still exits 0 - which is how all of those shipped.
-    #
-    # Only these two: the others animate or fetch, so a byte-comparison would
-    # be pinning a clock rather than a layout.
-    # svg joins these two, and it is goldenable for a reason worth stating:
-    # plutosvg 0.0.8 has NO text support at all, so nothing it draws depends on
-    # a font, a font backend or CTBROWSER_FONTS. The page is static and
-    # scriptless, and plutovg is a pure software rasteriser pinned to the same
-    # version on both platforms - so one image compares byte-for-byte on Linux
-    # and Windows. Gated on the dependency: without plutosvg the graphics are
-    # simply absent, and the comparison would fail for a reason that is not a
-    # regression.
-    # p5basic joins them: the page is scriptless in the sense that matters -
-    # noLoop, no random, no text and no image - so the frame it draws is the
-    # same on every platform, and the golden is the only proof that the bundle
-    # actually PAINTS rather than merely running.
-    # p5webgl is the one that goes all the way through: p5's RendererGL, its
-    # shaders and its matrices, onto this engine's software rasteriser. It has a
-    # golden for the same reason p5basic does - the page runs noLoop with fixed
-    # rotations and no random, so the frame is the same everywhere, and nothing
-    # short of the pixels proves the geometry actually landed.
-    # phaserbasic is the second library's answer to p5basic, and it is a
-    # different claim: somebody else's game framework, its own display list,
-    # its own Graphics object and its own Canvas renderer, onto this engine.
-    # The page draws only in create() with an empty update(), so the frame does
-    # not depend on which tick the screenshot landed on - Phaser owns its game
-    # loop, and a scene that animated would have no stable golden.
-    # phaserinvaders is the one that is a GAME rather than a drawing: sprites
-    # under arcade physics, a formation stepping on a timer, bullets, overlap
-    # callbacks destroying objects mid-frame and a score that updates. Every
-    # piece of that passes a probe on its own; the golden is the only thing that
-    # says they work together. Deterministic by construction - no Math.random,
-    # and the player sweeps on a frame-count script when no key is held, so the
-    # same frame cap always produces the same frame.
-    # babylonscene is the THIRD library and the hardest of the three: a 3D
-    # engine with its own scene graph, camera and light model, a material system
-    # and a shader assembled at run time - and every uniform delivered through a
-    # BUFFER, which is what made it the corpus that found the WebGL 2 gaps. The
-    # page renders a fixed number of times rather than running a render loop,
-    # because Babylon compiles its effects asynchronously and a loop would make
-    # the frame depend on timing.
-    # babylonorbit is the INTERACTIVE one, and its golden is the frame before
-    # anybody touches it: the scene does not move on its own, so the picture is
-    # stable, and test/corpus/babylon/babylon_interaction.cpp is what drives a drag through it.
+    # And for the pages that exist to show what the ENGINE draws, compare the
+    # render to a golden. Exiting 0 is not evidence: a page renders with empty
+    # buttons, no caret, a <details> stuck open and every label glued to its
+    # control and still exits 0 - which is how all of those shipped. Only pages
+    # whose frame is deterministic belong here: static, noLoop, no Math.random,
+    # no text through a font backend, or a library that draws once in create()
+    # - a page that animates or fetches would pin a clock rather than a layout.
     set(golden-examples widgets elements p5basic p5text p5transform p5shape p5pixels
         p5image webgltriangle p5webgl phaserbasic phaserinvaders babylonscene
         babylonorbit)
@@ -274,24 +234,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
     endforeach()
   endif()
 
-  # GLOBBED, NOT NAMED, and that is this list's third lesson rather than a
-  # preference.
-  #
-  # It was a hand-written list of files because assets/ used to hold the
-  # previous engine's glTF models, which nothing here opened. Those are GONE,
-  # so the reason is gone with them - and in the meantime the list went stale
-  # twice in exactly the same way. phaser.js was added to the tree after the
-  # list was written, so phaserbasic.exe and phaserinvaders.exe shipped and
-  # rendered a page with no framework in it. Then babylon.js did the same, and
-  # babylonscene.exe came up with `BABYLON.Engine is undefined`.
-  #
-  # THE FAILURE READS LIKE AN ENGINE DIVERGENCE, which is what makes it worth
-  # this much comment: the Windows goldens differ from the Linux ones, on a
-  # cross-build that is meant to be byte-identical, and nothing says the page
-  # was missing its library.
-  #
-  # A directory is copied as a directory - which also carries each corpus's
-  # licence beside its code, where it has to stay - and a loose file as a file.
+  # GLOBBED, NOT NAMED: a hand-written list went stale twice (phaser.js, then
+  # babylon.js) and the symptom - Windows goldens differing from Linux on a
+  # cross-build meant to be byte-identical - reads like an engine divergence,
+  # not a missing library. A directory is copied as a directory, which keeps
+  # each corpus's licence beside its code.
   file(GLOB asset-entries CONFIGURE_DEPENDS LIST_DIRECTORIES true
        "${PROJECT_SOURCE_DIR}/examples/assets/*")
   list(APPEND dist-commands
@@ -299,17 +246,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets")
 
-  # AND vendor/, AT THE DIST ROOT, which is not a detail. The corpora moved out
-  # of examples/assets/ on 2026-08-09 because they are test data first, and the
-  # pages now ask for `../../vendor/<lib>/<lib>.js`. That resolves against the
-  # PAGE, so the only layout in which it finds anything is one that mirrors the
-  # repository: vendor/ beside examples/, not inside it.
-  #
-  # This is the third instalment of the lesson the comment above records. Both
-  # earlier times the symptom was the same and reads like an engine bug rather
-  # than a packaging one: the Windows goldens differ from the Linux ones on a
-  # cross-build that is meant to be byte-identical, and nothing anywhere says
-  # the page was served without its framework.
+  # AND vendor/, AT THE DIST ROOT: the pages ask for `../../vendor/<lib>/<lib>.js`
+  # relative to the PAGE, so the only layout that finds anything mirrors the
+  # repository - vendor/ beside examples/, not inside it.
   list(APPEND dist-commands
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${PROJECT_SOURCE_DIR}/vendor" "${dist-dir}/vendor")
