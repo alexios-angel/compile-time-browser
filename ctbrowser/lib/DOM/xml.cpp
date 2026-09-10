@@ -1,7 +1,6 @@
 #include <ctbrowser/dom/xml.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,11 +26,11 @@ namespace {
 // browser also renders - and getting those ranges subtly wrong would refuse
 // documents that load everywhere else.
 [[nodiscard]] bool is_name_start(unsigned char c) {
-    return std::isalpha(c) != 0 || c == '_' || c == ':' || c >= 0x80;
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 0x80;
 }
 
 [[nodiscard]] bool is_name_char(unsigned char c) {
-    return is_name_start(c) || std::isdigit(c) != 0 || c == '-' || c == '.';
+    return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
 // One element's namespace bindings. A vector rather than a map: an element

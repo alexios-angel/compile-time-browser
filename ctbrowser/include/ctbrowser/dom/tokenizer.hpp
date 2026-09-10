@@ -122,9 +122,7 @@ private:
 
     [[nodiscard]] char peek(std::size_t ahead = 0) const;
     [[nodiscard]] bool looking_at(std::string_view what) const;
-    [[nodiscard]] static bool is_space(char c);
     [[nodiscard]] static bool is_alpha(char c);
-    [[nodiscard]] static char lower(char c);
 
     // --- data state -------------------------------------------------------
 

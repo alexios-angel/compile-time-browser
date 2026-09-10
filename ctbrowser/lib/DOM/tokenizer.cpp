@@ -44,16 +44,8 @@ bool tokenizer::looking_at(std::string_view what) const {
     return input_.compare(at_, what.size(), what) == 0;
 }
 
-bool tokenizer::is_space(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
-}
-
 bool tokenizer::is_alpha(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
-
-char tokenizer::lower(char c) {
-    return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
 }
 
 token tokenizer::in_data() {
@@ -115,7 +107,7 @@ token tokenizer::in_text_until_close(bool decode_entities) {
             ctbrowser::ascii_iequals(input_.substr(at_ + 2, close_tag_.size()), close_tag_)) {
             const std::size_t after = at_ + 2 + close_tag_.size();
             const char follows = after < input_.size() ? input_[after] : '>';
-            if (is_space(follows) || follows == '>' || follows == '/') { break; }
+            if (html_whitespace.contains(follows) || follows == '>' || follows == '/') { break; }
         }
         if (decode_entities && input_[at_] == '&') {
             out.data += decode_reference(false);
@@ -153,12 +145,13 @@ token tokenizer::tag_open() {
         out.kind = token_kind::end_tag;
         ++at_;
     }
-    while (at_ < input_.size() && !is_space(peek()) && peek() != '>' && peek() != '/') {
+    while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '>' &&
+           peek() != '/') {
         // Case survives in foreign content and nowhere else. HTML is
         // case-insensitive and everything downstream expects a lowercase atom;
         // SVG is case-SENSITIVE, and `linearGradient` folded is a tag no
         // renderer recognises.
-        out.name += preserve_case_ ? input_[at_++] : lower(input_[at_++]);
+        out.name += preserve_case_ ? input_[at_++] : ascii_lower(input_[at_++]);
     }
     // THE ROOT <svg> IS THE AWKWARD ONE. Its start tag is read while the tree
     // builder is still in HTML - foreign content does not begin until the
@@ -172,7 +165,7 @@ token tokenizer::tag_open() {
 
 void tokenizer::read_attributes(token & out, bool preserve_case) {
     while (at_ < input_.size()) {
-        while (at_ < input_.size() && is_space(peek())) { ++at_; }
+        while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
         if (peek() == '>') {
             ++at_;
             return;
@@ -189,19 +182,19 @@ void tokenizer::read_attributes(token & out, bool preserve_case) {
         if (at_ >= input_.size()) { return; }
 
         token_attribute attribute;
-        while (at_ < input_.size() && !is_space(peek()) && peek() != '=' && peek() != '>' &&
-               peek() != '/') {
+        while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '=' &&
+               peek() != '>' && peek() != '/') {
             // Case survives here too, and MISSING THIS ONE is the obvious way
             // to half-implement it: the element name comes through as
             // `linearGradient` while every attribute on it is still flattened,
             // so `gradientUnits` and `viewBox` are gone and the graphic is
             // subtly wrong rather than obviously broken.
-            attribute.name += preserve_case ? input_[at_++] : lower(input_[at_++]);
+            attribute.name += preserve_case ? input_[at_++] : ascii_lower(input_[at_++]);
         }
-        while (at_ < input_.size() && is_space(peek())) { ++at_; }
+        while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
         if (peek() == '=') {
             ++at_;
-            while (at_ < input_.size() && is_space(peek())) { ++at_; }
+            while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
             attribute.value = read_attribute_value();
         }
         if (!attribute.name.empty()) {
@@ -233,7 +226,7 @@ std::string tokenizer::read_attribute_value() {
     }
     // Unquoted. Ends at whitespace or `>`, which is what makes
     // `<a href=/x/y>` work and `<a href=a b>` two attributes.
-    while (at_ < input_.size() && !is_space(peek()) && peek() != '>') {
+    while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '>') {
         if (peek() == '&') {
             out += decode_reference(true);
             continue;
@@ -270,9 +263,9 @@ token tokenizer::doctype() {
     token out;
     out.kind = token_kind::doctype;
     at_ += 9; // "<!doctype"
-    while (at_ < input_.size() && is_space(peek())) { ++at_; }
-    while (at_ < input_.size() && !is_space(peek()) && peek() != '>') {
-        out.name += lower(input_[at_++]);
+    while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+    while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '>') {
+        out.name += ascii_lower(input_[at_++]);
     }
     // Public and system identifiers are consumed and discarded: nothing
     // downstream renders differently for them. force_quirks is the one bit
