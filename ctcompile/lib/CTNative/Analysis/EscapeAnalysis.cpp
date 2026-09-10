@@ -1202,7 +1202,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     continue;
                 }
                 if ((binary.getKind() == ctjs::BinaryKind::Sub ||
-                     binary.getKind() == ctjs::BinaryKind::Mul) &&
+                     binary.getKind() == ctjs::BinaryKind::Mul ||
+                     binary.getKind() == ctjs::BinaryKind::Div) &&
                     lhs && rhs &&
                     ((bigIntOrigin(lhs, state.bigIntOrigins) &&
                       primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
