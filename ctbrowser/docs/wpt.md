@@ -14,6 +14,40 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-10, night
+
+**445 of the 1,090 tests that ran, which is 40.8%**, and still not one crash.
+Same instrument, engine at commit `d99ddf7b` on `ctbrowser-wpt` — browser gate
+152/152 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 132 | 153 | 13 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 92 | 116 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 101 | 3 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **445** | **561** | **33** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,513 PASS, 9,113 FAIL, 72 NOTRUN, 40 TIMEOUT.**
+
+Against `8ca744a1` (the evening row): +13 files, +182 passing subtests, and
+TIMEOUT 43 -> 33. Named from the PASS-set diff: `html/dom` +10 is the whole
+of `render-blocking/` bar the IDL file that already passed —
+`parser-blocking-script`, `parser-inserted-{async,defer,module}-script`,
+`parser-inserted-{style-element,stylesheet-link}`,
+`script-inserted-{script,module-script,style-element,stylesheet-link}` —
+which is Paint Timing plus `load`/`error` at a sheet or script element
+(`1abf9798`), the `?pipe=` query dropped before the filesystem probe
+(`4e3f124c`), and the `blocking` token list (`cb6fa020`). `dom/nodes` +3 is
+`ChildNode-before`, `Text-wholeText` and `insert-adjacent` — the fragment
+serialisation and `textContent` on a text node (`74d61725`). Nothing went
+PASS -> FAIL. **FAIL subtests rose 8,218 -> 9,113 and NOTRUN fell 727 -> 72
+in the same run**: eight `dom/nodes` files that used to time out — the two
+`Document-characterSet-normalization` files among them — now run to the end
+under the top-level block-scoping fix (`d99ddf7b`) and report their
+failures instead of NOTRUN, which is the honest number.
+
 ## The baseline — 2026-09-10, evening
 
 **432 of the 1,090 tests that ran, which is 39.6%**, and still not one crash.
