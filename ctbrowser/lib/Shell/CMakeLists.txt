@@ -70,6 +70,14 @@ target_sources(ctbrowser-shell
     # much as a diff of it - `mutated()` reports THAT the document changed and
     # never what, so the records are reconstructed from a snapshot.
     bindings/mutation.cpp
+    # Web Animations: element.animate, Animation, KeyframeEffect and the
+    # timeline. Its own file because it is a timing model over the clock and
+    # an overlay on the cascade, and neither the element nor the computed
+    # style owns "what an animation says a property is right now".
+    bindings/animations.cpp
+    # customElements: the registry, the constructible HTMLElement, and the
+    # reactions - found by the same scan-from-`mutated()` the observer uses.
+    bindings/custom_elements.cpp
     # the `CSS` namespace object: CSS.supports gates every computed-value test
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp

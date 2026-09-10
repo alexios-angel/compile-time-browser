@@ -568,6 +568,11 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         });
     }
 
+    // `animate` and `getAnimations` on Element.prototype, and the Animation
+    // interfaces beside them - here because this is where that prototype
+    // exists. See lib/Shell/bindings/animations.cpp.
+    install_animations(cx);
+
     // The document and the window are EventTargets with interfaces of their own,
     // and `passive-by-default.html` reads `eventTarget.constructor.name` for
     // both of them before it can even name its subtests.

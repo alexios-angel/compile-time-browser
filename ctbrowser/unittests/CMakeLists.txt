@@ -132,6 +132,9 @@ ctbrowser_test(unit/layout_parallel)
 ctbrowser_test(unit/flex_basics)
 # <iframe>: a second document inside the first. See lib/Shell/bindings/frames.cpp.
 ctbrowser_test(unit/frames)
+# Web Animations: element.animate seeked and read back through getComputedStyle.
+# See lib/Shell/bindings/animations.cpp.
+ctbrowser_test(unit/web_animations)
 # Positioning, which is the one part of layout where a box's place is decided
 # by an ancestor rather than by its parent - see layout/position.hpp.
 ctbrowser_test(unit/position_basics)
@@ -182,6 +185,9 @@ ctbrowser_test(unit/page_input)
 # record and about WHEN the callback runs, neither of which any other test
 # observes. See lib/Shell/bindings/mutation.cpp.
 ctbrowser_test(unit/mutation_observer)
+# customElements: define, construct, upgrade, and the reactions that run
+# before the mutating call returns. See lib/Shell/bindings/custom_elements.cpp.
+ctbrowser_test(unit/custom_elements)
 ctbrowser_test(unit/widgets_basics)
 # --- the chrome, five files since 2026-09-07 --------------------------------
 # chrome_basics was 2,299 lines. Its cases are these five, verbatim, grouped by
@@ -222,12 +228,21 @@ ctbrowser_test(unit/bootstrap_layout)
 # foreign one, a name that SERIALISES against a name that parses - and each of
 # those used to have one answer where two belong.
 ctbrowser_test(unit/element_attrs)
+# The `blocking` attribute as a DOMTokenList on link, script and style, and
+# the one ordering the engine has for it: a stylesheet applies before the
+# first frame. See lib/Shell/bindings/element/views.cpp.
+ctbrowser_test(unit/render_blocking)
 # Event handlers: where an exception thrown by a listener goes, and what an
 # `on...` IDL attribute is. Its own file rather than more of event_listeners
 # because every case in it dispatches from inside a `try` ON PURPOSE - a throw
 # unwinds to the innermost handler anywhere below it, so containment is what is
 # under test and the harness has to provide the thing it is contained from.
 ctbrowser_test(unit/event_handlers)
+# The dispatch PATH, one case per rule dom/events found missing: a composed
+# event crosses a shadow boundary and an uncomposed one stops at the root, the
+# target and window.event as seen from each side of it, a detached tree that
+# reaches neither document nor window, and offsetX measured from the target.
+ctbrowser_test(unit/events_wpt)
 # CharacterData and the constructible node interfaces. Its own file because
 # every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
 # byte offset answers `substringData(39, 2)` wrongly only once the text stops

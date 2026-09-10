@@ -277,8 +277,23 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // in four other places downstream. The cascade inherits now, so `get` on the
     // element's own style is the whole answer - and the fifth ad-hoc inheritance
     // mechanism this file used to be is gone.
-    const auto declared = [declared_on, at](std::string_view property) -> std::string_view {
+    // ...AND WHAT AN ANIMATION SAYS ON TOP OF IT. A running Web Animation's
+    // effect value replaces the cascade's text for the properties it animates,
+    // at the animation's current time (lib/Shell/bindings/animations.cpp), and
+    // it goes in HERE so that every rule below - a percentage against its
+    // containing block, an inset's used value - runs on the interpolated text
+    // exactly as it runs on a declared one. The underlying value it may need
+    // is the cascade's own answer for the same element.
+    const std::vector<std::pair<std::string, std::string>> animated =
+        animated_values(id, at.font_size, [&](std::string_view property) {
+            return declared_on(at.chain.front(), property);
+        });
+    const auto declared = [declared_on, at,
+                           &animated](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
+        for (const auto & [name, text] : animated) {
+            if (std::string_view{name} == property) { return text; }
+        }
         return declared_on(at.chain.front(), property);
     };
 
@@ -766,6 +781,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 answers.emplace_back(std::string{name}, std::move(text));
             }
         }
+    }
+    // ...and an ANIMATED custom property nothing declared, which the walk
+    // above cannot see because it walks declarations.
+    for (const auto & [name, text] : animated) {
+        if (style::css::find_property(name) != nullptr) { continue; }
+        const auto seen = std::find_if(answers.begin(), answers.end(),
+                                       [&name](const auto & e) { return e.first == name; });
+        if (seen == answers.end()) { answers.emplace_back(name, text); }
     }
     return answers;
 }

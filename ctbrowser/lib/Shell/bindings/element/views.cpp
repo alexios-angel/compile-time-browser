@@ -1,5 +1,5 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
-// values: `attributes`, `style`, `classList`, `dataset` and the tree accessors.
+// values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
 //
 // One of twelve files carved out of a 5,442-line bindings/element.cpp on
 // 2026-09-08 - which was itself one of six carved out of bindings.cpp on
@@ -792,92 +792,171 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
     }
 
-    // --- element.classList
+    // --- element.classList, and every other DOMTokenList over an attribute
     //
-    // Every operation reads the attribute, edits the token list and writes it
-    // back, so nothing is cached and a class added by the parser, by
+    // ONE BUILDER, because a DOMTokenList is defined over "an associated
+    // attribute" and nothing about it is specific to `class`: `blocking` below
+    // is the same object over another attribute with a set of supported
+    // tokens. Every operation reads the attribute, edits the token list and
+    // writes it back, so nothing is cached and a token added by the parser, by
     // setAttribute or by the style engine is seen by all of them.
-    auto * list = static_cast<script::object_object *>(cx.make_object().as_heap());
-    const auto tokens_now = [this, id] {
-        const auto txn = doc_->read();
-        return class_tokens(txn.attribute_value(id, atoms_->intern("class")));
-    };
-    const auto write_tokens = [this, id](const std::vector<std::string> & tokens) {
-        std::string text;
-        for (const std::string & token : tokens) {
-            if (!text.empty()) { text += ' '; }
-            text += token;
+    const auto make_token_list = [this, &cx, id](std::string_view attribute,
+                                                 std::string_view supported) {
+        auto * list = static_cast<script::object_object *>(cx.make_object().as_heap());
+        if (const value proto = interface_prototype("DOMTokenList"); proto.is_object()) {
+            list->prototype = proto;
         }
-        (void)doc_->set_attribute(id, atoms_->intern("class"), text);
-        mutated();
-    };
-    const auto list_method = [&](std::string name, script::native_fn fn) {
-        list->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    list_method("add", [tokens_now, write_tokens](context & c, std::span<value> args) {
-        std::vector<std::string> tokens = tokens_now();
-        for (const value & v : args) {
-            const std::string token = c.to_string(v);
-            if (token.empty()) { continue; }
-            if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
-                tokens.push_back(token);
+        const std::string attribute_name{attribute};
+        const auto attribute_now = [this, id, attribute_name] {
+            const auto txn = doc_->read();
+            return std::string{txn.attribute_value(id, atoms_->intern(attribute_name))};
+        };
+        const auto tokens_now = [attribute_now] { return class_tokens(attribute_now()); };
+        const auto write_attribute = [this, id, attribute_name](std::string_view text) {
+            (void)doc_->set_attribute(id, atoms_->intern(attribute_name), std::string{text});
+            mutated();
+        };
+        const auto write_tokens = [write_attribute](const std::vector<std::string> & tokens) {
+            std::string text;
+            for (const std::string & token : tokens) {
+                if (!text.empty()) { text += ' '; }
+                text += token;
             }
-        }
-        write_tokens(tokens);
-        return value::undefined();
-    });
-    list_method("remove", [tokens_now, write_tokens](context & c, std::span<value> args) {
-        std::vector<std::string> tokens = tokens_now();
-        for (const value & v : args) {
-            const std::string token = c.to_string(v);
-            std::erase(tokens, token);
-        }
-        write_tokens(tokens);
-        return value::undefined();
-    });
-    list_method("contains", [tokens_now](context & c, std::span<value> args) {
-        const std::vector<std::string> tokens = tokens_now();
-        return value::boolean(std::find(tokens.begin(), tokens.end(), arg_string(c, args, 0)) !=
-                              tokens.end());
-    });
-    list_method("toggle", [tokens_now, write_tokens](context & c, std::span<value> args) {
-        std::vector<std::string> tokens = tokens_now();
-        const std::string token = arg_string(c, args, 0);
-        // The two-argument form FORCES a state rather than flipping it -
-        // `classList.toggle("on", isOn)` is the idiom, and treating the second
-        // argument as absent turns it into a flip that is right half the time.
-        const bool present = std::find(tokens.begin(), tokens.end(), token) != tokens.end();
-        const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
-        if (want && !present) { tokens.push_back(token); }
-        if (!want && present) { std::erase(tokens, token); }
-        write_tokens(tokens);
-        return value::boolean(want);
-    });
-    list_method("item", [tokens_now](context & c, std::span<value> args) {
-        const std::vector<std::string> tokens = tokens_now();
-        const auto i = static_cast<std::ptrdiff_t>(
-            context::to_number(args.empty() ? value::undefined() : args[0]));
-        if (i < 0 || static_cast<std::size_t>(i) >= tokens.size()) { return value::null(); }
-        return c.string(tokens[static_cast<std::size_t>(i)]);
-    });
-    // An ACCESSOR, not a number: the count changes whenever the attribute does,
-    // and a data property would report whatever it was when the element was
-    // first wrapped.
-    list->define_accessor("length",
-                          value::object(cx.allocate<script::native_object>(
-                              "length",
-                              [tokens_now](context &, std::span<value>) {
-                                  return value::number(static_cast<double>(tokens_now().size()));
-                              })),
-                          value::undefined());
+            write_attribute(text);
+        };
+        const auto list_method = [&](std::string name, script::native_fn fn) {
+            list->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+        };
+        list_method("add", [tokens_now, write_tokens](context & c, std::span<value> args) {
+            std::vector<std::string> tokens = tokens_now();
+            for (const value & v : args) {
+                const std::string token = c.to_string(v);
+                if (token.empty()) { continue; }
+                if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
+                    tokens.push_back(token);
+                }
+            }
+            write_tokens(tokens);
+            return value::undefined();
+        });
+        list_method("remove", [tokens_now, write_tokens](context & c, std::span<value> args) {
+            std::vector<std::string> tokens = tokens_now();
+            for (const value & v : args) {
+                const std::string token = c.to_string(v);
+                std::erase(tokens, token);
+            }
+            write_tokens(tokens);
+            return value::undefined();
+        });
+        list_method("contains", [tokens_now](context & c, std::span<value> args) {
+            const std::vector<std::string> tokens = tokens_now();
+            return value::boolean(std::find(tokens.begin(), tokens.end(), arg_string(c, args, 0)) !=
+                                  tokens.end());
+        });
+        list_method("toggle", [tokens_now, write_tokens](context & c, std::span<value> args) {
+            std::vector<std::string> tokens = tokens_now();
+            const std::string token = arg_string(c, args, 0);
+            // The two-argument form FORCES a state rather than flipping it -
+            // `classList.toggle("on", isOn)` is the idiom, and treating the
+            // second argument as absent turns it into a flip that is right
+            // half the time.
+            const bool present = std::find(tokens.begin(), tokens.end(), token) != tokens.end();
+            const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
+            if (want && !present) { tokens.push_back(token); }
+            if (!want && present) { std::erase(tokens, token); }
+            write_tokens(tokens);
+            return value::boolean(want);
+        });
+        list_method("item", [tokens_now](context & c, std::span<value> args) {
+            const std::vector<std::string> tokens = tokens_now();
+            const auto i = static_cast<std::ptrdiff_t>(
+                context::to_number(args.empty() ? value::undefined() : args[0]));
+            if (i < 0 || static_cast<std::size_t>(i) >= tokens.size()) { return value::null(); }
+            return c.string(tokens[static_cast<std::size_t>(i)]);
+        });
+        // `supports(token)`, DOM 7.1: a TypeError when the attribute defines no
+        // supported tokens at all - which is `class` - and otherwise an ASCII
+        // case-insensitive membership test.
+        const std::string supported_tokens{supported};
+        list_method("supports", [supported_tokens](context & c, std::span<value> args) {
+            if (supported_tokens.empty()) {
+                c.throw_error("TypeError", "DOMTokenList has no supported tokens");
+                return value::undefined();
+            }
+            return value::boolean(
+                lists_token(supported_tokens, ascii_lower_copy(arg_string(c, args, 0))));
+        });
+        // `value` IS the attribute, verbatim in both directions - it is what a
+        // `PutForwards=value` assignment writes - and it is the stringifier.
+        list_method("toString", [attribute_now](context & c, std::span<value>) {
+            return c.string(attribute_now());
+        });
+        list->define_accessor(
+            "value",
+            value::object(cx.allocate<script::native_object>(
+                "value", [attribute_now](context & c,
+                                         std::span<value>) { return c.string(attribute_now()); })),
+            value::object(cx.allocate<script::native_object>(
+                "value", [write_attribute](context & c, std::span<value> args) {
+                    write_attribute(arg_string(c, args, 0));
+                    return value::undefined();
+                })));
+        // An ACCESSOR, not a number: the count changes whenever the attribute
+        // does, and a data property would report whatever it was when the
+        // element was first wrapped.
+        list->define_accessor("length",
+                              value::object(cx.allocate<script::native_object>(
+                                  "length",
+                                  [tokens_now](context &, std::span<value>) {
+                                      return value::number(
+                                          static_cast<double>(tokens_now().size()));
+                                  })),
+                              value::undefined());
+        return list;
+    };
     // READONLY, and this one had a price. `classList` is `[SameObject] readonly
     // attribute DOMTokenList` and it was a writable data property, so
     // `Element-classlist.html` - 1,420 subtests - assigned a STRING to it in
     // its first case and every case after it called `add`, `contains` and
     // `item` on that string. A write to a readonly property is silently
     // discarded in sloppy mode, which is what the corpus expects to happen.
-    obj.define("classList", value::object(list),
+    obj.define("classList", value::object(make_token_list("class", {})),
                script::attr_enumerable | script::attr_configurable);
+
+    // --- element.blocking, HTML 2.5.7 "blocking attributes"
+    //
+    // `[SameObject, PutForwards=value] readonly attribute DOMTokenList
+    // blocking` on HTMLLinkElement, HTMLScriptElement and HTMLStyleElement -
+    // the same list as above over `blocking`, whose one supported token is
+    // `render`. An ACCESSOR rather than the readonly data property `classList`
+    // is, because a write to it has a meaning: `el.blocking = 'render'`
+    // forwards to `value` and sets the attribute, which is how
+    // `html/dom/render-blocking` marks a script-inserted element.
+    //
+    // THE ATTRIBUTE ONLY. This engine loads a stylesheet and a classic script
+    // synchronously from the asset registry while the page is being built, so
+    // every sheet and script has applied before the first frame is laid out,
+    // and there is nothing left for `render` to hold back - the ordering the
+    // attribute asks for is the only one the engine has.
+    {
+        const auto txn = doc_->read();
+        const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
+        if (txn.element_ns(id) == node_ns::html &&
+            (tag == "link" || tag == "script" || tag == "style")) {
+            const value list = value::object(make_token_list("blocking", "render"));
+            auto * reader = cx.allocate<script::native_object>(
+                "blocking", [list](context &, std::span<value>) { return list; });
+            // A capture is not a GC edge - see the note on `attributes` above.
+            reader->retained.push_back(list);
+            auto * writer = cx.allocate<script::native_object>(
+                "blocking", [list](context & c, std::span<value> a) {
+                    c.store_property(list, "value", a.empty() ? c.string("") : a[0]);
+                    return value::undefined();
+                });
+            writer->retained.push_back(list);
+            obj.define_accessor("blocking", value::object(reader), value::object(writer));
+        }
+    }
 
     // --- element.dataset
     //
