@@ -63,10 +63,25 @@ exposed ten intended historical Sub-retention promotions; their exact source
 remains, alongside ten separate mixed-Mul refusal controls. All prior fixture
 source bytes and named-function recordings remain intact.
 
-The complete monorepo build finished **241 steps without warnings**; the CTest
-gate is running. Full-suite results,
-corpus coverage and integrated execution counts are not yet measured for this
-checkpoint; the preceding section's full results remain historical evidence.
+The complete monorepo build finishes **241 steps without warnings** and passes
+**512/517 CTests in 2302.35 seconds**, including **all 372 compiler checks**.
+All **166/166 lit cases** pass in **1493.74 seconds** (CTest **1493.83**),
+including **390 native programs and 42 lifetime families**. The only failures
+are the established browser tests `selectors`, `frames`, `element_attrs`,
+`vm_async` and `early_errors`; all five failure outputs are byte-identical to
+the preceding complete gate. No compiler correction or second full run followed.
+
+All **14 frozen code/test hashes** match committed, local and devbox files.
+The artifact census verifies **1560 fresh GCC/Clang binaries and 84 sanitized
+binaries** from this run. Ten inspected explicit/deduced C++ variants retain
+real size, branch and Map operations with ordinary owners and no Script symbols;
+the three field-read witnesses retain their actual present-object lookups and
+field reads. All five positive type and four escape corpus oracles report zero
+violations. Escape precision remains **98/133** for the fixture and **0/64,
+0/16 and 0/20** for Bootstrap, p5 and Phaser, with the existing p5 partial
+unchanged. Fresh native coverage remains **19/574 Bootstrap, 39/4754 p5 and
+45/7725 Phaser** in both modes, with zero pruned; exact Bootstrap Data remains
+**0/7, 0/7 and 0/8**.
 
 **Next native boundary: known mutations after an equal-cardinality join.**
 Twelve fresh typed Node/interpreter sources and eight mutations agree. Source
@@ -90,8 +105,9 @@ Evidence: `/tmp/ctcompile-map-join-{proofs,corrected-proofs,corrected-lowering,e
 `/tmp/ctcompile-map-join-final-frozen.json`,
 `/tmp/ctcompile-after-join-size-final/`,
 `/tmp/ctcompile-after-mixed-sub-boundary.{log,rec,claims}` and
-`ctcompile/docs/escape-load-evidence.md`. Full gate:
-`/tmp/ctcompile-map-join-full.log`.
+`ctcompile/docs/escape-load-evidence.md`. Full evidence:
+`/tmp/ctcompile-map-join-full{,-detail}.log` and
+`/tmp/ctcompile-map-join-{audit,inventory,cpp-audit,devbox-hashes}.json`.
 
 ## Saved Map sizes after deletion and BigInt unary Plus, 2026-09-09
 

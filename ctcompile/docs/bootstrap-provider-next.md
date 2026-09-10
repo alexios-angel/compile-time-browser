@@ -8,7 +8,14 @@ ownership and native instance presence retain equal cardinalities without
 inventing common key membership. **4a624e9e** executes eighteen new native
 programs and the saved-join lifetime. Two historical singleton-join programs
 also now execute unchanged. Focused type/escape checks pass **9/9** and
-Map-presence lit **1/1**; the full monorepo gate is pending at this checkpoint.
+Map-presence lit **1/1**. The full warning-free build passes **all 372 compiler
+CTests** and **166/166 lit cases**, including **390 native programs and 42
+lifetime families**. Overall **512/517 CTests pass in 2302.35 seconds**; the
+five established browser failure outputs are byte-identical to the previous
+run. All fourteen code/test hashes match committed, local and devbox files.
+Native corpus coverage remains Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes; exact Data remains **0/7, 0/7 and 0/8**.
+`HANDOFF.md` records the complete measurements.
 
 The next exact source inserts a key distinct from either possible survivor:
 

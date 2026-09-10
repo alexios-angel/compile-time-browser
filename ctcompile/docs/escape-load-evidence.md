@@ -3039,3 +3039,26 @@ observed opaque actuals authorize no future category, completion or native effec
 Evidence: the matching `.log`, `.rec`, `.claims`, `-node.json` and `-audit.json`.
 All five committed subtraction code/test hashes remain unchanged; full-suite
 validation is still pending at this checkpoint.
+
+**Mixed subtraction full-gate completion, 2026-09-10.** The final devbox build
+completes **241 steps without warnings**. One complete run passes **512/517
+CTests in 2302.35 seconds**, including **all 372 compiler checks** and **166/166
+lit cases in 1493.74 seconds** (CTest **1493.83**). The five established browser
+failures (`selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`)
+have byte-identical output to the preceding complete run.
+
+All eight focused escape tests pass in that full run: arrays **0.53 seconds**,
+fixture **0.49 seconds**. Mixed Sub repeats **57 rows, 43 live states and 3328
+budget cutoffs**; the source checker confirms **12 literal sites, 21 instances,
+10 retained and three independent Errors**. All four escape oracles report
+zero violations. Fixture precision remains **98/133**, with **689 claims,
+703 observed sites and 15 unclaimed sites**, zero partials and zero pending.
+The three corpus oracle summaries match the preceding full run: precision
+**0/64, 0/16 and 0/20**, including p5's existing single partial.
+
+All fourteen final code/test hashes match frozen, local, committed and devbox
+inputs; the five escape files remain exactly **a43858ac**. The strict checker
+baseline and all **60 corruption rejections** independently match the current
+checker. Earlier failure/correction evidence and the measured next mixed-Mul
+boundary above are preserved. Evidence: `/tmp/ctcompile-mixed-sub-full-audit.json`,
+`/tmp/ctcompile-map-join-full.log` and `/tmp/ctcompile-map-join-full-detail.log`.
