@@ -261,6 +261,10 @@ void dom_bindings::install_window(context & cx) {
         ctor->set("prototype", prototype_out);
         cx.define_global(name, value::object(ctor));
     };
+    // `HTMLElement` is the one a page's class EXTENDS, so it is constructible
+    // and lives with the registry - bindings/custom_elements.cpp - and it has
+    // to exist before install_dom_interfaces builds the table around it.
+    install_custom_elements(cx);
     interface_object("HTMLCanvasElement", canvas_element_prototype_);
     interface_object("HTMLImageElement", image_element_prototype_);
     interface_object("CanvasRenderingContext2D", canvas2d_prototype_);

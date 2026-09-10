@@ -75,6 +75,9 @@ target_sources(ctbrowser-shell
     # an overlay on the cascade, and neither the element nor the computed
     # style owns "what an animation says a property is right now".
     bindings/animations.cpp
+    # customElements: the registry, the constructible HTMLElement, and the
+    # reactions - found by the same scan-from-`mutated()` the observer uses.
+    bindings/custom_elements.cpp
     # the `CSS` namespace object: CSS.supports gates every computed-value test
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp

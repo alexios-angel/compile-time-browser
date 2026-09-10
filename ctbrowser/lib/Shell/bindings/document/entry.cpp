@@ -257,6 +257,9 @@ void dom_bindings::mutated() {
     // and it must not run inside a native that is halfway through a tree edit.
     frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
+    // LAST, because it runs script - a connectedCallback may mutate again and
+    // arrive back here - and everything above it is bookkeeping.
+    react_custom_elements();
 }
 
 void dom_bindings::install_navigation(context & cx) {

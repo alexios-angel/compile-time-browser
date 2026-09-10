@@ -185,6 +185,9 @@ ctbrowser_test(unit/page_input)
 # record and about WHEN the callback runs, neither of which any other test
 # observes. See lib/Shell/bindings/mutation.cpp.
 ctbrowser_test(unit/mutation_observer)
+# customElements: define, construct, upgrade, and the reactions that run
+# before the mutating call returns. See lib/Shell/bindings/custom_elements.cpp.
+ctbrowser_test(unit/custom_elements)
 ctbrowser_test(unit/widgets_basics)
 # --- the chrome, five files since 2026-09-07 --------------------------------
 # chrome_basics was 2,299 lines. Its cases are these five, verbatim, grouped by
