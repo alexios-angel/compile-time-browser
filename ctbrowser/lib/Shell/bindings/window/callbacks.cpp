@@ -1,7 +1,7 @@
 // dom_bindings - the callback queue: what a tick runs and in what order, the
 // fault it reports, `console`, and the timers.
 
-#include "internal.hpp"
+#include <ctbrowser/shell/bindings.hpp>
 
 namespace ctbrowser::shell {
 

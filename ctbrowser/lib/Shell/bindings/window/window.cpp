@@ -1,7 +1,7 @@
 // dom_bindings - install_window: the window object, the globals it carries,
 // and the proxy that makes it the global object.
 
-#include "internal.hpp"
+#include <ctbrowser/shell/bindings.hpp>
 
 namespace ctbrowser::shell {
 
