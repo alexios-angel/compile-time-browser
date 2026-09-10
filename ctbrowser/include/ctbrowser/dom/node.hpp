@@ -160,9 +160,10 @@ struct text_block {
 
 // Shared empties, so a leaf element costs no allocation at all. Never
 // published into the epoch domain - `retire_payload` skips them.
-inline const child_list empty_children{};
-inline const attr_list empty_attributes{};
-inline const text_block empty_text{};
+template <class T> inline const T empty_payload{};
+inline const child_list & empty_children = empty_payload<child_list>;
+inline const attr_list & empty_attributes = empty_payload<attr_list>;
+inline const text_block & empty_text = empty_payload<text_block>;
 
 struct node {
     node_kind kind = node_kind::element;
@@ -201,32 +202,16 @@ struct node {
         destroy_payload(text.load(std::memory_order_relaxed));
     }
 
-    static void destroy_payload(const child_list * p) {
-        if (p != &empty_children) { delete p; }
-    }
-    static void destroy_payload(const attr_list * p) {
-        if (p != &empty_attributes) { delete p; }
-    }
-    static void destroy_payload(const text_block * p) {
-        if (p != &empty_text) { delete p; }
+    template <class T> static void destroy_payload(const T * p) {
+        if (p != &empty_payload<T>) { delete p; }
     }
 };
 
 // Hand a replaced payload block to the epoch domain. The shared empties are
 // never retired - they outlive every document.
-inline void retire_payload(epoch_domain & domain, const child_list * p) {
-    if (p == &empty_children) { return; }
-    domain.retire(const_cast<child_list *>(p),
-                  [](void * q) { delete static_cast<child_list *>(q); });
-}
-inline void retire_payload(epoch_domain & domain, const attr_list * p) {
-    if (p == &empty_attributes) { return; }
-    domain.retire(const_cast<attr_list *>(p), [](void * q) { delete static_cast<attr_list *>(q); });
-}
-inline void retire_payload(epoch_domain & domain, const text_block * p) {
-    if (p == &empty_text) { return; }
-    domain.retire(const_cast<text_block *>(p),
-                  [](void * q) { delete static_cast<text_block *>(q); });
+template <class T> void retire_payload(epoch_domain & domain, const T * p) {
+    if (p == &empty_payload<T>) { return; }
+    domain.retire(const_cast<T *>(p), [](void * q) { delete static_cast<T *>(q); });
 }
 
 } // namespace ctbrowser
