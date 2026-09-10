@@ -3264,14 +3264,14 @@ var trace = host.slot.get({});
 '''
     rows = {}
 
-    def add(name, source, calls=4, value=0, admitted=False):
+    def add(name, source, calls=4, value=0, admitted=False, functions=4):
         rows['object_argument_' + name] = dict(source=source, expected_trace=value,
-            raw_calls=calls, prepared_calls=calls, functions=4,
+            raw_calls=calls, prepared_calls=calls, functions=functions,
             admitted=admitted, owner=admitted or name == 'seeded',
             sha256=hashlib.sha256(source.encode()).hexdigest())
 
     add('exact', base, admitted=True)
-    add('seeded', base.replace('return t.has(e)', 't.set(1, 1); return t.has(e)'), 5)
+    add('seeded', base.replace('return t.has(e)', 't.set(1, 1); return t.has(e)'), 5, admitted=True)
     add('alias', base.replace('return t.has(e)', 'const alias = e; return t.has(alias)'), admitted=True)
     add('repeated', base.replace('var trace = host.slot.get({});',
                                 'host.slot.get({}); var trace = host.slot.get({});'), 5, admitted=True)
@@ -3288,7 +3288,36 @@ var trace = host.slot.get({});
     add('later_number', base.replace('var trace = host.slot.get({});',
                                     'host.slot.get({}); var trace = host.slot.get(1);'), 5)
     add('field_write', base.replace('return t.has(e)', 'e.value = 1; return t.has(e)'))
-    add('key_write', base.replace('return t.has(e)', 't.set(e, 1); return t.has(e)'), 5, 1)
+    add('key_write', base.replace('return t.has(e)', 't.set(e, 1); return t.has(e)'), 5, 1, True)
+    add('object_payload', base.replace('return t.has(e)', 't.set(e, e); return t.has(e)'), 5, 1)
+    siblings = base.replace('return { get(e) { return t.has(e) ? 1 : 0; } };', '''return {
+        get(e) { return t.has(e) ? t.get(e) : 0; },
+        set(e, value) { t.set(e, value); return t.get(e); },
+        erase(e) { return t.delete(e) ? 1 : 0; },
+        clear() { t.clear(); return 0; }
+    };''').replace('var trace = host.slot.get({});', '''{
+    const key = {}, alias = key, other = {};
+    host.slot.set(key, 7);
+    host.slot.set(alias, 9);
+    host.slot.get(other);
+    host.slot.erase(other);
+    host.slot.clear();
+    host.slot.set(key, 11);
+    var trace = host.slot.get(alias);
+}''')
+    # The current importer leaks these block-scoped consts into script globals.
+    # Re-measure this exact source after the d99ddf7b block-scope fix lands;
+    # ordinary var/global key arguments have a separate ownership boundary.
+    add('siblings_named', siblings, 15, 11, functions=7)
+    siblings = siblings.replace('    const key = {}, alias = key, other = {};\n', '')
+    for actual in ('key', 'alias', 'other'):
+        siblings = siblings.replace('(' + actual + ',', '({},').replace(
+            '(' + actual + ')', '({})')
+    add('siblings', siblings, 15, 0, True, functions=7)
+    add('sibling_mutation', siblings.replace('get(e) { return',
+        'get(e) { e.value = 1; return'), 15, 0, functions=7)
+    assert rows['object_argument_key_write']['sha256'].startswith('7381e2fb')
+    assert rows['object_argument_seeded']['sha256'].startswith('5eba229d')
     assert rows['object_argument_exact']['sha256'] == (
         '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
     assert rows['object_argument_evaluated_number']['sha256'] == (

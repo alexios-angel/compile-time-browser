@@ -1413,9 +1413,11 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
-        if name == 'object_argument_exact':
+        if name in {'object_argument_exact', 'object_argument_siblings'}:
             source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(object_argument_lifetime_cpp(cpp))
+            observer = (retained_key_lifetime_cpp if name == 'object_argument_siblings'
+                        else object_argument_lifetime_cpp)
+            source.write_text(observer(cpp))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -1469,7 +1471,7 @@ def standalone(args, output, name, value, compilers, nm):
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
                                   "joined_size_saved_lifetime", "joined_mutation_saved_lifetime",
-                                  "object_argument_exact"} else 1
+                                  "object_argument_exact", "object_argument_siblings"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1509,7 +1511,7 @@ def standalone(args, output, name, value, compilers, nm):
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name == 'object_argument_exact':
+        if name in {'object_argument_exact', 'object_argument_siblings'}:
             object_argument_lifetime(args, cpp, name, mode, compilers[1])
 
 
@@ -2710,17 +2712,22 @@ def object_argument_observer_source(source):
 def check_object_argument_calls(cpp, name, mode):
     source = object_argument_cases()[name]['source']
     entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
-    method = re.search(r'\bfn_3\([^\n]*\)\s*\{(.*?)^\}', cpp, re.M | re.S)
     arity = 2 if name == 'object_argument_two_formals' else 1
     signature = 'std::function<js_num(' + ', '.join(
         ['std::shared_ptr<ctnative::identity_object>'] * arity) + ')>'
-    if (not entry or not method or signature not in cpp or 'struct identity_object {};' not in cpp
-            or entry[1].count('ctnative::invoke_callable(') != source.count('host.slot.get(')
+    if (not entry or signature not in cpp or 'struct identity_object {};' not in cpp
+            or entry[1].count('ctnative::invoke_callable(')
+            != len(re.findall(r'host\.slot\.\w+\(', source))
             or entry[1].count('std::make_shared<ctnative::identity_object>()')
-            != source.count('{}') - 1
-            or method[1].count('ctnative::map_has(') != source.count('t.has(')
-            or method[1].count('ctnative::map_set(') != source.count('t.set(')):
-        raise RuntimeError(f'{name}/{mode}: changed live object allocation, actual or Map operations')
+            != source.count('{}') - 1):
+        raise RuntimeError(f'{name}/{mode}: changed live object allocations or callable actuals')
+    for method in ('has', 'set', 'get', 'delete', 'clear'):
+        emitted = len(re.findall(rf'ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
+        if emitted != len(re.findall(rf'\bt\.{method}\(', source)):
+            raise RuntimeError(f'{name}/{mode}: changed live Map.{method} calls')
+    if name == 'object_argument_seeded' and (
+            'std::variant<double, std::shared_ptr<ctnative::identity_object>>' not in cpp):
+        raise RuntimeError(f'{name}/{mode}: lost independent Number/Object key alternatives')
 
 
 def object_argument_lifetime_cpp(cpp):
@@ -2774,13 +2781,113 @@ int main() {
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f'{name}.{mode}.lifetime.cpp'
-    source.write_text(object_argument_lifetime_cpp(cpp))
+    observer = (retained_key_lifetime_cpp if name == 'object_argument_siblings'
+                else object_argument_lifetime_cpp)
+    source.write_text(observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
     host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
               str(source), '-o', str(binary)])
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
         env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
              'UBSAN_OPTIONS': 'halt_on_error=1'})
-    if result.returncode or result.stdout != 'trace=0\n' * 2 or result.stderr:
-        raise RuntimeError(f'{name}/{mode}: borrowed object key lifetime failed\n'
+    expected = object_argument_cases()[name]['expected_trace']
+    if result.returncode or result.stdout != f'trace={expected}\n' * 2 or result.stderr:
+        raise RuntimeError(f'{name}/{mode}: object key lifetime failed\n'
                            f'{result.returncode}: {result.stdout}{result.stderr}')
+
+
+def retained_key_observer_source(source):
+    return source + '''
+(function() {
+    const get = host.slot.get, set = host.slot.set;
+    const erase = host.slot.erase, clear = host.slot.clear;
+    clear();
+    const first = {}, alias = first, other = {};
+    const a = set(first, 7) === 7 && get(alias) === 7 && get(other) === 0;
+    const b = set(alias, 9) === 9 && get(first) === 9;
+    const c = erase(other) === 0 && get(first) === 9;
+    const d = erase(alias) === 1 && get(first) === 0 && erase(first) === 0;
+    set(first, 11);
+    const e = clear() === 0 && get(first) === 0;
+    let future = true;
+    for (let i = 0; i < 128; ++i) {
+        const key = {}, same = key;
+        if (get(key) !== 0 || set(key, i + 1) !== i + 1 ||
+            get(same) !== i + 1 || get({}) !== 0 || erase(same) !== 1 ||
+            get(key) !== 0) { future = false; }
+        set(key, i + 2);
+        clear();
+        if (get(key) !== 0) { future = false; }
+    }
+    trace = (a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) |
+            (d ? 8 : 0) | (e ? 16 : 0) | (future ? 32 : 0);
+})();
+''', 63
+
+
+def retained_key_lifetime_cpp(cpp):
+    return instrument_leaf_objects(cpp, allocations=6) + r'''
+int main() {
+    using Key = std::shared_ptr<ctnative::identity_object>;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 6) { return 210; }
+    for (std::size_t index = 0; index < 6; ++index) {
+        if (ctn_test_objects[index].expired() != (index != 4)) { return 224; }
+    }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    auto erase = table->m_erase;
+    auto clear = table->m_clear;
+    static_assert(std::is_same_v<decltype(get), std::function<js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(set), std::function<js_num(Key, js_num)>>);
+    static_assert(std::is_same_v<decltype(erase), std::function<js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(clear), std::function<js_num()>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired() || clear() != 0 ||
+        !ctn_test_objects[4].expired()) { return 211; }
+    auto other = std::make_shared<ctnative::identity_object>();
+    for (int call = 0; call < 128; ++call) {
+        auto key = std::make_shared<ctnative::identity_object>();
+        auto alias = key;
+        std::weak_ptr key_lifetime = key;
+        const auto value = static_cast<js_num>(call + 1);
+        if (get(key) != 0 || set(key, value) != value || get(alias) != value ||
+            get(other) != 0 || erase(other) != 0) { return 212; }
+        key.reset();
+        if (set(alias, value + 1) != value + 1 || get(alias) != value + 1) { return 213; }
+        alias.reset();
+        if (key_lifetime.expired()) { return 214; }
+        key = key_lifetime.lock();
+        if (get(key) != value + 1 || erase(key) != 1 || get(key) != 0 ||
+            erase(key) != 0) { return 215; }
+        key.reset();
+        if (!key_lifetime.expired()) { return 216; }
+        key = std::make_shared<ctnative::identity_object>();
+        key_lifetime = key;
+        if (set(key, value) != value) { return 217; }
+        key.reset();
+        if (key_lifetime.expired() || clear() != 0 || !key_lifetime.expired()) { return 218; }
+    }
+    std::weak_ptr key_lifetime = other;
+    if (set(other, 7) != 7 || ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other) != 7 ||
+        g_host->slot->m_get(other) != 0) { return 219; }
+    other.reset();
+    set = {}; erase = {}; clear = {};
+    if (key_lifetime.expired() || ctn_test_maps[0].expired()) { return 220; }
+    get = {};
+    if (!key_lifetime.expired() || !ctn_test_maps[0].expired() ||
+        ctn_test_maps[1].expired()) { return 221; }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired()) { return 222; }
+    for (const auto & key : ctn_test_objects) {
+        if (!key.expired()) { return 223; }
+    }
+    return 0;
+}
+'''

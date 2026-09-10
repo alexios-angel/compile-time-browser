@@ -394,11 +394,19 @@
 # Fresh empty entry objects cross the published Map.has argument boundary with
 # their original allocations and exact t.has(e) calls. Local aliases, repeated
 # actuals and two object formals retain concrete owning C++ identity signatures.
-# Field-bearing/named/root/table/array arguments, mixed future tags, discarded
-# allocations and mutating object uses still refuse; the numeric-seeded source
-# has an independent complete owner but retains its mixed Map-key carrier refusal.
+# Field-bearing/global/root/table/array arguments, mixed future tags, discarded
+# allocations and mutating object fields still refuse; the numeric-seeded source
+# independently owns its closed Number/Object Map-key carrier.
 # Fresh/stale forged reports, reruns and bounded proofs preserve each source.
 # Typed Node/interpreter observations and seven mutations distinguish same,
 # alias and distinct future keys, deletion and clear. Saved native getters keep
 # their Map after root/table release, borrow caller-owned keys over 128 rounds,
 # and release each key and final Map after reentry under ASan/UBSan/leak checks.
+
+# Exact7381e2fb stores the borrowed object's identity as an owning Map key.
+# Same-family get/set/delete/clear siblings preserve alias and distinct keys;
+# actual stored Numbers, overwrite and deletion remain runtime operations.
+# Saved siblings keep keys alive after every caller alias is released, then
+# delete/clear and final Map destruction release them. Both output forms run
+# 128 future rounds, independent reentry and owner/table release under sanitizers.
+# Object payloads and later key mutations remain independent ownership refusals.

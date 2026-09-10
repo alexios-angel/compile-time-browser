@@ -55,7 +55,7 @@ from .harness import (
     LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
     NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source, string_field_observer_source,
     zero_size_observer_source, one_size_observer_source, delete_size_observer_source,
-    object_argument_observer_source,
+    object_argument_observer_source, retained_key_observer_source,
 )
 
 
@@ -322,7 +322,8 @@ def check_leaf_object_observations(args, node, reference):
 def check_leaf_object_forgeries(args, saved, names=None):
     for name in names or ("leaf_object_plain", "leaf_object_scalar_writes", "leaf_object_lifetime"):
         ir, config, output = saved[name]
-        functions = 4 if name in object_argument_sources() else LEAF_OBJECT_FUNCTIONS.get(name, 5)
+        functions = (object_argument_cases()[name]['functions'] if name in object_argument_sources()
+                     else LEAF_OBJECT_FUNCTIONS.get(name, 5))
         expected_cpp = comparable_provenance(
             host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
@@ -1687,7 +1688,8 @@ def main():
         raise RuntimeError("nullable host result: saved payload lifetime cannot distinguish deletion")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
-        functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
+        functions = (object_argument_cases()[name]['functions'] if name in object_argument_sources()
+                     else LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      or name in constant_global_sources()
@@ -2456,9 +2458,10 @@ def main():
           "exact repairs, fresh/stale forgeries and future key/flag observations; "
           "one saved-two mutation lifetime runs 128 future calls through final Map/leaf release; "
           f"{len(object_argument_sources())} fresh empty-object argument programs preserve t.has(e); "
-          "ten argument/effect refusals and the separate complete-owner mixed-key refusal remain; "
+          f"{len(object_argument_cases()) - len(object_argument_sources())} argument/effect/carrier refusals remain; "
           "saved object-key getters distinguish same/alias/distinct keys over 128 future rounds, "
-          "release borrowed arguments and survive root/table release, reentry and final Map/key release; "
+          "release borrowed arguments; saved siblings retain keys across caller release, overwrite, delete, "
+          "clear, reentry and final Map/key release; "
           f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
           "six field refusal/repair families and six emitted field-tag controls remain independent; "
           "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
@@ -3370,7 +3373,26 @@ def check_object_argument_observations(args, node, reference):
                                 capture_output=True, text=True, timeout=30)
         if not result.returncode and result.stdout == expected:
             raise RuntimeError(f'object argument observer cannot distinguish {replacement}')
-    return dict(sources=len(cases), observations=len(cases) + 1, mutations=len(mutations))
+    retained, value = retained_key_observer_source(cases['object_argument_siblings']['source'])
+    expected = observe('retained_key_future', retained, value)
+    retained_mutations = (
+        ('t.set(e, value);', 't.has(e);'),
+        ('t.get(e) : 0;', '0 : 0;'),
+        ('t.delete(e)', 't.has(e)'),
+        ('clear() { t.clear();', 'clear() { t.size;'),
+        ('alias = first', 'alias = {}'),
+        ('get(other) === 0', 'get(first) === 0'),
+    )
+    for index, (old, replacement) in enumerate(retained_mutations):
+        assert retained.count(old) == 1, old
+        js = args.work / f'retained-key-blinded-{index}.js'
+        js.write_text(retained.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected:
+            raise RuntimeError(f'retained-key observer cannot distinguish {replacement}')
+    return dict(sources=len(cases), observations=len(cases) + 2,
+                mutations=len(mutations) + len(retained_mutations))
 
 
 def check_object_argument_census(args, ir, name):
@@ -3418,18 +3440,21 @@ def check_object_argument_controls(args, saved):
     for name in object_argument_sources():
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + '-rerun', config, cleanup=False)
-        text = methods.census(rerun, 4, name, admitted=4)
+        functions = object_argument_cases()[name]['functions']
+        text = methods.census(rerun, functions, name, admitted=functions)
         if 'ctnative.host_owner_proved = false' not in text or 'fingerprint mismatch' not in text:
             raise RuntimeError(f'{name}: emitted object signature reused original source authority')
     ir, config, _ = saved['object_argument_exact']
     check_budgets(args, ir, config, 'object_argument_exact', functions=4)
+    ir, config, _ = saved['object_argument_key_write']
+    check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
     for name, row in object_argument_cases().items():
         if row['admitted']:
             continue
         _, ir, count = boundary.prepare(args, name, row['source'])
         check_object_argument_census(args, ir, name)
-        if count != 4:
-            raise RuntimeError(f'{name}: changed the four-function source chain')
+        if count != row['functions']:
+            raise RuntimeError(f'{name}: changed the exact source function count')
         config = contract(args, ir, name)
         for mode, options in (('default', ''), ('disabled', 'optimize=false')):
             label = name + '-' + mode
@@ -3437,7 +3462,7 @@ def check_object_argument_controls(args, saved):
             def reject(input_ir, current, current_config):
                 output = owned.lower(args, input_ir, current, current_config,
                                      options=options, cleanup=False)
-                text = methods.census(output, 4, current, admitted=0)
+                text = methods.census(output, row['functions'], current, admitted=0)
                 if 'ctnative.host_owner_proved = ' + str(row['owner']).lower() not in text:
                     raise RuntimeError(f'{current}: changed independent object argument ownership')
                 if row['owner']:
