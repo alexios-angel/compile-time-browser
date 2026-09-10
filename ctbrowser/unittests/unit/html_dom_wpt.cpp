@@ -74,6 +74,25 @@ void test_nonce_is_a_slot_in_front_of_the_attribute() {
        "c");
 }
 
+void test_the_rows_the_element_tables_name_are_all_there() {
+    // elements-grouping.js, -embedded.js and -forms.js name four rows the
+    // table lacked; `button.value` is the one with a trap, because a button is
+    // a control here and a control's own `value` accessor shadowed the row.
+    is("(function () { var b = document.createElement('button');"
+       " b.setAttribute('value', 'v'); var was = b.value; b.value = 'w';"
+       " return was + ',' + b.getAttribute('value'); })()",
+       "v,w");
+    is("(function () { var h = document.createElement('hr'); h.width = 7;"
+       " return typeof h.width + ':' + h.getAttribute('width'); })()",
+       "string:7");
+    is("(function () { var p = document.createElement('pre'); p.setAttribute('width', ' 12x');"
+       " return typeof p.width + ':' + p.width; })()",
+       "number:12");
+    is("(function () { var o = document.createElement('object');"
+       " o.data = 'http://site.example/x'; return o.data; })()",
+       "http://site.example/x");
+}
+
 // --- HTMLHyperlinkElementUtils ----------------------------------------------
 
 void test_an_anchor_reports_the_parts_of_its_url() {
@@ -175,6 +194,7 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
 int main() {
     test_legacy_null_to_empty_string_rows_write_nothing_for_null();
     test_nonce_is_a_slot_in_front_of_the_attribute();
+    test_the_rows_the_element_tables_name_are_all_there();
     test_an_anchor_reports_the_parts_of_its_url();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
