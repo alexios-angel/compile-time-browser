@@ -480,8 +480,12 @@ struct ArrayContentsEvidence {
 /// accept independently proved BigInt origins and record their independent
 /// BigInt result in a separately charged per-path category set. Chained results
 /// and exact saved/forwarded origins retain that category; downstream non-BigInt
-/// operations must exclude it. Plus's BigInt TypeError remains refused.
-/// Neither unary BigInt operation carries an input object identity or runs user
+/// operations must exclude it. Plus separately accepts a proved original BigInt:
+/// to_number_value raises an independent TypeError before object lookup or user
+/// conversion. That Error has no edge to the input or unpublished fresh locals.
+/// The VM's independent Number result carrier does not imply successful completion;
+/// every structural continuation is still checked, including later publication.
+/// None of these unary operations carries an input object identity or runs user
 /// conversion; VM allocation and C++ temporary allocation success remain unproved.
 /// Neg/Plus still have a catchable recursion-depth guard: its unrelated Error
 /// cannot retain unpublished fresh locals from this call/handler-free subset.

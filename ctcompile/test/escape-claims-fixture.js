@@ -1651,6 +1651,57 @@ function objectFrameBigIntPowRetained(choice) {
 H.push(objectFrameBigIntPowRetained(false));
 H.push(objectFrameBigIntPowRetained(true));
 
+// --- PROVED BIGINT PLUS ERRORS: independent payload, original categories -----
+// Preserve the three measured continuation bodies verbatim. The opaque case
+// must remain conservative even when its observed actuals are Number/BigInt.
+function primitivePlusEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 1n : 1;
+    var numeric = +input;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+function primitivePlusRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var input = choice ? 1n : 1;
+    var numeric = +input;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved, numeric: numeric };
+}
+function primitivePlusOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var numeric = +input;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+var primitivePlusNormal = primitivePlusEarly(false);
+var primitivePlusSaved = primitivePlusRetained(false);
+var primitivePlusUnknown = primitivePlusOpaque(1);
+H.push(primitivePlusNormal); H.push(primitivePlusSaved); H.push(primitivePlusUnknown);
+function primitivePlusCatch(fn, input) {
+    try { return fn(input); }
+    catch (error) { H.push(error); return error; }
+}
+var primitivePlusError = primitivePlusCatch(primitivePlusEarly, true);
+var primitivePlusSavedError = primitivePlusCatch(primitivePlusRetained, true);
+var primitivePlusUnknownError = primitivePlusCatch(primitivePlusOpaque, 1n);
+var primitivePlusTrace = 0;
+if (primitivePlusNormal.numeric === 1 && primitivePlusNormal.source.held === void 0 &&
+    primitivePlusNormal.target.held === void 0) primitivePlusTrace += 1;
+if (primitivePlusError instanceof TypeError && primitivePlusError.name === "TypeError") primitivePlusTrace += 2;
+if (primitivePlusSaved.numeric === 1 && primitivePlusSaved.saved.id === 1 &&
+    primitivePlusSaved.source.held === void 0 && primitivePlusSaved.target.held === void 0) primitivePlusTrace += 4;
+if (primitivePlusSavedError instanceof TypeError && primitivePlusSavedError !== primitivePlusError) primitivePlusTrace += 8;
+if (primitivePlusUnknown.numeric === 1) primitivePlusTrace += 16;
+if (primitivePlusUnknownError instanceof TypeError && primitivePlusUnknownError !== primitivePlusError &&
+    primitivePlusUnknownError !== primitivePlusSavedError &&
+    typeof primitivePlusError.message === "string" &&
+    typeof primitivePlusSavedError.stack === "string") primitivePlusTrace += 32;
+if (primitivePlusTrace !== 63) throw "BigInt unary Plus independent TypeError witness";
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

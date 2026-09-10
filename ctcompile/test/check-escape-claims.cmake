@@ -217,6 +217,12 @@ if(STRICT)
   set(_object_bigint_divmod_rows "")
   set(_object_bigint_divmod_error_rows "")
   set(_object_bigint_divmod_literal_pcs "")
+  set(_primitive_plus_rows "")
+  set(_primitive_plus_error_rows "")
+  set(_primitive_plus_literal_pcs "")
+  set(_primitive_plus_error_pc_Early "24")
+  set(_primitive_plus_error_pc_Retained "28")
+  set(_primitive_plus_error_pc_Opaque "17")
   set(_object_bigint_pow_rows "")
   set(_object_bigint_pow_error_rows "")
   set(_object_bigint_pow_literal_pcs "")
@@ -260,6 +266,9 @@ if(STRICT)
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "primitivePlusEarly 8c223906ec365dd8ab5a06b8168b17a93cdf81c42afa5803fa82fc24d18afaaa"
+      "primitivePlusRetained 75e3e72fa61e33182913ec9022bbc84f138f9070cce3712753ebe1e99742398b"
+      "primitivePlusOpaque 2dacd3acb40ee8863d417f927b47db976dce0253a6adf5a0eb8b06778573928b"
       "objectFrameStringBigIntSaved aec68c23e5f9bf8bfa9e5ab52c5ede7b1b8c9822da89811035d45d1ac3a6369e"
       "objectFrameStringBigIntPaths 2dc79c09d7cbc6a9d8e5d065665b77ff0eb33085c3c4fd9955a5e54ddb8168ff"
       "objectFrameStringBigIntTemplate cb31d3c6a5118ab6b13b36d6808ea45026d20cac641034055c7f28c0df0c3ea5"
@@ -454,6 +463,38 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_add_concat_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^primitivePlus(Early|Retained|Opaque)$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Plus source allocation: ${_line}")
+      endif()
+      list(APPEND _primitive_plus_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^primitivePlus(Early|Retained|Opaque)$" AND _line MATCHES "^site ")
+      string(REGEX REPLACE "^primitivePlus" "" _plus_suffix "${_function_name}")
+      set(_plus_error_pc "${_primitive_plus_error_pc_${_plus_suffix}}")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Plus observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(_pc STREQUAL _plus_error_pc)
+        if(NOT _line STREQUAL "site ${_plus_error_pc} kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes thrown:1")
+          message(FATAL_ERROR "${_function_name}: the independent Plus Error was not retained through unwinding: ${_line}")
+        endif()
+        if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_plus_error_pc} [^\n]+")
+          message(FATAL_ERROR "${_function_name}: the implicit Plus Error acquired a source allocation claim")
+        endif()
+        list(APPEND _primitive_plus_error_rows "${_row} pc${_pc} unclaimed")
+      else()
+        string(REGEX MATCHALL "escape ${_program_hash} ${_function_index} ${_pc} obj [^\n]+" _plus_claims "${_claim_text}")
+        list(LENGTH _plus_claims _plus_claim_count)
+        if(NOT _plus_claim_count EQUAL 1)
+          message(FATAL_ERROR "${_function_name}: missing or duplicate BigInt Plus claim at pc ${_pc}")
+        endif()
+        if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+          message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+        endif()
+        list(APPEND _primitive_plus_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
+      endif()
     elseif(_function_name MATCHES "^objectFrameBigIntMixed(Saved|Primitives|Paths|Numbers|Opaque|Object|Retained|Strings)$" AND _line MATCHES "^alloc ")
       if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
         message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt comparison source allocation: ${_line}")
@@ -1464,6 +1505,57 @@ if(STRICT)
     message(FATAL_ERROR "imported BigInt Pow evidence mismatch:\nexpected: ${_expected_object_bigint_pow_rows}\nobserved: ${_object_bigint_pow_rows}")
   endif()
   message(STATUS "imported BigInt Pow: twenty-eight literal sites, sixty instances, thirty-eight retained; live claims agree")
+  # Separate source literals from independent thrown Errors, including the
+  # opaque actuals whose observed TypeError never proves their future category.
+  set(_expected_primitive_plus_literal_pcs
+      "primitivePlusEarly 5"
+      "primitivePlusEarly 9"
+      "primitivePlusEarly 13"
+      "primitivePlusEarly 32"
+      "primitivePlusRetained 6"
+      "primitivePlusRetained 10"
+      "primitivePlusRetained 14"
+      "primitivePlusRetained 36"
+      "primitivePlusOpaque 4"
+      "primitivePlusOpaque 8"
+      "primitivePlusOpaque 12"
+      "primitivePlusOpaque 25"
+  )
+  list(SORT _expected_primitive_plus_literal_pcs)
+  list(SORT _primitive_plus_literal_pcs)
+  if(NOT _primitive_plus_literal_pcs STREQUAL _expected_primitive_plus_literal_pcs)
+    message(FATAL_ERROR "BigInt Plus literal_pcs mismatch:\nexpected: ${_expected_primitive_plus_literal_pcs}\nobserved: ${_primitive_plus_literal_pcs}")
+  endif()
+  set(_expected_primitive_plus_rows
+      "primitivePlusEarly 2 2 0 0 0 - confined pc5"
+      "primitivePlusEarly 2 1 1 0 0 temporaries:1 escapes:stored pc9"
+      "primitivePlusEarly 2 1 1 0 0 temporaries:1 escapes:stored pc13"
+      "primitivePlusEarly 1 0 1 0 0 temporaries:1 escapes:returned pc32"
+      "primitivePlusRetained 2 1 1 0 0 temporaries:1 escapes:stored pc6"
+      "primitivePlusRetained 2 1 1 0 0 temporaries:1 escapes:stored pc10"
+      "primitivePlusRetained 2 1 1 0 0 temporaries:1 escapes:stored pc14"
+      "primitivePlusRetained 1 0 1 0 0 temporaries:1 escapes:returned pc36"
+      "primitivePlusOpaque 2 2 0 0 0 - escapes:stored pc4"
+      "primitivePlusOpaque 2 1 1 0 0 temporaries:1 escapes:stored pc8"
+      "primitivePlusOpaque 2 1 1 0 0 temporaries:1 escapes:stored pc12"
+      "primitivePlusOpaque 1 0 1 0 0 temporaries:1 escapes:returned pc25"
+  )
+  list(SORT _expected_primitive_plus_rows)
+  list(SORT _primitive_plus_rows)
+  if(NOT _primitive_plus_rows STREQUAL _expected_primitive_plus_rows)
+    message(FATAL_ERROR "BigInt Plus rows mismatch:\nexpected: ${_expected_primitive_plus_rows}\nobserved: ${_primitive_plus_rows}")
+  endif()
+  set(_expected_primitive_plus_error_rows
+      "primitivePlusEarly 1 0 1 0 0 thrown:1 pc24 unclaimed"
+      "primitivePlusRetained 1 0 1 0 0 thrown:1 pc28 unclaimed"
+      "primitivePlusOpaque 1 0 1 0 0 thrown:1 pc17 unclaimed"
+  )
+  list(SORT _expected_primitive_plus_error_rows)
+  list(SORT _primitive_plus_error_rows)
+  if(NOT _primitive_plus_error_rows STREQUAL _expected_primitive_plus_error_rows)
+    message(FATAL_ERROR "BigInt Plus error_rows mismatch:\nexpected: ${_expected_primitive_plus_error_rows}\nobserved: ${_primitive_plus_error_rows}")
+  endif()
+  message(STATUS "imported BigInt Plus: twelve literal sites, twenty-one instances, ten retained; three independent Errors and live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

@@ -1098,8 +1098,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::UnaryKind::Plus:
                 case ctjs::UnaryKind::BitNot: {
                     const mlir::Value input = origin(unary.getOperand());
-                    if (input && unary.getKind() != ctjs::UnaryKind::Plus &&
-                        bigIntOrigin(input, state.bigIntOrigins)) {
+                    if (input && bigIntOrigin(input, state.bigIntOrigins)) {
+                        if (unary.getKind() == ctjs::UnaryKind::Plus) {
+                            // to_number_value rejects BigInt before any lookup
+                            // or user conversion. Its TypeError (or depth-guard
+                            // Error) has no input/local object edge. The entire
+                            // frame still excludes calls, handlers and publication.
+                            // Keep the independent Number carrier used by the VM
+                            // and inspect EVERY structural continuation; neither
+                            // successful completion nor dead code follows here.
+                            break;
+                        }
                         // negate_value/bit_not_value allocate independent BigInt
                         // digits before any conversion or user callback. Record
                         // the actual category, never a Number or concrete value.
