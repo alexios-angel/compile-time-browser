@@ -764,11 +764,13 @@ public:
     // not known until the loop is finished being compiled, so each records its
     // jump site here and the loop patches them on the way out.
     //
-    // `label` is what makes `break outer;` reach past an inner loop - without
+    // `labels` is what makes `break outer;` reach past an inner loop - without
     // it, a labeled break silently becomes an ordinary one and leaves the wrong
-    // loop.
+    // loop. It is a list because `a: b: for (;;)` names ONE loop twice: every
+    // label in a chain is a break and continue target of the statement it ends
+    // on (ECMA-262 14.13).
     struct loop_context {
-        std::string label;
+        std::vector<std::string> labels;
         std::vector<std::size_t> breaks;
         std::vector<std::size_t> continues;
         std::size_t handler_depth = 0; // try blocks open when the loop started
@@ -882,7 +884,7 @@ public:
 
     void compile_throw(const vp::node & n);
 
-    [[nodiscard]] std::string take_label();
+    [[nodiscard]] std::vector<std::string> take_labels();
 
     // Falling off the end of an async function still owes the caller a promise.
     void emit_implicit_return();
@@ -1117,7 +1119,7 @@ public:
     boost::unordered_flat_map<std::string, std::vector<std::int32_t>, sv_hash, std::equal_to<>>
         mentions_;
     std::vector<loop_context> loops_;
-    std::string pending_label_;
+    std::vector<std::string> pending_labels_;
     // The short-circuit jumps of the optional chain being compiled, and
     // whether one is open - see compile_chain.
     std::vector<std::size_t> optional_exits_;
