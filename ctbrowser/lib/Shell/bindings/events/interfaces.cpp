@@ -709,6 +709,12 @@ void dom_bindings::install_event_interfaces(context & cx) {
     target_proto->define("constructor", value::object(target_ctor), script::attr_builtin);
     cx.define_global("EventTarget", value::object(target_ctor));
     event_target_prototype_ = target_prototype;
+    // THE FENCE HANGS OFF THE EventTarget CONSTRUCTOR, which is the one object
+    // in this file that is reachable from a root the collector already walks:
+    // `event_target_prototype_` is marked by register_roots and names its
+    // constructor, and `retained` is how a native says "these are mine" - see
+    // native_object::retained. A `value` in a C++ member is not a root.
+    install_listener_fence(cx, *target_ctor);
 
     // `window.dispatchEvent`. The window is the LAST stop on every path, so
     // dispatching AT it runs only the window's own listeners - which is what the

@@ -1233,8 +1233,11 @@ private:
 
     void fire_at(path_step step, std::string_view type, value event, bool capturing);
 
-    // `onclick`, `onload` - the handler PROPERTY, run after the listeners.
-    void fire_handler_property(value target, std::string_view type, value event);
+    // `onclick`, `onload` - the handler PROPERTY, run after the listeners. True
+    // when it threw, with the thrown value written through `thrown` if a caller
+    // asked for it; a caller that does not is one with nowhere to report to.
+    bool fire_handler_property(value target, std::string_view type, value event,
+                               value * thrown = nullptr);
     [[nodiscard]] value value_of_wrapper(node_id id) const;
 
     // --- lookups ----------------------------------------------------------
@@ -1513,6 +1516,51 @@ private:
     std::vector<value> animation_callbacks_;
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
+
+    // --- the listener fence ---
+    //
+    // THE FENCE EVERY LISTENER IS CALLED BEHIND, and it is a JavaScript
+    // function rather than a C++ try because the exception it has to stop is
+    // not a C++ one.
+    //
+    // `context::throw_error` unwinds to the innermost live `try` ANYWHERE
+    // below it on the stack - `handlers_` is one list for the whole VM - so a
+    // listener that threw did not stop at `dispatchEvent`: it landed in
+    // whatever `try` the page happened to be inside, which for the suite is
+    // testharness's own wrapper around `test(...)`. That is why
+    // Event-dispatch-throwing.html reported the LISTENER's error as the test's
+    // result, why the second of two listeners never ran, and why nothing was
+    // ever reported to `window.onerror`. The DOM says the opposite: "if this
+    // throws an exception, then report the exception" - the dispatch continues
+    // and the page is told through an `error` event.
+    //
+    // A `try` INSIDE the callee is the only thing the VM's unwinder stops at,
+    // so the fence is
+    //
+    //     function (invoke, callback, receiver, args) {
+    //         try { ...call it... } catch (e) { return [e]; }
+    //         return null;
+    //     }
+    //
+    // compiled once per page. It is also where WebIDL's "call a user object's
+    // operation" lives, because both halves of that algorithm can throw and
+    // both have to be INSIDE the fence: the `handleEvent` Get - which a page
+    // may make an accessor - and the TypeError for a listener object whose
+    // `handleEvent` is not callable.
+    value listener_fence_;
+    // The native the fence calls back into: `invoke(fn, receiver, args)`, where
+    // `args` is one value or an array of them. Kept because the window's
+    // `onerror` takes five positional arguments rather than the event.
+    value listener_invoke_;
+    // Build both, once. Called from install_event_interfaces; a compile failure
+    // leaves them undefined and the unfenced C++ path stands in.
+    void install_listener_fence(context & cx, script::native_object & keeper);
+    // Call one listener - a function, or an object with a `handleEvent` - with
+    // `this` bound to `receiver`. True when it threw, with the thrown value in
+    // `thrown`; a VM fault that was never an exception reports false and leaves
+    // `context::failed()` set, as it always did.
+    [[nodiscard]] bool invoke_listener(context & cx, value callback, value receiver, value args,
+                                       value & thrown);
 
     // --- shadow DOM workstream ---
     //
