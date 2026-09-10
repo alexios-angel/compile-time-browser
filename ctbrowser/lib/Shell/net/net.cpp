@@ -1,25 +1,5 @@
-// HTTP over libcurl - the transport behind shell/net/net.hpp.
-//
-// WHY libcurl AND NOT THE ASIO IT REPLACES. Asio is a socket; everything above
-// it - the request line, header folding, chunked decoding, redirects - was
-// hand-written here, and that is the half a browser keeps needing more of.
-//
-// AND WHY NOT POCO, which was written first and does cross-compile (that work
-// is in git history). Two reasons that are about capability rather than taste:
-//
-//   * TLS ON WINDOWS FOR FREE. libcurl uses Schannel, the operating system's
-//     own TLS stack, so https:// on the Windows build needs NO OpenSSL
-//     cross-build. The Windows preset ships with CTBROWSER_WITH_TLS=0 today -
-//     no https at all - and POCO's NetSSL would have meant cross-building
-//     OpenSSL to change that.
-//   * IT ALREADY DOES THE REST. HTTP/2, brotli and zstd content encodings,
-//     HSTS, alt-svc, IDN. Content-Encoding is on the plan and comes free here,
-//     which also retires the zlib work it was going to need.
-//
-// What POCO had over it is a mature WebSocket; libcurl's is still experimental.
-// If WebSocket becomes a real requirement that is the reason to revisit, and
-// the interface in net.hpp is what makes revisiting cheap - both are peers
-// behind one `http_get()`, selected in lib/Shell/CMakeLists.txt.
+// HTTP over libcurl - the transport behind shell/net/net.hpp. Why libcurl
+// rather than Asio or POCO is in docs/build.md.
 //
 // NOTHING libcurl REACHES net.hpp. The public header declares plain structs and
 // two functions; every CURL type lives in this file, the same rule url.cpp

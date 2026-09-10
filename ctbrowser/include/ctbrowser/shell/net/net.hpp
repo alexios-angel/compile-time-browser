@@ -4,29 +4,15 @@
 #include <string_view>
 #include <vector>
 
-// HTTP over libcurl. It used to be a hand-written client on Boost.Asio, and
-// that is gone rather than kept as a fallback: Asio is a socket, and the
-// request line, header folding, chunked decoding and redirects above it all had
-// to be maintained here. curl also brings TLS - Schannel on Windows - which is
-// how the cross build has https:// with no OpenSSL. See docs/build.md.
+// HTTP over libcurl, which also brings TLS - Schannel on Windows - so the
+// cross build has https:// with no OpenSSL. See docs/build.md.
 //
-// SYNCHRONOUS, on purpose. Promises in this VM are settled when they are made,
-// so `await fetch(url)` has to have the bytes by the time fetch returns; there
-// is no suspended frame to resume. A request therefore BLOCKS the frame it is
-// made in, which is why the timeout is short by default and why the asset
-// registry is consulted first - a page that bakes its resources in never waits.
-// A real event loop with pending promises would fix this properly and is a
-// bigger change than this stage.
+// SYNCHRONOUS: a request BLOCKS the frame it is made in, which is why the
+// timeout is short by default and why the asset registry is consulted first -
+// a page that bakes its resources in never waits.
 //
-// HTTPS needs OpenSSL, which is NOT part of Boost and is optional: without it
-// the build still does http:// and rejects https:// by name rather than
-// silently failing to connect.
-
-// NOTHING third-party is included above. Asio's headers are ~1 MB of C++ and a
-// module's global module fragment is SERIALIZED INTO ITS BMI, so including
-// them here made ctbrowser.shell-net.pcm 27 MB and every translation unit that
-// imported the browser paid to deserialize all of it. They live in net.cpp now,
-// where they are compiled once and reach nobody.
+// NOTHING third-party is included above: curl.h lives in net.cpp and reaches
+// nobody.
 
 namespace ctbrowser::shell {
 

@@ -4,30 +4,22 @@
 #include <string_view>
 #include <vector>
 
-// URLs, parsed in ONE place.
+// URLs, parsed in ONE place, for the HTTP client and for `location.*` alike -
+// two parsers for one job drift apart, and nothing can compare them.
 //
-// There used to be two parsers: `detail::parse_url` in net.cpp for the HTTP
-// client and `split_url` in bindings.cpp for `location.*`. Written separately,
-// they drifted, and one of them was wrong - `split_url` reached for the last
-// colon in the authority with no bracket guard, so `http://[::1]/` gave hostname
-// `[:` and port `1]`. Nothing compared them, because nothing could.
-//
-// NOTHING THIRD-PARTY IS INCLUDED ABOVE, and that is the same rule net.hpp
-// states for Asio. `boost/url/` is 1.2 MB of headers; every consumer of the
-// engine would parse it to get three structs. Boost.URL lives in url.cpp and
-// reaches nobody.
+// NOTHING THIRD-PARTY IS INCLUDED ABOVE. `boost/url/` is 1.2 MB of headers;
+// Boost.URL lives in url.cpp and reaches nobody.
 //
 // WHY BOOST AT ALL. RFC 3986 is not hard to get roughly right and is very hard
 // to get exactly right - dot segments, IPv6 literals, percent-encoding, scheme
-// and host case, and relative resolution - and the two parsers between them had
-// none of it. Boost.URL is compiled-only (its `src.hpp` is discontinued
-// upstream), which is why this engine now links a Boost library at all.
+// and host case, and relative resolution. Boost.URL is compiled-only (its
+// `src.hpp` is discontinued upstream), which is why this engine links a Boost
+// library at all.
 //
 // LENIENT, LIKE THE REST OF THIS TREE. Boost.URL is a strict parser and refuses
-// a raw space or a UTF-8 byte in a path. A browser accepts both, and so did the
-// two parsers replaced here, so the implementation percent-encodes what RFC 3986
-// disallows before parsing rather than handing pages a stricter engine than they
-// were written for. ctcss and ctjs are documented lenient parsers; this matches.
+// a raw space or a UTF-8 byte in a path. A browser accepts both, so the
+// implementation percent-encodes what RFC 3986 disallows before parsing rather
+// than handing pages a stricter engine than they were written for.
 
 namespace ctbrowser::shell {
 
@@ -44,9 +36,8 @@ struct fetch_url {
     std::string target = "/"; // path and query, NEVER the fragment
     // WHAT GOES IN THE `Host:` HEADER, which is NOT `host` above. An IPv6
     // literal has to be bracketed there - `Host: [::1]:8080` - or the server
-    // reads the address's own colons as the port separator, which is the same
-    // mistake the old bindings.cpp parser made in the other direction. The port
-    // is included only when it is not the scheme's default, as the RFC asks.
+    // reads the address's own colons as the port separator. The port is
+    // included only when it is not the scheme's default, as the RFC asks.
     std::string authority;
     bool valid = false;
 };
@@ -77,21 +68,12 @@ struct location_url {
 // Resolve a reference against a base - `../c`, `/abs`, `//other/x`, `?q=2`, or
 // an absolute URL that ignores the base entirely.
 //
-// THE CAPABILITY NEITHER OLD PARSER HAD, which is why `new URL(href, base)` did
-// not exist and why relative asset paths were resolved by string surgery
-// elsewhere. Returns the reference unchanged if the base is unparseable, which
-// is the lenient answer rather than an empty string that loses information.
+// Returns the reference unchanged if the base is unparseable, which is the
+// lenient answer rather than an empty string that loses information.
 [[nodiscard]] std::string resolve(std::string_view base, std::string_view reference);
 
 // A `data:` URL carries its own bytes, so it is a resource that needs no
 // transport at all.
-//
-// THE ENGINE COULD WRITE THESE LONG BEFORE IT COULD READ THEM - `toDataURL` and
-// FileReader both produce one - and nothing noticed, because a hand-written page
-// that makes a data URL hands it straight back to the same page. A LIBRARY ships
-// its own images inside itself: Phaser's texture manager loads three base64 PNGs
-// during boot and waits for all three, so every one of them failing left it
-// waiting forever with no error anyone could see.
 //
 // Parsed here rather than at each consumer because every one of them - an <img>
 // src, `fetch`, a CSS `url()`, a <script> - resolves through asset_registry,
