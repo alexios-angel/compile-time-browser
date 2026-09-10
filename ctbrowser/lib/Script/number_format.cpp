@@ -97,24 +97,11 @@ void append_exponent(std::string & text, int exponent) {
     return false;
 }
 
-// IS `magnitude * 10^places` EXACTLY A HALF-INTEGER?
-//
-// This is the whole of the disagreement between `toFixed` and correctly-rounded
-// conversion. The specification picks the LARGER n when two are equally close,
-// so a tie rounds away from zero; `std::to_chars` is correctly rounded, which
-// means a tie goes to even. They differ on `(0.5).toFixed(0)` ("1" against
-// "0"), `(8.5).toFixed(0)` ("9" against "8"), `(0.25).toFixed(1)` ("0.3"
-// against "0.2") and every other exactly-halfway value.
-//
-// It is decidable exactly, and cheaply. Write the magnitude as m * 2^e with m
-// ODD - every finite double has exactly one such form. Then
-//
-//     magnitude * 10^places == m * 5^places * 2^(e + places)
-//
-// and 5^places is odd, so the product is an integer when e + places >= 0 and a
-// half-integer when e + places == -1, and has a smaller fractional part
-// otherwise. So the tie is precisely `e + places == -1`, with no arithmetic on
-// the scaled value and therefore no rounding error of its own.
+// IS `magnitude * 10^places` EXACTLY A HALF-INTEGER? `toFixed` rounds a tie
+// away from zero (21.1.3.3 picks the LARGER n); `std::to_chars` rounds it to
+// even. Decidable exactly: with magnitude = m * 2^e and m ODD,
+// magnitude * 10^places == m * 5^places * 2^(e + places), and 5^places is odd,
+// so the product is a half-integer precisely when e + places == -1.
 [[nodiscard]] bool halfway_exactly(double magnitude, int places) {
     if (magnitude == 0 || !std::isfinite(magnitude)) { return false; }
     int exponent = 0;

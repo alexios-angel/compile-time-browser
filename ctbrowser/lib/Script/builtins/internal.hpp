@@ -1,9 +1,9 @@
 #pragma once
 // Private to lib/Script/builtins/. NOT installed and in no file set:
-// include/ctbrowser/script/builtins.hpp still declares exactly one function,
+// include/ctbrowser/script/builtins.hpp declares exactly one function,
 // install_builtins(), which is the entire public surface of the standard
 // library. This header exists only so the implementation can be more than one
-// file - it was 4,118 lines in one until 2026-08-09.
+// file.
 
 #include <algorithm>
 #include <charconv>
@@ -31,17 +31,8 @@
 #include <map>
 #include <memory>
 
-// The JavaScript standard library.
-//
-// the engine had NONE of this. The whole property surface was `.length`, numeric
-// indexing and named lookup on plain objects - no `arr.push`, no `str.split`,
-// no `Math.floor`, no `JSON.parse`. A VM can be complete and still useless if
-// nothing can be done with a value once you have one, and that is what this
-// closes.
-//
-// It is a SUBSET, chosen by what pages actually call rather than by what the
-// spec lists. The omissions that matter are named at the bottom of this file
-// rather than left to be discovered.
+// The JavaScript standard library: a SUBSET, chosen by what pages actually
+// call rather than by what the spec lists.
 
 namespace ctbrowser::script {
 

@@ -24,15 +24,10 @@
 // and removes every push/pop from the dispatch loop.
 //
 // An instruction is 8 bytes: an opcode and three 16-bit operands, the odd byte
-// going to alignment padding. Ops that need a wider operand (constant indices, jump offsets)
-// read b and c as one 32-bit field, which is why `bx()` exists.
-//
-// It was 4 bytes with three BYTE operands, and every operand that did not fit
-// was truncated without a word: the 257th distinct property name in a function
-// read a different property, a function wanting more than 256 registers
-// aliased its own locals, and a jump further than 32,767 instructions branched
-// to an address that was never a target. p5.js hits all three. Eight bytes
-// costs about 8 MB on a 4.5 MB bundle and removes the entire class of problem.
+// going to alignment padding. Ops that need a wider operand (constant indices,
+// jump offsets) read b and c as one 32-bit field, which is why `bx()` exists.
+// Byte operands were not enough: p5.js has functions with more than 256
+// distinct property names and more than 256 registers.
 
 namespace ctbrowser::script {
 
@@ -58,9 +53,7 @@ enum class op : std::uint8_t {
     // --- captured variables. A local that some nested function refers to is
     // stored in a heap CELL rather than directly in its register, and every
     // access goes through the cell. That is what makes mutation through a
-    // closure visible to the enclosing scope - the alternative, copying the
-    // value into the closure, silently gets the commonest closure idiom
-    // (a counter) wrong.
+    // closure visible to the enclosing scope.
     new_cell,    // a = cell(a)          (box the value already in a)
     cell_get,    // a = *b
     cell_set,    // *a = b
@@ -130,10 +123,7 @@ enum class op : std::uint8_t {
     apply,           // a = a.call(c, ...b)
     construct_apply, // a = new a(...b)
 
-    // `get x()` / `set x(v)`. A property that runs code when it is read or
-    // written, which is a different thing from a property that HOLDS a
-    // function - installing a getter as a data property made `obj.x` be the
-    // function rather than call it.
+    // `get x()` / `set x(v)`.
     define_getter, // a.<b> gets the getter in c
     define_setter, // a.<b> gets the setter in c
 
@@ -157,9 +147,8 @@ enum class op : std::uint8_t {
     delete_prop,   // a[k[b]] = gone
     delete_index,  // a[b] = gone
     own_keys,      // a = the own property names of b, as an array (for..in)
-    // a = b as an ARRAY OF VALUES, for anything a page can iterate. for-of is an
-    // index loop over `length`, so a Map or a Set - which has neither - ran zero
-    // times and said nothing. See context::iterable_values.
+    // a = b as an ARRAY OF VALUES, for anything a page can iterate: for-of is
+    // an index loop over `length`. See context::iterable_values.
     iterable,
     set_proto,   // a.__proto__ = b, for `class X extends Y`
     get_proto,   // a = b's prototype, for `super`
@@ -217,9 +206,7 @@ enum class op : std::uint8_t {
     // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
     // way to reach it: the enclosing scope has no such name, and the closure
-    // does not exist yet when the body is compiled. Without it a recursive
-    // function expression called an undefined `me` - which is silent when the
-    // call is a callback, as `(function pump() { raf(pump); })()` is.
+    // does not exist yet when the body is compiled.
     load_callee,
     // a = `arguments`: every value this call actually received, as an array.
     //
@@ -250,11 +237,9 @@ enum class op : std::uint8_t {
 // middle of itself, or can suspend the frame. The VM builds its own dispatch
 // table from it, and ctcompile reads the same file, so there is ONE list.
 //
-// Counting the ENTRIES rather than sizing an array is deliberate and was
-// learned the hard way: a table built with array designators has no gap check,
-// and two opcodes went missing from the VM's private list for as long as
-// modules existed. A hole is a null entry and a jump to address zero in the
-// computed-goto build; here it is a build failure.
+// Counting the ENTRIES rather than sizing an array: a table built with array
+// designators has no gap check, and a hole is a jump to address zero in the
+// computed-goto build. Here it is a build failure.
 #define CT_OPCODE(name, ...) +1
 inline constexpr std::size_t opcode_count = 0
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -263,20 +248,11 @@ inline constexpr std::size_t opcode_count = 0
 static_assert(opcode_count == static_cast<std::size_t>(op::halt) + 1,
               "bytecode_opcodes.def must list every opcode in `enum class op` exactly once");
 
-// AND IN THE SAME ORDER, which the count above cannot see. Two lists of 93 names
-// can agree on the length and disagree on every position, and nothing here would
-// have said so: `shapes[]` in program_image/read.cpp is built from the .def and
-// INDEXED BY THE ENUM, so a table whose rows had drifted would bounds-check
-// every operand against some other opcode's pool - a validator quietly checking
-// the wrong thing, which is worse than no validator. Verified by swapping two
-// rows: without this the build is clean.
-//
-// The list still exists twice, and this is the cheapest honest fix rather than
-// the right one. Generating `enum class op` from the .def would leave ONE list -
-// which is what the paragraph above already claims - and the reason it was not
-// done here is that the enumerators carry the per-opcode commentary that makes
-// the file readable, and moving it into the .def's columns is a bigger change
-// than a build error deserves.
+// AND IN THE SAME ORDER, which the count above cannot see: `shapes[]` in
+// program_image/read.cpp is built from the .def and INDEXED BY THE ENUM, so a
+// table whose rows had drifted would bounds-check every operand against some
+// other opcode's pool. The enum is not generated from the .def because the
+// enumerators carry the per-opcode commentary.
 #define CT_OPCODE(name_, ...) op::name_,
 inline constexpr op opcode_order[] = {
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -293,12 +269,10 @@ static_assert(
 
 // THE IDENTITY OF THE INSTRUCTION SET, as a number. Every opcode's spelling, in
 // order, folded together - so renaming one, reordering two or adding one to the
-// middle produces a different value, and the COUNT staying at 93 does not save
-// it. `image_fingerprint()` mixes this, because an image stores opcodes as bare
-// bytes: if byte 45 means `sub` when the image is written and `add` when it is
-// read, the program loads clean, runs at full speed and computes the wrong
-// answer. That is the worst failure this format has, and until now the only
-// thing standing against it was a count that a renumbering does not change.
+// middle produces a different value. `image_fingerprint()` mixes this, because
+// an image stores opcodes as bare bytes: if byte 45 means `sub` when the image
+// is written and `add` when it is read, the program loads clean and computes
+// the wrong answer.
 #define CT_OPCODE(name_, ...) #name_ ";"
 inline constexpr std::string_view opcode_names_joined =
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -345,14 +319,8 @@ struct upvalue_desc {
 //
 // The register machine has no notion of a variable: `r4` is a frame slot, and
 // the same slot holds a `let` in one block and a temporary in the next. The
-// name existed in the compiler - `declare_local(name)` is called for every one
-// of them - and was thrown away at the end of the scope that introduced it.
-//
-// Throwing it away costs two things that are worth more than the table. A
-// stack trace cannot say which variable was undefined, and the AOT backend
-// emits `v18[4] = v17` where the source said `this._isEnabled = ...`, which is
-// why nine differential defects in this project were found by a harness and
-// none by reading the output.
+// table is what lets a stack trace name a variable and the AOT backend emit
+// `this._isEnabled = ...` rather than `v18[4] = v17`.
 //
 // `first_pc` and `last_pc` are a HALF-OPEN range of indices into `code`, taken
 // when the local is declared and when its scope is popped. They are the
@@ -389,19 +357,14 @@ struct function_proto {
     std::uint16_t param_count = 0;
     std::uint16_t frame_size = 1; // registers this body needs
     // An arrow does not get its own `this`; it sees the one where it was
-    // WRITTEN. The VM cannot tell an arrow from a function at run time, and
-    // reading the frame's own receiver made `this` undefined inside every arrow
-    // inside a method - which is exactly where arrows are usually written.
+    // WRITTEN, and the VM cannot tell an arrow from a function at run time.
     bool is_arrow = false;
     // `function*`. Calling one does NOT run the body: it builds a generator
     // object over a suspended frame and hands that back, so the first
     // instruction runs on the first `.next()`.
     bool is_generator = false;
-    // WHERE IT WAS WRITTEN, as byte offsets into the program's source.
-    //
-    // `f.toString()` has to hand back the text, and an engine with no answer
-    // cannot run a library that reads its own source - which p5.js's error
-    // system does. Two integers, and the parser already knew both.
+    // WHERE IT WAS WRITTEN, as byte offsets into the program's source, for
+    // `f.toString()`.
     std::uint32_t source_begin = 0, source_end = 0;
     std::vector<instruction> code;
     // Immediates only. A string literal cannot live here: `value` for a string
@@ -433,13 +396,9 @@ struct function_proto {
     std::vector<std::uint32_t> code_offsets;
     // THE OFFSET THE NEXT `emit` WILL STAMP, and it is COMPILE-TIME STATE on a
     // structure that is otherwise a compiled artefact - the same bargain
-    // `aot_entry` below makes in the other direction.
-    //
-    // It is here rather than on the compiler because `proto().emit(...)` is
-    // spelled 245 times across seven files, and threading an argument through
-    // all of them would put the burden of remembering on every call site. A
-    // cursor the compiler moves at statement and expression boundaries puts it
-    // in two.
+    // `aot_entry` below makes in the other direction. A cursor the compiler
+    // moves at statement and expression boundaries, rather than an argument
+    // threaded through every `emit` call.
     //
     // `no_offset` means "this node cannot say where it was written" - a
     // template literal's interpolation is parsed from a different buffer, so a
@@ -450,29 +409,19 @@ struct function_proto {
     static constexpr std::uint32_t no_offset = 0xFFFFFFFFu;
     std::uint32_t emit_offset = no_offset;
     // WHETHER THIS PROTO KEEPS A SOURCE-OFFSET TABLE AT ALL, set by the
-    // compiler when it creates the proto and false everywhere else.
-    //
-    // EMPTY AND PARALLEL ARE THE ONLY TWO STATES THE TABLE MAY BE IN, and the
-    // choice between them has to be made once per FUNCTION. Deciding it per
-    // instruction - "stamp an offset when one is known" - produced three
-    // offsets for six instructions, because the prologue and the implicit
-    // return are emitted with no statement in hand. The image loader's
-    // parallelism check is what said so.
+    // compiler when it creates the proto and false everywhere else. EMPTY AND
+    // PARALLEL ARE THE ONLY TWO STATES THE TABLE MAY BE IN, and the choice
+    // between them is made once per FUNCTION: the prologue and the implicit
+    // return are emitted with no statement in hand.
     bool debug_offsets = false;
 
     // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
     // compiler never sets it, no image ever carries it, and `image_fingerprint`
     // cannot see it - an entry point is a property of THIS PROCESS, not of the
     // program. It lives on the proto rather than on `closure_object` because it
-    // belongs to the CODE: stamped once here, every closure built from this
-    // proto inherits it through the existing closure builder with no diff at
-    // all, where on the closure it would have to be copied by op::closure, by
+    // belongs to the CODE: every closure built from this proto inherits it,
+    // where on the closure it would have to be copied by op::closure, by
     // run_nested, by make_generator and by ct_aot_make_closure.
-    //
-    // Measured cost: `function_proto` goes from 200 bytes to 208. On babylon,
-    // which is 31,905 protos, that is 255 KB of memory and nothing on disk.
-    // The dispatch that reads it was measured at -0.07% instructions on
-    // bench_script - inside the noise, and in the faster direction.
     aot::ct_aot_entry_fn aot_entry = nullptr;
 
     [[nodiscard]] std::uint32_t add_constant(value v) {
@@ -506,12 +455,8 @@ struct function_proto {
 // compile.hpp because it is a property of the compiled thing rather than of the
 // compiler. A classic script's top level IS the global scope; a module's is a
 // scope of its own. See compile.hpp for what that means for a declaration.
-//
 // It is on `program` because the same TEXT compiles to two different programs,
-// and until 2026-08-21 nothing recorded which one you had: an image of
-// `var out = 41 + 1;` compiled as a module recorded the same source hash as the
-// classic one, loaded with ok=1 against that hash, ran without error, and left
-// `globalThis.out` undefined instead of 42.
+// and an image must record which one it holds.
 enum class script_kind : std::uint8_t {
     classic,
     module_
