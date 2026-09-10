@@ -376,3 +376,17 @@
 # A saved owning leaf selected by joined size one survives deletion and clear
 # across 128 future native calls, both flags, owner/table release, independent
 # reentry and final Map/leaf reclamation under GCC/Clang and ASan/UBSan/leak checks.
+# Known mutations after that join preserve the twelve exact continuation sources,
+# including insertion 56679e2d and its evaluated-read/literal-two a11c4179 repair,
+# and absent deletion 887e65fc with literal-one 8e3fa6f1. Both startup flags retain
+# all sixteen calls and a real saved-key object field read. A key present on both
+# arms supports overwrite/deletion; captured aliases and repeated known mutations
+# retain their own exact cardinality. Possible deletion or a future formal key
+# which may insert/overwrite/delete remain independent refusals with exact
+# executed repairs, fresh/stale forgeries, reruns and bounded proof cutoffs.
+# Typed future observations distinguish startup-only key relations and both arms;
+# moving the size read across insertion changes the saved key. A saved-two leaf
+# is selected while the current Map size is one, survives deletion/clear, and
+# remains independently retained after 128 future native calls, owner/table
+# release, reentry and final Map release. Explicit/deduced GCC/Clang output and
+# ASan/UBSan/leak observers retain the ordinary ownership and no-Script gates.

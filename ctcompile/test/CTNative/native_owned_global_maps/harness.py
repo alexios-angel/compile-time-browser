@@ -27,6 +27,7 @@ from .sources import (
     STRING_FIELD_BYTES, STRING_FIELD_LONG, zero_size_cases, zero_size_sources,
     one_size_cases, one_size_sources, delete_size_cases, delete_size_sources,
     join_size_cases, join_size_sources,
+    mutation_size_cases, mutation_size_sources,
 )
 
 
@@ -1350,6 +1351,8 @@ def standalone(args, output, name, value, compilers, nm):
             check_exact_size_calls(cpp, name, mode, delete_size_cases()[name])
         if name in join_size_sources():
             check_exact_size_calls(cpp, name, mode, join_size_cases()[name])
+        if name in mutation_size_sources():
+            check_exact_size_calls(cpp, name, mode, mutation_size_cases()[name])
         if name in leaf_readback_sources():
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
@@ -1404,7 +1407,7 @@ def standalone(args, output, name, value, compilers, nm):
         if name == "size_deleted_saved_lifetime":
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(delete_size_lifetime_cpp(cpp))
-        if name == "joined_size_saved_lifetime":
+        if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
         if name in primitive_absence_sources():
@@ -1459,7 +1462,7 @@ def standalone(args, output, name, value, compilers, nm):
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES,
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
-                                  "joined_size_saved_lifetime"} else 1
+                                  "joined_size_saved_lifetime", "joined_mutation_saved_lifetime"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1497,7 +1500,7 @@ def standalone(args, output, name, value, compilers, nm):
             one_size_lifetime(args, cpp, name, mode, compilers[1])
         if name == "size_deleted_saved_lifetime":
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "joined_size_saved_lifetime":
+        if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
 
 
@@ -2482,7 +2485,8 @@ def check_exact_size_calls(cpp, name, mode, row):
         raise RuntimeError(f'{name}/{mode}: lost the typed size callable or live leaf allocation')
     if (name in ('size_one_present_field_entry_repair', 'size_one_present_field_checked_repair',
                  'size_deleted_zero_present_field', 'size_deleted_one_present_field')
-            or (name in join_size_sources() and 'state.get(saved).value' in source)):
+            or (name in {**join_size_sources(), **mutation_size_sources()}
+                and 'state.get(saved).value' in source)):
         present = re.search(r'\b(\w+)\s*=\s*ctnative::map_get_present_identity\([^;]+;', cpp)
         if (not present or len(re.findall(r'\bctnative::map_get_present_identity\(', cpp)) != 1
                 or f'ctnative::object_get_field_76616c7565({present[1]})' not in cpp):
