@@ -364,3 +364,15 @@
 # zero survives later deletion/clear through 128 future native calls, both flags,
 # owner/table release, independent reentry and final Map/leaf destruction under
 # GCC/Clang explicit/deduced output and ASan/UBSan/leak checks, without Script.
+# Equal cardinalities at a structural join retain the exact twelve continuation
+# sources, including 2d1763eb and its evaluated-read/literal-one b0d72c4e repair.
+# Deleting different keys and setting disjoint keys exercise both startup flags;
+# each post-join saved size selects a real object's field after the Map changes.
+# Unequal arms, no common present key and writes that insert on only one arm
+# refuse independently with exact admitted repairs, unchanged calls/branches,
+# fresh/stale forgeries, reruns and bounded proofs. Typed future observations
+# distinguish both branches and saved versus current size; source mutations
+# independently remove each executed delete/set, corrupt its field and stale size.
+# A saved owning leaf selected by joined size one survives deletion and clear
+# across 128 future native calls, both flags, owner/table release, independent
+# reentry and final Map/leaf reclamation under GCC/Clang and ASan/UBSan/leak checks.

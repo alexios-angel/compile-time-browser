@@ -3030,3 +3030,118 @@ def delete_size_cases():
 def delete_size_sources():
     return {name: (row['source'], 'host', row['expected_trace'])
             for name, row in delete_size_cases().items() if row['admitted']}
+
+
+# The twelve measured branch-cardinality continuation sources are immutable.
+JOIN_SIZE_HISTORY = {
+    'joined_delete_disjoint_false': (15, '2d1763ebbce40e07c852e21e89b45106e767f8a83432af6be650b59f7e3c20fc'),
+    'joined_delete_disjoint_false_literal_repair': (15, 'b0d72c4ef0d1b5017a8d041903d1bf14dde9d93cdf1e998ec5a31f28eb08b249'),
+    'joined_set_disjoint_false': (13, '1ae41caf1b62a270c2ce75e18acdfaaa8ea2c539c9ddf127cef02607f11a62bd'),
+    'joined_set_disjoint_false_literal_repair': (13, 'f09bc7aa7f61f0af53bcb7ab8b96a1a94a0cbd899d3ff642ad3d2e7621208490'),
+    'joined_unequal_false': (15, '88585cc58f7f089c488aa6830eeb0cee526ac3ab1405077196729fe0ec0a75ec'),
+    'joined_saved_in_arms_false': (15, 'a0dc17164da6f46dd8777af5c4e457d7236f0559f76b248759c04d972244e721'),
+    'joined_delete_disjoint_true': (15, '6b49533862c057079caccb946c3d5f13f240d004e6c702844bf61e3ccd8d12ee'),
+    'joined_delete_disjoint_true_literal_repair': (15, 'de28b4538d2411f4d94fb904e7db763a4acf531e8d57283828171904e4a77d92'),
+    'joined_set_disjoint_true': (13, '082976f04967785688271e1d1d527297f56a3b9e54b4baf74fd7c700b4e0b701'),
+    'joined_set_disjoint_true_literal_repair': (13, 'efa12dbf6ee1d9d884c8ca176ebab5e126247a0a15e06773318bb295dcee2724'),
+    'joined_unequal_true': (15, '2e5576ed9ca3ddf67201ce65a31358e99b4cefb8af4a791961095e2426a1ab41'),
+    'joined_saved_in_arms_true': (15, '95836a416bdf0cd1b40f6dd77f286bdc4be6856a04b703f8d1597590136e0876'),
+}
+
+
+def join_size_cases():
+    rows = {}
+
+    def add(name, source, value, calls, admitted=True, repair=None):
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        if name in JOIN_SIZE_HISTORY:
+            assert (calls, digest) == JOIN_SIZE_HISTORY[name], name
+        row = dict(source=source, expected_trace=value, raw_calls=calls,
+                   prepared_calls=calls, sha256=digest, admitted=admitted)
+        if repair:
+            before, after, target = repair
+            assert source.count(before) == 1 and source.replace(before, after) == rows[target]['source'], name
+            row.update(removed_text=before, replacement_text=after, repair=target)
+        rows[name] = row
+
+    def source(body, flag):
+        return """var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key, flag) { BODY }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7, FLAG);
+""".replace('BODY', body).replace('FLAG', flag)
+
+    prefix = 'const item = {value: 1}; state.set(key, item); state.clear(); '
+    start = prefix + 'state.set(1, item); state.set(2, item); '
+    branches = ('if (flag) { state.delete(1); } '
+                'else { state.delete(2); state.has(key); } ')
+    snapshot = 'const saved = state.size; '
+    field = ('state.clear(); state.set(1, item); state.set(3, item); '
+             'return state.get(saved).value === 1 ? 1 : 0;')
+    control = ('state.clear(); state.set(1, item); state.set(3, item); '
+               'return state.get(saved) === void 0 ? 2 : 1;')
+    for flag in ('false', 'true'):
+        body = start + branches + snapshot + field
+        add('joined_delete_disjoint_' + flag, source(body, flag), 1, 15)
+        add('joined_delete_disjoint_' + flag + '_literal_repair',
+            source(body.replace(snapshot, 'state.size; const saved = 1; '), flag), 1, 15)
+        setters = ('if (flag) { state.set(7, item); } '
+                   'else { state.set(9, item); state.has(key); } ')
+        body = prefix + setters + snapshot + field
+        add('joined_set_disjoint_' + flag, source(body, flag), 1, 13)
+        add('joined_set_disjoint_' + flag + '_literal_repair',
+            source(body.replace(snapshot, 'state.size; const saved = 1; '), flag), 1, 13)
+        name = 'joined_unequal_' + flag
+        equal = source(start + branches + snapshot + control, flag)
+        add(name + '_repair', equal, 1, 15)
+        unequal = equal.replace('if (flag) { state.delete(1); }',
+                                'if (flag) { state.has(1); }')
+        add(name, unequal, 2 if flag == 'true' else 1, 15, False,
+            ('if (flag) { state.has(1); }', 'if (flag) { state.delete(1); }', name + '_repair'))
+        saved_arms = ('let saved; if (flag) { state.delete(1); saved = state.size; } '
+                      'else { state.delete(2); saved = state.size; state.has(key); } ')
+        add('joined_saved_in_arms_' + flag, source(start + saved_arms + field, flag), 1, 15)
+
+        # Equal sizes do not prove either surviving key is present on both arms.
+        name = 'joined_missing_common_key_' + flag
+        uncertain = source(start + branches + snapshot +
+                           'return state.get(saved) === void 0 ? 2 : 1;', flag)
+        repaired = uncertain.replace(snapshot, snapshot + 'state.set(1, item); ')
+        add(name + '_repair', repaired, 1, 13)
+        add(name, uncertain, 2 if flag == 'true' else 1, 12, False,
+            (snapshot, snapshot + 'state.set(1, item); ', name + '_repair'))
+
+        # A write after the join inserts on one arm and overwrites on the other.
+        # It must invalidate the mutable exact-size fact before the next read.
+        name = 'joined_mutated_size_' + flag
+        changed = source(start + branches + 'state.set(1, item); ' + snapshot + control, flag)
+        repaired = changed.replace('state.set(1, item); ' + snapshot,
+                                    'state.clear(); state.set(1, item); ' + snapshot)
+        add(name + '_repair', repaired, 1, 17)
+        add(name, changed, 2 if flag == 'true' else 1, 16, False,
+            ('state.set(1, item); ' + snapshot,
+             'state.clear(); state.set(1, item); ' + snapshot, name + '_repair'))
+
+    base = rows['joined_delete_disjoint_false']['source']
+    add('joined_captured_alias', base.replace('const saved = state.size;',
+        'const alias = state; const saved = alias.size;'), 1, 15)
+    # The saved one remains immutable while current size grows to two, the
+    # selected owning leaf is deleted, and the Map is finally reseeded.
+    lifetime = base.replace(field,
+        'state.clear(); state.set(1, item); state.set(3, item); '
+        'const leaf = state.get(saved); state.delete(1); state.clear(); state.set(2, item); '
+        'return leaf === item ? (flag ? 2 : 1) : 0;')
+    add('joined_size_saved_lifetime', lifetime, 1, 18)
+    for name, (calls, digest) in JOIN_SIZE_HISTORY.items():
+        assert (rows[name]['raw_calls'], rows[name]['sha256']) == (calls, digest), name
+    return rows
+
+
+def join_size_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in join_size_cases().items() if row['admitted']}

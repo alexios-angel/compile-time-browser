@@ -42,7 +42,7 @@ from .sources import (
     CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
     StringValue, string_field_cases, string_field_sources, STRING_FIELD_PROMOTED,
     zero_size_cases, zero_size_sources, one_size_cases, one_size_sources,
-    delete_size_cases, delete_size_sources,
+    delete_size_cases, delete_size_sources, join_size_cases, join_size_sources,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -1436,6 +1436,7 @@ def main():
         **scalar_global_sources(),
         **constant_global_sources(),
         **string_field_sources(), **zero_size_sources(), **one_size_sources(), **delete_size_sources(),
+        **join_size_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1452,6 +1453,7 @@ def main():
     check_zero_size_observations(args, node, reference)
     check_one_size_observations(args, node, reference)
     check_delete_size_observations(args, node, reference)
+    check_join_size_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -1686,7 +1688,7 @@ def main():
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      or name in constant_global_sources()
                      or name in string_field_sources() or name in zero_size_sources() or name in one_size_sources()
-                     or name in delete_size_sources()
+                     or name in delete_size_sources() or name in join_size_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1724,6 +1726,7 @@ def main():
         check_zero_size_census(args, ir, name)
         check_one_size_census(args, ir, name)
         check_delete_size_census(args, ir, name)
+        check_join_size_census(args, ir, name)
         if name in primitive_absence_sources() and (
                 len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
                 or len(source_calls(ir.read_text())) != 10):
@@ -1761,7 +1764,8 @@ def main():
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
                     **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources(),
-                    **scalar_global_sources(), **constant_global_sources(), **string_field_sources()}:
+                    **scalar_global_sources(), **constant_global_sources(), **string_field_sources(),
+                    **join_size_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -2104,6 +2108,8 @@ def main():
     check_leaf_object_forgeries(args, saved, ("local_clear_zero_size_key", "zero_size_saved_lifetime"))
     check_one_size_refusals(args, positives)
     check_delete_size_refusals(args, positives)
+    check_join_size_refusals(args, positives)
+    check_leaf_object_forgeries(args, saved, ("joined_delete_disjoint_false", "joined_size_saved_lifetime"))
     check_leaf_object_forgeries(args, saved, ("size_deleted_literal_last", "size_deleted_saved_lifetime"))
     check_leaf_object_forgeries(args, saved, ("zero_size_read_after_write", "size_one_saved_lifetime"))
     check_historical_string_field_refusals(args, positives, node, reference)
@@ -2280,7 +2286,8 @@ def main():
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
                  | numeric_entry_sources().keys() | scalar_global_sources().keys()
                  | constant_global_sources().keys() | string_field_sources().keys()
-                 | zero_size_sources().keys() | one_size_sources().keys() | delete_size_sources().keys()):
+                 | zero_size_sources().keys() | one_size_sources().keys() | delete_size_sources().keys()
+                 | join_size_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -2312,7 +2319,8 @@ def main():
                  "field_string_read", "field_string_lifetime",
                  "local_clear_zero_size_key", "zero_size_saved_lifetime",
                  "zero_size_read_after_write", "size_one_saved_lifetime",
-                 "size_deleted_literal_last", "size_deleted_saved_lifetime"):
+                 "size_deleted_literal_last", "size_deleted_saved_lifetime",
+                 "joined_delete_disjoint_false", "joined_size_saved_lifetime"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2426,6 +2434,11 @@ def main():
           f"{len(delete_size_cases()) - len(delete_size_sources())} independent deletion refusals retain "
           "fresh/stale forgeries and exact repairs; a saved deletion lifetime runs 128 future calls, "
           "both flags, owner/table release, reentry and final Map/leaf destruction; "
+          f"{len(join_size_sources())} equal-cardinality join programs preserve twelve continuation sources; "
+          "disjoint deleting/writing arms retain real saved-size and object-field reads; "
+          f"{len(join_size_cases()) - len(join_size_sources())} unequal-size, missing-common-key and "
+          "post-join mutation refusals retain exact repairs and fresh/stale evidence checks; "
+          "one saved join lifetime runs 128 future calls/both flags through final Map/leaf release; "
           f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
           "six field refusal/repair families and six emitted field-tag controls remain independent; "
           "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
@@ -3077,5 +3090,108 @@ def check_delete_size_observations(args, node, reference):
                         'const deleted = state.delete(2);', expected)
             continue
         assert source.count(old) == 1, (name, old)
+        distinguish(name + '-future', observed, old, replacement, expected)
+    return dict(sources=len(cases), observations=observations, mutations=mutations)
+
+
+def check_join_size_census(args, ir, name):
+    if name not in join_size_cases():
+        return
+    row = join_size_cases()[name]
+    raw = (args.work / f'{name}.raw.mlir').read_text()
+    prepared = ir.read_text()
+    if (len(boundary.FUNCTION.findall(raw)) != 5
+            or len(source_calls(raw)) != row['raw_calls']
+            or len(source_calls(prepared)) != row['prepared_calls']):
+        raise RuntimeError(f'{name}: changed exact branch-cardinality function/call census')
+    if 'scf.if' not in prepared or prepared.count('scf.yield') < 2:
+        raise RuntimeError(f'{name}: lost either structural branch before the cardinality proof')
+
+
+def check_join_size_refusals(args, positives):
+    check_exact_size_refusals(args, positives, join_size_cases(), check_join_size_census)
+
+
+def check_join_size_observations(args, node, reference):
+    cases = join_size_cases()
+    observations = mutations = 0
+
+    def observe(name, source, value):
+        nonlocal observations
+        js = args.work / f'{name}-join-observed.js'
+        js.write_text(source)
+        expected = f'trace={value}\n'
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
+            raise RuntimeError(f'{name}: typed Node branch-cardinality observation changed')
+        if reference:
+            result = host.run([str(reference), str(js)])
+            if (result.stdout != expected
+                    or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
+                raise RuntimeError(f'{name}: interpreter lost branch-cardinality Number observation')
+        observations += 1
+        return expected
+
+    def distinguish(name, source, old, replacement, expected):
+        nonlocal mutations
+        assert source.count(old) == 1, (name, old)
+        js = args.work / f'{name}-join-blind-{mutations}.js'
+        js.write_text(source.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected:
+            raise RuntimeError(f'{name}: join observer cannot distinguish {replacement}')
+        mutations += 1
+
+    for name, row in cases.items():
+        observe(name, row['source'], row['expected_trace'])
+    for flag in ('false', 'true'):
+        name = 'joined_delete_disjoint_' + flag
+        row = cases[name]
+        for old, replacement in (
+            ('state.get(saved)', 'state.get(state.size)'),
+            ('{value: 1}', '{value: 2}'),
+            ('const saved = state.size;', 'state.size; const saved = 2;'),
+            ('state.delete(2);' if flag == 'false' else 'state.delete(1);',
+             'state.has(2);' if flag == 'false' else 'state.has(1);'),
+        ):
+            distinguish(name, row['source'], old, replacement, 'trace=1\n')
+        name = 'joined_set_disjoint_' + flag
+        row = cases[name]
+        key = '9' if flag == 'false' else '7'
+        distinguish(name, row['source'], f'state.set({key}, item);', f'state.has({key});', 'trace=1\n')
+
+    # Both future flags distinguish unequal cardinality, missing common keys,
+    # and writes which overwrite in one arm but insert in the other. The
+    # startup argument is no authority for a method callable again later.
+    for name, values in (
+        ('joined_delete_disjoint_false', (1, 1)),
+        ('joined_set_disjoint_false', (1, 1)),
+        ('joined_unequal_false', (1, 2)),
+        ('joined_missing_common_key_false', (1, 2)),
+        ('joined_mutated_size_false', (1, 2)),
+    ):
+        source = cases[name]['source'] + f"""
+(function() {{
+    const setter = host.slot.set;
+    const a = setter(99, false);
+    const b = setter(-8, true);
+    trace = (typeof a === 'number' && a === {values[0]} ? 1 : 0) |
+            (typeof b === 'number' && b === {values[1]} ? 2 : 0);
+}})();
+"""
+        expected = observe(name + '-future', source, 3)
+        if values[0] != values[1]:
+            distinguish(name + '-future', source, 'setter(-8, true)', 'setter(-8, false)', expected)
+
+    name = 'joined_size_saved_lifetime'
+    source = cases[name]['source']
+    observed, value = zero_size_observer_source(source)
+    expected = observe(name + '-future', observed, value)
+    for old, replacement in (
+        ('state.get(saved)', 'state.get(state.size)'),
+        ('const leaf = state.get(saved);', 'const leaf = void 0;'),
+        ('(flag ? 2 : 1)', '(flag ? 1 : 2)'),
+        ('state.clear(); state.set(2, item);', 'state.has(key); state.set(2, item);'),
+    ):
         distinguish(name + '-future', observed, old, replacement, expected)
     return dict(sources=len(cases), observations=observations, mutations=mutations)
