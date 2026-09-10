@@ -6,6 +6,89 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Borrowed object keys and mixed BigInt Div, 2026-09-10
+
+Resumed the **15:44–15:45 UTC** object-key/Div thread at **183a10c0**, including
+three dirty Div files. The earlier interrupted mutation gate and codex-wip
+recovery were already complete. Three agents handled independent escape,
+owner-test and execution work; root serialized every build and commit. No
+browser or runtime source changed.
+
+**e9802e24** proves a direct empty entry object passed to a captured method as
+an independent object actual/formal edge, with no primitive category. Every
+actual use and every current invocation is checked; each object formal can only
+be borrowed by the captured Map's `has`. Native identity and callable carriers
+are still independently derived. Mixed primitive/object formals, field-bearing
+or named objects, mutations, returns and storing an object key remain refused.
+
+The exact **20d4806e** source advances **0/4 → 4/4 native in both modes**,
+keeping all four calls and Number `trace=0`. **0dfded6a** executes that source,
+a local-alias variant, repeated fresh actuals and two object formals: **four
+programs, sixteen typed Node/interpreter observations and seven distinguishing
+mutations**. Explicit/deduced GCC/Clang output retains actual allocations,
+call arguments and `Map.has`, with no Script symbols. A saved getter survives
+root/table destruction, **128 future object-key rounds**, reentry and final
+Map/key destruction under ASan/UBSan/leak checks. The budget boundary is **1688**,
+with **31 cutoffs** checked. Ten ownership/effect controls and a separate
+complete-owner mixed-key carrier control retain their refusals.
+
+All five owner/host CTests pass **5/5 in 217.69 seconds**. New source/prepared
+owner matrices cover **20/18 rows and all 1348/1295 incomplete budgets**.
+A test-only forged schema attribute initially invalidated its own restoration
+contract; the corrected test removes it before checking the original contract.
+An independent review found no additional production issue.
+
+**c20f43a4** finishes mixed BigInt Div's independent error-retention proof,
+without granting native BigInt or successful-completion permission. It checks
+**57 rows, 43 live states and 3410 cutoffs**. The strict fixture records **721
+claims, 741 observed sites, 21 unclaimed and 100/137 precision**, with zero
+violations/partial/pending. Eight escape CTests pass **8/8 in 9.22 seconds**.
+Historical fixture bytes and Div sources remain intact; Mod controls stay
+conservative. The full build completes **263 steps without warnings**. Stable
+clang-format **22.1.8 passes 745 files**; bundled 23 has the same nine baseline
+differences. The fresh complete gate at **a129764d** passes **512/517 CTests
+in 2227.17 seconds**, including **all 372 compiler tests** and **166/166 lit
+cases** (1442.85 seconds internally; CTest 1443.04). The five browser failures
+are `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`;
+each diagnostic exactly matches the previous gate. The full-run rebuild reports
+no work, separately from the earlier 263-step build. All **14 committed/local/
+devbox code/test hashes** match the frozen inputs. The fresh artifact census
+verifies **417 native programs, 1668 GCC/Clang executables and 88 sanitized
+binaries across 44 lifetime families**. Eight new C++ variants preserve their
+allocations, calls and `Map.has`; those programs' sixteen ordinary and two
+sanitized executables have no Script/AOT symbols.
+
+**Next: retaining actual object keys through Bootstrap Data.** Exact
+**7381e2fb** adds `t.set(e, 1)` before the same `t.has(e)` and remains unowned
+**0/4** (typed Node/interpreter `trace=1`). It needs an ordinary Map-to-key owner
+and all later set/get/delete uses proved through the existing host seam.
+Field-bearing **698def06** and named **7573e89b** actuals remain separate owner
+obligations. Numeric-seeded **5eba229d** now has complete ownership but stays
+**0/4** at the closed Number/Object key variant's missing native carrier;
+that is distinct from object ownership. These two bounded extensions can proceed
+independently: `HostContract` proves exact Map-to-key retention and same-family
+sibling uses; lowering supplies the already-proved Number/Object key variant.
+Keep object-valued payloads, named/field-bearing keys and unknown effects separate.
+
+The fresh postfull Data probe preserves browser/CommonJS/AMD source hashes
+**80a6fd87/cc6c3960/821e07a5** and all **19/19/20 typed observations**. They remain
+**0/7, 0/7 and 0/8** native in both modes, with **42/42/43 calls** preserved.
+Ordinary publication **8359592c** remains **0/7**, with **19 observations and
+40 calls**. Every observation matches Node and the interpreter. The owner reason
+remains `property receiver lacks a fresh own-data object proof`. Browser,
+CommonJS and ordinary prefix analyses finish **24 resolved calls and 23 provider
+summaries**; freshly fingerprinted residual contracts still refuse ownership.
+Exact Data and full native Bootstrap remain unfinished.
+
+Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape,owners,execution}.log`,
+`/tmp/ctcompile-object-resume-{probe,execution}/`, and the fourteen-input
+`/tmp/ctcompile-object-resume-frozen.json`. Full gate:
+`/tmp/ctcompile-object-resume-full.log` and
+`/tmp/ctcompile-object-resume-full-detail.log`. Exact Data:
+`/tmp/ctcompile-object-resume-exact-data/`. Artifact audit:
+`/tmp/ctcompile-object-resume-audit.json` and
+`/tmp/ctcompile-object-resume-full-cpp/`.
+
 ## Interrupted mutation gate recovered, 2026-09-10
 
 Resumed the pending **a1ce9b02** gate from the **05:22:09 UTC** journal and

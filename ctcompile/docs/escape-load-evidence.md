@@ -3166,3 +3166,49 @@ Evidence: `/tmp/ctcompile-mul-recovery-audit.json`,
 `/tmp/ctcompile-recovered-gate/Temporary/LastTest.log.tmp`,
 `/tmp/ctcompile-data-resume-full.log` and
 `/tmp/ctcompile-data-resume-full-detail.log`.
+
+
+## Mixed primitive BigInt Div recovery, 2026-09-10
+
+Resumed the three dirty files left by the **15:44:36 UTC** journal at
+**183a10c0**. **c20f43a4** extends the existing Sub/Mul proof to dynamic Div
+with exactly one independently known original BigInt and one non-BigInt
+primitive. Its independent TypeError cannot retain unpublished local objects;
+the proof still checks every structural continuation. It grants no successful
+completion, native BigInt representation, or general effect permission.
+
+The shared Mul/Div matrix checks **57 rows, 43 live states and 3410 Div budget
+cutoffs**, plus a wide snapshot. Ten historical comparison/Div sources retain
+their bytes and now independently prove retention; ten separate Mod controls
+remain refused. The exact **8a20a9a8** witness bodies enter the fixture unchanged.
+All **89,904 preceding fixture bytes and 172 named functions** remain intact.
+Node observes Number **63**, with seven distinguishing mutations checked.
+
+The complete **263-step build is warning-free**. Eight focused escape CTests
+pass **8/8 in 9.22 seconds**. The strict fixture records **721 claims, 741
+observed sites, 21 unclaimed and 100/137 precision**, with zero soundness
+violations, partial or pending claims. Div has twelve literal sites, twenty-one
+instances and ten retained objects; its three independent Errors have no source
+allocation claims. All four corpus checks pass; p5 retains its recorded partial
+observation. Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape}.log` and
+`/tmp/ctcompile-div-local-preservation.json`.
+
+The first targeted run used an old linked claims helper and retained ten stale
+Div refusal expectations. Rebuilding all targets and promoting those exact
+sources resolves both; no runtime behavior or historical source was changed.
+The fresh complete gate at **a129764d** now passes **512/517 CTests in
+2227.17 seconds**, including all **372 compiler tests** and **166/166 lit cases**.
+The five browser failures exactly match the previous diagnostic bodies. The
+full-run rebuild reports no work; the 263-step build above is separate evidence.
+Arrays pass in **0.56 seconds**, repeating all Div rows/states/cutoffs; the
+fixture passes in **0.54 seconds**, retaining **721 claims, 741 observed sites,
+21 unclaimed, zero violations/partial/pending and 100/137 precision**. All four
+actual corpus oracles retain zero violations, including p5's prior partial.
+All fourteen committed/local/devbox code/test hashes match the frozen manifest.
+The fresh native census verifies **417 programs, 1668 GCC/Clang executables and
+88 sanitized binaries across 44 lifetime families**. Eight new object-argument
+C++ variants retain the actual calls and allocations; their sixteen ordinary
+and two sanitized executables have no Script/AOT symbols. Census and hashes:
+`/tmp/ctcompile-object-resume-audit.json`. Full logs:
+`/tmp/ctcompile-object-resume-full.log` and
+`/tmp/ctcompile-object-resume-full-detail.log`.

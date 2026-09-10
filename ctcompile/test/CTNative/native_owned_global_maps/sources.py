@@ -3250,3 +3250,52 @@ def mutation_size_cases():
 def mutation_size_sources():
     return {name: (row['source'], 'host', row['expected_trace'])
             for name, row in mutation_size_cases().items() if row['admitted']}
+
+
+def object_argument_cases():
+    # Keep the exact 20d4806e continuation, including the entry allocation and
+    # Bootstrap's t.has(e). A discarded allocation is a separate owner boundary.
+    base = '''var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const t = new Map;
+    return { get(e) { return t.has(e) ? 1 : 0; } };
+});
+var trace = host.slot.get({});
+'''
+    rows = {}
+
+    def add(name, source, calls=4, value=0, admitted=False):
+        rows['object_argument_' + name] = dict(source=source, expected_trace=value,
+            raw_calls=calls, prepared_calls=calls, functions=4,
+            admitted=admitted, owner=admitted or name == 'seeded',
+            sha256=hashlib.sha256(source.encode()).hexdigest())
+
+    add('exact', base, admitted=True)
+    add('seeded', base.replace('return t.has(e)', 't.set(1, 1); return t.has(e)'), 5)
+    add('alias', base.replace('return t.has(e)', 'const alias = e; return t.has(alias)'), admitted=True)
+    add('repeated', base.replace('var trace = host.slot.get({});',
+                                'host.slot.get({}); var trace = host.slot.get({});'), 5, admitted=True)
+    add('two_formals', base.replace('get(e)', 'get(e, other)').replace(
+        'return t.has(e) ? 1 : 0;', 'return t.has(e) ? 1 : t.has(other) ? 2 : 0;').replace(
+        'host.slot.get({})', 'host.slot.get({}, {})'), 5, admitted=True)
+    add('evaluated_number', base.replace('host.slot.get({})', 'host.slot.get(({}, 1))'))
+    for name, actual in (('root', 'host'), ('table', 'host.slot'), ('field', '{value: 1}'),
+                         ('array', '[]')):
+        add(name, base.replace('host.slot.get({})', 'host.slot.get(' + actual + ')'))
+    add('global', base.replace('var trace = host.slot.get({});',
+                              'var key = {}; var trace = host.slot.get(key);'))
+    add('later_object', base.replace('var trace =', 'host.slot.get(1); var trace ='), 5)
+    add('later_number', base.replace('var trace = host.slot.get({});',
+                                    'host.slot.get({}); var trace = host.slot.get(1);'), 5)
+    add('field_write', base.replace('return t.has(e)', 'e.value = 1; return t.has(e)'))
+    add('key_write', base.replace('return t.has(e)', 't.set(e, 1); return t.has(e)'), 5, 1)
+    assert rows['object_argument_exact']['sha256'] == (
+        '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
+    assert rows['object_argument_evaluated_number']['sha256'] == (
+        '2507446b08d7e897441904b6d09aea9ea97c1512c8913e1976092455e56d1514')
+    return rows
+
+
+def object_argument_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in object_argument_cases().items() if row['admitted']}

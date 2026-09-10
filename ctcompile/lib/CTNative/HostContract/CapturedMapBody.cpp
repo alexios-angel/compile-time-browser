@@ -297,6 +297,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     }
     for (mlir::BlockArgument parameter : body.getArguments().drop_front(offset)) {
         if (!step()) { return false; }
+        if (llvm::is_contained(parameters.objectKeys, parameter)) { continue; }
         primitives.insert(parameter);
         alternatives.try_emplace(parameter,
                                  parameters.alternatives[parameter.getArgNumber() - offset]);
@@ -627,6 +628,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
                     if (!step()) { return false; }
                     if (primitives.contains(argument)) { continue; }
+                    if (key == "has" && index == 0 &&
+                        llvm::is_contained(parameters.objectKeys, argument)) {
+                        continue;
+                    }
                     if (key != "set" || index != 1 || !objects.contains(argument)) { return false; }
                     objectStores.insert(invoke);
                 }
@@ -722,6 +727,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     if (!returned || result.reads.size() == firstRead ||
         (!prepared && result.upvalues.size() == firstUpvalue)) {
         return false;
+    }
+    for (mlir::BlockArgument parameter : parameters.objectKeys) {
+        for (mlir::OpOperand & use : parameter.getUses()) {
+            if (!step() || !dominance.dominates(parameter, use.getOwner())) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!read || !calls.contains(call) || keyOf(read.getKey()) != "has" ||
+                use.getOperandNumber() != 2) {
+                return false;
+            }
+        }
     }
     for (mlir::BlockArgument argument : body.getArguments()) {
         if (argument.getArgNumber() >= offset) { continue; }

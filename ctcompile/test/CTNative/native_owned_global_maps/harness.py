@@ -27,7 +27,7 @@ from .sources import (
     STRING_FIELD_BYTES, STRING_FIELD_LONG, zero_size_cases, zero_size_sources,
     one_size_cases, one_size_sources, delete_size_cases, delete_size_sources,
     join_size_cases, join_size_sources,
-    mutation_size_cases, mutation_size_sources,
+    mutation_size_cases, mutation_size_sources, object_argument_cases,
 )
 
 
@@ -1316,15 +1316,18 @@ def standalone(args, output, name, value, compilers, nm):
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
         cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
+        object_argument = name.startswith('object_argument_')
         size_signature = ("std::function<js_num(ctnative::nullable_string)>"
                           if name in nullable_host_result_sources()
                           else "std::function<bool()>" if name == "boolean_result"
                           else "std::function<js_num()>")
-        map_action = "ctnative::map_has(" if name == "boolean_result" else "ctnative::map_size("
+        map_action = "ctnative::map_has(" if name == "boolean_result" or object_argument else "ctnative::map_size("
         if (owned.VM.search(cpp) or "std::shared_ptr<ctn_slot>" not in cpp
-                or size_signature not in cpp or map_action not in cpp
+                or (not object_argument and size_signature not in cpp) or map_action not in cpp
                 or not re.search(r"std::shared_ptr<ctnative::method_\w+>\s+slot\s*;", cpp)):
             raise RuntimeError(f"{name}/{mode}: missing standalone Map/table/callable owners\n{cpp}")
+        if object_argument:
+            check_object_argument_calls(cpp, name, mode)
         if name == "boolean_result":
             entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
             getter = re.search(r"\bfn_3\([^\n]*\)\s*\{(.*?)^\}", cpp, re.M | re.S)
@@ -1410,6 +1413,9 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
+        if name == 'object_argument_exact':
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(object_argument_lifetime_cpp(cpp))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -1462,7 +1468,8 @@ def standalone(args, output, name, value, compilers, nm):
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES,
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
-                                  "joined_size_saved_lifetime", "joined_mutation_saved_lifetime"} else 1
+                                  "joined_size_saved_lifetime", "joined_mutation_saved_lifetime",
+                                  "object_argument_exact"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1502,6 +1509,8 @@ def standalone(args, output, name, value, compilers, nm):
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
+        if name == 'object_argument_exact':
+            object_argument_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
@@ -1509,13 +1518,15 @@ def check_call_preservation(original, output, name):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
     if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable", "leaf_object",
                         "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
-                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_")):
+                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_",
+                        "object_argument_")):
         pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
                    r"scf\.(?:if|yield))\b[^\n]*)")
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
     if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
-                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_")):
+                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_",
+                        "object_argument_")):
         pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
         if ([match.strip() for match in re.findall(pattern, original, re.M)]
                 != [match.strip() for match in re.findall(pattern, output, re.M)]):
@@ -2653,4 +2664,123 @@ def delete_size_lifetime(args, cpp, name, mode, compiler):
              'UBSAN_OPTIONS': 'halt_on_error=1'})
     if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
         raise RuntimeError(f'{name}/{mode}: saved deletion size/leaf lifetime failed\n'
+                           f'{result.returncode}: {result.stdout}{result.stderr}')
+
+
+def object_argument_observer_source(source):
+    # Capture the actual Map in a separate interpreter observer. The native
+    # source and its standard intrinsic contract remain untouched.
+    return source + '''
+(function() {
+    const get = host.slot.get;
+    const original = Map.prototype.has;
+    let captured;
+    Map.prototype.has = function(key) { captured = this; return original.call(this, key); };
+    get({});
+    Map.prototype.has = original;
+    const first = {}, alias = first, other = {};
+    captured.set(first, 7);
+    const a = get(first), b = get(alias), c = get(other);
+    captured.delete(first);
+    const d = get(alias);
+    captured.set(other, 9);
+    const e = get(other), f = get(first);
+    captured.clear();
+    const g = get(other);
+    let future = true;
+    for (let i = 0; i < 128; ++i) {
+        const key = {};
+        if (get(key) !== 0) { future = false; }
+        captured.set(key, i);
+        if (get(key) !== 1 || get({}) !== 0) { future = false; }
+        captured.delete(key);
+        if (get(key) !== 0) { future = false; }
+    }
+    trace = (typeof a === 'number' && a === 1 ? 1 : 0) |
+            (typeof b === 'number' && b === 1 ? 2 : 0) |
+            (typeof c === 'number' && c === 0 ? 4 : 0) |
+            (typeof d === 'number' && d === 0 ? 8 : 0) |
+            (typeof e === 'number' && e === 1 ? 16 : 0) |
+            (typeof f === 'number' && f === 0 ? 32 : 0) |
+            (typeof g === 'number' && g === 0 ? 64 : 0) | (future ? 128 : 0);
+})();
+''', 255
+
+
+def check_object_argument_calls(cpp, name, mode):
+    source = object_argument_cases()[name]['source']
+    entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
+    method = re.search(r'\bfn_3\([^\n]*\)\s*\{(.*?)^\}', cpp, re.M | re.S)
+    arity = 2 if name == 'object_argument_two_formals' else 1
+    signature = 'std::function<js_num(' + ', '.join(
+        ['std::shared_ptr<ctnative::identity_object>'] * arity) + ')>'
+    if (not entry or not method or signature not in cpp or 'struct identity_object {};' not in cpp
+            or entry[1].count('ctnative::invoke_callable(') != source.count('host.slot.get(')
+            or entry[1].count('std::make_shared<ctnative::identity_object>()')
+            != source.count('{}') - 1
+            or method[1].count('ctnative::map_has(') != source.count('t.has(')
+            or method[1].count('ctnative::map_set(') != source.count('t.set(')):
+        raise RuntimeError(f'{name}/{mode}: changed live object allocation, actual or Map operations')
+
+
+def object_argument_lifetime_cpp(cpp):
+    return instrument_leaf_objects(cpp) + r'''
+int main() {
+    using Key = std::shared_ptr<ctnative::identity_object>;
+    using Map = ctnative::number_map<Key>;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 1 || !ctn_test_objects[0].expired()) { return 200; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    static_assert(std::is_same_v<decltype(get), std::function<js_num(Key)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired()) { return 201; }
+    auto map = std::const_pointer_cast<Map>(
+        std::static_pointer_cast<const Map>(ctn_test_maps[0].lock()));
+    auto other = std::make_shared<ctnative::identity_object>();
+    for (int call = 0; call < 128; ++call) {
+        auto key = std::make_shared<ctnative::identity_object>();
+        auto alias = key;
+        std::weak_ptr key_lifetime = key;
+        if (get(key) != 0) { return 202; }
+        ctnative::map_set(map, key, static_cast<js_num>(call));
+        if (get(key) != 1 || get(alias) != 1 || get(other) != 0) { return 203; }
+        key.reset();
+        if (key_lifetime.expired() || get(alias) != 1 ||
+            !ctnative::map_delete(map, alias) || get(alias) != 0) { return 204; }
+        alias.reset();
+        if (!key_lifetime.expired()) { return 205; }
+    }
+    ctnative::map_set(map, other, js_num{7});
+    std::weak_ptr key_lifetime = other;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other) != 1 ||
+        g_host->slot->m_get(other) != 0 || !ctn_test_objects[1].expired()) { return 206; }
+    other.reset(); map.reset();
+    if (key_lifetime.expired() || ctn_test_maps[0].expired()) { return 207; }
+    get = {};
+    if (!key_lifetime.expired() || !ctn_test_maps[0].expired() ||
+        ctn_test_maps[1].expired()) { return 208; }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired()) { return 209; }
+    return 0;
+}
+'''
+
+
+def object_argument_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source.write_text(object_argument_lifetime_cpp(cpp))
+    binary = source.with_suffix('.sanitized').resolve()
+    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
+              str(source), '-o', str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
+        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
+             'UBSAN_OPTIONS': 'halt_on_error=1'})
+    if result.returncode or result.stdout != 'trace=0\n' * 2 or result.stderr:
+        raise RuntimeError(f'{name}/{mode}: borrowed object key lifetime failed\n'
                            f'{result.returncode}: {result.stdout}{result.stderr}')

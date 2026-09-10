@@ -77,6 +77,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     llvm::DenseSet<mlir::Operation *> methodInitializations;
     llvm::DenseSet<mlir::Operation *> methodReads;
     llvm::DenseSet<mlir::Operation *> methodCalls;
+    llvm::DenseSet<mlir::Operation *> argumentObjects;
     for (const HostCallableEdge & edge : host.callables()) {
         if (!spend()) { return; }
         auto method = edge.function;
@@ -121,6 +122,17 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         methodReads.insert(edge.read);
         methodCalls.insert(edge.call);
+        for (const HostMethodArgument & argument : edge.arguments) {
+            if (!spend()) { return; }
+            if (!argument.object) { continue; }
+            auto made = argument.object;
+            if (made.getResult() != argument.actual || made->getParentOp() != entry ||
+                !made->isBeforeInBlock(edge.call)) {
+                reject("owned global object argument lacks its earlier entry allocation");
+                return;
+            }
+            argumentObjects.insert(made);
+        }
     }
     if (capture) {
         if (!spend()) { return; }
@@ -179,7 +191,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
         if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
-            if (made != owner && made != table &&
+            if (made != owner && made != table && !argumentObjects.contains(made) &&
                 (!capture || !llvm::is_contained(capture->leafObjects, made))) {
                 reject("owned global method table has another allocation");
             }

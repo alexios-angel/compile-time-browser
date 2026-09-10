@@ -527,7 +527,7 @@ struct ArrayContentsEvidence {
 /// RangeErrors have the same retention-only early-exit argument: the independent
 /// Error has no local object edge, while the whole-frame proof excludes calls,
 /// handlers and publication. Pow keeps the VM's unconditional exponent cap for
-/// small bases as an explicit source-semantics divergence. Dynamic Sub/Mul also
+/// small bases as an explicit source-semantics divergence. Dynamic Sub/Mul/Div also
 /// accept exactly one original BigInt and one independently proved non-BigInt
 /// primitive. bigint_binary rejects this pair before lookup or user conversion;
 /// its independent TypeError cannot retain unpublished fresh locals. The VM's

@@ -51,20 +51,24 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// Finite primitive categories proved over the complete current call census.
-// They describe possible values, never the value of an earlier invocation.
+// Finite primitive categories or borrowed empty object keys, proved over the
+// complete current call census. Object positions have no primitive alternatives;
+// their actual allocation and allowed uses are checked independently.
 struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
+    std::vector<mlir::BlockArgument> objectKeys{};
     bool operator==(const HostMethodParameters & other) const {
-        return function == other.function && alternatives == other.alternatives;
+        return function == other.function && alternatives == other.alternatives &&
+               objectKeys == other.objectKeys;
     }
 };
 
-struct HostPrimitiveArgument {
+struct HostMethodArgument {
     mlir::BlockArgument parameter;
     mlir::Value actual;
     PrimitiveAlternatives alternatives;
+    ctjs::CreateObjectOp object{};
 };
 
 // One immutable environment slot owns this exact standard Map, constructed
@@ -102,7 +106,7 @@ struct HostCallableEdge {
     ctjs::CreateClosureOp closure;
     ctjs::FuncOp function;
     std::optional<HostCapturedMap> capturedMap;
-    std::vector<HostPrimitiveArgument> arguments;
+    std::vector<HostMethodArgument> arguments;
 };
 
 // A proved Number, Boolean or String origin in an ordinary source global. Each read has

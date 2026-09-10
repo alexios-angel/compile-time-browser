@@ -3619,7 +3619,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         if constexpr (isComparison) {
             return false;
         } else {
-            return producerKind == ctjs::BinaryKind::Sub || producerKind == ctjs::BinaryKind::Mul;
+            return producerKind == ctjs::BinaryKind::Sub || producerKind == ctjs::BinaryKind::Mul ||
+                   producerKind == ctjs::BinaryKind::Div;
         }
     }();
     const std::string mnemonic = isComparison ? "ctjs.compare" : "ctjs.binary";
@@ -4517,8 +4518,9 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                                 ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow,
                                 ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
-            inspect(kind == ctjs::BinaryKind::Mul ? ArrayContentsFailure::None
-                                                  : ArrayContentsFailure::UnsupportedOperation);
+            inspect(kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Div
+                        ? ArrayContentsFailure::None
+                        : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
             inspect(ArrayContentsFailure::None);
         }
@@ -4548,7 +4550,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                 rowCount, liveStates, budgets);
 }
 
-void checkBigIntMixedMulErrors(mlir::MLIRContext & context) {
+void checkBigIntMixedMulDivErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %big = ctjs.constant #ctjs.bigint<\"9007199254740993\"> "
@@ -4615,8 +4617,18 @@ void checkBigIntMixedMulErrors(mlir::MLIRContext & context) {
                                                 .complete = complete});
     };
     const auto parse = [&](const mixed_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
             std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        // Preserve every historical Mul fixture; run the same independent
+        // operand/retention matrix for Div by changing only those operations.
+        if (module && operation == ctjs::BinaryKind::Div) {
+            module->walk([&](ctjs::BinaryOp binary) {
+                if (binary.getKind() == ctjs::BinaryKind::Mul) {
+                    binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));
+                }
+            });
+        }
+        return module;
     };
     const auto run = [&](const mixed_row & expected) {
         if (auto module = parse(expected)) {
@@ -4836,13 +4848,14 @@ void checkBigIntMixedMulErrors(mlir::MLIRContext & context) {
              {ctjs::BinaryKind::Add, ctjs::BinaryKind::Div, ctjs::BinaryKind::Mod,
               ctjs::BinaryKind::Pow, ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
-            inspect(ArrayContentsFailure::UnsupportedOperation);
-            binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Mul));
+            inspect(kind == ctjs::BinaryKind::Div ? ArrayContentsFailure::None
+                                                  : ArrayContentsFailure::UnsupportedOperation);
+            binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));
             inspect(ArrayContentsFailure::None);
         }
         binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
         inspect(ArrayContentsFailure::None);
-        binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Mul));
+        binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));
         inspect(ArrayContentsFailure::None);
         binary->setOperand(0, inputs[1]);
         binary->setOperand(1, inputs[0]);
@@ -4865,9 +4878,9 @@ void checkBigIntMixedMulErrors(mlir::MLIRContext & context) {
         fail(row{.what = "live mixed BigInt Mul", .body = mutation.contents.body, .expected = ""},
              "the mixed BigInt Mul mutation fixture did not parse");
     }
-    std::printf("mixed BigInt Mul errors: %u rows, %u stale/fresh live states, one wide snapshot, "
+    std::printf("mixed BigInt %s errors: %u rows, %u stale/fresh live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
-                rowCount, liveStates, budgets);
+                operation == ctjs::BinaryKind::Div ? "Div" : "Mul", rowCount, liveStates, budgets);
 }
 
 void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
@@ -4997,8 +5010,8 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %big"}) {
                     const bool supported =
-                        (form == "binary" &&
-                         (operation == "concat" || operation == "sub" || operation == "mul")) ||
+                        (form == "binary" && (operation == "concat" || operation == "sub" ||
+                                              operation == "mul" || operation == "div")) ||
                         (operands == "%produced, %big" &&
                          (form == "binary"
                               ? operation == "add" || operation == "sub" || operation == "mul" ||
@@ -5274,7 +5287,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                   .body = values + operate(input) + done,
                                   .failure = !isStatic &&
                                                      (kind == ctjs::BinaryKind::Sub ||
-                                                      kind == ctjs::BinaryKind::Mul) &&
+                                                      kind == ctjs::BinaryKind::Mul ||
+                                                      kind == ctjs::BinaryKind::Div) &&
                                                      input == "%zero"
                                                  ? ArrayContentsFailure::None
                                              : isStatic && input == "%p"
@@ -5291,6 +5305,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                  operate("%input") + done,
                          .failure = !isStatic && (kind == ctjs::BinaryKind::Sub ||
                                                   kind == ctjs::BinaryKind::Mul ||
+                                                  kind == ctjs::BinaryKind::Div ||
                                                   (kind == ctjs::BinaryKind::Add &&
                                                    attribute == "#ctjs.string<\"2\">"))
                                         ? ArrayContentsFailure::None
@@ -5369,7 +5384,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                              .failure = (supported && operands == "%produced, %rhs") ||
                                                 (consumerForm == "binary" &&
                                                  (operation == "concat" || operation == "sub" ||
-                                                  operation == "mul"))
+                                                  operation == "mul" || operation == "div"))
                                             ? ArrayContentsFailure::None
                                             : ArrayContentsFailure::UnsupportedOperation,
                              .arrays = "a:[x]",
@@ -5608,7 +5623,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 const auto oldValue = constant.getValue();
                 constant.setValueAttr(ctjs::NumberAttr::get(&context, 0));
                 inspect(!isStatic &&
-                                (kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul)
+                                (kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
+                                 kind == ctjs::BinaryKind::Div)
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 constant.setValueAttr(oldValue);
@@ -6193,9 +6209,15 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                   "  %bad = ctjs.binary mul %operand, %zero\n" + done,
                           .arrays = "a:[x] | a:[x] | a:[x]",
                           .exit = "produced -> {}; produced -> {}; produced -> {}"}});
-        run({.contents = {.what = "mixed comparison cannot authorize mixed Div conversion",
+        run({.contents = {.what =
+                              "mixed comparison and later Div have independent retention proofs",
                           .body = threeCategories + compareInput("%operand") +
                                   "  %bad = ctjs.binary div %operand, %zero\n" + done,
+                          .arrays = "a:[x] | a:[x] | a:[x]",
+                          .exit = "produced -> {}; produced -> {}; produced -> {}"}});
+        run({.contents = {.what = "mixed comparison cannot authorize mixed Mod conversion",
+                          .body = threeCategories + compareInput("%operand") +
+                                  "  %bad = ctjs.binary mod %operand, %zero\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}});
         for (const std::string saved : {"%lhs", "%zero", "%text", "%x"}) {
             const bool primitive = saved != "%x";
@@ -7380,7 +7402,8 @@ int main() {
     checkArithmeticUnaryProducers(context);
     checkBigIntPlusErrors(context);
     checkBigIntMixedSubErrors(context);
-    checkBigIntMixedMulErrors(context);
+    checkBigIntMixedMulDivErrors(context, ctjs::BinaryKind::Mul);
+    checkBigIntMixedMulDivErrors(context, ctjs::BinaryKind::Div);
     checkBigIntUnaryProducers(context);
     checkBigIntBinaryProducers(context);
     checkStringBigIntConcatenation(context);
