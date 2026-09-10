@@ -75,8 +75,6 @@ bool scheduler::run_one(std::size_t i) {
 }
 
 void scheduler::run(std::size_t i, const std::stop_token & stop) {
-    identity me{this, i};
-    current_ = &me;
     while (!stop.stop_requested()) {
         if (run_one(i)) { continue; }
         std::unique_lock lock{idle_mutex_};
@@ -85,7 +83,6 @@ void scheduler::run(std::size_t i, const std::stop_token & stop) {
                    stop.stop_requested();
         });
     }
-    current_ = nullptr;
 }
 
 } // namespace ctbrowser
