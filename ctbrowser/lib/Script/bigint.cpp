@@ -49,16 +49,9 @@ struct scanned {
     }
     if (rest.empty()) { return {0, {}, false}; }
     for (const char c : rest) {
-        if (c == '_') { continue; } // a numeric separator, already legal in the lexer
-        unsigned digit = 0;
-        if (c >= '0' && c <= '9') {
-            digit = static_cast<unsigned>(c - '0');
-        } else if (ascii_lower(c) >= 'a' && ascii_lower(c) <= 'f') {
-            digit = static_cast<unsigned>(ascii_lower(c) - 'a') + 10;
-        } else {
-            return {0, {}, false}; // a '.', an 'e', anything else - not an integer
-        }
-        if (digit >= out.radix) { return {0, {}, false}; }
+        if (c == '_') { continue; }     // a numeric separator, already legal in the lexer
+        const int digit = hex_value(c); // a '.', an 'e', anything else - not an integer
+        if (digit < 0 || static_cast<unsigned>(digit) >= out.radix) { return {0, {}, false}; }
         out.digits += c;
     }
     if (out.digits.empty()) { return {0, {}, false}; }
@@ -71,10 +64,8 @@ struct scanned {
     // in the digit count either way and this needs no special cases.
     bigint out = 0;
     for (const char c : s.digits) {
-        const unsigned digit = c <= '9' ? static_cast<unsigned>(c - '0')
-                                        : static_cast<unsigned>(ascii_lower(c) - 'a') + 10;
         out *= s.radix;
-        out += digit;
+        out += static_cast<unsigned>(hex_value(c));
     }
     return s.negative ? -out : out;
 }
