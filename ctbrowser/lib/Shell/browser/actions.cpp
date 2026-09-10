@@ -11,32 +11,55 @@
 
 namespace ctbrowser::shell {
 
+// THE ACTIVATION BEHAVIOUR of one element, run by the bindings' dispatch after
+// a `click`'s listeners and only if none of them cancelled it - `target` IS the
+// activation target, the first node on the event's path that has any, so this
+// dispatches on its tag rather than walking up from wherever the click landed.
+// A checkbox or radio was already toggled before the listeners ran and has
+// already fired `input` and `change`; all it needs here is the repaint.
 void browser::activate(node_id target) {
+    std::string_view tag;
+    node_id labelled;
+    {
+        const auto txn = doc_->read();
+        tag = atoms_.text(txn.tag(target).value_or(atom{}));
+        if (tag == "label") { labelled = labelled_control(txn, target); }
+    }
+    if (tag == "a" || tag == "area") {
+        (void)follow_link(target);
+        return;
+    }
+    if (tag == "summary") {
+        (void)toggle_details(target);
+        return;
+    }
+    // A <label>'s activation behaviour is a click at the control it labels -
+    // HTML 4.10.4 - and that click has an activation behaviour of its own,
+    // which is how the label's text toggles the checkbox. A disabled control
+    // refuses it, in dom_bindings::click, as it refuses `element.click()`.
+    if (tag == "label") {
+        if (labelled) { (void)bindings_->click(labelled); }
+        return;
+    }
     // A DISABLED control does nothing and dispatches nothing - it does not
     // toggle, submit, focus or fire an event. Without this the attribute
     // was purely decorative, and it was not even that.
-    if (is_disabled(control_ancestor(target))) { return; }
-    if (follow_link(target)) { return; }
-    if (toggle_details(target)) { return; }
-    const node_id control = control_ancestor(target);
-    if (!control) { return; }
+    if (is_disabled(target)) { return; }
     const auto txn = doc_->read();
-    const control_kind kind = kind_of(txn, control);
+    const control_kind kind = kind_of(txn, target);
     if (kind == control_kind::checkbox || kind == control_kind::radio) {
-        forms_.toggle(txn, atoms_, control, kind);
-        bindings_->dispatch("change", control);
         mark(dirty::paint);
         return;
     }
     if (kind == control_kind::select) {
         // Toggle: clicking an open select closes it again.
-        select_open_ = select_open_ == control ? node_id{} : control;
+        select_open_ = select_open_ == target ? node_id{} : target;
         mark(dirty::paint);
         return;
     }
     if (kind != control_kind::button) { return; }
-    const std::string_view type = txn.attribute_value(control, atoms_.intern("type"));
-    const node_id form = form_store::owning_form(txn, atoms_, control);
+    const std::string_view type = txn.attribute_value(target, atoms_.intern("type"));
+    const node_id form = form_store::owning_form(txn, atoms_, target);
     if (type == "reset") {
         forms_.reset_form(txn, form);
         mark(dirty::paint);
@@ -193,7 +216,9 @@ void browser::scroll_to_fragment(std::string_view id) {
 }
 
 void browser::submit(node_id form) {
-    if (!form) { return; }
+    // HTML 4.10.21.3 step 4: a form that is not connected cannot navigate, so
+    // it does not submit - and does not fire `submit` either.
+    if (!form || !bindings_->is_connected(form)) { return; }
     if (bindings_->dispatch("submit", form)) { return; } // cancelled
     const auto txn = doc_->read();
     last_submission_ = forms_.form_data(txn, atoms_, form);

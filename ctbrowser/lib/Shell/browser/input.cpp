@@ -177,14 +177,22 @@ bool browser::handle(const input_event & event) {
         changed = focus(control_ancestor(pressed_)) || changed;
         // A click fires on RELEASE, at the element the press started on -
         // which is what makes dragging off a button cancel it, the way every
-        // real browser behaves.
+        // real browser behaves. It is a MouseEvent down the same dispatch a
+        // page's `element.click()` takes, and the default action - toggling,
+        // submitting, following the link - runs INSIDE that dispatch, after
+        // the listeners and only if none of them cancelled.
+        //
+        // A DISABLED CONTROL HEARS NO CLICK - HTML 4.10.18.5: a disabled form
+        // control prevents click events from being dispatched on it. Its
+        // label is not disabled, so a click on the label's text still reaches
+        // the label; the click the label then sends its control is refused by
+        // dom_bindings::click, the same rule one step later.
         const node_id released_on = hit_test(event.x, event.y);
         if (pressed_ && released_on == pressed_) {
-            const bool prevented = bindings_->dispatch("click", pressed_);
+            if (!is_disabled(control_ancestor(pressed_)) || via_label(pressed_)) {
+                (void)dispatch_mouse("click", pressed_, event);
+            }
             changed = true;
-            // Default actions run AFTER the listeners and only if none of
-            // them cancelled - which is what preventDefault is for.
-            if (!prevented) { activate(pressed_); }
         }
         pressed_ = node_id{};
         return changed;
