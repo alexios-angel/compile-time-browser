@@ -148,4 +148,16 @@ struct function_span {
                                        std::string_view name, const function_span & span);
 [[nodiscard]] bool has_percentage(std::string_view text);
 
+// The canonical unit's spelling, or an empty view for a `<number>`. This is what
+// a computed value is serialised with. Defined in units.cpp.
+[[nodiscard]] std::string_view canonical_unit(numeric_type type) noexcept;
+
+// One dimension to pixels. `nullopt` for a unit this does not model, so a caller
+// can leave the value alone rather than guess at it - which is the difference
+// between an honest gap and a wrong number. An empty unit is a plain number and
+// answers with itself, because that is what a calc term needs. Defined in
+// units.cpp.
+[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
+                                              const length_context & ctx);
+
 } // namespace ctbrowser::style::css::detail

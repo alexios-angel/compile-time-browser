@@ -67,10 +67,6 @@ enum class numeric_type : std::uint8_t {
     flex,
 };
 
-// The canonical unit's spelling, or an empty view for a `<number>`. This is what
-// a computed value is serialised with.
-[[nodiscard]] std::string_view canonical_unit(numeric_type type) noexcept;
-
 // A value that may carry a percentage it could not resolve. `px` alone is the
 // ordinary case; `has_percent` is the `calc(100% - 12px)` one.
 //
@@ -146,21 +142,14 @@ enum class math_context : std::uint8_t {
 // function in the value and one of them may legitimately be a number.
 [[nodiscard]] math_context math_context_of(std::string_view property) noexcept;
 
-// One dimension to pixels. `nullopt` for a unit this does not model, so a caller
-// can leave the value alone rather than guess at it - which is the difference
-// between an honest gap and a wrong number. An empty unit is a plain number and
-// answers with itself, because that is what a calc term needs.
-[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
-                                              const length_context & ctx);
-
 // ONE DIMENSION IN ITS CANONICAL UNIT, whatever family it belongs to: `1in` ->
 // `96px`, `10ms` -> `0.01s`, `100grad` -> `90deg`, `96dpi` -> `1dppx`. `nullopt`
 // for text that is not exactly one dimension, or one whose unit needs a basis
 // this engine has no answer for.
 //
-// This is `unit_to_px`'s sibling and NOT a replacement for it: a length is the
-// only family the layout tree can use, so the caller that wants a number keeps
-// asking for pixels. What this is for is the computed VALUE, which CSS Values 4
+// This is `length_text_to_px`'s sibling and NOT a replacement for it: a length
+// is the only family the layout tree can use, so the caller that wants a number
+// keeps asking for pixels. What this is for is the computed VALUE, which CSS Values 4
 // §6.4 and §6.5 say is the canonical unit for every family - `transition-delay:
 // 12ms` computes to `0.012s` and `rotate: 100grad` to `90deg` in every browser.
 [[nodiscard]] std::optional<std::string> canonical_dimension_text(std::string_view text,

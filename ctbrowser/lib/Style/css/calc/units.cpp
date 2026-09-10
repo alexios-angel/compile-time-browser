@@ -144,8 +144,6 @@ namespace detail {
     return out;
 }
 
-} // namespace detail
-
 std::string_view canonical_unit(numeric_type type) noexcept {
     switch (type) {
     case numeric_type::number: return {};
@@ -187,6 +185,8 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     if (ascii_iequals(unit, "pc")) { return value * 16.0f; }
     return std::nullopt;
 }
+
+} // namespace detail
 
 std::optional<float> length_text_to_px(std::string_view text, const length_context & ctx) {
     // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave the

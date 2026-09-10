@@ -60,22 +60,6 @@ target_sources(ctbrowser-style
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/ua.hpp")
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-style)
-# NO ctcss INTERFACE, AND NOTHING OF ITS TO INSTALL, since the CSS front end
-# landed. `style/engine.hpp` used to include <ctcss.hpp> for one private member's
-# parameter type, and because that is a PUBLIC header the path and the headers
-# themselves both had to travel - so an installed prefix carried a COPY of
-# ctcss's include tree, and a consumer that had its own ended up with two.
-#
-# It took an install to notice the second interface was missing in the first
-# place: an exported target may not name a source-tree path, so the build tree got
-# BUILD_INTERFACE and until 2026-08-09 that was the only one. `find_package`
-# succeeded and the first `#include <ctbrowser.hpp>` died on "ctcss.hpp: No such
-# file or directory". Nothing said so, because everything in this tree consumes
-# the engine through add_subdirectory.
-#
-# Deleting the whole arrangement is the real fix, and the parser being ours is
-# what allows it. tools/check/check-package.sh is what proves an install still
-# compiles; it is the only thing that can.
 target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)
