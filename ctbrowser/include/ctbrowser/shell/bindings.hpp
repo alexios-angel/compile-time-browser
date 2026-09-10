@@ -931,6 +931,10 @@ public:
         std::string source; // what was last parsed, so a <style> edit re-parses
         bool disabled = false;
         bool constructed = false;
+        // CSSOM 6.3 "origin-clean flag": false for a `<link>` fetched from
+        // another origin, and then cssRules/insertRule/deleteRule are a
+        // SecurityError - the one place the object model refuses to answer.
+        bool origin_clean = true;
         // The same list as a rule's, and the reason it is not re-derived from
         // `media` on every read: a script that has called `appendMedium` must
         // not have it undone by the next walk of the DOM.

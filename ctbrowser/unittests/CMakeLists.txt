@@ -85,6 +85,10 @@ ctbrowser_test(unit/css_values_wpt)
 # getComputedStyle and el.style hand a script.
 ctbrowser_test(unit/cssom_rules)
 ctbrowser_test(unit/cssom_sheets)
+# ...and the css/cssom behaviours moved on 2026-09-10: class strings, the
+# three declaration blocks, removed rules, @charset, keyframes, @container,
+# `sheet` on the prototype and the origin-clean flag. One case per behaviour.
+ctbrowser_test(unit/cssom_wpt)
 # `querySelector` and the Selectors engine behind it. Its own file rather than
 # more of css_syntax: that one asks what the parser BUILDS, and this asks what a
 # script gets back when it matches with it - which used to be a second, weaker

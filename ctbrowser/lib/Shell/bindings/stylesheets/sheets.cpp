@@ -9,6 +9,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/shell/net/url.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -234,6 +236,15 @@ void dom_bindings::sync_style_sheets(context & cx) {
             // re-reading a file each time would be a load per property access.
             if (fresh || record.href != each.href) {
                 record.href = each.href;
+                // ORIGIN-CLEAN, CSSOM 6.3: a sheet fetched from another origin
+                // keeps its rules to itself. Only an absolute http(s) href can
+                // be cross-origin - a relative one, a data: URL and a
+                // constructed sheet are the document's own - and the origin
+                // is the URL's tuple, compared the way `location.origin`
+                // reports it.
+                record.origin_clean =
+                    !parse_absolute(record.href).valid ||
+                    location_parts(record.href).origin == location_parts(location_href_).origin;
                 std::string text;
                 if (assets_ != nullptr) {
                     const std::vector<std::byte> bytes = assets_->load(record.href);
