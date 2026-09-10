@@ -143,9 +143,12 @@ std::string dom_bindings::locate_namespace(node_id element, const std::string * 
     // so: the two prefixes are reserved and their namespaces are fixed.
     // `Node-lookupNamespaceURI.html` asserts exactly this on an element that
     // carries neither declaration, so it cannot be derived from the tree.
+    // AT EVERY ELEMENT - a DocumentFragment or a parentless text node has
+    // none, and "locate a namespace" answers null for it before any prefix
+    // is looked at.
+    if (!element || atoms_ == nullptr || doc_ == nullptr) { return {}; }
     if (prefix != nullptr && *prefix == "xml") { return std::string{xml_namespace}; }
     if (prefix != nullptr && *prefix == "xmlns") { return std::string{xmlns_namespace}; }
-    if (!element || atoms_ == nullptr || doc_ == nullptr) { return {}; }
     // THE DECLARATION IS READ OFF THE QUALIFIED NAME, not off an attribute's
     // namespace. `struct attribute` is `(atom name, std::string value)` and has
     // nowhere to put a namespace - see docs/wpt.md's handoff table - so
