@@ -10,6 +10,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
+
 using namespace ctcompile::test::owned_global_methods;
 
 namespace {
@@ -2246,6 +2248,182 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
                              : "deletion cannot revive a census that exceeded its complete limit");
     }
     check(rows == 31, "all independent delete-size owner source controls ran");
+
+    const unsigned deletionRows = rows;
+    const auto branch = [](const std::string & left, const std::string & right) {
+        return "    %flag = ctjs.truthy %choice\n    scf.if %flag {\n" + left +
+               "      scf.yield\n    } else {\n" + right + "      scf.yield\n    }\n";
+    };
+    const std::string differentDeletes =
+        branch("      %leftDelete = ctjs.call %eraser(%state, %one)\n",
+               "      %rightDelete = ctjs.call %eraser(%state, %two) {join_erase}\n");
+    const std::string differentSets =
+        branch("      %leftSet = ctjs.call %setter(%state, %one, %value)\n",
+               "      %rightSet = ctjs.call %setter(%state, %three, %value)\n");
+    const std::string joinBody = clear + seed + extra + differentDeletes;
+    const auto joinedOne = program(joinBody + size, "%one");
+    for (const char * flag : {"true", "false"}) {
+        const auto choice = [&](const std::string & text) {
+            return replaced(text, "#ctjs.boolean<true>",
+                            std::string("#ctjs.boolean<") + flag + ">");
+        };
+        variant(choice(joinedOne), true,
+                "different surviving branch keys independently establish exact size one");
+        variant(choice(program(clear + differentSets + size, "%one")), true,
+                "different singleton setters preserve exact size without common membership");
+        variant(choice(program(clear + seed + extra +
+                                   replaced(differentDeletes,
+                                            "      %rightDelete = ctjs.call %eraser(%state, %two) "
+                                            "{join_erase}\n",
+                                            "") +
+                                   size,
+                               "%one")),
+                false, "a startup arm cannot erase an unequal future cardinality");
+        variant(choice(program(seed + extra + differentDeletes + size, "%one")), false,
+                "equal tracked branch entries cannot exclude unknown incoming Map contents");
+    }
+    variant(program(joinBody + size), false,
+            "an empty definite-key intersection does not make the joined Map empty");
+    variant(replaced(joinedOne, reset + replaced(store, "%zero", "%one"), ""), false,
+            "exact joined size cannot fabricate a common member at the saved numeric key");
+    variant(program(clear + seed + extra + size + differentDeletes, "%two"), true,
+            "a pre-join saved two retains its read-time value after either deletion");
+    variant(program(clear + seed + extra + size + differentDeletes, "%one"), false,
+            "a pre-join snapshot cannot borrow the later exact one");
+    const std::string grow = "    %grew = ctjs.call %setter(%state, %three, %value)\n";
+    variant(program(joinBody + size + grow, "%one"), true,
+            "an immutable joined size survives later insertion and table reset");
+    variant(program(joinBody + grow + size, "%one"), false,
+            "a new size read after growth cannot reuse the earlier joined cardinality");
+    const std::string uncertainDelete =
+        "    %aliasEraser = ctjs.get_property %seeded[%deleteKey]\n"
+        "    %aliasDelete = ctjs.call %aliasEraser(%seeded, %one)\n";
+    variant(program(joinBody + uncertainDelete + size, "%one"), false,
+            "an alias deletion invalidates a mutable joined size on the same runtime Map");
+    variant(program(joinBody + size + uncertainDelete, "%one"), true,
+            "an alias deletion does not alter an already saved joined scalar");
+    variant(program(joinBody + replaced(seed, "%seeded", "%uncertainSet") + size, "%one"), false,
+            "a post-join write at a possibly present key invalidates exact size");
+    variant(program(joinBody + "    %effect = ctjs.call %this(%this)\n" + size, "%one"), false,
+            "an unknown effect cannot preserve joined mutable cardinality");
+    const std::string inner = "      %innerFlag = ctjs.truthy %choice\n      scf.if %innerFlag {\n"
+                              "        %innerLeft = ctjs.call %setter(%state, %two, %value)\n"
+                              "        scf.yield\n      } else {\n"
+                              "        %innerRight = ctjs.call %setter(%state, %three, %value)\n"
+                              "        scf.yield\n      }\n";
+    variant(
+        program(clear +
+                    branch("      %outerLeft = ctjs.call %setter(%state, %one, %value)\n", inner) +
+                    size,
+                "%one"),
+        true, "nested structural joins independently retain the same exact one");
+    variant(program(clear +
+                        branch("      %outerLeft = ctjs.call %setter(%state, %one, %value)\n",
+                               replaced(inner,
+                                        "        %innerRight = ctjs.call %setter(%state, "
+                                        "%three, %value)\n",
+                                        "")) +
+                        size,
+                    "%one"),
+            false, "an empty inner arm prevents an exact outer cardinality");
+    for (unsigned writes : {64u, 65u}) {
+        std::string left;
+        std::string right;
+        for (unsigned index = 0; index < writes; ++index) {
+            const auto suffix = std::to_string(index);
+            left += "      %left" + suffix + " = ctjs.call %setter(%state, %one, %value)\n";
+            if (index < 64) {
+                right += "      %right" + suffix + " = ctjs.call %setter(%state, %three, %value)\n";
+            }
+        }
+        variant(program(clear + branch(left, right) + size, "%one"), writes == 64,
+                writes == 64
+                    ? "two independently bounded sixty-four-candidate arms retain exact size"
+                    : "one arm over its complete census budget cannot borrow its sibling's size");
+    }
+    const unsigned joinRows = rows - deletionRows;
+    check(joinRows == 22, "all independent exact-join owner controls ran");
+    rows = deletionRows;
+
+    auto joinedModule = mlir::parseSourceString<mlir::ModuleOp>(joinedOne, &context);
+    check(static_cast<bool>(joinedModule), "joined size budget and live-edit fixture parses");
+    if (joinedModule) {
+        auto joinedContract = requested(*joinedModule);
+        OwnedGlobalRoots complete(*joinedModule, joinedContract);
+        const unsigned completion = complete.steps();
+        check(complete.proved() && completion < 30000, "the joined cardinality proof is bounded");
+        if (complete.proved() && completion > 1 && completion < 30000) {
+            std::vector<unsigned> budgets{0, 1, completion / 2, completion - 1};
+            for (unsigned budget = 2; budget < completion; budget *= 2) {
+                budgets.push_back(budget);
+            }
+            llvm::sort(budgets);
+            budgets.erase(std::unique(budgets.begin(), budgets.end()), budgets.end());
+            for (unsigned budget : budgets) {
+                OwnedGlobalRoots limited(*joinedModule, joinedContract, budget);
+                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                          empty(*joinedModule, limited),
+                      "incomplete join work cannot publish a partial ownership or size proof");
+            }
+            OwnedGlobalRoots exact(*joinedModule, joinedContract, completion);
+            check(exact.proved() && exact.steps() == completion,
+                  "the exact charged join budget reproduces complete ownership");
+            ctjs::GetPropertyOp snapshot;
+            ctjs::CallOp rightDeletion;
+            ctjs::ConstantOp wrong;
+            mlir::scf::IfOp joined;
+            auto setter = joinedModule->lookupSymbol<ctjs::FuncOp>("put$4");
+            setter.walk([&](ctjs::GetPropertyOp op) {
+                if (op->hasAttr("snapshot")) { snapshot = op; }
+            });
+            setter.walk([&](ctjs::CallOp op) {
+                if (op->hasAttr("join_erase")) { rightDeletion = op; }
+            });
+            setter.walk([&](mlir::scf::IfOp op) { joined = op; });
+            setter.walk([&](ctjs::ConstantOp op) {
+                auto number = llvm::dyn_cast<ctjs::NumberAttr>(op.getValue());
+                if (number && number.getBits() == 4613937818241073152ULL) { wrong = op; }
+            });
+            check(snapshot && rightDeletion && joined && wrong,
+                  "join mutations keep their actual branch, snapshot and deletion");
+            if (snapshot && rightDeletion && joined && wrong) {
+                mlir::Builder attrs(&context);
+                joinedModule->walk([&](mlir::Operation * op) {
+                    op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(1));
+                    op->setAttr("ctnative.map_present", attrs.getUnitAttr());
+                });
+                joinedContract = requested(*joinedModule);
+                const auto refused = [&] {
+                    OwnedGlobalRoots stale(*joinedModule, joinedContract);
+                    check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                              empty(*joinedModule, stale),
+                          "a live join edit invalidates the former ownership fingerprint");
+                    OwnedGlobalRoots fresh(*joinedModule, requested(*joinedModule));
+                    check(!fresh.proved() && !fresh.exhausted() && empty(*joinedModule, fresh),
+                          "fresh fingerprints and forged size reports cannot hide unequal arms");
+                };
+                snapshot->moveBefore(joined);
+                refused();
+                snapshot->moveAfter(joined);
+                check(OwnedGlobalRoots(*joinedModule, joinedContract).proved(),
+                      "restoring the actual post-join read recovers exact one");
+                const auto key = rightDeletion.getArgs().front();
+                rightDeletion->setOperand(2, wrong.getResult());
+                refused();
+                rightDeletion->setOperand(2, key);
+                check(OwnedGlobalRoots(*joinedModule, joinedContract).proved(),
+                      "restoring both equal-cardinality arms recovers the proof");
+                const auto receiver = rightDeletion.getReceiver();
+                rightDeletion->setOperand(1, setter.getBody().front().getArgument(0));
+                refused();
+                rightDeletion->setOperand(1, receiver);
+                check(OwnedGlobalRoots(*joinedModule, joinedContract).proved(),
+                      "restoring the same runtime Map on both arms recovers the proof");
+            }
+            std::printf("joined-size owner %s: %u rows, six live edits, %zu cutoffs / %u work\n",
+                        prepared ? "prepared" : "source", joinRows, budgets.size(), completion);
+        }
+    }
 
     for (const auto & [text, label] : {std::pair{last, "last key"}, {remaining, "one of two"}}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);

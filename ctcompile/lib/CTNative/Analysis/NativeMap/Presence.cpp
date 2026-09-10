@@ -59,6 +59,10 @@ struct state {
     // means unknown contents; an empty vector independently proves emptiness.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> possibleKeys{};
     llvm::DenseMap<mlir::Value, unsigned> exactSizes{};
+    // Mutable cardinality of an actual runtime instance. Equal structural
+    // arms can preserve it without sharing any definite key. Mutations clear
+    // this fact independently of already-read, immutable SSA exactSizes.
+    llvm::DenseMap<mlir::Value, unsigned> currentSizes{};
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
@@ -68,6 +72,51 @@ struct state {
         return {{},
                 sizeBounds.lookup(value),
                 found == exactSizes.end() ? std::nullopt : std::optional(found->second)};
+    }
+
+    struct size_fact {
+        unsigned lower = 0;
+        std::optional<unsigned> exact;
+    };
+    size_fact sizeFacts(mlir::Value instance) const {
+        if (const auto found = currentSizes.find(instance); found != currentSizes.end()) {
+            return {found->second, found->second};
+        }
+        llvm::SmallVector<mlir::Value> distinct;
+        unsigned candidates = 0;
+        for (const fact & value : entries) {
+            if (!value.present || value.instance != instance) { continue; }
+            if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
+            if (llvm::all_of(distinct, [&](mlir::Value previous) {
+                    return comparePrimitiveMapKeys(previous, value.key, keyEvidence(previous),
+                                                   keyEvidence(value.key)) ==
+                           PrimitiveMapKeyRelation::Distinct;
+                })) {
+                distinct.push_back(value.key);
+            }
+        }
+        size_fact result{static_cast<unsigned>(distinct.size()), std::nullopt};
+        if (const auto found = possibleKeys.find(instance); found != possibleKeys.end()) {
+            llvm::SmallVector<mlir::Value> possible;
+            for (mlir::Value key : found->second) {
+                if (llvm::none_of(possible, [&](mlir::Value previous) {
+                        return comparePrimitiveMapKeys(previous, key, keyEvidence(previous),
+                                                       keyEvidence(key)) ==
+                               PrimitiveMapKeyRelation::Same;
+                    })) {
+                    possible.push_back(key);
+                }
+            }
+            if (possible.size() == distinct.size()) { result.exact = result.lower; }
+        }
+        return result;
+    }
+    void rememberSizes() {
+        for (const auto & [instance, possible] : possibleKeys) {
+            if (const auto fact = sizeFacts(instance); fact.exact) {
+                currentSizes[instance] = *fact.exact;
+            }
+        }
     }
 
     PrimitiveAlternatives alternatives(mlir::Value value) const {
@@ -97,6 +146,12 @@ struct state {
         entries.push_back(value);
     }
     void intersect(const state & other) {
+        for (const auto & [instance, exact] : llvm::make_early_inc_range(currentSizes)) {
+            const auto found = other.currentSizes.find(instance);
+            if (found == other.currentSizes.end() || exact != found->second) {
+                currentSizes.erase(instance);
+            }
+        }
         for (auto & [instance, possible] : llvm::make_early_inc_range(possibleKeys)) {
             const auto found = other.possibleKeys.find(instance);
             if (found == other.possibleKeys.end() ||
@@ -222,6 +277,12 @@ struct presenceAnalysis {
             current = {};
             return;
         }
+        for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
+            if (effect.written.contains(familyOf(instance)) ||
+                effect.erased.contains(familyOf(instance))) {
+                current.currentSizes.erase(instance);
+            }
+        }
         for (const auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
             if (effect.written.contains(familyOf(instance)) ||
                 (!possible.empty() && effect.erased.contains(familyOf(instance)))) {
@@ -268,6 +329,11 @@ struct presenceAnalysis {
 
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call);
+        for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
+            if (familyOf(instance) == familyOf(affected.instance)) {
+                current.currentSizes.erase(instance);
+            }
+        }
         // Only this runtime instance definitely lost the erased key. Other
         // Maps in its schema family may alias it, so their upper bounds remain
         // unchanged while mayErase below invalidates definite membership.
@@ -302,6 +368,11 @@ struct presenceAnalysis {
     // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
+        for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
+            if (familyOf(instance) == familyOf(added.instance)) {
+                current.currentSizes.erase(instance);
+            }
+        }
         for (auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
             if (familyOf(instance) != familyOf(added.instance)) { continue; }
             if (instance == added.instance && possible.size() < kMaxPrimitiveMapSizeCandidates) {
@@ -340,37 +411,9 @@ struct presenceAnalysis {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
             const auto instance = instanceOf(read.getObject());
-            llvm::SmallVector<mlir::Value> distinct;
-            unsigned candidates = 0;
-            for (const fact & value : current.entries) {
-                if (!value.present || value.instance != instance) { continue; }
-                if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
-                if (llvm::all_of(distinct, [&](mlir::Value previous) {
-                        return comparePrimitiveMapKeys(previous, value.key,
-                                                       current.keyEvidence(previous),
-                                                       current.keyEvidence(value.key)) ==
-                               PrimitiveMapKeyRelation::Distinct;
-                    })) {
-                    distinct.push_back(value.key);
-                }
-            }
-            current.sizeBounds[read.getResult()] = static_cast<unsigned>(distinct.size());
-            if (const auto found = current.possibleKeys.find(instance);
-                found != current.possibleKeys.end()) {
-                llvm::SmallVector<mlir::Value> possible;
-                for (mlir::Value key : found->second) {
-                    if (llvm::none_of(possible, [&](mlir::Value previous) {
-                            return comparePrimitiveMapKeys(
-                                       previous, key, current.keyEvidence(previous),
-                                       current.keyEvidence(key)) == PrimitiveMapKeyRelation::Same;
-                        })) {
-                        possible.push_back(key);
-                    }
-                }
-                if (possible.size() == distinct.size()) {
-                    current.exactSizes[read.getResult()] = static_cast<unsigned>(distinct.size());
-                }
-            }
+            const auto fact = current.sizeFacts(instance);
+            current.sizeBounds[read.getResult()] = fact.lower;
+            if (fact.exact) { current.exactSizes[read.getResult()] = *fact.exact; }
             current.scalars[read.getResult()] =
                 PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
             return;
@@ -412,6 +455,11 @@ struct presenceAnalysis {
                     }
                 }
             }
+            // Derive each arm's cardinality before merging key sets. The
+            // union of possible keys and intersection of definite keys cannot
+            // recover equal sizes when different keys survive on each arm.
+            thenState.rememberSizes();
+            elseState.rememberSizes();
             thenState.intersect(elseState);
             current = std::move(thenState);
             return;
@@ -486,6 +534,7 @@ struct presenceAnalysis {
                 erase.erased.insert(familyOf(call.getReceiver()));
                 invalidate(current, erase);
                 current.possibleKeys[instanceOf(call.getReceiver())] = {};
+                current.currentSizes[instanceOf(call.getReceiver())] = 0;
             } else if (action.empty()) {
                 current = {};
             }

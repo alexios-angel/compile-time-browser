@@ -53,7 +53,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_after_second_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_startup_lower_bound.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_conditional_second_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_different_singleton_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_different_singleton_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_selected_two_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_clear_invalidates.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
@@ -70,13 +70,27 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_before_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_after_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_different_survivors.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_different_survivors.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_nonzero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_signed_zero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_alias_after_store.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_other_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_disjoint_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_possibly_equal_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_saved_before_reset.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_prebranch_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_nested_singletons.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_equal_two.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_after_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_uncertain_write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_no_common_member.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_alias_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_nested_unequal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// JOIN: emitc.func
+// JOIN-DAG: call_opaque "ctnative::map_size"
+// JOIN-DAG: call_opaque "ctnative::map_get_present"
 
 // DELETE: emitc.func
 // DELETE-DAG: call_opaque "ctnative::map_delete"
@@ -1186,3 +1200,159 @@ function probe(left, right) {
     return outer.get(0).size;
 }
 var result = probe("x", "y");
+
+//--- join_saved_before_reset.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    const saved = outer.size;
+    outer.set(3, inner);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- join_prebranch_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    const saved = outer.size;
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- join_nested_singletons.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    if (flag) { outer.set(1, inner); }
+    else {
+        if (flag) { outer.set(2, inner); }
+        else { outer.set(3, inner); }
+    }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- join_equal_two.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    if (flag) { outer.set(1, inner); outer.set(2, inner); }
+    else { outer.set(3, inner); outer.set(4, inner); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- join_after_growth.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- join_uncertain_write.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- join_no_common_member.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    const saved = outer.size;
+    return outer.get(saved).size;
+}
+var result = probe(false);
+
+//--- join_alias_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    const alias = outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    alias.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- join_nested_unequal.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    if (flag) { outer.set(1, inner); }
+    else {
+        if (flag) { outer.set(2, inner); }
+        else { outer.has(3); }
+    }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);

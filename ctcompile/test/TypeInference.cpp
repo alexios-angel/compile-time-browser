@@ -1113,12 +1113,12 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
          clear + seed + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + extra + "  }\n" + size +
              suffix,
          false},
-        {"different singleton keys do not borrow an intersected exact-one proof",
+        {"different singleton keys independently join their exact-one cardinalities",
          clear +
              replace(replace(both, "%anotherOne", "%three"),
                      "    %again = ctjs.call %setter(%map, %one, %one)\n", "") +
              size + suffix,
-         false},
+         true},
         {"selected size and literal arms independently establish one",
          clear + seed + selected + suffix, true},
         {"one selected two arm cannot inherit the other arm's exact one",
@@ -1310,12 +1310,27 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                  "    %left = ctjs.get_property %map[%sizeName]\n"
                                  "    scf.yield %left : !ctjs.value\n"
                                  "  } else {\n    scf.yield %negativeZero : !ctjs.value\n  }\n";
+    const auto branch = [](const std::string & left, const std::string & right) {
+        return "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + left + "  } else {\n" + right +
+               "  }\n";
+    };
+    const std::string differentDeletes =
+        branch("    %leftDelete = ctjs.call %eraser(%map, %one)\n",
+               "    %rightDelete = ctjs.call %eraser(%map, %two) {join_erase}\n");
+    const std::string differentSets =
+        branch("    %leftSet = ctjs.call %setter(%map, %one, %one)\n",
+               "    %rightSet = ctjs.call %setter(%map, %three, %one)\n");
+    const std::string joined = clear + seed + extra + differentDeletes;
+    const std::string grow = "  %grew = ctjs.call %setter(%map, %three, %one)\n";
+    const std::string aliasDelete = "  %aliasEraser = ctjs.get_property %seeded[%deleteName]\n"
+                                    "  %aliasDelete = ctjs.call %aliasEraser(%seeded, %one)\n";
     const auto suffix = reset + store + read;
     const auto oneSuffix = reset + store + replace(read, "%zero", "%one");
     struct presenceRow {
         const char * what;
         std::string body;
         bool present;
+        bool supported = true;
     };
     std::vector<presenceRow> rows = {
         {"deleting the last key saves exact zero", clear + seed + erase + size + suffix, true},
@@ -1366,12 +1381,12 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
          clear + seed + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + erase + "  }\n" + size +
              suffix,
          false},
-        {"different singleton survivors cannot borrow an intersected exact count",
+        {"different singleton survivors independently join their exact counts",
          clear + seed + extra +
              replace(replace(both, "%anotherOne", "%two"),
                      "    %again = ctjs.call %eraser(%map, %one)\n", "") +
              size + oneSuffix,
-         false},
+         true},
         {"both selected arms establish zero after deletion",
          clear + seed + erase + selected + suffix, true},
         {"one selected one cannot borrow a deleted Map's zero",
@@ -1405,6 +1420,86 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                      : "deletion cannot repair an overflowed complete census",
                         clear + repeated + erase + size + suffix, writes == 64});
     }
+    const size_t deletionRows = rows.size();
+    const std::vector<presenceRow> joinRows = {
+        {"post-join size is exact despite disjoint singleton survivors", joined + size + oneSuffix,
+         true},
+        {"post-join size is exact despite disjoint singleton setters",
+         clear + differentSets + size + oneSuffix, true},
+        {"unequal survivor cardinalities cannot select the startup arm",
+         clear + seed + extra +
+             replace(differentDeletes,
+                     "    %rightDelete = ctjs.call %eraser(%map, %two) {join_erase}\n", "") +
+             size + oneSuffix,
+         false},
+        {"equal tracked survivor counts cannot exclude unknown incoming contents",
+         seed + extra + differentDeletes + size + oneSuffix, false},
+        {"an empty intersection of branch keys is not an empty Map", joined + size + suffix, false},
+        {"exact size does not create common membership at the saved key",
+         joined + size + replace(read, "%zero", "%saved"), false},
+        {"exact size does not make either disjoint survivor definitely present",
+         joined + size + replace(read, "%zero", "%two"), false},
+        {"a snapshot before the join remains exact two after either deletion",
+         clear + seed + extra + size + differentDeletes + reset + store +
+             replace(read, "%zero", "%two"),
+         true},
+        {"an earlier snapshot cannot borrow the joined cardinality",
+         clear + seed + extra + size + differentDeletes + oneSuffix, false},
+        {"an immutable post-join snapshot survives later growth", joined + size + grow + oneSuffix,
+         true},
+        {"a post-growth snapshot cannot reuse the former joined size",
+         joined + grow + size + oneSuffix, false},
+        {"a fluent alias reads the same instance's joined size",
+         joined + replace(size, "%map", "%seeded") + oneSuffix, true},
+        {"alias deletion invalidates mutable joined size", joined + aliasDelete + size + oneSuffix,
+         false},
+        {"alias deletion preserves an earlier immutable joined snapshot",
+         joined + size + aliasDelete + oneSuffix, true},
+        {"a post-join write at a possibly present key invalidates exact size",
+         joined + replace(seed, "%seeded", "%uncertainSet") + size + oneSuffix, false},
+        {"unknown effects invalidate mutable joined cardinality",
+         joined + "  %effect = ctjs.call %p(%receiver)\n" + size + oneSuffix, false, false},
+        {"unknown effects keep saved-key proof conservative even after an exact snapshot",
+         joined + size + "  %effect = ctjs.call %p(%receiver)\n" + oneSuffix, false, false},
+        {"a clear after storing at the saved key invalidates current membership",
+         joined + size + reset + store + "  %lateClear = ctjs.call %clearer(%map)\n" +
+             replace(read, "%zero", "%one"),
+         false},
+    };
+    rows.insert(rows.end(), joinRows.begin(), joinRows.end());
+    const std::string inner =
+        "    %innerBit = ctjs.truthy %q\n    scf.if %innerBit {\n"
+        "      %innerLeft = ctjs.call %setter(%map, %two, %one)\n"
+        "    } else {\n      %innerRight = ctjs.call %setter(%map, %three, %one)\n    }\n";
+    rows.push_back({"nested disjoint singleton joins preserve exact one",
+                    clear +
+                        branch("    %outerLeft = ctjs.call %setter(%map, %one, %one)\n", inner) +
+                        size + oneSuffix,
+                    true});
+    rows.push_back(
+        {"an empty inner branch prevents an outer exact cardinality",
+         clear +
+             branch("    %outerLeft = ctjs.call %setter(%map, %one, %one)\n",
+                    replace(inner, "      %innerRight = ctjs.call %setter(%map, %three, %one)\n",
+                            "")) +
+             size + oneSuffix,
+         false});
+    for (unsigned writes : {64u, 65u}) {
+        std::string left;
+        std::string right;
+        for (unsigned index = 0; index < writes; ++index) {
+            const auto label = std::to_string(index);
+            left += "    %left" + label + " = ctjs.call %setter(%map, %one, %one)\n";
+            if (index < 64) {
+                right += "    %right" + label + " = ctjs.call %setter(%map, %three, %one)\n";
+            }
+        }
+        rows.push_back(
+            {writes == 64
+                 ? "equal cardinality survives union-census overflow when each arm is bounded"
+                 : "a single over-budget arm withholds joined exact cardinality",
+             clear + branch(left, right) + size + oneSuffix, writes == 64});
+    }
     const auto marked = [](mlir::ModuleOp module, llvm::StringRef name) {
         mlir::Operation * result = nullptr;
         module.walk([&](mlir::Operation * op) {
@@ -1413,7 +1508,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
         return result;
     };
     const auto verify = [&](mlir::ModuleOp module, const char * what, bool expected,
-                            bool mixed = true) {
+                            bool mixed = true, bool supported = true) {
         for (bool clone : {false, true}) {
             mlir::OwningOpRef<mlir::ModuleOp> fresh;
             auto current = module;
@@ -1437,7 +1532,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             });
             ctnative::prepareNativeMaps(current);
             auto * observed = marked(current, "check");
-            if (!observed || ctnative::nativeMapAction(observed) != "get" ||
+            if (!observed || ctnative::nativeMapAction(observed) != (supported ? "get" : "") ||
                 observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
                 std::printf("FAIL %s: %s delete-size membership differs from %d\n", what,
                             clone ? "fresh" : "reused", static_cast<int>(expected));
@@ -1453,8 +1548,13 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                 std::printf("FAIL %s: delete-size preparation changed executable source\n", what);
                 ++failures;
             }
+            if (!supported && observed && observed->hasAttr(ctnative::kNativeMapReadType)) {
+                std::printf("FAIL %s: unsupported Map kept forged read-type evidence\n", what);
+                ++failures;
+            }
             check(current, what,
-                  !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
+                  !supported ? "!ctnative.boxed"
+                  : !mixed   ? "!ctnative.opt<!ctnative.num<i32>>"
                   : expected
                       ? "!ctnative.num<f64>"
                       : "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>");
@@ -1474,7 +1574,55 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             }
             // A homogeneous local Number read retains its optional public
             // type; the later mixed store independently requests presence.
-            verify(*module, r.what, mixed && r.present, mixed);
+            verify(*module, r.what, mixed && r.present, mixed, r.supported);
+        }
+    }
+    auto joinedModule =
+        mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + joined + size + oneSuffix +
+                                                    mixedSuffix + "  ctjs.return %observed\n}\n",
+                                                &context);
+    if (!joinedModule) {
+        std::printf("FAIL live joined-size fixture did not parse\n");
+        ++failures;
+    } else {
+        auto * snapshot = marked(*joinedModule, "snapshot");
+        auto * deletion = marked(*joinedModule, "join_erase");
+        auto * resetting = marked(*joinedModule, "reset");
+        auto * observed = marked(*joinedModule, "check");
+        mlir::scf::IfOp branchOp;
+        ctjs::ConstantOp wrong;
+        joinedModule->walk([&](mlir::scf::IfOp op) { branchOp = op; });
+        joinedModule->walk([&](ctjs::ConstantOp op) {
+            auto number = llvm::dyn_cast<ctjs::NumberAttr>(op.getValue());
+            if (number && number.getBits() == 4613937818241073152ULL) { wrong = op; }
+        });
+        if (!snapshot || !deletion || !resetting || !observed || !branchOp || !wrong) {
+            std::printf("FAIL live joined-size fixture lost a marked source operation\n");
+            ++failures;
+        } else {
+            verify(*joinedModule, "live exact joined size", true);
+            snapshot->moveBefore(branchOp);
+            verify(*joinedModule, "moving snapshot before join retains the old two", false);
+            snapshot->moveAfter(branchOp);
+            verify(*joinedModule, "restoring snapshot after join rederives one", true);
+            const auto key = deletion->getOperand(2);
+            deletion->setOperand(2, wrong.getResult());
+            verify(*joinedModule, "one changed branch cannot inherit the sibling's exact size",
+                   false);
+            deletion->setOperand(2, key);
+            verify(*joinedModule, "restoring equal branch cardinalities recovers one", true);
+            snapshot->moveAfter(resetting);
+            verify(*joinedModule, "reading after reset cannot reuse a previous join's size", false);
+            snapshot->moveBefore(resetting);
+            verify(*joinedModule, "restoring actual read time restores exact one", true);
+            const auto lookup = observed->getOperand(2);
+            observed->setOperand(2, wrong.getResult());
+            verify(*joinedModule, "changed lookup cannot inherit saved-size membership", false);
+            observed->setOperand(2, lookup);
+            verify(*joinedModule, "restoring actual lookup key recovers membership", true);
+            std::printf("joined-size Map presence: %zu source/mixed rows and eight live edits, "
+                        "reused/fresh modules\n",
+                        (rows.size() - deletionRows) * 2);
         }
     }
     auto module = mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + clear + seed +
