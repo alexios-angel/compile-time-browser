@@ -69,10 +69,6 @@ void ascii_upper_in_place(std::string & text) noexcept {
     boost::algorithm::to_upper(text, std::locale::classic());
 }
 
-std::string ascii_upper_copy(std::string_view text) {
-    return boost::algorithm::to_upper_copy(std::string{text}, std::locale::classic());
-}
-
 // BEAST'S TABLE, BEAST'S LOOP, ONE LINE CHANGED - and the numbers are why, over
 // a 4 MiB payload, min of five runs:
 //

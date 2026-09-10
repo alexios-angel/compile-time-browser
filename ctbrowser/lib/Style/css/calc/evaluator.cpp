@@ -1,7 +1,7 @@
 // calc() - the term algebra, the non-linear functions of CSS Values 4
 // §10.4-§10.8, the recursive-descent evaluator over the token stream, and its
-// entry points: evaluate_math, evaluate_calc and the symbolic evaluation a
-// specified value uses.
+// entry points: evaluate_math and the symbolic evaluation a specified value
+// uses.
 
 #include "internal.hpp"
 
@@ -935,12 +935,6 @@ math_answer evaluate_math(std::string_view expression, const length_context & ct
     const token_stream tokens = tokenize(expression);
     evaluator run{tokens, ctx};
     return run.run();
-}
-
-std::optional<calc_result> evaluate_calc(std::string_view expression, const length_context & ctx) {
-    const math_answer answer = evaluate_math(expression, ctx);
-    if (answer.outcome != math_outcome::resolved || answer.value.is_number) { return std::nullopt; }
-    return answer.value;
 }
 
 } // namespace ctbrowser::style::css

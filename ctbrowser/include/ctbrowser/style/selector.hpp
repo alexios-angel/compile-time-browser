@@ -248,7 +248,6 @@ class ancestor_filter {
 public:
     static constexpr std::size_t slots = 4096;
 
-    void push(const compound & keys) { apply(keys, +1); }
     void push(atom tag, atom id, std::span<const atom> classes) {
         if (tag) { bump(hash(tag), +1); }
         if (id) { bump(hash(id), +1); }
@@ -275,8 +274,6 @@ public:
         return true;
     }
 
-    void clear() noexcept { counters_.fill(0); }
-
 private:
     struct slot_pair {
         std::size_t a, b;
@@ -285,11 +282,6 @@ private:
         // two independent probes over one 32-bit id
         const std::uint32_t k = key.id * 2654435761u;
         return slot_pair{(k >> 4) % slots, ((k >> 18) ^ (k * 40503u)) % slots};
-    }
-    void apply(const compound & c, int delta) {
-        if (c.tag) { bump(hash(c.tag), delta); }
-        if (c.id) { bump(hash(c.id), delta); }
-        for (const atom cls : c.classes) { bump(hash(cls), delta); }
     }
     void bump(slot_pair p, int delta) noexcept {
         for (const std::size_t i : {p.a, p.b}) {

@@ -17,7 +17,6 @@ namespace ctbrowser {
 
 struct parse_result {
     node_id root;
-    bool wellformed = true; // the tree builder recovers from everything; kept for callers
     // Each <svg> element and the EXACT bytes it was written as, for the
     // rasteriser. The tree holds the parsed, namespaced subtree as well - see
     // dom/tokenizer.hpp.

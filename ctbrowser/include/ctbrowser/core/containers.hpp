@@ -5,7 +5,6 @@
 
 #include <boost/container_hash/hash.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
-#include <boost/unordered/unordered_flat_set.hpp>
 
 // The third-party containers, aliased in one place: the seam for replacing them
 // with std:: versions when libstdc++ catches up.
@@ -16,8 +15,6 @@ namespace ctbrowser {
 // the standard one is a linked list of nodes and every lookup is a pointer
 // chase. These are the atom table, the style intern table and the VM's globals.
 template <typename Key, typename Value> using flat_map = boost::unordered_flat_map<Key, Value>;
-
-template <typename Key> using flat_set = boost::unordered_flat_set<Key>;
 
 // A NAME WHOSE HASH IS ALREADY KNOWN. Property lookup walks a prototype chain
 // asking EVERY level for the same name, and the hash cannot change between

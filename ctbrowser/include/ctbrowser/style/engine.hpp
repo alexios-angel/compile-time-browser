@@ -122,8 +122,6 @@ public:
 
     [[nodiscard]] std::uint32_t state_of(node_id id) const;
 
-    void clear_states() { states_.clear(); }
-
     // What a page's @font-face rules asked for: a family name and the file it
     // should come from. The cascade has no opinion about these - they are a
     // resource list - so they are collected rather than matched.

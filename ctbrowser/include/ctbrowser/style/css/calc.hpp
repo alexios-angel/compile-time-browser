@@ -170,14 +170,6 @@ enum class math_context : std::uint8_t {
 // `min(...)`, `max(...)` or `clamp(...)`. The three outcomes are above.
 [[nodiscard]] math_answer evaluate_math(std::string_view expression, const length_context & ctx);
 
-// The length-only view of evaluate_math, kept because most callers want exactly
-// that: `nullopt` for a number, for an unresolved comparison, and for anything
-// invalid. NOT the primitive - a caller that has to tell "not a length" from
-// "not a value" must ask evaluate_math, and confusing the two is the defect
-// `is_number` exists to fix.
-[[nodiscard]] std::optional<calc_result> evaluate_calc(std::string_view expression,
-                                                       const length_context & ctx);
-
 // A folded value, and whether every calc() in it actually evaluated.
 //
 // The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a
@@ -274,13 +266,6 @@ struct folded_value {
 // is 24px" from "this is not a length at all" without a second parse.
 [[nodiscard]] std::optional<float> length_text_to_px(std::string_view text,
                                                      const length_context & ctx);
-
-// Like length_text_to_px, but a BARE NUMBER IS NOT A LENGTH. That distinction is
-// the difference between folding `padding: 1rem` to `16px` and destroying
-// `line-height: 1.5` by calling it `1.5px`, so the two callers get two functions
-// rather than a flag nobody remembers to pass.
-[[nodiscard]] std::optional<float> dimension_text_to_px(std::string_view text,
-                                                        const length_context & ctx);
 
 // A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)`, `90deg`,
 // `0.5s` - or, for a number answer, the bare number with no unit at all: `0.5`,

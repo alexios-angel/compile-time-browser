@@ -188,13 +188,6 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     return std::nullopt;
 }
 
-std::optional<float> dimension_text_to_px(std::string_view text, const length_context & ctx) {
-    const token_stream tokens = tokenize(text);
-    const css_token * tok = lone_value(tokens);
-    if (tok == nullptr || tok->type != token_type::dimension) { return std::nullopt; }
-    return unit_to_px(static_cast<float>(tok->number), tokens.unit_of(*tok), ctx);
-}
-
 std::optional<float> length_text_to_px(std::string_view text, const length_context & ctx) {
     // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave the
     // same here as they do everywhere else in the front end.

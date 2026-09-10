@@ -37,7 +37,6 @@ namespace ctbrowser {
 void ascii_lower_in_place(std::string & text) noexcept;
 [[nodiscard]] std::string ascii_lower_copy(std::string_view text);
 void ascii_upper_in_place(std::string & text) noexcept;
-[[nodiscard]] std::string ascii_upper_copy(std::string_view text);
 
 // `boost::algorithm::iequals` implements it, but NOT its default overload -
 // that one takes `std::locale()`, the global locale, which is the host
@@ -86,13 +85,11 @@ void ascii_upper_in_place(std::string & text) noexcept;
 //
 //   HTML and CSS   space, tab, LF, FF, CR
 //   JavaScript     the above plus vertical tab (and more this engine does not do)
-//   GLSL lines     space, tab, CR - a newline ENDS the thing being trimmed
 //
-// So a caller names the set it means, and the three the engine uses are here to
+// So a caller names the set it means, and the sets the engine uses are here to
 // be named rather than retyped.
 inline constexpr std::string_view html_whitespace = " \t\n\r\f";
 inline constexpr std::string_view js_whitespace = " \t\n\r\f\v";
-inline constexpr std::string_view glsl_line_whitespace = " \t\r";
 
 // NOT `boost::algorithm::trim`: it trims what the locale calls space, which
 // INCLUDES vertical tab, and `trim_if` returns a std::string - measured 7x slower
@@ -102,10 +99,6 @@ inline constexpr std::string_view glsl_line_whitespace = " \t\r";
     const std::size_t first = text.find_first_not_of(set);
     if (first == std::string_view::npos) { return {}; }
     return text.substr(first, text.find_last_not_of(set) - first + 1);
-}
-
-[[nodiscard]] constexpr bool all_whitespace(std::string_view text, std::string_view set) noexcept {
-    return text.find_first_not_of(set) == std::string_view::npos;
 }
 
 // --- utf-8 ----------------------------------------------------------------
