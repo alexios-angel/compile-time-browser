@@ -502,10 +502,6 @@ public:
     // which is the common case and the point.
     std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr);
 
-    // Push anything a script wrote into `value`/`checked` through to the
-    // controls, and report whether that changed one.
-    [[nodiscard]] bool sync_controls() { return bindings_->refresh_wrappers(); }
-
     [[nodiscard]] rect viewport() const noexcept;
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] const fragment & fragments() const noexcept { return fragments_; }

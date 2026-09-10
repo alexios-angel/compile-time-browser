@@ -1019,8 +1019,6 @@ private:
     void normalize_subtree(node_id root);
     // END selectors
 
-    [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
-
     // The 2D context. Its methods close over the canvas node, so the object can
     // be stored and reused - which is what every canvas page does.
     // What a page can pass to drawImage: a loadImage() handle (a number) or an

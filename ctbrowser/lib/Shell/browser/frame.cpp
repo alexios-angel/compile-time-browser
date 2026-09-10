@@ -155,7 +155,8 @@ rect browser::viewport() const noexcept {
 std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * pool) {
     // A value the page assigned OUTSIDE an event handler - at the top of the
     // script, say - reaches the control here. Dispatch covers the rest.
-    if (bindings_ && sync_controls()) { mark(dirty::paint); }
+    // Anything a script wrote into `value`/`checked` reaches the controls here.
+    if (bindings_ && bindings_->refresh_wrappers()) { mark(dirty::paint); }
     // Anything drawn into a canvas since the last frame makes its tiles
     // stale. Asking here rather than being told keeps the bindings from
     // having to know what a tile is.

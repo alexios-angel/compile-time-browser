@@ -24,7 +24,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     install_attribute_methods(cx, obj);
 
     method("setText", [this](context & c, std::span<value> args) {
-        set_text(id_or_nothing(c), arg_string(c, args, 0));
+        set_text(receiver(c), arg_string(c, args, 0));
         return value::undefined();
     });
     method("getText", [this](context & c, std::span<value>) {
