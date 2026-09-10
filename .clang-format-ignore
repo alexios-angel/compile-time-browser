@@ -8,7 +8,6 @@
 # formatter ran" impossible to read.
 ctbrowser/include/ctbrowser/raster/text/font8x8.hpp
 ctbrowser/include/ctbrowser/dom/entities.hpp
-ctbrowser/include/ctbrowser/gpu/shaders/tile_spv.hpp
 
 # mlir-tblgen's output, which is generated for the same reason and is not
 # committed either (Principle 10 - generated files are build artifacts). Listed

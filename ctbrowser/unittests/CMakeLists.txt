@@ -345,20 +345,6 @@ ctbrowser_test(js/number_basics)
 ctbrowser_test(js/symbol_basics)
 ctbrowser_test(js/bigint_basics)
 
-# The GPU test needs SDL3 to BUILD; it does not need a GPU to PASS. Where there
-# is no device it skips the hardware half and still checks the fallback, which
-# is the path such a machine actually takes.
-if(SDL3_FOUND)
-  ctbrowser_test(unit/gpu_basics)
-  target_link_libraries(ctbrowser-test-gpu_basics PRIVATE ctbrowser::gpu SDL3::SDL3)
-  # `offscreen` rather than `dummy`: dummy has no Vulkan surface support, so a
-  # device cannot be created under it even where the driver is fine.
-  # The Vulkan driver is not TSan-instrumented, so its internal locking is
-  # reported as races. Suppressed by library only - see test/support/tsan.supp.
-  set_tests_properties(gpu_basics PROPERTIES ENVIRONMENT
-    "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp")
-endif()
-
 # navigation drives run_app (bindings_basics did, until it was split), which
 # initialises SDL - and SDL reaches libdbus, whose own lock order TSan reports
 # as an inversion. Same suppression file, same rule: by LIBRARY, so a real one

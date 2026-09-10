@@ -84,7 +84,6 @@ add_subdirectory(Paint)
 add_subdirectory(Raster)
 add_subdirectory(Shell)
 add_subdirectory(App)
-add_subdirectory(GPU)
 
 
 # NOTHING OF ctcss'S IS INSTALLED any more. This shipped a copy of its include
@@ -159,9 +158,6 @@ endif()
 set(CTBROWSER_TARGETS
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser)
-if(TARGET ctbrowser-gpu)
-  list(APPEND CTBROWSER_TARGETS ctbrowser-gpu)
-endif()
 
 install(TARGETS ${CTBROWSER_TARGETS}
   EXPORT ctbrowser-targets

@@ -17,7 +17,3 @@ target_include_directories(ctbrowser-test-bench_style PRIVATE
 ctbrowser_bench(bench_interaction)
 ctbrowser_bench(bench_layout)
 ctbrowser_bench(bench_raster)
-if(SDL3_FOUND)
-  ctbrowser_bench(bench_gpu)
-  target_link_libraries(ctbrowser-test-bench_gpu PRIVATE ctbrowser::gpu SDL3::SDL3)
-endif()
