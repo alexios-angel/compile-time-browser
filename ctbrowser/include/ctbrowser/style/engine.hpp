@@ -633,7 +633,8 @@ public:
             "font-size",       "font-style",     "font-variant",    "font-weight",
             "letter-spacing",  "line-height",    "list-style",      "list-style-position",
             "list-style-type", "text-align",     "text-decoration", "text-indent",
-            "text-transform",  "visibility",     "white-space",     "word-spacing"};
+            "text-transform",  "visibility",     "white-space",     "word-spacing",
+            "writing-mode"};
         for (const std::string_view name : names) {
             if (name == property) { return true; }
         }

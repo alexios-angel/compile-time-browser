@@ -606,6 +606,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     containing block in the question at all. `text-indent: 10%`
         //     computes to `10%`.
         const style::css::property_syntax * known = style::css::find_property(property);
+        // 3a. A `<position>`, whose keywords compute to percentages: `10% center`
+        //     is `10% 50%` and `right 20px` is `calc(100% - 20px)`, CSS Values 5
+        //     §position. `background-position` is not modelled as one - its
+        //     grammar has a three-value form and a comma list - but a value that
+        //     IS a position reads the same way, and anything else keeps its text.
+        if ((known != nullptr && known->kind == style::css::value_kind::position) ||
+            property == "background-position") {
+            std::string resolved = style::css::computed_position(text, declared("writing-mode"),
+                                                                 declared("direction"));
+            if (!resolved.empty()) { return resolved; }
+        }
         if (known != nullptr && (known->kind == style::css::value_kind::length ||
                                  known->kind == style::css::value_kind::length_percentage)) {
             return computed_length(text);

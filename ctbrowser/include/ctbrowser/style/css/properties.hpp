@@ -132,6 +132,22 @@ struct value_check {
 [[nodiscard]] value_check check_declaration(std::string_view property, std::string_view value,
                                             bool allow_important = false);
 
+// THE COMPUTED VALUE OF A `<position>`. CSS Values 5 §position: the keywords
+// compute to percentages - `center` is `50%`, `right 30%` is `70%`, `right 20px`
+// is `calc(100% - 20px)` - and a single component gets `50%` for the half it
+// left unsaid, so `10% center` and `10%` both compute to `10% 50%`. The four
+// flow-relative keywords resolve against the WRITING MODE and DIRECTION the
+// caller supplies, which is why they are parameters: `x-start` is `left` in a
+// horizontal left-to-right box and `right` in a right-to-left one.
+//
+// A math function is a component like any other and is kept as written -
+// `calc(0% + 320px)` is `calc(0% + 320px) 50%` - and text that is not a
+// position this reader can resolve comes back EMPTY, so a caller keeps what it
+// had rather than guessing.
+[[nodiscard]] std::string computed_position(std::string_view specified,
+                                            std::string_view writing_mode,
+                                            std::string_view direction);
+
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.
 [[nodiscard]] bool supports_declaration(std::string_view property, std::string_view value);
