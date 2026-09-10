@@ -35,25 +35,17 @@ using ctbrowser::atom;
 struct declaration {
     atom property;
     std::string value;
+    [[nodiscard]] friend bool operator==(const declaration &, const declaration &) = default;
 };
 
 // small_vector because the overwhelming majority of elements carry a handful
 // of declarations; a heap allocation each would dominate.
 using declaration_list = boost::container::small_vector<declaration, 8>;
 
-[[nodiscard]] inline bool same_declarations(const declaration_list & a,
-                                            const declaration_list & b) noexcept {
-    if (a.size() != b.size()) { return false; }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (a[i].property != b[i].property || a[i].value != b[i].value) { return false; }
-    }
-    return true;
-}
-
 // `boost::hash_combine`, not a hand-rolled FNV-1a: FNV walks a string a BYTE AT
 // A TIME, and boost::hash mixes over word-sized chunks (core/containers.hpp).
 //
-// It hashes exactly what `same_declarations` compares - the property atom and
+// It hashes exactly what `declaration_list::operator==` compares - the property atom and
 // the value bytes, in order - because a hash that reads less than equality does
 // is a table that returns wrong answers, and one that reads more is a table
 // that misses.
@@ -141,7 +133,7 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return declarations.size(); }
 
     [[nodiscard]] bool operator==(const computed_style & o) const noexcept {
-        return inherited == o.inherited && same_declarations(declarations, o.declarations);
+        return inherited == o.inherited && declarations == o.declarations;
     }
     [[nodiscard]] std::size_t hash() const noexcept {
         std::size_t h = hash_declarations(declarations);
@@ -180,8 +172,7 @@ public:
         const std::lock_guard lock{mutex_};
         auto & bucket = by_hash_[h];
         for (const computed_style_ptr & existing : bucket) {
-            if (existing->inherited == from &&
-                same_declarations(existing->declarations, candidate)) {
+            if (existing->inherited == from && existing->declarations == candidate) {
                 return existing;
             }
         }
@@ -198,7 +189,7 @@ public:
         const std::lock_guard lock{inherited_mutex_};
         auto & bucket = inherited_by_hash_[h];
         for (const inherited_ptr & existing : bucket) {
-            if (same_declarations(existing->declarations, candidate)) { return existing; }
+            if (existing->declarations == candidate) { return existing; }
         }
         inherited_ptr fresh{new inherited_style{std::move(candidate)}};
         bucket.push_back(fresh);
