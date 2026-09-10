@@ -125,7 +125,6 @@ target_sources(ctbrowser-shell
     # image codecs, each behind a two-function header, none of them SDL
     image/png.cpp
     image/jpeg.cpp
-    image/images.cpp
     # what a PAGE can do
     page/canvas.cpp
     page/forms.cpp

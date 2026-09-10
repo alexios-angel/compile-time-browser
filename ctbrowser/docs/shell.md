@@ -776,18 +776,12 @@ at 0x0 forever - the attribute was right, the decode was cached, and layout had
 nothing to measure. `refresh_images` runs before each layout instead, which costs
 a tree walk and not a decode.
 
-### PNG with no compression library
+### PNG out
 
 `canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
-(`shell/image/images.hpp`) writes one with no zlib: a PNG's pixel data is a zlib
-stream, and a zlib stream may be made entirely of STORED deflate blocks - five
-bytes of header and the bytes verbatim. Valid deflate, so every decoder reads it,
-and the file is about 1.05x the raw pixels. That is the whole cost, and it buys
-one fewer dependency in a header belonging to the SDL-free core.
-
-`tools/check/check-png.py` decodes what the engine wrote with Python's own zlib. "It
-has the right chunk names" is not evidence: the CRCs, the Adler-32 and the block
-headers are all silent when wrong.
+(`shell/image/png.hpp`) writes one through libpng's simplified API, the same
+library that decodes them. `tools/check/check-png.py` decodes what the engine
+wrote with Python's own zlib, independently of it.
 
 ### `<a download>` WRITES A FILE - the one invented behaviour
 

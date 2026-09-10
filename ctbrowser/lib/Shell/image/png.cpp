@@ -1,6 +1,6 @@
 #include <ctbrowser/shell/image/png.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. png.hpp declares two
+// THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. png.hpp declares three
 // functions and includes nothing third-party, which is the rule url.cpp follows
 // for Boost.URL and net_curl.cpp for curl.h.
 //
@@ -80,6 +80,46 @@ paint::bitmap decode_png(std::span<const std::byte> data) {
         }
     }
     return out;
+}
+
+std::vector<std::byte> encode_png(const paint::bitmap & image) {
+    // Empty in, empty out - not a header with no pixels, which a decoder would
+    // reject and which would look like a corrupt file rather than no file.
+    if (image.empty()) { return {}; }
+
+    // bitmap::at is 0xAARRGGBB; libpng wants the channels in reading order.
+    std::vector<unsigned char> rgba;
+    rgba.reserve(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) *
+                 4U);
+    for (std::int32_t y = 0; y < image.height; ++y) {
+        for (std::int32_t x = 0; x < image.width; ++x) {
+            const std::uint32_t pixel = image.at(x, y);
+            rgba.push_back(static_cast<unsigned char>((pixel >> 16) & 0xFF));
+            rgba.push_back(static_cast<unsigned char>((pixel >> 8) & 0xFF));
+            rgba.push_back(static_cast<unsigned char>(pixel & 0xFF));
+            rgba.push_back(static_cast<unsigned char>((pixel >> 24) & 0xFF));
+        }
+    }
+
+    png_image out;
+    std::memset(&out, 0, sizeof out);
+    out.version = PNG_IMAGE_VERSION;
+    out.width = static_cast<png_uint_32>(image.width);
+    out.height = static_cast<png_uint_32>(image.height);
+    out.format = PNG_FORMAT_RGBA;
+
+    // Two passes, as the simplified API is written: the first measures, the
+    // second writes. A null buffer on the first is what asks for the size.
+    png_alloc_size_t size = 0;
+    if (png_image_write_to_memory(&out, nullptr, &size, 0, rgba.data(), 0, nullptr) == 0) {
+        return {};
+    }
+    std::vector<std::byte> bytes(size);
+    if (png_image_write_to_memory(&out, bytes.data(), &size, 0, rgba.data(), 0, nullptr) == 0) {
+        return {};
+    }
+    bytes.resize(size);
+    return bytes;
 }
 
 } // namespace ctbrowser::shell

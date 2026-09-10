@@ -226,8 +226,10 @@ turned down rather than overlooked:
 
 ### Taken since (2026-08-08)
 
-* **Boost.CRC** — `boost::crc_32_type` replaces the 256-entry CRC table
-  `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
+* **Boost.CRC** — since retired with the hand-rolled encoder: `encode_png` is
+  libpng's `png_image_write_to_memory` now (`lib/Shell/image/png.cpp`), and
+  nothing includes `<boost/crc.hpp>`. Kept for the record: `boost::crc_32_type`
+  replaced the 256-entry CRC table `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
   0xEDB88320 reflected), so this is the same checksum from a library rather than
   from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
   zlib independently of it. Header-only, so the cross-build needs nothing.

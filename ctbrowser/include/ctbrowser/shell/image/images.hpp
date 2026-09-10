@@ -92,16 +92,6 @@ namespace ctbrowser::shell {
 // is the whole cost, and it buys the engine one fewer dependency in a header
 // that is part of the SDL-free core.
 //
-// RGBA, 8 bits per channel, filter 0 on every row: the encoding a decoder needs
-// no options for.
-//
-// DEFINED IN images.cpp, not here, and that is the point of the split: the CRC
-// comes from Boost.CRC now instead of a 256-entry table rebuilt per call, and
-// `<boost/crc.hpp>` belongs in a .cpp. `decode_bmp` above stays inline because
-// it pulls in nothing. This is the rule core/cpu_time.hpp set for <windows.h>
-// and lib/Core/algorithms.cpp follows for boost/algorithm.
-[[nodiscard]] std::vector<std::byte> encode_png(const paint::bitmap & image);
-
 // What a script's image handle refers to, and what an <img> element resolves
 // to. Bitmaps are shared_ptr because the display list holds them too - a
 // re-record must not copy every sprite in the page.

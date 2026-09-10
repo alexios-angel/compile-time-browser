@@ -48,9 +48,7 @@ with it.
   before reading lost 4 MB down to 2,588,672 bytes and no newline. Keep both —
   `stall` alone is a test with no explanation, `drain` alone cannot fail.
 - `tools/check/check-png.py` — decodes a PNG this engine wrote using Python's own
-  zlib. `encode_png` uses STORED deflate blocks and no compression library, so
-  "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
-  silent when wrong.
+  zlib, independently of the libpng that wrote it.
 - `tools/check/bootstrap-data-probe.py` — extracts the vendor Bootstrap Data
   factory and checks CommonJS, browser and delayed-AMD publication. Interpreter
   observations after factory return and native compile coverage are recorded

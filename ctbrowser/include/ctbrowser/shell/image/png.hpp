@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <span>
+#include <vector>
 
 #include <ctbrowser/paint/paint.hpp>
 
@@ -34,5 +35,9 @@ namespace ctbrowser::shell {
 // to ask of every load, which is what lets `image_store` try formats in order
 // without a decode attempt per format.
 [[nodiscard]] bool looks_like_png(std::span<const std::byte> data) noexcept;
+
+// RGBA, 8 bits per channel: the encoding a decoder needs no options for. Empty
+// for an empty bitmap. What `canvas.toDataURL()` and `toBlob()` hand back.
+[[nodiscard]] std::vector<std::byte> encode_png(const paint::bitmap & image);
 
 } // namespace ctbrowser::shell
