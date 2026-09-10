@@ -1558,9 +1558,12 @@ private:
     // Call one listener - a function, or an object with a `handleEvent` - with
     // `this` bound to `receiver`. True when it threw, with the thrown value in
     // `thrown`; a VM fault that was never an exception reports false and leaves
-    // `context::failed()` set, as it always did.
+    // `context::failed()` set, as it always did. `returned` is what the callee
+    // returned when that was a BOOLEAN and undefined otherwise - the one part
+    // of a return value HTML's "processing the return value" reads, and the
+    // one part the fence can hand back without an allocation per call.
     [[nodiscard]] bool invoke_listener(context & cx, value callback, value receiver, value args,
-                                       value & thrown);
+                                       value & thrown, value & returned);
 
     // --- shadow DOM workstream ---
     //

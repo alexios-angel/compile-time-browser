@@ -481,18 +481,25 @@ void dom_bindings::install_listener_fence(context & cx, script::native_object & 
     // the one handler that is not handed one: `window.onerror` takes (message,
     // filename, lineno, colno, error). One value in the common case rather than
     // an array, because an array per mousemove is an allocation per mousemove.
+    //
+    // WHAT COMES BACK IS THE CALLEE'S RETURN VALUE IF IT WAS A BOOLEAN, and
+    // undefined otherwise. A handler property's `return false` cancels the
+    // event and nothing else about a return value is read, so a boolean is all
+    // the fence forwards - it is not a heap value, so nothing has to be rooted
+    // across the return, and it cannot be mistaken for the `[thrown]` array.
     auto * runner = cx.allocate<script::native_object>(
         "invokeEventListener", [](context & c, std::span<value> a) {
             if (a.size() < 3 || !a[0].is_callable()) { return value::undefined(); }
+            value out = value::undefined();
             if (a[2].is_array()) {
                 const std::vector<value> spread =
                     static_cast<script::array_object *>(a[2].as_heap())->items;
-                (void)c.call(a[0], spread, a[1]);
-                return value::undefined();
+                out = c.call(a[0], spread, a[1]);
+            } else {
+                const value one = a[2];
+                out = c.call(a[0], std::span<const value>{&one, 1}, a[1]);
             }
-            const value one = a[2];
-            (void)c.call(a[0], std::span<const value>{&one, 1}, a[1]);
-            return value::undefined();
+            return out.is_boolean() ? out : value::undefined();
         });
     listener_invoke_ = value::object(runner);
     // ROOTED ACROSS THE COMPILE. `run_nested` below runs JavaScript, which takes
@@ -506,19 +513,17 @@ void dom_bindings::install_listener_fence(context & cx, script::native_object & 
         "return (function (invoke, callback, receiver, args) {\n"
         "    try {\n"
         "        if (typeof callback === \"function\") {\n"
-        "            invoke(callback, receiver, args);\n"
-        "        } else {\n"
-        "            var method = callback.handleEvent;\n"
-        "            if (typeof method !== \"function\") {\n"
-        "                throw new TypeError(\"Failed to invoke an EventListener: the object's \"\n"
-        "                    + \"'handleEvent' property is not a function.\");\n"
-        "            }\n"
-        "            invoke(method, callback, args);\n"
+        "            return invoke(callback, receiver, args);\n"
         "        }\n"
+        "        var method = callback.handleEvent;\n"
+        "        if (typeof method !== \"function\") {\n"
+        "            throw new TypeError(\"Failed to invoke an EventListener: the object's \"\n"
+        "                + \"'handleEvent' property is not a function.\");\n"
+        "        }\n"
+        "        return invoke(method, callback, args);\n"
         "    } catch (thrown) {\n"
         "        return [thrown];\n"
         "    }\n"
-        "    return null;\n"
         "});\n");
     // A COMPILE FAILURE IS NOT FATAL. `invoke_listener` falls back to the
     // unfenced C++ path, which is what this file did before the fence existed:
@@ -529,12 +534,16 @@ void dom_bindings::install_listener_fence(context & cx, script::native_object & 
 }
 
 bool dom_bindings::invoke_listener(context & cx, value callback, value receiver, value args,
-                                   value & thrown) {
+                                   value & thrown, value & returned) {
     thrown = value::undefined();
+    returned = value::undefined();
     if (listener_fence_.is_callable() && listener_invoke_.is_callable()) {
         const value passed[4] = {listener_invoke_, callback, receiver, args};
         const value answer = cx.call(listener_fence_, passed);
-        if (!answer.is_array()) { return false; }
+        if (!answer.is_array()) {
+            returned = answer;
+            return false;
+        }
         // THE THROWN VALUE COMES BACK IN A ONE-ELEMENT ARRAY rather than as
         // itself, because `undefined` and `null` are both values a page can
         // throw and neither can be told from "nothing was thrown" on its own.
@@ -548,9 +557,9 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
         if (args.is_array()) {
             const std::vector<value> spread =
                 static_cast<script::array_object *>(args.as_heap())->items;
-            (void)cx.call(callback, spread, receiver);
+            returned = cx.call(callback, spread, receiver);
         } else {
-            (void)cx.call(callback, std::span<const value>{&args, 1}, receiver);
+            returned = cx.call(callback, std::span<const value>{&args, 1}, receiver);
         }
         return false;
     }
@@ -677,8 +686,9 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         auto * carrier = static_cast<script::object_object *>(event.as_heap());
         if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
         value thrown = value::undefined();
+        value returned = value::undefined();
         const bool threw =
-            invoke_listener(*cx_, callback, object_of_step(*cx_, step), event, thrown);
+            invoke_listener(*cx_, callback, object_of_step(*cx_, step), event, thrown, returned);
         if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
         // PER LISTENER, not per dispatch. A throw from the first of three must
         // not stop the other two - which it did twice over, first because every
@@ -727,8 +737,41 @@ bool dom_bindings::fire_handler_property(value target, std::string_view type, va
     // one. Found by asserting on window.onerror rather than by a page
     // complaining, because a handler that is never called says nothing.
     if (cx_ == nullptr || !target.is_object_like()) { return answer(false); }
-    const value handler = cx_->lookup_property(target, "on" + std::string{type});
+    // THE NAME IS ALL-LOWERCASE AND THE TYPE IS NOT.
+    //
+    // Every event handler IDL attribute HTML defines is lowercase, and the type
+    // it listens for is whatever the specification that named the event chose -
+    // which for the prefixed CSS ones is camelCase. `onwebkitanimationend` has
+    // an "event handler event type" of `webkitAnimationEnd`, so building the
+    // property name by concatenation found nothing for the four legacy families
+    // and would have gone on finding nothing. Folding also takes away an
+    // invention: `el.onMyEvent` was a handler here for a `MyEvent` dispatch and
+    // is not one in any browser, because only the attributes the IDL declares
+    // are handlers at all.
+    const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
     if (!handler.is_callable()) { return answer(false); }
+    // WHAT THE HANDLER RETURNS IS PART OF WHAT IT DID - HTML, "processing the
+    // return value". A handler that returns exactly `false` CANCELS the event,
+    // which is `<a onclick="return false">` and twenty years of code written
+    // against it; the window's `onerror` is the one inversion, where `true`
+    // means "I reported it" and cancels instead.
+    //
+    // EXACTLY `false`, not merely falsy. `return 0` and `return ""` do not
+    // cancel in any browser - the return type is `any` and the rule names the
+    // boolean, so truthiness is the wrong question to ask here.
+    value returned = value::undefined();
+    const auto process_return = [this, event, &returned](bool cancel_on_true) {
+        if (!returned.is_boolean() || returned.as_boolean() != cancel_on_true) { return; }
+        // "Cancel the event" is the DOM's set-the-canceled-flag, so it obeys
+        // the same two refusals `preventDefault` does: an uncancellable event
+        // cannot be cancelled and a passive listener may not try.
+        if (!context::truthy(cx_->lookup_property(event, "cancelable")) ||
+            flag_of(*cx_, event, passive_property)) {
+            return;
+        }
+        static_cast<script::object_object *>(event.as_heap())
+            ->set("defaultPrevented", value::boolean(true));
+    };
     // `window.onerror` IS THE ONE HANDLER THAT IS NOT HANDED ITS EVENT.
     //
     // HTML's OnErrorEventHandler takes (message, filename, lineno, colno,
@@ -758,9 +801,13 @@ bool dom_bindings::fire_handler_property(value target, std::string_view type, va
         items->items.push_back(cx_->lookup_property(event, "lineno"));
         items->items.push_back(cx_->lookup_property(event, "colno"));
         items->items.push_back(cx_->lookup_property(event, "error"));
-        return answer(invoke_listener(*cx_, handler, target, arguments, caught));
+        const bool threw = invoke_listener(*cx_, handler, target, arguments, caught, returned);
+        process_return(/*cancel_on_true*/ true);
+        return answer(threw);
     }
-    return answer(invoke_listener(*cx_, handler, target, event, caught));
+    const bool threw = invoke_listener(*cx_, handler, target, event, caught, returned);
+    process_return(/*cancel_on_true*/ false);
+    return answer(threw);
 }
 
 } // namespace ctbrowser::shell
