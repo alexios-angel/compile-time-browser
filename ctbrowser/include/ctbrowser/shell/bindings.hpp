@@ -408,6 +408,13 @@ private:
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
     [[nodiscard]] node_id node_from(context & cx, value v);
+    // "Convert nodes into a node", DOM 4.2.5: the arguments of one of those
+    // methods as ONE node - the node itself for one argument, a fragment holding
+    // them all (which MOVES each out of the tree) for several.
+    [[nodiscard]] node_id convert_nodes(context & cx, std::span<value> args);
+    // "Viable next/previous sibling", DOM 4.2.7: the first sibling of `self` in
+    // that direction that is not one of `args`. Empty when there is none.
+    [[nodiscard]] node_id viable_sibling(node_id self, std::span<value> args, bool forward);
     // THE EXACT NAMESPACE OF AN ELEMENT, as a string. Derived from `element_ns`
     // for everything the parser built - there are only two answers there - and
     // read from `namespaces_` for an element `createElementNS` put in some other
