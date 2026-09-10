@@ -126,13 +126,59 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
 // Read back as markup. A serialiser rather than the original text: the DOM is
 // the truth, and a page that appended a node after setting innerHTML expects to
 // see it.
+// HTML 13.2, "serializing HTML fragments". Text is escaped except inside the
+// raw-text elements, attribute values escape `&`, `"` and U+00A0, and a comment
+// is `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
+namespace {
+[[nodiscard]] std::string escape_html(std::string_view text, bool attribute) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '&') {
+            out += "&amp;";
+        } else if (c == '\xc2' && i + 1 < text.size() && text[i + 1] == '\xa0') {
+            out += "&nbsp;";
+            ++i;
+        } else if (attribute && c == '"') {
+            out += "&quot;";
+        } else if (!attribute && c == '<') {
+            out += "&lt;";
+        } else if (!attribute && c == '>') {
+            out += "&gt;";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+[[nodiscard]] bool serializes_raw(std::string_view tag) {
+    for (const std::string_view raw :
+         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"}) {
+        if (tag == raw) { return true; }
+    }
+    return false;
+}
+} // namespace
+
 std::string dom_bindings::inner_html(node_id target) const {
     const auto txn = doc_->read();
     std::string out;
-    const auto write = [&](auto && self, node_id node) -> void {
-        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
-            out += txn.text(node);
+    const auto write = [&](auto && self, node_id node, bool raw) -> void {
+        switch (txn.kind(node).value_or(node_kind::element)) {
+        case node_kind::text:
+            out += raw ? std::string{txn.text(node)} : escape_html(txn.text(node), false);
             return;
+        case node_kind::comment:
+            out += "<!--";
+            out += txn.text(node);
+            out += "-->";
+            return;
+        case node_kind::document:
+        case node_kind::document_fragment:
+            for (const node_id child : txn.children(node)) { self(self, child, false); }
+            return;
+        case node_kind::element: break;
         }
         const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
         out += "<";
@@ -141,24 +187,31 @@ std::string dom_bindings::inner_html(node_id target) const {
             out += " ";
             out += atoms_->text(a.name);
             out += "=\"";
-            out += a.value;
+            out += escape_html(a.value, true);
             out += "\"";
         }
         out += ">";
         if (ctbrowser::html::is_void_element(tag)) { return; }
-        for (const node_id child : txn.children(node)) { self(self, child); }
+        const bool raw_below = txn.element_ns(node) == node_ns::html && serializes_raw(tag);
+        for (const node_id child : txn.children(node)) { self(self, child, raw_below); }
         out += "</";
         out += tag;
         out += ">";
     };
-    for (const node_id child : txn.children(target)) { write(write, child); }
+    for (const node_id child : txn.children(target)) { write(write, child, false); }
     return out;
 }
 
 // Every text node under the element, concatenated - which is what
-// `textContent` is, and what makes it the safe way to read a label.
+// `textContent` is, and what makes it the safe way to read a label. A Text or
+// Comment node's textContent is its own data (DOM 4.4, "the descendant text
+// content" applies only to an element or fragment).
 std::string dom_bindings::text_content(node_id target) const {
     const auto txn = doc_->read();
+    const node_kind kind = txn.kind(target).value_or(node_kind::element);
+    if (kind == node_kind::text || kind == node_kind::comment) {
+        return std::string{txn.text(target)};
+    }
     std::string out;
     const auto walk = [&](auto && self, node_id node) -> void {
         if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
