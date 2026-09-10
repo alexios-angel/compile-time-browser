@@ -1,12 +1,5 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
 // values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -489,18 +482,10 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             return value::undefined();
         });
 
-    // `value` and `checked` ARE ACCESSORS, on a control.
-    //
-    // They were data properties written by refresh_control on whatever tick it
-    // next ran. A page that creates a control and reads it back in the same
-    // statement - `createInput('hello').value()`, which is p5's own DOM library
-    // - therefore read the property as it was before the value existed. The
-    // header's note that "the VM has no property accessors" was true when it
-    // was written and is not any more.
-    //
-    // refresh_control still runs: it writes BACK a property assignment into the
-    // control, which is how `input.value = ''` clears a field. These make the
-    // READ live, which is the half that could not be done before.
+    // `value` and `checked` ARE ACCESSORS, on a control, so a page that creates
+    // a control and reads it back in the same statement -
+    // `createInput('hello').value()`, which is p5's own DOM library - reads the
+    // value that exists now. A data property would shadow the accessor.
     {
         const auto txn = doc_->read();
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));

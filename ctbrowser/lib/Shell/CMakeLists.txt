@@ -125,7 +125,6 @@ target_sources(ctbrowser-shell
     # image codecs, each behind a two-function header, none of them SDL
     image/png.cpp
     image/jpeg.cpp
-    image/images.cpp
     # what a PAGE can do
     page/canvas.cpp
     page/forms.cpp
@@ -144,8 +143,6 @@ target_sources(ctbrowser-shell
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/assets.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/images.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/url.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/png.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/jpeg.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/net.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/canvas.hpp"
         # PUBLIC, and it has to be here: canvas.hpp - which IS installed -

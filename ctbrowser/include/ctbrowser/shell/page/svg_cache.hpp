@@ -91,9 +91,6 @@ public:
 
     void clear() noexcept;
 
-    // Cached rasters, for tests - a number nothing in the engine branches on.
-    [[nodiscard]] std::size_t cached_rasters() const noexcept { return rasters_.size(); }
-
 private:
     // Two levels, so two <img> pointing at one file share both the scan and the
     // pixels. `content` is a hash; the full source is compared on a hit, which

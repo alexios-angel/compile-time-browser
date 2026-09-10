@@ -1,8 +1,5 @@
 // dom_bindings - DOM 6, traversal: `createNodeIterator`, `createTreeWalker`
 // and the NodeFilter constants.
-//
-// The ninth file beside the eight carved out of bindings/document.cpp on
-// 2026-09-08; a member of the same class, sharing internal.hpp.
 
 #include "internal.hpp"
 

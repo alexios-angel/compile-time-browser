@@ -1,12 +1,5 @@
 #pragma once
-// Private to lib/Shell/bindings/stylesheets/. NOT installed and in no file
-// set: include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and
-// this exists only so its CSSOM half can be more than one file - it was 2,814
-// lines in one until 2026-09-08. The includes are stylesheets.cpp's, so every
-// file here sees exactly what that one saw. The design note that file opened
-// with follows; then the private slots and rule-type constants every file
-// uses, and the helpers more than one of them needs, which serialize.cpp and
-// source.cpp define.
+// Private to lib/Shell/bindings/stylesheets/ - not installed.
 //
 // dom_bindings - the CSSOM: `document.styleSheets` and everything under it.
 //

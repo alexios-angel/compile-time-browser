@@ -1,12 +1,6 @@
 // dom_bindings - the WebGL methods that draw and read back: getVertexAttrib,
 // the WebGL 2 surface, drawArrays/drawElements, getParameter, the
 // extensions, readPixels and the framebuffer family.
-//
-// One of four files carved out of a 1,431-line bindings/webgl.cpp on
-// 2026-09-08. webgl_context_object was ONE 1,213-line function; it is split
-// at three seams that share no local into private member functions, called
-// in the order the original installed things. The argument helpers every
-// file needs are in internal.hpp beside this, in ctbrowser::shell::detail.
 
 #include "internal.hpp"
 

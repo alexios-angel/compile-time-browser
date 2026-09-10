@@ -1,12 +1,5 @@
 // dom_bindings - the entry points: install(), the GC roots, location and
 // navigation, and the small mutators the rest of the bindings share.
-//
-// One of eight files carved out of a 3,071-line bindings/document.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the name productions every one of
-// them needs are in internal.hpp beside this. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 

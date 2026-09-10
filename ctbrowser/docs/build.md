@@ -57,8 +57,8 @@ cross-compile; that work is in the history:
   Content-Encoding was going to need.
 
 POCO's mature WebSocket is what curl lacks; if that becomes a requirement it is
-the reason to revisit, and `net.hpp`'s request/response interface is what makes
-revisiting cheap - a transport is one `.cpp` behind one `fetch()`.
+the reason to revisit, and `net.hpp`'s interface is what makes revisiting
+cheap - a transport is one `.cpp` behind one `http_get()`.
 
 **Asio is gone entirely** (2026-07-31), not kept as a fallback. Keeping it meant
 keeping the hand-written HTTP above it compiling and correct for a path nothing
@@ -226,8 +226,10 @@ turned down rather than overlooked:
 
 ### Taken since (2026-08-08)
 
-* **Boost.CRC** — `boost::crc_32_type` replaces the 256-entry CRC table
-  `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
+* **Boost.CRC** — since retired with the hand-rolled encoder: `encode_png` is
+  libpng's `png_image_write_to_memory` now (`lib/Shell/image/png.cpp`), and
+  nothing includes `<boost/crc.hpp>`. Kept for the record: `boost::crc_32_type`
+  replaced the 256-entry CRC table `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
   0xEDB88320 reflected), so this is the same checksum from a library rather than
   from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
   zlib independently of it. Header-only, so the cross-build needs nothing.
@@ -507,7 +509,7 @@ Chrome at y=60, so one click typed into the field and the other missed entirely.
 
 **What is by design and should not be read as a difference:** ctbrowser's
 `Math.random` is a fixed-seed xorshift and a real browser's is not; its
-`wheel_step` (53), `wheel_lines` (3) and `scrollbar_width` (15) are its own
+wheel step (53), wheel lines (3) and `scrollbar_width` (15) are its own
 numbers; and antialiasing and hinting will never match. Fonts are handled —
 `compare.py` points the reference browser at the repo's own Tinos/Fira
 Sans/Cousine through `FONTCONFIG_FILE`, since otherwise every glyph differs and

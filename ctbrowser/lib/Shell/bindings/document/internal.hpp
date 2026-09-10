@@ -1,14 +1,7 @@
 #pragma once
-// Private to lib/Shell/bindings/document/. NOT installed and in no file set:
-// include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and this
-// exists only so its document half can be more than one file - it was 3,071
-// lines in one until 2026-09-08. The includes are document.cpp's, so every
-// file here sees exactly what that one saw.
-//
-// What follows is the name-production namespace that file opened with: the
-// namespace URIs, qualified names, and the element, doctype, attribute and
-// XML Name rules. Stateless and small, so they are inline here rather than
-// declared here and defined in a ninth file.
+// Private to lib/Shell/bindings/document/ - not installed. The namespace
+// URIs, qualified names, and the element, doctype, attribute and XML Name
+// rules shared by the files here; stateless and small, so inline.
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -28,25 +21,6 @@
 #include <vector>
 
 namespace ctbrowser::shell::detail {
-
-// The parts of a URL, as `location` reports them.
-//
-// href alone is not enough for a library: `location.search` is where a page
-// reads its own query string and `location.pathname` is what a router matches
-// on, and both are read WITHOUT a guard - the idiom is
-// `location.search.substring(1)`, so an absent one is not a missing feature but
-// a TypeError on the first line of the library's setup.
-//
-// Parsed rather than tracked, because href is the one thing the browser
-// actually knows and keeping seven fields in step with it by hand is how they
-// drift apart.
-// url_parts and split_url USED TO BE HERE. They are gone, and the reason is
-// worth keeping: this one reached for the last colon in the authority with no
-// bracket guard, so `http://[::1]/` reported hostname `[:` and port `1]`. Its
-// twin in net.cpp guarded exactly that case. Two parsers for one job, written
-// apart, drifted apart - and nothing compared them because nothing could.
-//
-// shell/net/url.hpp parses once now, for both.
 
 // The four namespaces the DOM names by URI. Spelled out rather than derived,
 // because getting one character wrong makes a NamespaceError fire on the valid

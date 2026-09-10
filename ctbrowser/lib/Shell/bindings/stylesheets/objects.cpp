@@ -1,11 +1,5 @@
 // dom_bindings' CSSOM - the objects: a sheet, a rule, a rule list, a media list
 // and a declaration block, made once and refreshed in place.
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 

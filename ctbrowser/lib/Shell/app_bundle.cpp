@@ -2,7 +2,9 @@
 
 #include <ctbrowser/script/program_image.hpp>
 
-#include <cstring>
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -32,18 +34,29 @@ constexpr std::size_t trailer_size = sizeof(trailer_magic) + 8 + 8;
 
 thread_local std::string last_write_error;
 
+// Every integer in the format is little-endian, whatever the host is.
+template <typename T> [[nodiscard]] std::array<std::byte, sizeof(T)> little_bytes(T v) {
+    if constexpr (std::endian::native == std::endian::big) { v = std::byteswap(v); }
+    return std::bit_cast<std::array<std::byte, sizeof(T)>>(v);
+}
+template <typename T> [[nodiscard]] T from_little(std::span<const std::byte> at) {
+    std::array<std::byte, sizeof(T)> raw;
+    std::copy_n(at.begin(), sizeof(T), raw.begin());
+    T v = std::bit_cast<T>(raw);
+    if constexpr (std::endian::native == std::endian::big) { v = std::byteswap(v); }
+    return v;
+}
+
 struct sink {
     std::vector<std::byte> bytes;
-    void u8(std::uint8_t v) { bytes.push_back(static_cast<std::byte>(v)); }
-    void u32(std::uint32_t v) {
-        for (int i = 0; i < 4; ++i) { u8(static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF)); }
+    void append(std::span<const std::byte> more) {
+        bytes.insert(bytes.end(), more.begin(), more.end());
     }
-    void u64(std::uint64_t v) {
-        for (int i = 0; i < 8; ++i) { u8(static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF)); }
-    }
+    void u32(std::uint32_t v) { append(little_bytes(v)); }
+    void u64(std::uint64_t v) { append(little_bytes(v)); }
     void text(std::string_view s) {
         u32(static_cast<std::uint32_t>(s.size()));
-        for (const char c : s) { u8(static_cast<std::uint8_t>(c)); }
+        append(std::as_bytes(std::span{s}));
     }
 };
 
@@ -71,10 +84,7 @@ struct source {
     }
     template <typename T> T little() {
         if (!need(sizeof(T))) { return 0; }
-        T v = 0;
-        for (std::size_t i = 0; i < sizeof(T); ++i) {
-            v |= static_cast<T>(static_cast<std::uint8_t>(bytes[at + i])) << (8 * i);
-        }
+        const T v = from_little<T>(bytes.subspan(at, sizeof(T)));
         at += sizeof(T);
         return v;
     }
@@ -170,10 +180,8 @@ std::vector<std::byte> write_bundle(const app_bundle & from) {
     const std::uint64_t payload_at = header_bytes + table.bytes.size();
     out.u64(payload_at);
     out.u64(payload_length);
-    for (const std::byte b : table.bytes) { out.bytes.push_back(b); }
-    for (const bundle_entry & one : from.entries) {
-        out.bytes.insert(out.bytes.end(), one.bytes.begin(), one.bytes.end());
-    }
+    out.append(table.bytes);
+    for (const bundle_entry & one : from.entries) { out.append(one.bytes); }
     return std::move(out.bytes);
 }
 
@@ -272,33 +280,24 @@ bundle_load_result read_bundle(std::span<const std::byte> bytes) {
 
 std::vector<std::byte> append_bundle_to(std::span<const std::byte> launcher,
                                         std::span<const std::byte> bundle) {
-    std::vector<std::byte> out{launcher.begin(), launcher.end()};
-    const std::uint64_t at = out.size();
-    out.insert(out.end(), bundle.begin(), bundle.end());
-    for (const char c : trailer_magic) { out.push_back(static_cast<std::byte>(c)); }
-    for (int i = 0; i < 8; ++i) { out.push_back(static_cast<std::byte>((at >> (8 * i)) & 0xFF)); }
-    const std::uint64_t length = bundle.size();
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<std::byte>((length >> (8 * i)) & 0xFF));
-    }
-    return out;
+    sink out;
+    out.append(launcher);
+    const std::uint64_t at = out.bytes.size();
+    out.append(bundle);
+    out.append(std::as_bytes(std::span{trailer_magic}));
+    out.u64(at);
+    out.u64(bundle.size());
+    return std::move(out.bytes);
 }
 
 std::span<const std::byte> find_appended_bundle(std::span<const std::byte> whole) {
     if (whole.size() < trailer_size) { return {}; }
     const std::size_t tail = whole.size() - trailer_size;
-    for (std::size_t i = 0; i < sizeof(trailer_magic); ++i) {
-        if (whole[tail + i] != static_cast<std::byte>(trailer_magic[i])) { return {}; }
-    }
-    const auto read64 = [&whole](std::size_t at) {
-        std::uint64_t v = 0;
-        for (std::size_t i = 0; i < 8; ++i) {
-            v |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(whole[at + i])) << (8 * i);
-        }
-        return v;
-    };
-    const std::uint64_t at = read64(tail + sizeof(trailer_magic));
-    const std::uint64_t length = read64(tail + sizeof(trailer_magic) + 8);
+    const std::span<const std::byte> magic = std::as_bytes(std::span{trailer_magic});
+    if (!std::ranges::equal(whole.subspan(tail, magic.size()), magic)) { return {}; }
+    const std::uint64_t at = from_little<std::uint64_t>(whole.subspan(tail + magic.size(), 8));
+    const std::uint64_t length =
+        from_little<std::uint64_t>(whole.subspan(tail + magic.size() + 8, 8));
     // THE TRAILER MUST ACCOUNT FOR THE WHOLE FILE. A copy that was truncated,
     // or a launcher that happens to contain these eight bytes in its own data,
     // fails this and is treated as having no bundle at all rather than as
@@ -320,9 +319,8 @@ std::vector<std::byte> this_executable_bytes() {
     std::ifstream in{self, std::ios::binary};
     if (!in) { return {}; }
     const std::string raw{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
-    std::vector<std::byte> out(raw.size());
-    if (!raw.empty()) { std::memcpy(out.data(), raw.data(), raw.size()); }
-    return out;
+    const std::span<const std::byte> bytes = std::as_bytes(std::span{raw});
+    return {bytes.begin(), bytes.end()};
 }
 
 } // namespace ctbrowser::shell

@@ -1,15 +1,16 @@
 // browser - input: handle() and the mouse, keys, text input, the editing
 // keys inside a field, and the wheel over a textarea.
-//
-// One of ten files carved out of a 2,871-line Shell/browser.cpp on 2026-09-08.
-// All are member functions of one class declared in
-// include/ctbrowser/shell/browser.hpp; internal.hpp beside this carries the
-// includes browser.cpp had, so every file sees exactly what it saw. Nothing
-// about the public header changed.
 
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
+
+namespace {
+// How far one wheel notch moves a page, and how many VISUAL LINES it moves a
+// textarea - lines rather than pixels, because a field scrolls by whole lines.
+constexpr float wheel_step = 53.0f;
+constexpr std::ptrdiff_t wheel_lines = 3;
+} // namespace
 
 bool browser::handle(const input_event & event) {
     // Remembered for anything that has to keep aiming at the pointer after the
@@ -35,7 +36,7 @@ bool browser::handle(const input_event & event) {
         // cannot use falls through to the page - which is what makes a textarea
         // at its last line stop swallowing the wheel.
         if (scroll_field_under(event)) { return true; }
-        scroll_by(-event.wheel_y * options_.wheel_step);
+        scroll_by(-event.wheel_y * wheel_step);
         return true;
     }
     case input_kind::mouse_move: {
@@ -315,11 +316,11 @@ bool browser::handle_key(const input_event & event) {
     }
     const float page = static_cast<float>(options_.height) * 0.9f;
     if (event.key == "ArrowDown") {
-        scroll_by(options_.wheel_step);
+        scroll_by(wheel_step);
         return true;
     }
     if (event.key == "ArrowUp") {
-        scroll_by(-options_.wheel_step);
+        scroll_by(-wheel_step);
         return true;
     }
     if (event.key == "PageDown" || event.key == "Space") {
@@ -386,8 +387,7 @@ bool browser::scroll_field_under(const input_event & event) {
     if (most == 0) { return false; } // nothing to scroll: the page takes it
 
     // Negative wheel_y is towards the user, which is down the document.
-    const auto step = static_cast<std::ptrdiff_t>(options_.wheel_lines);
-    const auto delta = event.wheel_y > 0 ? -step : step;
+    const auto delta = event.wheel_y > 0 ? -wheel_lines : wheel_lines;
     const auto want = static_cast<std::ptrdiff_t>(geometry.scroll_line) + delta;
     const auto next = static_cast<std::size_t>(
         std::clamp<std::ptrdiff_t>(want, 0, static_cast<std::ptrdiff_t>(most)));

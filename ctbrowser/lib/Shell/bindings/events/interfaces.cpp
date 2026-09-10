@@ -1,13 +1,6 @@
 // dom_bindings - the event interfaces a page can name: Event.prototype and its
 // methods, the constructor hierarchy from Event down to PointerEvent, the
 // legacy init* methods, and EventTarget.
-//
-// One of three files carved out of a 1,647-line bindings/events.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 

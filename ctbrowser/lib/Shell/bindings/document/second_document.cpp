@@ -1,11 +1,4 @@
 // dom_bindings - a second Document: createHTMLDocument and createDocument.
-//
-// One of eight files carved out of a 3,071-line bindings/document.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the name productions every one of
-// them needs are in internal.hpp beside this. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 
@@ -26,7 +19,7 @@ using namespace detail;
 //
 // THIS IS A DIFFERENT ONE: a second Document is a second `dom_bindings` over
 // its own tree, in the same realm. Every key the note listed - `wrappers_`,
-// `namespaces_`, `mirrors_`, `webgl_objects_` - is already a member, so a
+// `namespaces_`, `webgl_objects_` - is already a member, so a
 // second instance simply has a second set of them and two nodes with the same
 // slot cannot collide. `doc_` stays a member because it is now true: it IS the
 // document these bindings are about.

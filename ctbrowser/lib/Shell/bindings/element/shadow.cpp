@@ -1,11 +1,4 @@
 // dom_bindings - the shadow DOM.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -24,8 +17,7 @@ using namespace detail;
 // HOST and its MODE, and neither belongs on `node`: it is the most replicated
 // object in the engine and every field on it is paid for by every document that
 // has never heard of shadow DOM. They live in two maps on dom_bindings instead,
-// keyed on pack(node_id) exactly as `wrappers_`, `namespaces_` and `mirrors_`
-// already are.
+// keyed on pack(node_id) exactly as `wrappers_` and `namespaces_` already are.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO IS RENDER. The fragment is detached, so the
 // cascade, layout and paint never reach it: an element inside a shadow root has

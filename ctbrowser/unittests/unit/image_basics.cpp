@@ -353,8 +353,7 @@ void test_encode_png() {
     // reject and which would look like a corrupt file rather than no file.
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
 
-    // Written for tools/check/check-png.py, which is what proves the deflate stream
-    // and both checksums are right rather than merely well-shaped.
+    // Written for tools/check/check-png.py, which decodes it with Python's zlib.
     std::ofstream out{"../build/render-encode.png", std::ios::binary};
     out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
 }

@@ -1,12 +1,5 @@
 // dom_bindings - the element wrapper itself: identity, refresh, the box it
 // occupies, equality of nodes, and the wrapper a node already has.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -195,8 +188,6 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     // next refresh put the old value back. p5.js names its canvas and sizes it
     // that way, so both writes vanished.
     const std::string_view tag_text = atoms_->text(txn.tag(id).value_or(atom{}));
-
-    refresh_control(cx, obj, txn, id, tag_text);
 
     const rect box = box_of(id);
     obj.set("offsetLeft", value::number(static_cast<double>(box.x)));
