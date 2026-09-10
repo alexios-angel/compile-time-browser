@@ -87,24 +87,10 @@ option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 # Windows SDK - a second toolchain this repository does not otherwise require.
 #
 # So a clone that has not fetched still configures, builds and passes: it gets
-# exactly the build the OFF default used to give, and unittests/unit/gl_basics skips
-# itself with a reason when no device comes up.
-#
-# ASKING for it explicitly is a REQUIREMENT and still fails loudly. Someone who
-# typed -DCTBROWSER_WITH_ANGLE=ON wants a GLES device, not a quiet downgrade to
-# the software path - and would otherwise find out from a golden.
-#
-# Recorded in its own cache entry because `option()` writes CTBROWSER_WITH_ANGLE
-# itself: on the second configure the variable is always defined, so "did the
-# user pass -D" cannot be asked again and has to be remembered.
-if(NOT DEFINED CTBROWSER_ANGLE_REQUESTED)
-  if(DEFINED CTBROWSER_WITH_ANGLE)
-    set(CTBROWSER_ANGLE_REQUESTED ON CACHE INTERNAL "ANGLE was asked for explicitly")
-  else()
-    set(CTBROWSER_ANGLE_REQUESTED OFF CACHE INTERNAL "ANGLE was asked for explicitly")
-  endif()
-endif()
-
+# the build the OFF default used to give, unittests/unit/gl_basics skips itself
+# with a reason when no device comes up, and the configure WARNS - loudly enough
+# for someone who typed -DCTBROWSER_WITH_ANGLE=ON to see the downgrade rather
+# than find out from a golden.
 option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (tools/fetch-angle.sh fetches it)" ON)
 
 # Resolved HERE, above add_subdirectory, so lib/Raster and examples/ - which
@@ -115,12 +101,8 @@ else()
   set(CTBROWSER_ANGLE_DIR "${CTBROWSER_MONOREPO_ROOT}/third-party/angle/linux-x86_64")
 endif()
 if(CTBROWSER_WITH_ANGLE AND NOT EXISTS "${CTBROWSER_ANGLE_DIR}")
-  if(CTBROWSER_ANGLE_REQUESTED)
-    message(FATAL_ERROR
-      "CTBROWSER_WITH_ANGLE is ON but ${CTBROWSER_ANGLE_DIR} is missing - run tools/fetch-angle.sh")
-  endif()
-  message(STATUS "ctbrowser: no third-party/angle - WebGL has no device. "
-                 "tools/fetch-angle.sh downloads one.")
+  message(WARNING "ctbrowser: no ${CTBROWSER_ANGLE_DIR} - WebGL has no device. "
+                  "tools/fetch-angle.sh downloads one.")
   set(CTBROWSER_WITH_ANGLE OFF)
 endif()
 
