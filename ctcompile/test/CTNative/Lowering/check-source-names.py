@@ -24,8 +24,8 @@ def main():
     tests = Path(__file__).resolve().parents[2]
     module = args.work / "native.mlir"
     run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
-         f"-DSOURCE={tests / 'native-source-names-fixture.js'}", f"-DOUTPUT={module}",
-         "-DPARTIAL_EVALUATE=ON", "-P", str(tests / "native-pipeline.cmake")])
+         f"-DSOURCE={tests / 'CTNative/Fixtures/Optimization/native-source-names-fixture.js'}", f"-DOUTPUT={module}",
+         "-DPARTIAL_EVALUATE=ON", "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
     deduced = args.work / "deduced.mlir"
     run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(module),
          "-o", str(deduced)])

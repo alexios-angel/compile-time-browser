@@ -167,7 +167,7 @@ def main():
         module = args.work / f"{name}.emitc.mlir"
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={js}", f"-DOUTPUT={module}", "-DOPTIMIZE=OFF",
-             "-P", str(tests / "native-pipeline.cmake")])
+             "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
         native = module.read_text()
         if CTJS_FUNCTION.search(native) or REFUSAL.search(native) or len(NATIVE_FUNCTION.findall(native)) != denominator:
             raise RuntimeError(f"{name}: expected native {denominator}/{denominator}\n{native}")

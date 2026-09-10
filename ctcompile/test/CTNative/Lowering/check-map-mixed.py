@@ -109,7 +109,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
         ir = args.work / f"{name}.mlir"
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={js}", f"-DOUTPUT={ir}", "-DOPTIMIZE=OFF", "-P",
-             str(Path(__file__).resolve().parents[2] / "native-pipeline.cmake")])
+             str(Path(__file__).resolve().parents[2] / "CTNative/Checks/native-pipeline.cmake")])
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
         assert "struct nullable_string" in cpp
         assert carrier in cpp
@@ -169,7 +169,7 @@ def main():
         ir = args.work / f"{name}.mlir"
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={js}", f"-DOUTPUT={ir}", "-DOPTIMIZE=OFF", "-P",
-             str(Path(__file__).resolve().parents[2] / "native-pipeline.cmake")])
+             str(Path(__file__).resolve().parents[2] / "CTNative/Checks/native-pipeline.cmake")])
         deduced = args.work / f"{name}-deduced.mlir"
         run([args.opt, "--ctnative-print-deduced", str(ir), "-o", str(deduced)])
         for label, module in [("plain", ir), ("deduced", deduced)]:

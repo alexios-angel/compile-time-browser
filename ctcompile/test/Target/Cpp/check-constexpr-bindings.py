@@ -113,7 +113,7 @@ def main():
     native = args.work / "native.mlir"
     run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
          f"-DSOURCE={args.fixtures / 'constexpr-source.js'}", f"-DOUTPUT={native}",
-         "-DOPTIMIZE=OFF", "-P", str(tests / "native-pipeline.cmake")])
+         "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
     if "ctnative.constexpr_bindings" not in native.read_text():
         raise RuntimeError("native lowering omitted the constexpr policy marker")
     deduced = args.work / "native-deduced.mlir"

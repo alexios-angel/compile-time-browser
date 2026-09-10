@@ -42,7 +42,7 @@ def main():
         module = args.work / f"{fixture}.mlir"
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={args.fixtures / (fixture + '.js')}", f"-DOUTPUT={module}",
-             "-DOPTIMIZE=OFF", "-P", str(tests / "native-pipeline.cmake")])
+             "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
         deduced = args.work / f"{fixture}-deduced.mlir"
         run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(module),
              "-o", str(deduced)])

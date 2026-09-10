@@ -25,7 +25,7 @@ add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
 # is what has drifted here before.
 #
 # IT NEEDS NO MLIR either - it reads a .cpp as text.
-add_executable(ctcompile-test-importer-coverage ImporterCoverage.cpp)
+add_executable(ctcompile-test-importer-coverage CTJS/Import/ImporterCoverage.cpp)
 target_compile_definitions(ctcompile-test-importer-coverage PRIVATE
   CTCOMPILE_IMPORTER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/BytecodeImport.cpp"
   CTCOMPILE_IMPORTER_DISPATCH="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/Bytecode/Instructions.cpp"
@@ -35,7 +35,7 @@ ctcompile_target(ctcompile-test-importer-coverage)
 add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
 
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-importer-source-names ImporterSourceNames.cpp)
+  add_executable(ctcompile-test-importer-source-names CTJS/Import/ImporterSourceNames.cpp)
   target_link_libraries(ctcompile-test-importer-source-names PRIVATE ctcompile::ctjs-import)
   ctcompile_target(ctcompile-test-importer-source-names)
   add_test(NAME ctcompile_importer_source_names COMMAND ctcompile-test-importer-source-names)

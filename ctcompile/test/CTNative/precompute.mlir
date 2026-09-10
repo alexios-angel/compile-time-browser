@@ -5,7 +5,7 @@
 // RUN: ctjs-opt %t/effects.mlir --ctnative-precompute --ctnative-precompute | FileCheck %s --check-prefix=EFFECTS
 // RUN: ctjs-opt %t/unknown.mlir --ctnative-precompute | FileCheck %s --check-prefix=UNKNOWN
 // RUN: ctjs-opt %t/literals.mlir '--ctnative-precompute=max-steps=0' | FileCheck %s --check-prefix=BUDGET
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-symbolic-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=SOURCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-symbolic-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=SOURCE
 
 // The source fixture also has an independent native/reference pipeline. Calls
 // remain even when every consumer of their literal or boolean result folds.

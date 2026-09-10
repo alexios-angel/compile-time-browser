@@ -72,7 +72,7 @@ def main():
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={args.fixtures / (fixture + '.js')}", f"-DOUTPUT={module}",
              "-DOPTIMIZE=OFF", f"-DDEFOREST={'ON' if deforest else 'OFF'}",
-             "-P", str(tests / "native-pipeline.cmake")])
+             "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
         if deforest:
             projection = "true" if fixture == "string-values" else "false"
             assert f'ctnative::map_snapshot_at<{projection}>' in module.read_text()

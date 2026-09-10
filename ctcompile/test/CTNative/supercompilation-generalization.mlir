@@ -1,5 +1,5 @@
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-supercompilation-generalization-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf -o %t/source.mlir
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-supercompilation-generalization-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf -o %t/source.mlir
 // RUN: ctjs-opt %t/source.mlir --ctnative-supercompile -o %t/driven.mlir
 // RUN: FileCheck %s --check-prefix=SUMMARY --input-file=%t/driven.mlir
 // RUN: FileCheck %s --check-prefix=DRIVEN --input-file=%t/driven.mlir

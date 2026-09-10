@@ -54,11 +54,11 @@
 #
 # USAGE
 #
-#   ctcompile/test/native-snapshot.sh save <dir> [build]
+#   ctcompile/test/CTNative/Checks/native-snapshot.sh save <dir> [build]
 #   ...make the change, rebuild...
-#   ctcompile/test/native-snapshot.sh compare <dir> [build]
+#   ctcompile/test/CTNative/Checks/native-snapshot.sh compare <dir> [build]
 #
-#   ctcompile/test/native-snapshot.sh selftest [build]   # proves both teeth
+#   ctcompile/test/CTNative/Checks/native-snapshot.sh selftest [build]   # proves both teeth
 #
 # `build` defaults to $CTCOMPILE_BUILD_DIR, then to <repo>/build. `save` and
 # `compare` re-run the four census checks themselves (about twenty seconds -
@@ -69,7 +69,8 @@
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "$here/../.." && pwd)"
+tests="$(cd "$here/../.." && pwd)"
+repo="$(cd "$tests/../.." && pwd)"
 
 MODULES=(numeric functions structs arrays)
 CORPORA=(fixture bootstrap p5 phaser)
@@ -228,7 +229,7 @@ cmd_selftest() {
   fi
   local cmake_bin="${CMAKE:-cmake}"
   "$cmake_bin" -DTRANSLATE="$translate" -DOPT="$opt" \
-        -DSOURCE="$here/native-pipeline-fixture.js" \
+        -DSOURCE="$tests/CTNative/Fixtures/ControlFlow/native-pipeline-fixture.js" \
         -DOUTPUT="$work/again.mlir" \
         -P "$here/native-pipeline.cmake" >/dev/null 2>&1 || {
     echo "native-snapshot selftest: the pipeline failed to re-run" >&2

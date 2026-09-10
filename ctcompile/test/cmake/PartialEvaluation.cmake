@@ -2,44 +2,44 @@
 # Numeric observers receive heap arguments, so they remain runtime functions.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(object_values
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-object-values-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-object-values-fixture.js"
     raw42)
   ctcompile_add_native_pipeline(object_fields
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-object-fields-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-object-fields-fixture.js"
     traceWrite)
   ctcompile_add_native_pipeline(partial_evaluation
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-partial-evaluation-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-partial-evaluation-fixture.js"
     lifetime42 PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(partial_prefix
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-partial-prefix-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-partial-prefix-fixture.js"
     lifetime42 PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(partial_closures
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-partial-closures-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-partial-closures-fixture.js"
     lifetime42 PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(symbolic
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-symbolic-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-symbolic-fixture.js"
     lifetime42 PRECOMPUTE)
   ctcompile_add_native_pipeline(deforestation
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-deforestation-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-deforestation-fixture.js"
     zz_loop13 DEFOREST)
   ctcompile_add_native_pipeline(specialization
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-specialization-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-specialization-fixture.js"
     lifetime42 SPECIALIZE PRECOMPUTE PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(reachability
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-reachability-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-reachability-fixture.js"
     lifetime42 SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
   ctcompile_add_native_pipeline(supercompilation
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-supercompilation-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-supercompilation-fixture.js"
     lifetime42 SUPERCOMPILE)
   ctcompile_add_native_pipeline(supercompilation_generalization
-    "${CMAKE_CURRENT_SOURCE_DIR}/native-supercompilation-generalization-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-supercompilation-generalization-fixture.js"
     lifetime42 SUPERCOMPILE)
 endif()
 
 # Native variants retain the original callable value for boxed dispatch. The
 # generic body must still accept tuples used only by those redirected calls.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_dispatch_js "${CMAKE_CURRENT_SOURCE_DIR}/specialization-dispatch.js")
+  set(_dispatch_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/specialization-dispatch.js")
   set(_dispatch_inc "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.js.inc")
   set(_dispatch_cpp "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.generated.cpp")
   add_custom_command(OUTPUT "${_dispatch_inc}"
@@ -51,13 +51,13 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
       -DTRANSLATE=$<TARGET_FILE:ctjs-translate> -DOPT=$<TARGET_FILE:ctjs-opt>
       -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE} -DSOURCE=${_dispatch_js}
       -DOUTPUT=${_dispatch_cpp}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-specialization-dispatch.cmake"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/compile-specialization-dispatch.cmake"
     DEPENDS "${_dispatch_js}" ctjs-translate ctjs-opt
-      "${CMAKE_CURRENT_SOURCE_DIR}/compile-specialization-dispatch.cmake" VERBATIM)
+      "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/compile-specialization-dispatch.cmake" VERBATIM)
   set_source_files_properties("${_dispatch_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
   add_executable(ctcompile-test-specialization-dispatch
-    SpecializationDispatch.cpp "${_dispatch_cpp}" "${_dispatch_inc}")
+    CTNative/Specialization/SpecializationDispatch.cpp "${_dispatch_cpp}" "${_dispatch_inc}")
   target_include_directories(ctcompile-test-specialization-dispatch PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-specialization-dispatch PRIVATE ctbrowser::script)

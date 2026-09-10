@@ -89,7 +89,7 @@ def main():
     native = args.work / "native.mlir"
     run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
          f"-DSOURCE={args.fixtures / 'native-source.js'}", f"-DOUTPUT={native}",
-         "-DOPTIMIZE=OFF", "-P", str(tests / "native-pipeline.cmake")])
+         "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/native-pipeline.cmake")])
     assert "ctnative.parameter_suppression" in native.read_text()
     deduced = args.work / "native-deduced.mlir"
     run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(native), "-o", str(deduced)])
