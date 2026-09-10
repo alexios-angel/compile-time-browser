@@ -101,10 +101,24 @@ struct font_face {
     std::uint32_t declaration_count = 0;
 };
 
+// One `@namespace` rule. An empty prefix is the DEFAULT namespace, which is not
+// the same as a namespace whose prefix is the empty string - CSS has no such thing.
+struct namespace_declaration {
+    std::string prefix;
+    std::string uri;
+};
+
 struct stylesheet {
     // §3.3-preprocessed input plus decoded escapes. Owns every byte every view
     // below points into.
     std::string pool;
+    // The `@namespace` rules seen so far, which is what decides whether `ns|e`
+    // is a selector: Selectors 4 §3.2 makes an undeclared prefix a syntax error.
+    // `prefixes_checked` is false only for a caller of `parse_selector_text` that
+    // offered no declarations at all - a prefix is then taken on trust, because
+    // refusing it would drop a rule the sheet may well have declared.
+    std::vector<namespace_declaration> namespaces;
+    bool prefixes_checked = true;
     // How much of the pool is the INPUT. Beyond it is decoded escape text, which
     // appears nowhere in the source - so a run of tokens is a contiguous source
     // substring only when every one of them starts below this. That is the test

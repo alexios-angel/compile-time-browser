@@ -123,15 +123,42 @@ constexpr std::array<std::string_view, 27> value_functions{"rgb",
 // `0.500000`, and `1` rather than `1.0` - which is what CSSOM §6.7.2 means by
 // "the smallest number of digits", and what every `assert_equals(readValue,
 // "1")` in the corpus compares against.
+//
+// `std::to_chars` in fixed format IS that definition: the shortest decimal that
+// reads back as the same double, with no exponent. `std::to_string` was six
+// fixed decimals, which printed `0.1234567` as `0.123457` - a value the author
+// wrote, altered on the way to `el.style` - and could not say `1e-7` at all.
 [[nodiscard]] std::string number_text(double value) {
     if (!std::isfinite(value)) { return value > 0 ? "infinity" : "-infinity"; }
     if (value == 0) { return "0"; } // catches -0, which serialises as 0
-    std::string out = std::to_string(value);
-    if (out.find('.') != std::string::npos) {
-        while (!out.empty() && out.back() == '0') { out.pop_back(); }
-        if (!out.empty() && out.back() == '.') { out.pop_back(); }
+    std::array<char, 400> buffer{};
+    const std::to_chars_result written = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                                                       value, std::chars_format::fixed);
+    if (written.ec != std::errc{}) { return "0"; }
+    return std::string{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
+}
+
+// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
+// with `"` and `\` escaped and a control character as a hex escape.
+[[nodiscard]] std::string string_text(std::string_view body) {
+    std::string out{"\""};
+    for (const char c : body) {
+        const auto code = static_cast<unsigned char>(c);
+        if (code == 0) {
+            out += "\xEF\xBF\xBD";
+        } else if (code <= 0x1F || code == 0x7F) {
+            static constexpr char digits[] = "0123456789abcdef";
+            out += '\\';
+            if (code >= 16) { out += digits[code >> 4]; }
+            out += digits[code & 0xF];
+            out += ' ';
+        } else {
+            if (c == '"' || c == '\\') { out += '\\'; }
+            out += c;
+        }
     }
-    return out.empty() ? "0" : out;
+    out += '"';
+    return out;
 }
 
 // AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
@@ -566,6 +593,47 @@ namespace detail {
     }
     default: return false;
     }
+}
+
+// THE AUTHOR'S TOKENS, WITH THE NUMBERS, STRINGS AND URLS WRITTEN CANONICALLY.
+//
+// A value whose grammar this table does not model is stored as written - that
+// is deliberate, see check_declaration - but CSSOM §6.7.2 serialises a number,
+// a string and a URL the same way in every value, and `css/cssom/serialize-values`
+// asks for `0.5%` where `.5%` was written, `0px` for `-0px`, `"x"` for `'x'` and
+// `url("x")` for `url(x)`, through `background-position`, `content` and every
+// other shorthand this file leaves freeform. So the token stream is rebuilt
+// with only those three token kinds respelled; whitespace, idents, commas and
+// functions keep their bytes, which is what keeps `ident( myident)` its space
+// and `random-item(auto ,serif)` its odd comma.
+//
+// An ident or function name with an ESCAPE in it was decoded by the tokenizer
+// and has no source span left to copy - it would need serialize-an-identifier
+// to write back - so a value holding one is returned as written.
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::eof) { break; }
+        const std::string_view body = ts.text_of(t);
+        switch (t.type) {
+        case token_type::number: out += number_text(t.number); break;
+        case token_type::percentage: out += number_text(t.number) + "%"; break;
+        case token_type::dimension:
+            out += number_text(t.number) + ascii_lower_copy(ts.unit_of(t));
+            break;
+        case token_type::string:
+            if (body.size() < 2) { return std::string{text}; }
+            out += string_text(body.substr(1, body.size() - 2));
+            break;
+        case token_type::url: out += "url(" + string_text(body) + ")"; break;
+        default:
+            if (t.text >= ts.source_length) { return std::string{text}; }
+            out += body;
+            break;
+        }
+    }
+    return out;
 }
 
 } // namespace detail

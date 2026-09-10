@@ -81,7 +81,13 @@ public:
 
     // A selector list on its own: no braces, no declarations. `invalid` comes back
     // set when the text is not a selector at all.
-    [[nodiscard]] stylesheet take_selector_list(bool & invalid) {
+    [[nodiscard]] stylesheet take_selector_list(bool & invalid,
+                                                const std::vector<namespace_declaration> * ns) {
+        if (ns != nullptr) {
+            sheet_.namespaces = *ns;
+        } else {
+            sheet_.prefixes_checked = false;
+        }
         std::vector<component_value> run;
         while (!at_eof()) { run.push_back(consume_component_value()); }
         (void)parse_selector_list(sheet_, span_of(run), *atoms_, &invalid);
@@ -98,6 +104,44 @@ public:
 
 private:
     [[nodiscard]] const css_token & here() const { return sheet_.tokens[at_]; }
+
+    // The prefix is an ident and the URL a string or a `url()` - either token
+    // shape, since `url("x")` is a function around a string. Anything else is
+    // not a namespace rule and declares nothing.
+    void record_namespace(std::span<const component_value> prelude) {
+        namespace_declaration made;
+        bool have_uri = false;
+        for (const component_value & v : prelude) {
+            if (v.kind == cv_kind::function) {
+                const auto inner = sheet_.children_of(v);
+                for (const component_value & arg : inner) {
+                    if (arg.kind != cv_kind::token) { continue; }
+                    const css_token & t = sheet_.tokens[arg.token];
+                    if (t.type != token_type::string) { continue; }
+                    const std::string_view quoted = sheet_.text_of(t);
+                    made.uri = std::string{quoted.substr(1, quoted.size() - 2)};
+                    have_uri = true;
+                }
+                continue;
+            }
+            if (v.kind != cv_kind::token) { return; }
+            const css_token & t = sheet_.tokens[v.token];
+            if (t.type == token_type::whitespace) { continue; }
+            if (t.type == token_type::ident && !have_uri && made.prefix.empty()) {
+                made.prefix = std::string{sheet_.text_of(t)};
+            } else if (t.type == token_type::url) {
+                made.uri = std::string{sheet_.text_of(t)};
+                have_uri = true;
+            } else if (t.type == token_type::string) {
+                const std::string_view quoted = sheet_.text_of(t);
+                made.uri = std::string{quoted.substr(1, quoted.size() - 2)};
+                have_uri = true;
+            } else {
+                return;
+            }
+        }
+        if (have_uri) { sheet_.namespaces.push_back(std::move(made)); }
+    }
     [[nodiscard]] bool at_eof() const { return here().type == token_type::eof; }
     [[nodiscard]] std::string_view text(const css_token & t) const { return sheet_.text_of(t); }
 
@@ -184,7 +228,11 @@ private:
         }
         if (here().type == token_type::semicolon) {
             ++at_;
-            return; // @charset, @import, @namespace, `@layer a;` - all consumed
+            // `@namespace [<prefix>]? <url>;` is RECORDED, because it decides
+            // which prefixes the selectors after it may use. The rest - @charset,
+            // @import, `@layer a;` - are consumed and that is all.
+            if (ascii_iequals(name, "namespace")) { record_namespace(prelude); }
+            return;
         }
         if (at_eof()) { return; }
         if (kind == at_kind::statement) {
@@ -503,9 +551,10 @@ stylesheet parse_stylesheet(std::string_view css, atom_table & atoms) {
     return p.take_stylesheet();
 }
 
-stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool & invalid) {
+stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool & invalid,
+                               const std::vector<namespace_declaration> * namespaces) {
     parser p{text, atoms};
-    return p.take_selector_list(invalid);
+    return p.take_selector_list(invalid, namespaces);
 }
 
 stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {

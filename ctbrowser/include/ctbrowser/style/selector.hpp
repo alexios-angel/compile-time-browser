@@ -118,6 +118,13 @@ inline constexpr std::uint32_t structural_visited = 1u << 12;
 
 struct compiled_selector;
 
+enum class ns_prefix : std::uint8_t {
+    unset,
+    any,
+    none,
+    named
+};
+
 // The pseudo-classes that carry an ARGUMENT, so a bit will not do: an `An+B`
 // pattern, or a nested selector list.
 enum class pseudo_kind : std::uint8_t {
@@ -170,7 +177,25 @@ struct compound {
     // empty and because the type is recursive; tested LAST of everything in a
     // compound, since a nested selector list runs the matcher again.
     std::vector<pseudo_ref> pseudos;
-    bool never_matches = false; // a construct this engine cannot represent
+    // THE NAMESPACE PREFIX, Selectors 4 §3.2. `any` is `*|`, which constrains
+    // nothing - and is also what an unprefixed name means, because this engine
+    // models no default namespace. `none` is `|`: the null namespace, which no
+    // element the HTML parser makes is in. `named` keeps the prefix for the CSSOM,
+    // whose serialiser resolves it against the sheet's `@namespace` rules; the
+    // matcher answers neither of the last two and `never_matches` says so.
+    ns_prefix ns = ns_prefix::unset;
+    atom ns_name;
+    // A PSEUDO-ELEMENT - `::before`, interned lowercase - or empty. The engine
+    // generates no boxes for one, so a compound carrying it never matches an
+    // element; the name is kept so `selectorText` can be canonical, which is how
+    // `:before` comes back as `::before`.
+    atom pseudo_element;
+    bool never_matches = false; // a construct this engine cannot match
+    // A construct the compiled form does not HOLD - `:has()`, `::part(x)`, a
+    // namespaced attribute - so no serialiser can rebuild the author's selector
+    // from it. Distinct from never_matches: `ns|e` is unmatchable and
+    // representable, `:has(a)` is both unmatchable and lost.
+    bool dropped = false;
 };
 
 // Specificity as the spec's (a, b, c) triple, packed so the cascade's comparison
