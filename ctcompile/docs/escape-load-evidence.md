@@ -3062,3 +3062,71 @@ baseline and all **60 corruption rejections** independently match the current
 checker. Earlier failure/correction evidence and the measured next mixed-Mul
 boundary above are preserved. Evidence: `/tmp/ctcompile-mixed-sub-full-audit.json`,
 `/tmp/ctcompile-map-join-full.log` and `/tmp/ctcompile-map-join-full-detail.log`.
+
+
+**Mixed BigInt multiplication retention, 2026-09-10 (`0b25968b`).**
+Resumed the exact **d5a61e1a** boundary from the interrupted **04:27:51 UTC**
+journal, explicitly abandoned at **04:30:18**. Dynamic Mul now shares Sub's
+independent original-operand proof: exactly one known BigInt and one known
+non-BigInt primitive reach `bigint_binary`'s independent TypeError before
+lookup or user conversion. Its Undefined failure carrier supplies neither
+BigInt nor Number value evidence. Every structural continuation remains checked;
+publication, calls, handlers and object/opaque operands remain conservative.
+No normal-completion, native carrier or effect permission follows.
+
+The corrected **16-step warning-free build** passes **9/9 CTests in 10.86
+seconds**, comprising type inference and all eight escape checks (arrays
+**0.66**, fixture **0.62 seconds**). Mul passes **57 rows, 43 stale/fresh live
+states and 3369 incomplete retention budgets**, including exact completion and
+the wide snapshot's additional **64 work units**. Primitive Mul's shared matrix
+also passes **84 rows, 49 live states and 4378 cutoffs**. The initial **nine-step
+warning-free build / 7-of-8 escape gate in 10.45 seconds** exposed historical
+Mul refusal expectations; their source and operand order remain unchanged.
+Only independently justified expectations advance, including the original
+Sub-to-Mul live mutation and ten comparison-then-Mul paths. Ten separate Div
+cases retain the remaining-operation refusal. All **1511 historical IR string
+tokens** are preserved outside the new test cases.
+
+The three **d5a61e1a** function bodies are byte-identical in the fixture. All
+**87,049 historical UTF-8 bytes** remain; **169 named functions** retain identical
+recording headers, **522 literal allocations, 531 observations and 517 claims**.
+New coverage measures **12 literal sites / 21 instances / 11 confined / ten
+retained**, plus three independent thrown Errors at pcs **25, 29 and 18** with
+no literal claims. The early child's two instances are proved confined;
+saved-child and opaque-argument claims remain conservative. Node and the
+interpreter execute Number trace **63**, including three distinct TypeErrors.
+Seven source mutations distinguish the observations. The strict recorded-data
+checker passes its baseline and rejects **60 independent source, literal,
+claim and Error corruptions**.
+
+Fixture precision is **99/135**, with **705 claims, 722 observed sites,
+18 unclaimed and zero violations, partial or pending claims**. All four escape
+oracles report zero violations; corpus precision remains **0/64, 0/16 and
+0/20**, with p5's existing partial unchanged. All five frozen code/test hashes
+match local files and committed **0b25968b**. Stable clang-format **22.1.8
+passes all 745 files**; whitespace checks pass. Full-suite validation remains
+pending at this checkpoint.
+
+Evidence: `/tmp/ctcompile-mutation-{initial-build,initial-escape,focused-build,type-escape}.log`,
+`/tmp/ctcompile-mixed-mul-fixture.{rec,claims}`,
+`/tmp/ctcompile-mixed-mul-fixture-audit.json`,
+`/tmp/ctcompile-mixed-mul-checker-audit/audit.json`,
+`/tmp/ctcompile-mixed-mul-local-preservation.json` and
+`/tmp/ctcompile-mixed-mul-code-{initial-frozen,frozen}.json`.
+
+
+**Measured next boundary: mixed BigInt division, 2026-09-10.** The unchanged
+`/tmp/ctcompile-after-mixed-mul-boundary.js` (SHA256 **8a20a9a8**) uses
+`input / 1` in known Number/BigInt, saved-child and opaque-argument functions.
+All six calls agree between Node and the interpreter with Number
+`mixedDivTrace=63`: three normal returns and three TypeErrors. Its **12 literal
+sites / 21 instances / 11 confined / ten retained** and three independent
+thrown Errors at pcs **25, 29 and 18** have **twelve conservative compiler
+claims** (nine Stored, three Returned); the Errors have no literal claims.
+Each measured function imports and runs twice; only the multiple-handler
+driver is unimported. Continue original-operand category proofs while preserving
+every structural continuation and the independent Undefined error carrier;
+observed opaque arguments provide no completion or native effect permission.
+Evidence: the matching `.log`, `.rec`, `.claims`, `-node.json` and `-audit.json`.
+All five multiplication code/test hashes remain frozen; the full suite is still
+pending at this checkpoint.

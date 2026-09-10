@@ -1,6 +1,76 @@
 # Next Bootstrap native boundary
 
-## Current continuation: mutations after equal branch cardinalities, 2026-09-09
+## Current continuation: actual Data ownership and object keys, 2026-09-10
+
+**58983ccc** finishes the prior mutation-size boundary. The exact insertion
+**56679e2d** and absent-deletion **887e65fc** now admit **5/5 in both modes**
+with sixteen calls and Number `trace=1` preserved. The proof transports mutable
+cardinality only with independent actual-instance membership/absence and a
+bounded complete candidate census. **a03cc3fd** executes 23 native programs,
+38 typed observations, 26 mutations, six refusal/repair families and a 128-call
+saved-leaf lifetime. Focused type/escape checks pass **9/9**, owner/host/provider
+checks **5/5**, and presence lit **1/1**. The complete gate is pending with all
+fourteen code/test inputs frozen and committed; see `HANDOFF.md`.
+
+The continuation returns to Bootstrap's actual Data fragment. Fresh explicit
+source contracts, both native modes and a separately fingerprinted contract
+after prefix specialization give these measured results:
+
+| Source | SHA-256 prefix | Functions / calls | Typed observations | Native |
+|---|---|---|---|---|
+| exact browser | `80a6fd87` | 7 / 42 | 19 | 0/7 |
+| exact CommonJS | `cc6c3960` | 7 / 42 | 19 | 0/7 |
+| exact AMD | `821e07a5` | 8 / 43 | 20 | 0/8 |
+| ordinary publication, verbatim Data methods | `8359592c` | 7 / 40 | 19 | 0/7 |
+
+All observations agree with Node and the interpreter. Every source's current
+native owner reason is `property receiver lacks a fresh own-data object proof`.
+Browser/CommonJS and ordinary publication prefix analyses each finish **24
+resolved calls and 23 provider summaries**, with no remaining prefix boundary.
+Their freshly contracted residual programs still refuse native ownership.
+Completing a startup trace is not proof about future callers or object owners.
+
+The ordinary-publication companion preserves every upstream Data method byte
+and every observation, replacing only the UMD wrapper with the existing ordinary
+host slot seam. It isolates remaining ownership work from UMD branch discovery;
+it does not yet make Data native.
+
+A smaller source-derived witness preserves the vendor's `t.has(e)` operation:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const t = new Map;
+    return { get(e) { return t.has(e) ? 1 : 0; } };
+});
+var trace = host.slot.get({});
+```
+
+Exact SHA-256 prefix **20d4806e**; four functions and four calls. Both modes
+refuse **0/4** at `property call lacks a current source getter proof`. Changing
+only the argument to `({}, 1)` preserves the actual allocation and every Map,
+publication and call operation. That **2507446b** candidate passes source getter
+analysis but still refuses **0/4** at `owned global method table has another
+allocation`. Its seeded counterpart behaves the same. These are measured
+separate boundaries, not successful native repairs. A later Object actual also
+prevents borrowing an earlier Number argument's proof.
+
+Continue through the existing `HostContract` and native Map ownership model:
+prove ordinary object arguments and identity across all supplied calls, and
+prove the corresponding ordinary C++ owners. The current
+`capturedMapParameters` accepts primitive alternatives only; Data's object
+argument cannot be justified by an observed startup value. Nested Map creation
+inside Data.set and callback/error effects remain separate obligations. Keep
+source evaluation, future argument variation, unknown effects and conservative
+work limits. Full native Bootstrap and direct browser API integration remain
+unfinished.
+
+Artifacts: `/tmp/ctcompile-bootstrap-next-boundary/{sources,results,future}.json`,
+`/tmp/ctcompile-mutation-exact-probe/`, and
+`/tmp/ctcompile-mutation-execution.log`. Later measurements will refine this
+boundary; none of these compile counts claim native execution of Data.
+
+## Previous continuation: mutations after equal branch cardinalities, 2026-09-09
 
 **bb8c52d3** finishes the prior **2d1763eb** join boundary: both modes admit
 **5/5**, preserving all fifteen calls and Number `trace=1`. Independent source

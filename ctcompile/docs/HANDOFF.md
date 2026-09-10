@@ -6,6 +6,88 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Known Map mutation sizes and mixed BigInt multiplication, 2026-09-10
+
+Resumed interrupted iteration 6 from the **04:24:48–04:27:51 UTC**
+synchronization journal, explicitly abandoned at **04:30:18**. The checkout at
+**8541686d** was clean; the interrupted thread had claims but no code edits.
+The older codex-wip recovery and source-split fixes were already gated ancestors.
+Three agents continued independent proof, execution and escape work; root alone
+serialized every devbox operation and commit. No browser/runtime source changed.
+
+**58983ccc** carries exact Map cardinality through independently proved
+insertions, overwrites and present/absent deletions. It queries membership before
+mutation, for the actual runtime instance, and retains the complete bounded
+candidate census. Unknown key relations, alias effects and an exceeded
+64-candidate census still invalidate the fact. Saved SSA sizes retain their
+actual read-time value. Source ownership and native presence independently
+rederive the proof; neither cardinality nor a schema family supplies membership.
+
+The exact **56679e2d** insertion and **887e65fc** absent-deletion sources now
+admit **5/5 in both modes**, preserving sixteen calls and Number `trace=1`.
+All twelve historical continuation sources keep their bytes and call counts.
+**a03cc3fd** executes **23 native programs**, **38 typed Node/interpreter
+observations**, **26 discriminating mutations**, and **six refusal/repair
+families**. Explicit/deduced GCC/Clang programs retain actual Map/size/field
+operations and have no Script symbols. A saved leaf survives **128 future calls**,
+both flags, owner/table release, reentry and final Map/leaf release under
+ASan/UBSan/leak checks. Work budgets **7059/8252** check **32/30 cutoffs**.
+All **855 historical source rows across 65 helpers** remain unchanged.
+The complete **238-case** refusal census finds no unexpected classification changes.
+
+The corrected **16-step build is warning-free**. Type inference plus all eight
+escape CTests pass **9/9 in 10.86 seconds**; ownership/host/provider checks pass
+**5/5 in 228.29 seconds**; Map-presence lit passes **1/1 in 1.47 seconds**.
+New proof controls cover **26 owner rows per source/prepared form**, **48 type
+rows**, **12 live type edits**, and **16 lowering sources**. Four owner budget
+families check **17 cutoffs** each at **13383/13335/13261/13213** work. All 83
+historical lowering sources remain intact. Stable clang-format **22.1.8** passes
+all **745 files**; bundled 23 retains the same nine baseline differences.
+
+**0b25968b** proves independent error retention for mixed BigInt **Mul**,
+using each original operand's independently known primitive category. It grants
+no successful-completion, native BigInt carrier or effect proof. Every structural
+continuation remains checked. New tests cover **57 rows, 43 live states and
+3369 budget cutoffs**. The fixture records **705 claims, 722 observed sites,
+18 unclaimed, 99/135 precision**, with zero violations/partial/pending; **60
+checker corruptions reject**. All **169 historical named functions** and
+**87,049 prior fixture bytes** remain intact. The first escape run passed
+**7/8 in 10.45 seconds**; only old Mul refusal expectations needed the measured,
+source-preserving promotions before the corrected gate above.
+
+The complete monorepo gate is running with all **14 code/test inputs frozen
+and committed**. Its result is pending; earlier complete measurements below are
+not a result for this revision. Artifacts: `/tmp/ctcompile-mutation-full.log`
+and `/tmp/ctcompile-mutation-final-frozen.json`.
+
+**Next: actual Bootstrap Data ownership and object-valued Map arguments.**
+Fresh explicit contracts preserve exact browser/CommonJS/AMD sources
+**80a6fd87/cc6c3960/821e07a5**, their **19/19/20 typed observations**, and
+**42/42/43 calls**. Native remains **0/7, 0/7, 0/8** in both modes, with
+`property receiver lacks a fresh own-data object proof`. Browser/CommonJS prefix
+analysis completes **24 resolved calls and 23 provider summaries**; a separately
+fresh contract after specialization still refuses native ownership. An ordinary
+publication companion **8359592c** preserves every Data-method byte and all 19
+observations, but also refuses **0/7** with forty calls. Startup evaluation is
+therefore not a future ownership proof.
+
+A source-derived `t.has(e)` object-formal isolate **20d4806e** refuses **0/4**
+with four calls. Preserving its unused object allocation while changing only the
+argument to Number clears the source getter boundary but still refuses native
+ownership (`owned global method table has another allocation`). These are
+separate obligations, not a working repair. The next implementation must prove
+ordinary object arguments/identity and their owners through the existing host
+seam, keeping unknown future calls conservative. Nested Data Maps and diagnostic
+callbacks remain later obligations. Full native Bootstrap and direct browser API
+integration remain unfinished.
+
+The next escape probe is mixed primitive BigInt **Div**, **8a20a9a8**:
+Node/interpreter Number `mixedDivTrace=63`; its literal claims remain conservative.
+See `bootstrap-provider-next.md` and `escape-load-evidence.md` for exact evidence.
+Focused artifacts: `/tmp/ctcompile-mutation-{type-escape,owners,lowering,execution}.log`,
+`/tmp/ctcompile-mutation-{probe,all-refusals}/`, and
+`/tmp/ctcompile-bootstrap-next-boundary/{sources,results,future}.json`.
+
 ## Equal branch Map sizes and mixed BigInt subtraction, 2026-09-09
 
 Continued the exact **2d1763eb** boundary in **f7c42a09**'s handoff,
