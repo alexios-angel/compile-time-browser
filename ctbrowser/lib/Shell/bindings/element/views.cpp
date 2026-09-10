@@ -440,9 +440,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // all along and there was no way to read what was in one: `.data` was
     // undefined, `.nodeValue` was undefined, and the only spelling that worked
     // was textContent, which is the same answer by accident and a different
-    // question. Both are accessors, both write through, and on an element they
-    // are null - which is what the DOM says and is not the same as absent.
+    // question. Both are accessors, both write through, and `nodeValue` on an
+    // element is null - which is what the DOM says and is not the same as
+    // absent. `data` is a CharacterData member and an ELEMENT does not get
+    // one: as an own accessor it shadowed the reflected `object.data`.
+    const bool character_data = [&] {
+        const auto kind = doc_->read().kind(id).value_or(node_kind::element);
+        return kind == node_kind::text || kind == node_kind::comment;
+    }();
     for (const char * spelling : {"data", "nodeValue"}) {
+        if (!character_data && spelling[0] == 'd') { continue; }
         tree_property(
             spelling,
             [this, id](context & c, std::span<value>) {
