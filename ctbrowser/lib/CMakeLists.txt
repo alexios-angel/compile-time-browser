@@ -39,26 +39,12 @@ if(CTBROWSER_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
   endif()
 endif()
 
-# --- WHOLE-PROGRAM INLINING, IF YOU WANT IT BACK ------------------------
-# Moving the engine's code out of the module interfaces is what made consumer
-# builds fast, and the thing it gives up is the compiler's freedom to inline
-# ACROSS the library boundary - which is what an all-inline (or header-only)
-# engine gave for free, at the cost of recompiling it in every translation unit.
-#
-# LTO buys that back at link time instead of at compile time, which is the same
-# trade made in the right place. Off by default because it makes linking slow
-# again, and the default here is meant to be fast to build.
-option(CTBROWSER_LTO "Inline across the engine boundary again, at link time" OFF)
-
 # Everything the engine builds - libraries, tests and examples - goes through this, so
 # there is one place that decides how the engine is compiled and linked.
 function(ctbrowser_target name)
   target_compile_options(${name} PRIVATE ${CTBROWSER_STRICT_WARNINGS})
   if(CTBROWSER_LINK_OPTIONS)
     target_link_options(${name} PRIVATE ${CTBROWSER_LINK_OPTIONS})
-  endif()
-  if(CTBROWSER_LTO)
-    set_property(TARGET ${name} PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
   endif()
 endfunction()
 
