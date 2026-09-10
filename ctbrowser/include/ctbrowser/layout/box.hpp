@@ -815,7 +815,9 @@ private:
 
     [[nodiscard]] static side_lengths parse_sides(std::string_view shorthand);
 
-    [[nodiscard]] static std::string_view trimmed(std::string_view v);
+    [[nodiscard]] static std::string_view trimmed(std::string_view v) noexcept {
+        return trim(v, html_whitespace);
+    }
 
     // A character's width at a font size, through the injected measure when
     // there is one and a monospace stand-in when there is not.
