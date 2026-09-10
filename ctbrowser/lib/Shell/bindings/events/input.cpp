@@ -224,19 +224,49 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
 // firing. The deviation is that a `load` listener on the document fires too,
 // where a browser fires that one at the window with the document only as the
 // event's target.
-std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at) const {
+//
+// A SHADOW ROOT'S PARENT IS ITS HOST when the event is `composed` - DOM's "get
+// the parent" for a shadow root - and nothing at all when it is not. The walk
+// used to stop at the fragment either way, so a listener on the host never
+// heard an event from inside its own tree: Event-dispatch-listener-order.
+// window.js registers on both sides of the boundary and got the inside half.
+//
+// AND A DETACHED TREE ENDS AT ITS OWN ROOT. The document and the window were
+// appended for every node, so `div.dispatchEvent(...)` on an element nobody had
+// inserted reached every global listener on the page. The DOM's chain runs
+// parent to parent and the document's parent is the window; a root that is not
+// the document has no parent, and the two globals are not on the path.
+std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at,
+                                                                    bool composed) const {
     std::vector<path_step> path;
     // A STANDALONE EventTarget IS THE WHOLE PATH. It is not in the tree, so
     // there is nothing above it to capture through or bubble to, and appending
     // the document and the window would deliver a page's private events to
     // every global listener there is.
     if (at.on == listen_on::object) { return {at}; }
+    bool connected = true;
     if (at.on == listen_on::node && at.node) {
         const auto txn = doc_->read();
-        for (node_id walk = at.node; walk; walk = txn.parent(walk)) {
+        for (node_id walk = at.node; walk;) {
             path.push_back(path_step{walk, listen_on::node});
+            node_id up = txn.parent(walk);
+            if (!up) {
+                const shadow_tree * tree = shadow_tree_of(walk);
+                if (tree != nullptr && composed) {
+                    up = tree->host;
+                } else {
+                    // The test element/internal.hpp's is_document_root makes:
+                    // a parsed page's root is the <html> element, and a
+                    // created document still has its Document node.
+                    connected = tree == nullptr && (walk == txn.root() ||
+                                                    txn.kind(walk).value_or(node_kind::element) ==
+                                                        node_kind::document);
+                }
+            }
+            walk = up;
         }
     }
+    if (!connected) { return path; }
     if (at.on != listen_on::window) { path.push_back(path_step{node_id{}, listen_on::document}); }
     path.push_back(path_step{node_id{}, listen_on::window});
     return path;

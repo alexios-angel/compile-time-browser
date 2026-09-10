@@ -1403,8 +1403,12 @@ private:
     // flags checked between them. Returns whether a listener cancelled it.
     bool dispatch_to(value event, path_step at);
     // Where an event aimed at `at` travels: the node and its ancestors, then the
-    // document, then the window - innermost first.
-    [[nodiscard]] std::vector<path_step> propagation_path(path_step at) const;
+    // document, then the window - innermost first. A `composed` event crosses
+    // each shadow boundary to the host; one that is not stops at the shadow
+    // root. A detached tree ends at its own root and reaches neither the
+    // document nor the window.
+    [[nodiscard]] std::vector<path_step> propagation_path(path_step at,
+                                                          bool composed = false) const;
     // The JavaScript object for one step, which is what `currentTarget` reports
     // and what an `on<type>` handler property is looked up on.
     [[nodiscard]] value object_of_step(context & cx, path_step step);
