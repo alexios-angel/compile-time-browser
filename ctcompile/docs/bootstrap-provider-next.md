@@ -1,5 +1,150 @@
 # Next Bootstrap native boundary
 
+## Retained object keys, mixed key carriers and test splits, 2026-09-10
+
+Continued the exact **7381e2fb / 5eba229d** boundaries left by **637f4e8c**
+and the **17:06:31 UTC** synchronization journal. The checkout was clean at
+**98b7fde4**. The older codex-wip branch, CallDirectOp repair, interrupted
+mutation gate and source-split repairs were already merged and gated. Three
+agents handled independent lowering, escape and execution work; root alone
+serialized devbox operations and Git writes. No browser/runtime source changed.
+
+**25c4c882** proves empty object keys across the complete captured-Map call
+family. Actual uses must belong to that exact invocation census; every sibling
+body independently permits object formals only as Map keys. Map storage retains
+the key, which has no outgoing ownership edges. Same-family aliases, set/get/has/
+delete and scalar payloads reuse existing ownership and native identity proofs.
+Field mutation, object payloads, arbitrary calls and cycles remain refused.
+Source/prepared owner checks cover live edits, stale fingerprints and incomplete
+budgets. A separate review found no additional correctness issue.
+
+**54d50a6b** supplies the separately proved Number/Object Map key carrier using
+`std::variant<double, std::shared_ptr<ctnative::identity_object>>`. Key spelling,
+admission and wrapping use the existing comparator/storage implementations;
+object-valued payload storage is unchanged. Identity aliases, distinct keys,
+NaN, signed zero, deletion, clear and owner release pass the native mixed-key
+and object-key suites with GCC/Clang and sanitizers (**2/2**, **46.49 seconds**).
+This storage carrier does not authorize mixing Number/Object actuals at one
+formal across calls; **5eba229d** seeds a numeric key inside an object-key method.
+
+**e59e6ce1** executes **seven native object-key programs**, with **21 typed
+Node/interpreter observations across 19 sources** and **13 distinguishing
+mutations**. Historical source bytes remain intact. The exact retained-key
+**7381e2fb** and mixed-key **5eba229d** now admit **4/4 functions in both modes**;
+the fresh-key sibling source **3fbdfc23** admits **7/7** with fifteen calls.
+Explicit/deduced GCC/Clang output preserves actual allocations and Map calls,
+with no Script symbols. Saved sibling callables retain Map/key ownership after
+caller and table release, through **128 future key rounds**, aliasing,
+overwrite/delete/clear, reentry and final release under ASan/UBSan/leak checks.
+Twelve independent refusals remain. Exact budget boundaries **1516 / 1639**
+check **32 / 31 cutoffs**.
+
+**0995a758** promotes historical `parameter_object`, preserving its name,
+**7b592b83** source identity, **five functions and five calls**. It passes native
+execution in both layouts with GCC/Clang and sanitizers; saved setter/getter
+callables retain **128 fresh/aliased keys** after caller release and free them
+with the final Map owner. The collection now checks **eight native programs,
+20 source rows, 22 typed observations and 14 distinguishing mutations**.
+All **171 historical refusal sources** retain their exact bytes; only this
+proved case changes routing. Its proof completes at budget **3442**, with
+**31 cutoffs** checked. The complete lit rerun passes as recorded below.
+
+**4680d90e** extends independent mixed BigInt error-retention proof to Mod.
+It grants neither successful completion nor native BigInt/effect permission.
+The matrix checks **57 rows, 43 live states and 3451 cutoffs**. The strict fixture
+has **737 claims, 760 observed sites, 24 unclaimed and 101/139 precision**, with
+zero soundness violations, partial or pending checks. Initial array failures
+were stale test category predicates; their source-preserving correction passes.
+Next escape witness: mixed BigInt **Pow**, exact **06f94afe**, still conservative.
+
+The user requested splitting every compiler test over 1,000 lines using Git
+moves. **681bd899**, **cdcdc0c2** and **e37a4343** split the C++ tests, escape
+checker/fixture and Map-presence lit cases. Named test headers and ordinary C++
+translation units keep each original executable and main order. Fixture chunks
+reassemble the exact **95,603 bytes** (SHA-256 **c03c5607**); expanded checker
+includes reproduce the original checker. C++ bodies/literals and all **99 JS
+cases / 100 RUN commands** are preserved. Two blank inter-case separators were
+removed at file ends. The Python split preserves **198 helper/class bodies**,
+**134 source/data entries**, **199 import scopes**, and the original main AST
+when its extracted observation phase is inlined. All eleven original oversized
+files are split; the maximum remaining compiler test file is **987 lines**.
+The browser corpus's `p5-api-probe.js` is still **1,416 lines** under Claude's
+active claim; its eventual split is recorded in the synchronization journal.
+
+The user's later folder-organization request is also in progress. A complete
+**182-file move map** is prepared at `/tmp/ctcompile-test-organization-moves.json`:
+Analysis/Escape, Types and Ownership; CTNative/HostContract, ExceptionRecovery,
+Fixtures, Checks and Specialization; Runtime, Packaging, Comparison, Core and
+Support. Only CMake/lit configuration files remain at the test root in that plan.
+Fixture bytes, generated names and test registrations stay fixed. Apply and gate
+the moves in coherent groups next; the historical-case repair is committed as
+**0995a758**, and no folder move has been applied at this checkpoint.
+
+Measured gates so far: the initial merged-tree build passes **751 steps**; the
+feature rebuild passes **302 steps** without warnings. After the C++ splits,
+all **15 focused CTests pass in 224.65 seconds**, and the three regrouped
+Map-presence lit tests pass in **0.64 seconds**. Stable clang-format **22.1.8**
+passes **800 files**; bundled 23 retains the same nine baseline differences.
+**2172add2** commits the Python split after its seven-program native/lifetime
+check passed again. The full monorepo gate passes **522/523 CTests in 2228.37
+seconds**: **151/151 browser tests**, and **371/372 compiler tests**. Its lit
+CTest passes **167/168** cases in **1407.83 seconds**; the sole failure is the
+historical `parameter_object` expectation, now admitting all five functions.
+Its exact fresh-key setter/size-getter source now passes the focused execution
+and lifetime check above. The corrected **ctcompile_lit CTest passes 1/1**, with
+**168/168 lit cases in 1499.87 seconds** (1499.80 internally; 1499.88 total).
+Thus all **523 CTests** are covered as passing across the original run and the
+corrected rerun; the initial failure remains recorded. All **1,214 source hashes**
+match the devbox before and after the corrected run, with only the six intended
+test files differing from the initial full run. Independent evidence:
+`/tmp/ctcompile-retained-composite-audit.json`.
+
+Fresh exact Bootstrap Data measurements preserve these source identities:
+
+| Program | SHA-256 prefix | Functions | Raw/prepared calls | Native, both optimization modes |
+| --- | --- | ---: | ---: | ---: |
+| Browser | `80a6fd87` | 7 | 42 | 0/7 |
+| CommonJS | `cc6c3960` | 7 | 42 | 0/7 |
+| AMD | `821e07a5` | 8 | 43 | 0/8 |
+| Ordinary publication | `8359592c` | 7 | 40 | 0/7 |
+
+All **77 typed Number observations** agree between Node and the interpreter.
+Fresh prepared contracts still refuse with `property receiver lacks a fresh
+own-data object proof`; both native modes preserve the refused operations and
+source calls. Browser/CommonJS/ordinary prefix probes each resolve **24 calls**
+and summarize **23 provider calls**, keeping **one outer allocation, three
+nested allocations, one callback and two global writes** at runtime. Browser
+and CommonJS residuals have **40 calls**, ordinary remains at **40**; fresh
+residual contracts still admit **0/7**. Prefix work does not claim complete
+ownership, and no native execution of these wholly refused Data programs is
+claimed. Evidence: `/tmp/ctcompile-retained-exact-data-final-results.json`.
+
+**Next: ordinary named object owners for actual Bootstrap Data.** The exact
+field-bearing/nested-Map Data methods still need independent ownership and
+effect proofs. Block-const sibling **b6d341ad** currently refuses **0/7**, but
+that particular source imports globals because of the VM/compiler block-scope
+bug fixed by Claude's **d99ddf7b**, which is not merged here. Remeasure it after
+integration; do not treat that bug as a permanent native limitation. Ordinary
+`var` key **7573e89b** remains an independent global-owner refusal and is the
+smallest next slice. Prove one empty allocation, one unconditional initialization
+dominating every load, and key-only arguments across the complete captured-Map
+family. Keep each actual `LoadGlobal` separate from its allocation identity.
+The generic `object(actual)` lookup follows a sole store but does not establish
+initialization dominance; using that lookup alone is insufficient. Carry explicit
+live/fingerprint evidence through HostContract, OwnedGlobalMethods/Roots,
+NativeMap/ObjectIdentity/TypeInference and ordinary typed global emission.
+Reject second stores (including after the last call), early reads, field mutation,
+unknown consumers, payload/return escapes and incompatible later arguments.
+The true `var` sibling companion **600b8fb6** additionally needs immutable aliases
+and two distinct allocation identities. Full native Bootstrap and direct browser
+API integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-retained-{focused,execution,probe}.log`,
+`/tmp/ctcompile-test-splits-focused.log`,
+`/tmp/ctcompile-retained-key-execution-final.log`,
+`/tmp/ctcompile-{map-tests,escape,large-test}-split-*.json`.
+
+
 ## Current continuation: retaining object keys, 2026-09-10
 
 Resumed the **15:44–15:45 UTC** object-key/Div thread at **183a10c0**, including
