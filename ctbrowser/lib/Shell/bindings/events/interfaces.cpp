@@ -636,14 +636,19 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // `this`, which is what makes `class Nicer extends EventTarget` work: a
     // subclass instance inherits them and `this` is the instance. Capturing the
     // object in the closure instead would give every subclass the base's list.
+    //
+    // AND `this` IS NOT ALWAYS STANDALONE. Every node wrapper inherits these -
+    // the interface chain is `HTMLDivElement -> ... -> Node -> EventTarget` -
+    // so `step_of` asks which target the receiver names rather than assuming
+    // the object bucket, which no dispatch through the tree ever visits.
     auto * target_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
     const auto target_method = [&](const char * name, script::native_fn fn) {
         method_on(target_proto, name, std::move(fn));
     };
     target_method("addEventListener", [this](context & c, std::span<value> args) {
         const value self = c.current_this();
-        if (!self.is_object()) { return value::undefined(); }
-        add_listener(make_listener(c, path_step{node_id{}, listen_on::object, self}, args));
+        if (!self.is_object_like()) { return value::undefined(); }
+        add_listener(make_listener(c, step_of(self), args));
         return value::undefined();
     });
     target_method("removeEventListener", [this](context & c, std::span<value> args) {
@@ -659,9 +664,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
         const bool capture = options.is_object()
                                  ? context::truthy(c.lookup_property(options, "capture"))
                                  : context::truthy(options);
+        const path_step at = step_of(self);
         std::erase_if(listeners_, [&](const listener & l) {
-            return l.on == listen_on::object && l.host.bits() == self.bits() && l.type == type &&
-                   l.capture == capture && l.callback.bits() == callback.bits();
+            if (l.on != at.on || l.type != type || l.capture != capture ||
+                l.callback.bits() != callback.bits()) {
+                return false;
+            }
+            return at.on == listen_on::object ? l.host.bits() == at.host.bits()
+                                              : l.target == at.node;
         });
         return value::undefined();
     });
@@ -675,8 +685,8 @@ void dom_bindings::install_event_interfaces(context & cx) {
                                        "parameter 1 is not of type 'Event'.");
             return value::boolean(false);
         }
-        if (!self.is_object()) { return value::boolean(true); }
-        return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::object, self}));
+        if (!self.is_object_like()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, step_of(self)));
     });
     // The Error constructor's shape, and for the same reason: `this` is the
     // instance when this runs through `new` or through a subclass's `super()`,

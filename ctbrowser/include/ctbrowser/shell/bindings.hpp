@@ -1220,6 +1220,14 @@ private:
     // The JavaScript object for one step, which is what `currentTarget` reports
     // and what an `on<type>` handler property is looked up on.
     [[nodiscard]] value object_of_step(context & cx, path_step step);
+    // AND BACK AGAIN: which event target a value IS. `object_of_step` is the
+    // other direction and the two have to agree. It exists because
+    // EventTarget.prototype's three methods are INHERITED by every node
+    // wrapper - the interface chain ends at EventTarget - so `this` inside
+    // `addEventListener` is as often a node as it is a standalone target, and
+    // reading it as standalone gives an element a listener list no dispatch
+    // through the tree ever visits.
+    [[nodiscard]] path_step step_of(value self);
 
     [[nodiscard]] static bool prevented(value event);
 

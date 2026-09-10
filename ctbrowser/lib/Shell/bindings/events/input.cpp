@@ -255,4 +255,25 @@ value dom_bindings::object_of_step(context & cx, path_step step) {
     return value::undefined();
 }
 
+// The window is recognised as the PROXY and as the object behind it, because
+// `object_of_step` hands out the proxy and a page can reach either; the
+// document likewise. A wrapper carries its own copies of the three methods, so
+// an ELEMENT was fine before this; a node kind whose wrapper never got them
+// fell through to the prototype's and its listeners went into the object
+// bucket - registered, never called, and nothing anywhere said so.
+dom_bindings::path_step dom_bindings::step_of(value self) {
+    const auto same = [&](value other) {
+        return self.is_heap() && other.is_heap() && self.bits() == other.bits();
+    };
+    if (cx_ != nullptr && cx_->has_global("window") && same(cx_->global("window"))) {
+        return path_step{node_id{}, listen_on::window};
+    }
+    if (same(window_)) { return path_step{node_id{}, listen_on::window}; }
+    if (same(document_) || same(document_target_)) {
+        return path_step{node_id{}, listen_on::document};
+    }
+    if (const node_id id = handle_of(self)) { return path_step{id, listen_on::node}; }
+    return path_step{node_id{}, listen_on::object, self};
+}
+
 } // namespace ctbrowser::shell
