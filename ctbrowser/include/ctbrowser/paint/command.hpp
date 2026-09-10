@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -280,11 +281,9 @@ public:
     }
 
     [[nodiscard]] std::span<const paint_command> commands() const noexcept { return commands_; }
-    [[nodiscard]] std::span<const hit_region> hit_regions() const noexcept { return hit_regions_; }
-
     [[nodiscard]] node_id hit_test(point at) const noexcept {
-        for (auto it = hit_regions_.rbegin(); it != hit_regions_.rend(); ++it) {
-            if (it->bounds.contains(at)) { return it->source; }
+        for (const hit_region & region : std::views::reverse(hit_regions_)) {
+            if (region.bounds.contains(at)) { return region.source; }
         }
         return node_id{};
     }

@@ -74,7 +74,6 @@ public:
     bool add_face(std::string family, bool bold, bool italic, std::span<const std::byte> bytes);
 
     [[nodiscard]] std::size_t face_count() const;
-    [[nodiscard]] bool has_face(std::string_view family, bool bold, bool italic) const;
     void set_default_family(std::string family);
 
     [[nodiscard]] float advance(std::string_view text, float font_size, std::string_view family,

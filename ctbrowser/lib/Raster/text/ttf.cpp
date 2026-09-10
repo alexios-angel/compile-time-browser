@@ -43,11 +43,6 @@ std::size_t ttf_backend::face_count() const {
     return faces_.size();
 }
 
-bool ttf_backend::has_face(std::string_view family, bool bold, bool italic) const {
-    const std::lock_guard guard{mutex_};
-    return faces_.find(face_key{lowered(family), bold, italic}) != faces_.end();
-}
-
 void ttf_backend::set_default_family(std::string family) {
     const std::lock_guard guard{mutex_};
     default_family_ = lowered(family);

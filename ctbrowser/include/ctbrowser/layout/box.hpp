@@ -554,8 +554,8 @@ private:
                 !decoration.empty()) {
                 // `none` CLEARS what was inherited, which is how a link inside
                 // underlined text turns its own underline off.
-                b.underline = decoration.find("underline") != std::string_view::npos;
-                b.line_through = decoration.find("line-through") != std::string_view::npos;
+                b.underline = decoration.contains("underline");
+                b.line_through = decoration.contains("line-through");
             }
 
             if (b.kind == box_kind::replaced) {
