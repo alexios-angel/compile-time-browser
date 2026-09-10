@@ -62,34 +62,17 @@ namespace detail {
     return !v.is_nullish() && !v.is_callable();
 }
 
-// The declarations an object holds, as a `style` attribute. Serialising the
-// whole object on every write is what keeps the two representations from
-// drifting: there is one source of truth, the object, and the attribute is
-// derived from it.
+// The declarations an object holds, as a `style` attribute. CSSOM's "update
+// style attribute for" (6.7.1) writes the SERIALISED block, which is the same
+// string `cssText` answers: `el.style.cssText = 'background:red'` leaves the
+// attribute reading `background: red;` (cssstyledeclaration-csstext-setter),
+// and the trailing space this used to append was a third serialisation.
 std::string style_attribute(script::object_object & held, context & cx) {
-    std::string out;
-    for (const auto & [name, v] : held.props) {
-        // `setProperty` and friends live on the same object, and a CSS value is
-        // never a function - without this the methods serialise themselves into
-        // the attribute as `set-property: function;`.
-        if (!is_declaration(v)) { continue; }
-        const std::string text = cx.to_string(v);
-        // Assigning "" REMOVES a declaration, which is how a page turns one
-        // off - emitting `display: ;` instead would leave the old value in
-        // place as far as the parser is concerned.
-        if (text.empty()) { continue; }
-        out += css_name_of(name);
-        out += ": ";
-        out += text;
-        out += "; ";
-    }
-    return out;
+    return css_text_of(held, cx);
 }
 
-// `cssText`: the same declarations, without the trailing space CSSOM does not
-// ask for. A separate function from the one above because the ATTRIBUTE is a
-// derived artefact the style engine re-parses and `cssText` is an answer to
-// script, and the two have drifted before.
+// `cssText`: 6.7.2 serialize a CSS declaration block - `name: value;` joined
+// by a single space.
 std::string css_text_of(script::object_object & held, context & cx) {
     std::string out;
     for (const auto & [name, v] : held.props) {
