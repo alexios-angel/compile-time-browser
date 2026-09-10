@@ -134,6 +134,12 @@ public:
             return {};
         }
         if (sealed_) { return {}; }
+        // A FILE HAS NO QUERY AND NO FRAGMENT. `support/x.js?pipe=trickle(d1)`
+        // names x.js in every browser once the URL is a file: one - the query
+        // is the server's business and there is no server here - so the
+        // filesystem probe drops both. The registry lookup above keeps the
+        // literal reference, which is what a packager recorded.
+        name = name.substr(0, std::min(name.find('?'), name.find('#')));
         const std::filesystem::path relative{name};
         if (relative.is_absolute()) {
             // The document root FIRST when there is one, and the filesystem
