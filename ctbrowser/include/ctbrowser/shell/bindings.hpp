@@ -406,7 +406,10 @@ private:
     // `cloneNode(deep)`: a DETACHED copy, which is what makes it different from
     // copy_subtree above - that one exists to move a parsed fragment into this
     // document and needs somewhere to put it.
-    node_id clone_node(const read_txn & from, node_id source, bool deep);
+    // `owner` is the bindings the source node belongs to when it is not this
+    // one - `importNode` reads another document's tree - and null otherwise.
+    node_id clone_node(const read_txn & from, node_id source, bool deep,
+                       const dom_bindings * owner = nullptr);
     // Insert `child` into `parent`, before `before` or at the end when `before`
     // is empty, FLATTENING a DocumentFragment: inserting one moves its children
     // and leaves the fragment itself empty and parentless. Every insertion
@@ -1070,6 +1073,9 @@ private:
     // `install_document_as_node` in bindings/document/as_node.cpp - read it before
     // adding to any of these.
     void install_document_as_node(context & cx, script::object_object & doc);
+    // DOM 6: `createTreeWalker`, `createNodeIterator` and the `NodeFilter`
+    // constants - bindings/document/traversal.cpp.
+    void install_traversal(context & cx, script::object_object & doc);
 
     // Is this value the `document` object itself? By IDENTITY, because shape
     // cannot tell: the Document is the one node-like object with no handle
@@ -1551,8 +1557,21 @@ private:
     // the old note was avoiding was `getElementById` on one document handing
     // back the other's element.
     [[nodiscard]] value make_html_document(context & cx, const std::string * title);
+    // `as_xml_document` picks the interface: `createDocument` returns an
+    // XMLDocument and `new Document()` a plain Document, and the two differ in
+    // nothing else - DOM 4.5.1 and 4.5 respectively.
     [[nodiscard]] value make_xml_document(context & cx, std::string_view ns,
-                                          std::string_view qualified_name);
+                                          std::string_view qualified_name,
+                                          bool as_xml_document = true);
+    // WHICH BINDINGS A WRAPPER BELONGS TO: this one, the primary, or one of the
+    // primary's other secondaries. Null for anything that is not a node of any
+    // document in the realm. `handle_of` answers only for this one's own
+    // wrappers, which is the refusal `importNode` has to get past.
+    [[nodiscard]] dom_bindings * owner_of(value v);
+    // Is this the `document` of ANY bindings in the realm? `is_the_document`
+    // is identity against this one's; a Document is refused by importNode and
+    // adoptNode whichever document it is.
+    [[nodiscard]] bool is_a_document(value v) const;
     // The realm has ONE external-roots callback - `set_external_roots` replaces
     // rather than appends - so the primary's walks itself and then every
     // secondary. A secondary never registers.
@@ -1682,6 +1701,9 @@ private:
     // no `document.implementation` - a document from createHTMLDocument has a
     // null browsing context, so all three are what the DOM already says.
     bool secondary_ = false;
+    // The bindings that made this one, for a secondary; null on the primary.
+    // What `owner_of` walks up through to find the other documents.
+    dom_bindings * primary_ = nullptr;
     // --- XML document workstream ---
     // `document.contentType`, WHEN IT IS NOT DERIVABLE. A parsed document
     // answers from `document::xml()` and needs nothing here; `createDocument`

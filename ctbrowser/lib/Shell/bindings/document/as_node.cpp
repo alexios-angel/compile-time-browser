@@ -314,8 +314,15 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         doc.define_accessor(name, fn, value::undefined());
     };
     // THE DOCUMENT'S ONE ELEMENT CHILD, by the same route the `documentElement`
-    // property above takes, so the two cannot name different nodes.
-    const auto element_child = [this] { return find_by_tag("html"); };
+    // accessor takes, so the two cannot name different nodes: the ROOT, when
+    // it is an element. Not `find_by_tag("html")` - `createDocument(null,
+    // "foo")` has a root called `foo`, and `new Document()` has none at all.
+    const auto element_child = [this] {
+        const auto txn = doc_->read();
+        const node_id root = txn.root();
+        return txn.kind(root).value_or(node_kind::document) == node_kind::element ? root
+                                                                                  : node_id{};
+    };
 
     // --- the constants ----------------------------------------------------
     //
@@ -583,7 +590,11 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                                     "already has <html>");
                 return false;
             }
-            break;
+            // THE ONE INSERTION THAT WORKS: an element into a document with
+            // no root becomes the root - `new Document()` followed by
+            // `appendChild(createElement("html"))`, which is how
+            // `Document-doctype.html` and dom/common.js build one.
+            return true;
         case node_kind::document_fragment:
             if (fragment_has_a_real_child && element_child()) {
                 throw_dom_exception(c, "HierarchyRequestError",
@@ -605,29 +616,40 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         return false;
     };
 
-    method("appendChild", [may_become_a_child](context & c, std::span<value> args) {
-        if (!may_become_a_child(c, arg(args, 0))) { return value::undefined(); }
+    // Every path through `may_become_a_child` that answers true is the
+    // element-into-an-empty-document one, so this is what an accepted
+    // insertion does: the element becomes the root.
+    const auto place = [this, may_become_a_child](context & c, value given) {
+        if (!may_become_a_child(c, given)) { return false; }
+        const node_id fresh = handle_of(given);
+        if (doc_->read().parent(fresh)) { (void)doc_->remove_child(fresh); }
+        doc_->build().set_root(fresh);
+        mutated();
+        return true;
+    };
+
+    method("appendChild", [place](context & c, std::span<value> args) {
+        if (!place(c, arg(args, 0))) { return value::undefined(); }
         return arg(args, 0);
     });
-    method("insertBefore",
-           [this, may_become_a_child, element_child](context & c, std::span<value> args) {
-               // "If child is non-null and its parent is not parent, throw a
-               // NotFoundError" - DOM 4.2.3 step 3, and it comes BEFORE the check on
-               // what is being inserted. The Document's only child is documentElement,
-               // so anything else as the reference is a NotFoundError.
-               const value ref = arg(args, 1);
-               if (!ref.is_nullish()) {
-                   const node_id before = handle_of(ref);
-                   if (!before || before != element_child()) {
-                       throw_dom_exception(
-                           c, "NotFoundError",
-                           "insertBefore: the reference node is not a child of the document");
-                       return value::undefined();
-                   }
-               }
-               if (!may_become_a_child(c, arg(args, 0))) { return value::undefined(); }
-               return arg(args, 0);
-           });
+    method("insertBefore", [this, place, element_child](context & c, std::span<value> args) {
+        // "If child is non-null and its parent is not parent, throw a
+        // NotFoundError" - DOM 4.2.3 step 3, and it comes BEFORE the check on
+        // what is being inserted. The Document's only child is documentElement,
+        // so anything else as the reference is a NotFoundError.
+        const value ref = arg(args, 1);
+        if (!ref.is_nullish()) {
+            const node_id before = handle_of(ref);
+            if (!before || before != element_child()) {
+                throw_dom_exception(
+                    c, "NotFoundError",
+                    "insertBefore: the reference node is not a child of the document");
+                return value::undefined();
+            }
+        }
+        if (!place(c, arg(args, 0))) { return value::undefined(); }
+        return arg(args, 0);
+    });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
         if (!child) {
@@ -666,9 +688,12 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING IS INSERTED, which is what
     // `append-on-Document.html` measures rather than assumes: after a refused
     // `parent.append(x, y)` it asserts the childNodes are still empty.
-    const auto check_every_argument = [may_become_a_child](context & c, std::span<value> args) {
+    // ponytail: on a document with NO root, `append(x, y)` places x and then
+    // refuses y - the specification refuses both first; a fragment of the two
+    // would do it in one step when a test asks.
+    const auto check_every_argument = [place](context & c, std::span<value> args) {
         for (const value & one : args) {
-            if (!may_become_a_child(c, one)) { return false; }
+            if (!place(c, one)) { return false; }
         }
         return true;
     };
@@ -684,15 +709,15 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     });
     method("replaceChildren",
            [this, check_every_argument, element_child](context & c, std::span<value> args) {
-               if (!check_every_argument(c, args)) { return value::undefined(); }
-               // Nothing was refused, so there was nothing to insert - and
-               // `replaceChildren()` still has to REMOVE what is there, which on this
-               // document means detaching <html>.
+               // `replaceChildren` has to REMOVE what is there first, which on
+               // this document means detaching <html>.
                if (element_child()) {
                    throw_dom_exception(c, "NotSupportedError",
                                        "replaceChildren would detach <html>, which this engine's "
                                        "document cannot do - see removeChild");
+                   return value::undefined();
                }
+               (void)check_every_argument(c, args);
                return value::undefined();
            });
 

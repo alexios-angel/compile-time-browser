@@ -213,7 +213,14 @@ void dom_bindings::set_text(node_id id, std::string text) {
         for (const node_id child : txn.children(id)) { existing.push_back(child); }
     }
     for (const node_id child : existing) { (void)doc_->remove_child(child); }
-    if (const node_id created = doc_->create_text(text)) { (void)doc_->append_child(id, created); }
+    // "String replace all", DOM 4.4: the Text node is made ONLY IF the string
+    // is not empty. `el.textContent = ""` leaves no child, and
+    // `Node-textContent.html` asserts `firstChild` is null afterwards.
+    if (!text.empty()) {
+        if (const node_id created = doc_->create_text(text)) {
+            (void)doc_->append_child(id, created);
+        }
+    }
     mutated();
 }
 

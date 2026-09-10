@@ -39,7 +39,15 @@ void dom_bindings::install_document(context & cx) {
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
-        return create_html_element(c, name);
+        if (!doc_->xml()) { return create_html_element(c, name); }
+        // AN XML DOCUMENT, DOM 4.5 steps 3-5: the local name is kept AS
+        // WRITTEN - only an HTML document lowercases - and the namespace is
+        // HTML only when the content type is application/xhtml+xml, null
+        // otherwise. `new Document().createElement("DIV").localName` is "DIV"
+        // and its constructor is Element, not HTMLElement.
+        const std::string type = content_type_.empty() ? "application/xhtml+xml" : content_type_;
+        const node_ns kind = type == "application/xhtml+xml" ? node_ns::html : node_ns::other;
+        return wrap(c, doc_->create_element(atoms_->intern(name), kind));
     });
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
@@ -137,6 +145,77 @@ void dom_bindings::install_document(context & cx) {
     });
     method("createComment", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_comment(arg_string(c, args, 0)));
+    });
+    // `importNode(node, deep)`, DOM 4.5: a COPY of a node from any document in
+    // the realm, owned by this one. A Document is a NotSupportedError and a
+    // shadow root too, both by the specification; anything that is not a node
+    // of some document fails argument conversion. The copy is clone_node
+    // reading the OWNER's tree, so a `<div>` made by createHTMLDocument comes
+    // back with `ownerDocument === document` - Document-importNode.html's
+    // whole question.
+    method("importNode", [this](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        if (is_a_document(given)) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "importNode: a Document cannot be imported");
+            return value::undefined();
+        }
+        dom_bindings * owner = owner_of(given);
+        if (owner == nullptr) {
+            c.throw_error("TypeError", "importNode: the argument is not a Node");
+            return value::undefined();
+        }
+        const node_id source = owner->handle_of(given);
+        if (owner->shadow_tree_of(source) != nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "importNode: a shadow root cannot be imported");
+            return value::undefined();
+        }
+        const bool deep = context::truthy(arg(args, 1));
+        const auto from = owner->doc_->read();
+        return wrap(c, clone_node(from, source, deep, owner == this ? nullptr : owner));
+    });
+    // `adoptNode(node)`, DOM 4.5. A Document is a NotSupportedError, a shadow
+    // root a HierarchyRequestError, and otherwise the node is removed from its
+    // parent and becomes this document's - which, WITHIN ONE DOCUMENT, is the
+    // removal alone. A template's contents fragment has no parent, so for it
+    // the method returns the node untouched, which is the specification's
+    // early return by another route.
+    //
+    // ACROSS TWO DOCUMENTS IT IS REFUSED, and the refusal is named rather
+    // than approximated. A node is a slot in ONE document's slab and its
+    // wrapper's methods capture that document; moving it would mean a copy
+    // under the same wrapper, and every closure on the wrapper would still
+    // reach into the tree it left. That is a different node handed back as
+    // the same object, which is worse than a NotSupportedError.
+    method("adoptNode", [this](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        if (is_a_document(given)) {
+            throw_dom_exception(c, "NotSupportedError", "adoptNode: a Document cannot be adopted");
+            return value::undefined();
+        }
+        dom_bindings * owner = owner_of(given);
+        if (owner == nullptr) {
+            c.throw_error("TypeError", "adoptNode: the argument is not a Node");
+            return value::undefined();
+        }
+        const node_id node = owner->handle_of(given);
+        if (owner->shadow_tree_of(node) != nullptr) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "adoptNode: a shadow root cannot be adopted");
+            return value::undefined();
+        }
+        if (owner != this) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "adoptNode: this engine cannot move a node between two "
+                                "documents - importNode copies one");
+            return value::undefined();
+        }
+        if (doc_->read().parent(node)) {
+            (void)doc_->remove_child(node);
+            mutated();
+        }
+        return given;
     });
     method("createDocumentFragment",
            [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
@@ -788,6 +867,7 @@ void dom_bindings::install_document(context & cx) {
     // that belongs in one place rather than spread over install_document.
     install_document_as_node(cx, *doc);
     install_tree_accessors(cx, *doc);
+    install_traversal(cx, *doc);
     document_target_ = value::object(doc);
     document_ = make_document_proxy(cx, document_target_);
     // NOT A GLOBAL WHEN THIS IS A DOCUMENT A PAGE MADE. There is one `document`
@@ -797,10 +877,18 @@ void dom_bindings::install_document(context & cx) {
         cx.define_global("document", document_);
     } else {
         // WHAT `install_navigation` WOULD HAVE SET, for a document that has no
-        // browsing context to get it from. `defaultView` is null by the
-        // specification's own words, and the three names for the address are
-        // "about:blank" because that is what a document created by script has.
+        // browsing context to get it from. `defaultView` and `location` are
+        // null by the specification's own words, and the three names for the
+        // address are "about:blank" because that is what a document created
+        // by script has.
         doc->set("defaultView", value::null());
+        doc->set("location", value::null());
+        // AND ITS INTERFACE. The primary is linked to Document.prototype by
+        // install_dom_interfaces, which a secondary never runs - it adopted
+        // the table instead - so `made instanceof Document` was false.
+        if (const value proto = interface_prototype("Document"); proto.is_object()) {
+            doc->prototype = proto;
+        }
         for (const char * name : {"URL", "documentURI", "baseURI"}) {
             doc->set(name, cx.string("about:blank"));
         }

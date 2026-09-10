@@ -289,6 +289,11 @@ ctbrowser_test(unit/shadow_dom)
 # element.getElementsByTagName, template.content and getElementById on a
 # fragment. One case per rule the corpus found the OTHER answer to.
 ctbrowser_test(unit/dom_nodes_wpt)
+# The Document binding against dom/nodes: `new Document()` and what a made
+# document answers, importNode across documents and adoptNode within one,
+# createTreeWalker/createNodeIterator with NodeFilter, and the three one-line
+# rules a clone, textContent="" and getElementById("") had wrong.
+ctbrowser_test(unit/document_api_wpt)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the

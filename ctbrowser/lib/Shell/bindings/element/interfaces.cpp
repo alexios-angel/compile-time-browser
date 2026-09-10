@@ -68,6 +68,10 @@ constexpr dom_interface interface_table[] = {
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
     {"DOMStringMap", "", ""},
+    // DOM 6's two walkers - not nodes, not constructible; made by
+    // bindings/document/traversal.cpp.
+    {"TreeWalker", "", ""},
+    {"NodeIterator", "", ""},
 
     // EVERY TAG THAT IS A PLAIN HTMLElement, listed rather than left to the
     // fallback, so that anything NOT here can be told apart from them: HTML
@@ -699,8 +703,12 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // there is no `new HTMLDivElement`, there is `createElement`. Seven
             // files in `dom/nodes` open with one of them and lose every subtest
             // they have to the throw; see construct_node_interface.
-            const bool constructible =
-                name == "Text" || name == "Comment" || name == "DocumentFragment";
+            //
+            // AND `new Document()`, DOM 4.5 - the fourth, and the one that
+            // names no document because it IS one: a new XML document with
+            // no browsing context. See make_xml_document.
+            const bool constructible = name == "Text" || name == "Comment" ||
+                                       name == "DocumentFragment" || name == "Document";
             auto * ctor = cx.allocate<script::native_object>(
                 name, [this, name, constructible](context & c, std::span<value> args) {
                     if (constructible) { return construct_node_interface(c, name, args); }
@@ -1162,6 +1170,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
 value dom_bindings::construct_node_interface(context & cx, std::string_view which,
                                              std::span<value> args) {
     if (which == "DocumentFragment") { return wrap(cx, doc_->create_fragment()); }
+    if (which == "Document") { return make_xml_document(cx, {}, {}, false); }
     const value given = arg(args, 0);
     const std::string data = given.is_undefined() ? std::string{} : cx.to_string(given);
     return wrap(cx, which == "Comment" ? doc_->create_comment(data) : doc_->create_text(data));
