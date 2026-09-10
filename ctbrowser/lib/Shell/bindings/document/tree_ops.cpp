@@ -20,16 +20,22 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
         made = doc_->create_text(from.text(node));
     } else {
         made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node));
-        for (const attribute & a : from.attributes(node)) {
-            (void)doc_->set_attribute(made, a.name, a.value);
-        }
+        // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
+        for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
     }
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
     return made;
 }
 
-node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep) {
+// `owner` is the bindings the SOURCE node belongs to - this one when null,
+// which is every call but `importNode`'s. It matters twice: the namespace an
+// element was created in is in the owner's `namespaces_` and not the tree, and
+// a `<template>`'s contents are in the owner's document and not under the
+// element.
+node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep,
+                                 const dom_bindings * owner) {
+    const dom_bindings & src = owner == nullptr ? *this : *owner;
     node_id made;
     switch (from.kind(source).value_or(node_kind::element)) {
     case node_kind::text: made = doc_->create_text(from.text(source)); break;
@@ -44,17 +50,30 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // AND ITS NAMESPACE, which is not on the node: a clone of an element
         // createElementNS made must report the same namespaceURI, and reading
         // it off `element_ns` alone would answer for the wrong one.
-        if (const auto it = namespaces_.find(pack(source)); it != namespaces_.end()) {
+        if (const auto it = src.namespaces_.find(pack(source)); it != src.namespaces_.end()) {
             namespaces_.emplace(pack(made), it->second);
         }
+        // THE WHOLE ATTRIBUTE, namespace and all. Copying `(name, value)` put
+        // a cloned `xlink:href` in no namespace, and `Node-cloneNode-svg.html`
+        // reads the namespaceURI off the clone's attributes.
         for (const attribute & held : from.attributes(source)) {
-            (void)doc_->set_attribute(made, held.name, held.value);
+            (void)doc_->set_attribute(made, held);
         }
         break;
     }
     if (deep) {
         for (const node_id child : from.children(source)) {
-            (void)doc_->append_child(made, clone_node(from, child, true));
+            (void)doc_->append_child(made, clone_node(from, child, true, owner));
+        }
+        // HTML 4.12.3, the cloning steps for a template: its CONTENTS clone
+        // with it, into the copy's own contents fragment. They are not
+        // children of the element, so the loop above never sees them.
+        if (const node_id contents = src.doc_->template_content(source)) {
+            const node_id copied = doc_->create_fragment();
+            doc_->set_template_content(made, copied);
+            for (const node_id child : from.children(contents)) {
+                (void)doc_->append_child(copied, clone_node(from, child, true, owner));
+            }
         }
     }
     return made;
@@ -224,6 +243,9 @@ std::string dom_bindings::text_content(node_id target) const {
 }
 
 node_id dom_bindings::find_by_id(const std::string & want) {
+    // "If elementId is the empty string, return null" - DOM 4.2.6, and an
+    // element with `id=""` is not a match for it.
+    if (want.empty()) { return node_id{}; }
     const auto txn = doc_->read();
     const atom key = atoms_->intern("id");
     node_id found{};

@@ -395,7 +395,10 @@ private:
     // `cloneNode(deep)`: a DETACHED copy, which is what makes it different from
     // copy_subtree above - that one exists to move a parsed fragment into this
     // document and needs somewhere to put it.
-    node_id clone_node(const read_txn & from, node_id source, bool deep);
+    // `owner` is the bindings the source node belongs to when it is not this
+    // one - `importNode` reads another document's tree - and null otherwise.
+    node_id clone_node(const read_txn & from, node_id source, bool deep,
+                       const dom_bindings * owner = nullptr);
     // Insert `child` into `parent`, before `before` or at the end when `before`
     // is empty, FLATTENING a DocumentFragment: inserting one moves its children
     // and leaves the fragment itself empty and parentless. Every insertion
