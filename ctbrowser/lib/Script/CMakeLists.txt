@@ -154,21 +154,6 @@ if(NOT CTBROWSER_SCRIPT_RECORD_TYPES)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_RECORD_TYPES=0)
 endif()
 
-# PUBLIC, unlike the one above, and it MUST be: CTBROWSER_WITH_GMP selects the
-# type of `ctbrowser::script::bigint` inside value.hpp, which is a PUBLIC
-# header. A private definition would compile this library against mpz_int and
-# every consumer against cpp_int - one ODR violation per translation unit, and
-# the kind that links cleanly and then reads a bigint through the wrong layout.
-#
-# The root CMakeLists says why this is opt-in rather than on-when-found. GMP is
-# LGPL and this engine links statically; see NOTICE.
-if(CTBROWSER_WITH_GMP)
-  target_compile_definitions(ctbrowser-script PUBLIC CTBROWSER_WITH_GMP)
-  target_include_directories(ctbrowser-script PUBLIC "${CTBROWSER_GMP_INCLUDE_DIR}")
-  target_link_libraries(ctbrowser-script PUBLIC "${CTBROWSER_GMP_LIBRARY}")
-  message(STATUS "ctbrowser: BigInt backend GMP ${CTBROWSER_GMP_LIBRARY} (LGPL - see NOTICE)")
-endif()
-
 ctbrowser_target(ctbrowser-script)
 target_include_directories(ctbrowser-script PRIVATE
   "${CTBROWSER_CTJS}/include")

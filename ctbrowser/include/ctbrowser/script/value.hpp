@@ -9,11 +9,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(CTBROWSER_WITH_GMP)
-#include <boost/multiprecision/gmp.hpp>
-#else
 #include <boost/multiprecision/cpp_int.hpp>
-#endif
 
 #include <ctbrowser/core/core.hpp>
 
@@ -246,37 +242,11 @@ struct symbol_object final : heap_object {
 // and unbounded, which is exactly the BigInt semantic: no width, no wrapping,
 // no rounding.
 //
-// THE BACKEND IS SWITCHABLE, and cpp_int is the default DELIBERATELY.
-// `-DCTBROWSER_WITH_GMP=ON` selects `mpz_int` instead, which is the same
-// Boost.Multiprecision interface over GNU GMP. It is opt-in rather than
-// "on when GMP is found" for two measured reasons, both in docs/script.md:
-//
-//   - IT IS SLOWER HERE. GMP wins on numbers thousands of bits wide, and a
-//     JavaScript BigInt is almost never one - it is an id, a nanosecond
-//     timestamp, a 64-bit hash. At 64 bits, the width that matters, GMP
-//     measured 2.9x slower on Linux and 5.5x slower on Windows. cpp_int keeps
-//     a small value INLINE while every mpz_t is a heap allocation, and that
-//     one allocation swamps the arithmetic - which is also why the Windows gap
-//     is the wider one, its CRT allocator being the slower.
-//
-//     BUILDING GMP FOR A MODERN CPU DOES NOT CHANGE THIS, which was measured
-//     rather than assumed: GMP 6.3.0's own config.guess reads a Core Ultra 9
-//     185H as `nehalem` (2008), so the obvious build is mistuned, and a
-//     correctly tuned alderlake build moved the 64-bit numbers not at all. The
-//     cost is allocation, not instruction selection.
-//   - IT CHANGES THE LICENCE OF THE BINARY. GMP is LGPLv3+ or GPLv2+, and this
-//     engine ships STATICALLY LINKED self-contained .exe files under Apache-2.0
-//     with LLVM exceptions. Static LGPL linking carries relinking obligations
-//     that a default-on flag would attach silently. See NOTICE.
-//
-// The two backends agree on every operation this engine performs -
-// unittests/js/bigint_basics.cpp is the gate and passes identically on both - so the
-// switch moves no observable JavaScript result.
-#if defined(CTBROWSER_WITH_GMP)
-using bigint = boost::multiprecision::mpz_int;
-#else
+// GNU GMP (`mpz_int`) was a switchable backend until 2026-09-10 and was cut: it
+// measured 2.9x slower on Linux and 5.5x on Windows at 64 bits, the width a
+// JavaScript BigInt actually has, and it is LGPL in a statically linked binary.
+// docs/script.md keeps the measurement.
 using bigint = boost::multiprecision::cpp_int;
-#endif
 
 struct bigint_object final : heap_object {
     bigint digits;
