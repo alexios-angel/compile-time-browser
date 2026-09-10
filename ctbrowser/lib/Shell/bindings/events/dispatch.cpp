@@ -502,10 +502,18 @@ void dom_bindings::install_listener_fence(context & cx, script::native_object & 
             return out.is_boolean() ? out : value::undefined();
         });
     listener_invoke_ = value::object(runner);
-    // ROOTED ACROSS THE COMPILE. `run_nested` below runs JavaScript, which takes
-    // a safepoint, and a native held only in a C++ member is not something the
-    // collector can see - see native_object::retained.
-    const context::rooted keep_runner{cx, listener_invoke_};
+    keeper.retained.push_back(listener_invoke_);
+    fence_keeper_ = &keeper;
+}
+
+// COMPILED AT THE FIRST DISPATCH, NOT AT INSTALL. `run_nested` goes through
+// `context::call`, and `call` refuses every closure while no program has run
+// yet (`program_` is null until the page's first `execute`) - so a fence built
+// during install() came back `undefined`, every listener took the unfenced
+// path below, and a throw inside one reached the page's own `try`. By the
+// first dispatch a program is always running.
+void dom_bindings::compile_listener_fence(context & cx) {
+    if (listener_fence_.is_callable() || fence_keeper_ == nullptr) { return; }
     // A `TypeError` AND NOT A STRING, because the page can see the difference:
     // EventListener-handleEvent.html checks the reported value with
     // `promise_rejects_js(t, TypeError, ...)`.
@@ -529,14 +537,14 @@ void dom_bindings::install_listener_fence(context & cx, script::native_object & 
     // unfenced C++ path, which is what this file did before the fence existed:
     // every listener still runs and only the containment is lost.
     if (compiled.ok) { listener_fence_ = cx.run_nested(cx.own_program(std::move(compiled))); }
-    keeper.retained.push_back(listener_invoke_);
-    keeper.retained.push_back(listener_fence_);
+    fence_keeper_->retained.push_back(listener_fence_);
 }
 
 bool dom_bindings::invoke_listener(context & cx, value callback, value receiver, value args,
                                    value & thrown, value & returned) {
     thrown = value::undefined();
     returned = value::undefined();
+    compile_listener_fence(cx);
     if (listener_fence_.is_callable() && listener_invoke_.is_callable()) {
         const value passed[4] = {listener_invoke_, callback, receiver, args};
         const value answer = cx.call(listener_fence_, passed);

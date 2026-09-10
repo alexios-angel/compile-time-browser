@@ -1552,9 +1552,13 @@ private:
     // `args` is one value or an array of them. Kept because the window's
     // `onerror` takes five positional arguments rather than the event.
     value listener_invoke_;
-    // Build both, once. Called from install_event_interfaces; a compile failure
-    // leaves them undefined and the unfenced C++ path stands in.
+    // Build the native at install and the fence at the first dispatch - see
+    // compile_listener_fence for why not sooner. A compile failure leaves the
+    // fence undefined and the unfenced C++ path stands in.
     void install_listener_fence(context & cx, script::native_object & keeper);
+    void compile_listener_fence(context & cx);
+    // The native that keeps both alive: the EventTarget constructor.
+    script::native_object * fence_keeper_ = nullptr;
     // Call one listener - a function, or an object with a `handleEvent` - with
     // `this` bound to `receiver`. True when it threw, with the thrown value in
     // `thrown`; a VM fault that was never an exception reports false and leaves
