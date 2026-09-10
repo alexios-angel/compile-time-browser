@@ -189,8 +189,6 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     // that way, so both writes vanished.
     const std::string_view tag_text = atoms_->text(txn.tag(id).value_or(atom{}));
 
-    refresh_control(cx, obj, txn, id, tag_text);
-
     const rect box = box_of(id);
     obj.set("offsetLeft", value::number(static_cast<double>(box.x)));
     obj.set("offsetTop", value::number(static_cast<double>(box.y)));

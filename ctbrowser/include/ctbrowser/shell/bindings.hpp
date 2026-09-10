@@ -317,26 +317,6 @@ private:
     // which is what `element.offsetWidth` actually needs to be useful.
     void refresh_element(context & cx, script::object_object & obj, node_id id);
 
-    // `value` and `checked` USED TO BE SYNCED HERE, as data properties written
-    // on whatever tick this next ran. They are accessors now
-    // (install_element_views), which is what makes a read LIVE: a page that
-    // creates a control and reads it back in the same statement -
-    // `createInput('hello').value()`, which is p5's own DOM library - saw the
-    // property as it was before the value existed.
-    //
-    // The sync could not simply be left in place beside them: an own DATA
-    // property shadows an accessor, so it won every read and the accessor was
-    // dead code. What is left of this function is the control-kind check, which
-    // the wrapper still needs.
-    void refresh_control(context & cx, script::object_object & obj, const read_txn & txn,
-                         node_id id, std::string_view tag_text) {
-        (void)cx;
-        (void)obj;
-        (void)txn;
-        (void)id;
-        (void)tag_text;
-    }
-
     [[nodiscard]] rect box_of(node_id id) const;
 
     void install_element_methods(context & cx, script::object_object & obj);
@@ -1549,12 +1529,6 @@ private:
     std::function<void(node_id)> on_focus_;
     std::function<void(const std::string &)> on_alert_;
     std::function<void(node_id)> on_activate_;
-    // What we last wrote into a wrapper, so a differing value means the PAGE
-    // wrote it. See refresh_control.
-    struct property_mirror {
-        std::string value;
-        bool checked = false;
-    };
     // WHERE AN ARBITRARY NAMESPACE URI LIVES. `node` carries a three-valued
     // `node_ns` and not a URI, for the size reason written down beside the
     // enumerator; the handful of elements a page creates with createElementNS in
@@ -1562,7 +1536,6 @@ private:
     // same way a wrapper is.
     flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
-    flat_map<std::uint64_t, property_mirror> mirrors_;
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's
     // `cryptographic_nonce` for why the pair. Empty until a page assigns one.

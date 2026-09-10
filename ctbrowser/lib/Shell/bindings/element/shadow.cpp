@@ -17,8 +17,7 @@ using namespace detail;
 // HOST and its MODE, and neither belongs on `node`: it is the most replicated
 // object in the engine and every field on it is paid for by every document that
 // has never heard of shadow DOM. They live in two maps on dom_bindings instead,
-// keyed on pack(node_id) exactly as `wrappers_`, `namespaces_` and `mirrors_`
-// already are.
+// keyed on pack(node_id) exactly as `wrappers_` and `namespaces_` already are.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO IS RENDER. The fragment is detached, so the
 // cascade, layout and paint never reach it: an element inside a shadow root has
