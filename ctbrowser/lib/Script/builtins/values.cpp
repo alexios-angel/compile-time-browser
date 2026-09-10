@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <format>
+#include <numbers>
 
 namespace ctbrowser::script::builtins_detail {
 

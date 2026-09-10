@@ -11,10 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <limits>
 #include <memory>
-#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,9 +25,6 @@
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/regex.hpp>
-
-#include <map>
-#include <memory>
 
 // The JavaScript standard library: a SUBSET, chosen by what pages actually
 // call rather than by what the spec lists.
