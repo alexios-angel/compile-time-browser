@@ -2972,3 +2972,70 @@ subtraction boundary remain preserved. Evidence:
 `/tmp/ctcompile-delete-finish-full{,-detail}.log`,
 `/tmp/ctcompile-delete-finish-devbox-hashes.json` and
 `/tmp/ctcompile-bigint-plus-full-audit.json`.
+
+
+**Mixed BigInt subtraction retention, 2026-09-10 (`a43858ac`).**
+Resumed the exact **c71cb43f** boundary above. Dynamic Sub now accepts
+independently proved original primitive categories when exactly one is BigInt.
+`bigint_binary` rejects the pair before lookup or user conversion; its TypeError
+cannot retain unpublished fresh locals. The VM's independent **Undefined**
+failure carrier supplies neither a BigInt/Number value nor normal completion.
+Every structural continuation remains checked; calls, handlers, publication,
+object/opaque operands and other mixed arithmetic stay conservative. No native
+BigInt carrier or effect permission follows.
+
+The corrected devbox gate passes **9/9 CTests in 10.41 seconds**, comprising
+type inference and all eight escape checks (arrays **0.54**, fixture **0.50
+seconds**), after a **four-step warning-free build**. Mixed Sub passes **57 rows,
+43 stale/fresh live states and 3328 incomplete retention budgets**, including
+the wide snapshot's additional **64 work units**. The first **13-step
+warning-free build / 7-of-8 escape gate in 11.09 seconds** is preserved: ten
+historical comparison-then-Sub cases still expected refusal. Their exact IR
+bodies now assert all three structural paths; ten separate mixed-Mul cases
+retain the remaining-operation refusal. Corrected comparison coverage is
+**94 Eq rows / 5374 cutoffs** and **102 rows / 5666 cutoffs** per relational kind.
+
+The three **c71cb43f** function bodies are byte-identical in the expanded
+fixture. All **84,197 historical UTF-8 bytes** remain; **165 named functions**
+retain identical recording headers, **510 literal allocations, 516 observations
+and 505 claims**. New coverage has **12 literal sites / 21 instances / 11
+confined / ten retained**, plus three independent thrown Errors at pcs **25,
+29 and 18** with no literal claims. The early child's two instances are proved
+confined; saved-child and opaque-argument claims remain conservative. Node and
+the interpreter execute Number trace **63**, including three TypeErrors.
+The strict recorded-data replay passes and rejects **60 independent source,
+literal, claim and Error corruptions**.
+
+Fixture precision is **98/133**, with **689 claims, 703 observed sites, 15
+unclaimed and zero violations, partial or pending claims**. This adds coverage
+to the preceding **97/131** fixture. All four escape oracles report zero
+violations; corpus precision remains **0/64, 0/16 and 0/20**, with p5's existing
+partial unchanged. The five frozen code/test hashes match local and committed
+inputs. Stable clang-format **22.1.8** and whitespace checks pass. Full-suite
+validation remains pending at this checkpoint.
+
+Evidence: `/tmp/ctcompile-map-join-escape.log`,
+`/tmp/ctcompile-map-join-corrected-proofs.log`,
+`/tmp/ctcompile-mixed-sub-fixture.{rec,claims}`,
+`/tmp/ctcompile-mixed-sub-fixture-audit.json`,
+`/tmp/ctcompile-mixed-sub-checker-audit/audit.json`, and
+`/tmp/ctcompile-mixed-sub-code-{initial-frozen,frozen}.json`.
+
+
+**Measured next boundary: mixed BigInt multiplication, 2026-09-10.**
+The exact `/tmp/ctcompile-after-mixed-sub-boundary.js` (SHA256
+`d5a61e1a505a0302c8f6ad0d2652e7164bdb0f654bc6df215e56db02417276ad`)
+uses `input * 1` in known Number/BigInt, saved-child and opaque-argument
+functions. All six calls agree between Node and the interpreter with Number
+`mixedMulTrace=63`: three normal returns and three TypeErrors. The recorder
+measures **12 literal sites / 21 instances / 11 confined / ten retained**, plus
+three independent Errors at pcs **25, 29 and 18** without source claims. All
+**twelve compiler claims remain conservative** (nine Stored, three Returned),
+including the early child's two confined observations. Each measured function
+imports and runs twice; only the multiple-handler driver is unimported.
+The next proof must independently establish both original operand categories
+and preserve every structural continuation and the VM's Undefined error carrier;
+observed opaque actuals authorize no future category, completion or native effect.
+Evidence: the matching `.log`, `.rec`, `.claims`, `-node.json` and `-audit.json`.
+All five committed subtraction code/test hashes remain unchanged; full-suite
+validation is still pending at this checkpoint.

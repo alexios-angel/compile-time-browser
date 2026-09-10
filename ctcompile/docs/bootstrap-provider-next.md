@@ -1,6 +1,58 @@
 # Next Bootstrap native boundary
 
-## Current continuation: equal branch cardinalities, 2026-09-09
+## Current continuation: mutations after equal branch cardinalities, 2026-09-09
+
+**bb8c52d3** finishes the prior **2d1763eb** join boundary: both modes admit
+**5/5**, preserving all fifteen calls and Number `trace=1`. Independent source
+ownership and native instance presence retain equal cardinalities without
+inventing common key membership. **4a624e9e** executes eighteen new native
+programs and the saved-join lifetime. Two historical singleton-join programs
+also now execute unchanged. Focused type/escape checks pass **9/9** and
+Map-presence lit **1/1**; the full monorepo gate is pending at this checkpoint.
+
+The next exact source inserts a key distinct from either possible survivor:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key, flag) { const item = {value: 1}; state.set(key, item); state.clear(); state.set(1, item); state.set(2, item); if (flag) { state.delete(1); } else { state.delete(2); state.has(key); } state.set(3, item); const saved = state.size; state.clear(); state.set(2, item); state.set(4, item); return state.get(saved).value === 1 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7, false);
+```
+
+SHA-256: `56679e2d1edd49ce7e69a84633446fe408c31320c2613ed495484080a435ffa2`.
+Five functions, **16 raw/prepared calls**, and Number `trace=1` are preserved.
+Both native modes refuse **0/5**, with `property call lacks a current source
+getter proof`. Each arm leaves one entry; the subsequent write of key three
+increases both sizes to two, but currently invalidates the separate cardinality.
+The final lookup must retrieve a real object and read its field.
+
+The exact repair replaces only `const saved = state.size;` with
+`state.size; const saved = 2;`. SHA-256:
+`a11c4179e2b11578f284a41461ea87c867c9a96b5bfdd8d4b8d1154bb52bba9d`.
+It preserves all sixteen calls and the evaluated size read, admits **5/5 in
+both modes**, and retains Number `trace=1`. Both startup flags give the same
+admission results. Deleting definitely absent key three exposes the parallel
+size-one preservation boundary (**887e65fc** versus **8e3fa6f1**). Saving the
+size before the mutation or clearing and rebuilding the census already admits.
+Twelve typed Node/interpreter probes and eight discriminating mutations agree.
+
+Continue the independent mutable cardinality only when membership/absence and
+key relations prove the mutation's exact size effect on this runtime instance.
+A possible insertion versus overwrite, possible deletion, unknown alias or
+unknown effect must remain conservative. Keep every arm and actual read position;
+cardinality never proves common key membership. Retain the bounded census and
+independent native rederivation. Full native Bootstrap and direct browser API
+integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-after-join-size-final/{sources,results,mutations}.json`
+and `/tmp/ctcompile-map-join-execution.log`.
+
+## Previous continuation: equal branch cardinalities, 2026-09-09
 
 **e04810c8** completes exact saved sizes after deletion, and **b33125d1** gates
 21 native programs, six refusal/repair families and a 128-call saved-size/object

@@ -6,6 +6,93 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Equal branch Map sizes and mixed BigInt subtraction, 2026-09-09
+
+Continued the exact **2d1763eb** boundary in **f7c42a09**'s handoff,
+`bootstrap-provider-next.md` and the **02:47:18 UTC** synchronization journal.
+The checkout was clean; interrupted deletion/unary-Plus work, codex-wip recovery
+and source-split repairs were already committed and gated. Three agents handled
+independent proof tests, execution and escape analysis. No browser or runtime
+source changed.
+
+**bb8c52d3** retains a separate exact cardinality when both structural arms
+prove the same size for the actual Map instance. Different surviving keys need
+not imply different sizes. This fact supplies neither common key membership nor
+absence. Writes/deletes invalidate mutable cardinality; clear starts an exact
+zero. Complete key censuses may independently recover a size. Saved SSA sizes
+keep their actual read-time value. Both source ownership and native presence
+rederive these facts, preserving all arms, aliases and conservative work limits.
+
+The unchanged **2d1763eb** source and **b0d72c4e** repair now admit **5/5 in
+both modes**, with all **15 calls** and Number `trace=1` preserved. **4a624e9e**
+executes **18 native programs**, **30 typed Node/interpreter observations**,
+**17 mutations** and **six refusal/repair families**. Generated explicit/deduced
+GCC/Clang C++ retains actual size/Map/field calls without Script symbols. A saved
+leaf survives **128 future calls**, both flags, owner/table release, reentry and
+final Map/leaf release under ASan/UBSan/leak checks. Budgets **6715/8028** check
+**29/30 cutoffs**. All **811 historical source rows across 63 helpers** and all
+**12 continuation sources** preserve their bytes.
+
+A complete **234-case** refusal census found exactly two further intended
+historical promotions: **3dd12150** and **caabd2de** now use saved size one and
+a later definite write of key one. **6a8262ad** executes both **5/5 in both modes** under both
+compilers and layouts, preserving ten calls and Number `trace=0`. Their source
+bytes and original evaluated operations are unchanged; only their admission
+expectations advance. All other census classifications remain unchanged.
+
+Focused ownership/host checks pass **5/5**, including **22 new owner rows and
+six live edits per source/prepared form**, with **17 sampled join cutoffs** at
+**12697/12566** work. Type tests cover **44 new homogeneous/mixed rows and
+eight live edits**. The initial combined run passed **5/6 in 220.86 seconds**;
+old disjoint-join expectations needed promotion, and new unknown-call controls
+needed the existing whole-family boxed refusal instead of an optional type.
+The corrected **four-step warning-free build** passes **9/9 CTests in 10.41
+seconds** (type plus all eight escape checks). Map-presence lit passes **1/1
+in 1.28 seconds**. All **745 C++ files** pass stable clang-format **22.1.8**;
+bundled 23 retains the nine preexisting differences. A devbox shutdown and a
+temporary runner's missing Node path were recovered before these corrected gates.
+
+**a43858ac** proves independent error retention for dynamic Sub with exactly
+one independently known BigInt and one non-BigInt primitive. It grants no normal
+completion, native BigInt carrier or effect proof. The VM's independent Undefined
+error carrier cannot become a Number/BigInt proof. Tests cover **57 rows, 43 live
+states and 3328 budget cutoffs**. Fixture precision is **98/133**, with **689
+claims, 703 observed sites, 15 unclaimed** and zero violations/partial/pending;
+**60 checker corruptions reject**. The initial **7/8 escape run in 11.09 seconds**
+exposed ten intended historical Sub-retention promotions; their exact source
+remains, alongside ten separate mixed-Mul refusal controls. All prior fixture
+source bytes and named-function recordings remain intact.
+
+The complete monorepo build finished **241 steps without warnings**; the CTest
+gate is running. Full-suite results,
+corpus coverage and integrated execution counts are not yet measured for this
+checkpoint; the preceding section's full results remain historical evidence.
+
+**Next native boundary: known mutations after an equal-cardinality join.**
+Twelve fresh typed Node/interpreter sources and eight mutations agree. Source
+**56679e2d** inserts key three after the arms leave key one or key two, so both
+paths now have size two. The subsequent saved-size read still refuses **0/5**;
+evaluated-read/literal-two repair **a11c4179** admits **5/5**. Both modes preserve
+five functions, sixteen calls and Number `trace=1`, for either startup flag.
+Deleting definitely absent key three similarly loses the known size one.
+Saving the size before mutation or rebuilding a complete census with clear
+already admits. Continue mutable cardinality only with independent key-relation
+proofs; possible insertion/overwrite or deletion must remain conservative.
+The exact source and repair are in `bootstrap-provider-next.md`.
+
+The next escape boundary is mixed primitive BigInt **Mul**, measured at
+**d5a61e1a**: Node/VM Number `mixedMulTrace=63`, twelve literal sites and three
+independent Errors; all twelve compiler claims remain conservative. Full native
+Bootstrap and direct browser API integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-map-join-{proofs,corrected-proofs,corrected-lowering,execution,historical}.log`,
+`/tmp/ctcompile-map-join-{all-refusals,probe}/`,
+`/tmp/ctcompile-map-join-final-frozen.json`,
+`/tmp/ctcompile-after-join-size-final/`,
+`/tmp/ctcompile-after-mixed-sub-boundary.{log,rec,claims}` and
+`ctcompile/docs/escape-load-evidence.md`. Full gate:
+`/tmp/ctcompile-map-join-full.log`.
+
 ## Saved Map sizes after deletion and BigInt unary Plus, 2026-09-09
 
 Resumed the **14 uncommitted compiler paths at 8b66e83c** identified by the
