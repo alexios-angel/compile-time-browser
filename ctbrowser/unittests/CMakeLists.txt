@@ -135,6 +135,9 @@ ctbrowser_test(unit/frames)
 # Web Animations: element.animate seeked and read back through getComputedStyle.
 # See lib/Shell/bindings/animations.cpp.
 ctbrowser_test(unit/web_animations)
+# What `html/dom` measured: one case per behaviour changed for that suite -
+# reflection types, innerText, translate, the hyperlink URL parts.
+ctbrowser_test(unit/html_dom_wpt)
 # Positioning, which is the one part of layout where a box's place is decided
 # by an ancestor rather than by its parent - see layout/position.hpp.
 ctbrowser_test(unit/position_basics)

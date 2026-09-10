@@ -49,7 +49,14 @@ enum class reflect_type : std::uint8_t {
     // INVALID value is still a keyword - `crossorigin=x` is "anonymous" - so
     // the two defaults genuinely differ in type and neither `enumerated` nor
     // `nullable_dom_string` can spell it.
-    nullable_enumerated
+    nullable_enumerated,
+    // `nonce`, HTML 2.6.1 with a [[CryptographicNonce]] slot in front of the
+    // attribute: getting reads the slot, setting writes the slot AND NOT the
+    // content attribute, and a content attribute change reloads the slot. The
+    // one reflected attribute where `el.nonce = x; el.getAttribute("nonce")`
+    // does not answer x, which is the whole of /content-security-policy/
+    // nonce-hiding/ and eighteen subtests per element in reflection-metadata.
+    cryptographic_nonce
 };
 
 // ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
@@ -84,6 +91,11 @@ struct reflected_attribute {
     std::string_view keywords;
     std::string_view missing; // the missing value default
     std::string_view invalid; // the invalid value default
+    // [LegacyNullToEmptyString]: `body.bgColor = null` writes "" rather than
+    // the four letters. Fourteen rows carry it and the corpus tests every one
+    // with "IDL set to null"; a `dom_string` row without it writes "null",
+    // which is what `td.abbr = null` genuinely does.
+    bool null_to_empty = false;
 };
 
 // Is `want` one of the space-separated tokens of `list`? The table's keyword
