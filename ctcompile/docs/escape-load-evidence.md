@@ -3196,4 +3196,19 @@ observation. Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape}.log` an
 The first targeted run used an old linked claims helper and retained ten stale
 Div refusal expectations. Rebuilding all targets and promoting those exact
 sources resolves both; no runtime behavior or historical source was changed.
-The complete monorepo gate remains pending at this focused checkpoint.
+The fresh complete gate at **a129764d** now passes **512/517 CTests in
+2227.17 seconds**, including all **372 compiler tests** and **166/166 lit cases**.
+The five browser failures exactly match the previous diagnostic bodies. The
+full-run rebuild reports no work; the 263-step build above is separate evidence.
+Arrays pass in **0.56 seconds**, repeating all Div rows/states/cutoffs; the
+fixture passes in **0.54 seconds**, retaining **721 claims, 741 observed sites,
+21 unclaimed, zero violations/partial/pending and 100/137 precision**. All four
+actual corpus oracles retain zero violations, including p5's prior partial.
+All fourteen committed/local/devbox code/test hashes match the frozen manifest.
+The fresh native census verifies **417 programs, 1668 GCC/Clang executables and
+88 sanitized binaries across 44 lifetime families**. Eight new object-argument
+C++ variants retain the actual calls and allocations; their sixteen ordinary
+and two sanitized executables have no Script/AOT symbols. Census and hashes:
+`/tmp/ctcompile-object-resume-audit.json`. Full logs:
+`/tmp/ctcompile-object-resume-full.log` and
+`/tmp/ctcompile-object-resume-full-detail.log`.

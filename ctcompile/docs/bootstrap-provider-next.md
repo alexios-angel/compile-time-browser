@@ -40,8 +40,17 @@ violations/partial/pending. Eight escape CTests pass **8/8 in 9.22 seconds**.
 Historical fixture bytes and Div sources remain intact; Mod controls stay
 conservative. The full build completes **263 steps without warnings**. Stable
 clang-format **22.1.8 passes 745 files**; bundled 23 has the same nine baseline
-differences. The complete monorepo CTest gate is pending at this checkpoint,
-with all **14 code/test inputs committed and frozen**.
+differences. The fresh complete gate at **a129764d** passes **512/517 CTests
+in 2227.17 seconds**, including **all 372 compiler tests** and **166/166 lit
+cases** (1442.85 seconds internally; CTest 1443.04). The five browser failures
+are `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`;
+each diagnostic exactly matches the previous gate. The full-run rebuild reports
+no work, separately from the earlier 263-step build. All **14 committed/local/
+devbox code/test hashes** match the frozen inputs. The fresh artifact census
+verifies **417 native programs, 1668 GCC/Clang executables and 88 sanitized
+binaries across 44 lifetime families**. Eight new C++ variants preserve their
+allocations, calls and `Map.has`; those programs' sixteen ordinary and two
+sanitized executables have no Script/AOT symbols.
 
 **Next: retaining actual object keys through Bootstrap Data.** Exact
 **7381e2fb** adds `t.set(e, 1)` before the same `t.has(e)` and remains unowned
@@ -50,14 +59,50 @@ and all later set/get/delete uses proved through the existing host seam.
 Field-bearing **698def06** and named **7573e89b** actuals remain separate owner
 obligations. Numeric-seeded **5eba229d** now has complete ownership but stays
 **0/4** at the closed Number/Object key variant's missing native carrier;
-that is distinct from object ownership. Exact Data and full native Bootstrap
-remain unfinished. Recheck browser/CommonJS/AMD and ordinary publication after
-the full gate, preserving their source and all observations.
+that is distinct from object ownership. These two bounded extensions can proceed
+independently: `HostContract` proves exact Map-to-key retention and same-family
+sibling uses; lowering supplies the already-proved Number/Object key variant.
+Keep object-valued payloads, named/field-bearing keys and unknown effects separate.
+
+The fresh postfull Data probe preserves browser/CommonJS/AMD source hashes
+**80a6fd87/cc6c3960/821e07a5** and all **19/19/20 typed observations**. They remain
+**0/7, 0/7 and 0/8** native in both modes, with **42/42/43 calls** preserved.
+Ordinary publication **8359592c** remains **0/7**, with **19 observations and
+40 calls**. Every observation matches Node and the interpreter. The owner reason
+remains `property receiver lacks a fresh own-data object proof`. Browser,
+CommonJS and ordinary prefix analyses finish **24 resolved calls and 23 provider
+summaries**; freshly fingerprinted residual contracts still refuse ownership.
+Exact Data and full native Bootstrap remain unfinished.
 
 Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape,owners,execution}.log`,
 `/tmp/ctcompile-object-resume-{probe,execution}/`, and the fourteen-input
 `/tmp/ctcompile-object-resume-frozen.json`. Full gate:
-`/tmp/ctcompile-object-resume-full.log`.
+`/tmp/ctcompile-object-resume-full.log` and
+`/tmp/ctcompile-object-resume-full-detail.log`. Exact Data:
+`/tmp/ctcompile-object-resume-exact-data/`. Artifact audit:
+`/tmp/ctcompile-object-resume-audit.json` and
+`/tmp/ctcompile-object-resume-full-cpp/`.
+
+### Independent next implementations
+
+For **7381e2fb**, start with the two object-formal `has` restrictions in
+`HostContract/CapturedMapBody.cpp`: prove the same exact empty object at the key
+operand of captured `Map.set`, retaining scalar payload checks. Existing native
+Map storage owns identity keys. Sibling calls additionally need
+`Values.cpp::capturedMapParameters` to accept only exact invocations in the same
+completely enumerated captured-Map family. Check caller/key release, alias and
+distinct identities, overwrite/delete/clear, saved sibling lifetimes, reentry,
+unsafe later uses, cycles, stale facts and incomplete budgets.
+
+For **5eba229d**, add a key-only
+`std::variant<double, std::shared_ptr<ctnative::identity_object>>` spelling in
+`Lowering/LoweringSupport.cpp`, independently typed alternative admission in
+`Lowering/Admission/Operations.cpp`, and key wrapping in `Lowering/EmitC/Maps.cpp`.
+The existing variant comparator and both Map layouts already handle identity
+and Number SameValueZero. Do not broaden generic `mixedMapSpelling`: that would
+change established object-valued payload storage. Reuse `native-map-mixed.mlir`
+and `check-map-mixed.py` for identity, NaN, signed zero, deletion and lifetime;
+preserve the mixed same-formal and independent ownership refusals.
 
 ## Previous Data/object-key baseline, 2026-09-10
 
