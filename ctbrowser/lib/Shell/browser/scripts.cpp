@@ -82,6 +82,28 @@ void browser::run_scripts() {
         alerts_.push_back(message);
         if (alert_hook_) { alert_hook_(message); }
     });
+    // THE CSSOM REACHES THE CASCADE. `insertRule`, `selectorText =`, `replaceSync`
+    // and `adoptedStyleSheets` all funnel through `style_sheets_changed`, which is
+    // called from nowhere else - reading `document.styleSheets` does not fire it -
+    // so a page that never uses the object model never calls this and keeps
+    // `refresh_author_styles`' DOM-text path exactly as it was. The text handed
+    // back is the sheets re-serialised from their compiled form; `representable`
+    // in bindings/stylesheets keeps the author's bytes for any selector this
+    // front end cannot reproduce, which is what makes handing it back safe.
+    //
+    // `author_css_` IS LEFT ALONE: it is the key `refresh_author_styles` compares
+    // the DOM's text against, and the DOM's text has not changed - so leaving it
+    // stops the next restyle from collecting the `<style>` elements again and
+    // undoing this. The cost is one narrow case: a page that mutates the CSSOM
+    // and then rewrites a DIFFERENT `<style>`'s text falls back to the DOM's
+    // until its next CSSOM write.
+    bindings_->set_author_styles_hook([this](std::string css) {
+        if (!author_sheet_loaded_) { return; }
+        styles_->clear_origin(ctbrowser::style::author_origin);
+        if (!css.empty()) { styles_->add_sheet(css, ctbrowser::style::author_origin); }
+        // The restyle is scheduled by the `mutated()` that follows inside
+        // `style_sheets_changed`, the same funnel every other DOM write uses.
+    });
     bindings_->observe_location(location_href_, location_hash_);
     bindings_->install(*script_);
     // getComputedStyle ANSWERS ABOUT THE PAGE AS THE SCRIPT JUST LEFT IT.

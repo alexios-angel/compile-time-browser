@@ -14,7 +14,56 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-07, night
+## The baseline — 2026-09-10
+
+**422 of the 1,090 tests that ran, which is 38.7%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f830fbd3` on
+`ctbrowser-wpt` — the tip after the five red gate tests were fixed and the
+CSSOM-to-cascade hook (`3fad3a99`) was installed. The browser gate at that
+commit is 144 of 145: the one failure, `cssom_sheets`, pinned the trailing
+space the style attribute no longer has and was corrected in `77afb315`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 128 | 146 | 23 | 0 | 12 | 53 | 362 |
+| `dom/events` | 56 | 29 | 5 | 0 | 1 | 85 | 176 |
+| `html/dom` | 81 | 125 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 75 | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 82 | 170 | 2 | 0 | 17 | 237 | 508 |
+| **total** | **422** | **569** | **45** | **0** | **54** | **542** | **1,632** |
+
+Subtests: **16,125 PASS, 8,405 FAIL, 729 NOTRUN, 48 TIMEOUT.**
+
+Against the `f7e0912` row below: +53 files (369 -> 422), +2,572 subtests
+(13,553 -> 16,125), FAIL 599 -> 569, TIMEOUT 59 -> 45, HARNESS_ERROR 63 -> 54.
+Per suite: `dom/nodes` 114 -> 128, `dom/events` 56 -> 56, `html/dom` 76 -> 81,
+`css/cssom` 54 -> 75, `css/css-values` 69 -> 82. What sits between the two
+commits: the 2026-09-08 file splits (no behaviour), the four gate fixes
+(`querySelector` on a detached subtree, `:lang()` wildcards and the
+Content-Language pragma, `for-in` over a proxy, the style attribute's
+serialisation, an iframe's `parent`/`top`), and the CSSOM reaching the cascade —
+which is most of `css/cssom`'s +21.
+
+### What is standing in front of the most tests now
+
+Counted from this run's JSON. "Near-pass" is a FAIL file with one or two
+failing subtests — the cheapest file to turn.
+
+| what | where | counted |
+|---|---|---:|
+| near-pass files | — | `html/dom` 98, `css/css-values` 75, `dom/nodes` 70, `css/cssom` 67, `dom/events` 13 |
+| Web Animations (`element.animate`, `getAnimations`) | new binding | 246 subtests say "Web Animations should be supported" in `css/css-values` |
+| `customElements.define` | new binding | 6 HARNESS_ERRORs across `dom/nodes`, `html/dom`, `css/css-values` |
+| reflection: `IDL get expected _ but got _` | `element/reflection.cpp` | 1,097 subtests in `html/dom`, plus 234 `expected null but got string` and 283 `innerText` |
+| `render-blocking` (`blocking=`) | `element/reflection.cpp` | 11 files in `html/dom`, several as 10 s TIMEOUTs |
+| `hasOwnProperty` undefined on a wrapper | the wrapper prototype chain | 6 HARNESS_ERRORs in `html/dom`, 11 subtests in `css/cssom` |
+| `on{animation,transition}*` handlers | `events/` — landed after this run in `4f3fdc50` | ~36 subtests in `dom/events` |
+| `HTMLLinkElement-disabled-*` | `stylesheets/` | 4 TIMEOUTs in `css/cssom` |
+| `document.characterSet` normalisation | `document/` | 2 × 60 s TIMEOUTs in `dom/nodes` |
+| `FontFace` constructor, `CSS.registerProperty`, `showModal` | new | 3 + 2 + 1 HARNESS_ERRORs in `css/css-values` |
+
+## The previous baseline — 2026-09-07, night
 
 **369 of the 1,090 tests that ran, which is 33.9%**, and still not one crash.
 Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`

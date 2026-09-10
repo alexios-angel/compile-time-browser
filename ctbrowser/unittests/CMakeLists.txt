@@ -205,6 +205,13 @@ ctbrowser_test(unit/page_chrome)
 # apiece: the default passive value, the copied listener list, a throwing
 # listener, handleEvent, the bare EventTarget globals, and window.event.
 ctbrowser_test(unit/event_listeners)
+# The event INTERFACES and the handler property, from a page. Its own file
+# because most of what it asserts is that something does NOT happen - a passive
+# `touchstart` listener on the window cannot cancel, a mixed-case `on` property
+# is not a handler, `return 0` is not `return false` - and each of those is a
+# rule whose only evidence is an event that came back uncancelled, so the
+# cancelling case is asserted beside each refusal.
+ctbrowser_test(unit/events_basics)
 # The Bootstrap fixtures against test/baseline/. The Chrome half of that harness
 # is tools/check/css-parity.py and is deliberately not a ctest; this is the half
 # that catches a regression without a browser download. See docs/plans/bootstrap.md.
@@ -215,6 +222,12 @@ ctbrowser_test(unit/bootstrap_layout)
 # foreign one, a name that SERIALISES against a name that parses - and each of
 # those used to have one answer where two belong.
 ctbrowser_test(unit/element_attrs)
+# Event handlers: where an exception thrown by a listener goes, and what an
+# `on...` IDL attribute is. Its own file rather than more of event_listeners
+# because every case in it dispatches from inside a `try` ON PURPOSE - a throw
+# unwinds to the innermost handler anywhere below it, so containment is what is
+# under test and the harness has to provide the thing it is contained from.
+ctbrowser_test(unit/event_handlers)
 # CharacterData and the constructible node interfaces. Its own file because
 # every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
 # byte offset answers `substringData(39, 2)` wrongly only once the text stops

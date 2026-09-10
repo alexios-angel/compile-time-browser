@@ -43,7 +43,28 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. Where the two suites stand — 2026-09-07, night
+## 2. Where the two suites stand — 2026-09-10
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f830fbd3` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **75** | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | **82** | 170 | 2 | 0 | 17 | 237 | 508 |
+
+Subtests: `css/cssom` **1,196 PASS** / 463 FAIL / 6 NOTRUN / 7 TIMEOUT;
+`css/css-values` **3,803 PASS** / 3,156 FAIL / 3 TIMEOUT.
+
+Zero crashes in either suite. Both blocks named in §2's "THE TWO BLOCKS" below
+are now closed: `el.style` forwards (`341e6eec`) and the CSSOM reaches the
+cascade (`3fad3a99`). `css/cssom` 54 -> 75 files is mostly the second; the
+largest remaining `css/css-values` cause is `Web Animations should be
+supported` (246 subtests), then `querySelector` undefined on a wrapper (129)
+and computed-value serialisation (111).
+
+## 2a-prev. Where the two suites stood — 2026-09-07, night
 
 Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
 per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on

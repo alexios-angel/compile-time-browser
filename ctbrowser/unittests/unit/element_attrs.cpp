@@ -708,7 +708,11 @@ void test_a_same_object_attribute_survives_being_assigned_to() {
        "object,bar,true");
     // `style` is readonly TOO, and its write has a meaning:
     // [PutForwards=cssText] sends `el.style = "color: red"` to
-    // `el.style.cssText`. Losing the declaration object is what made
+    // `el.style.cssText`, and the cssText setter writes the SERIALISED block
+    // back to the attribute (CSSOM 6.7.1 "update style attribute for") - so
+    // the attribute reads `margin-top: 4px;`, not the author's string, exactly
+    // as cssstyledeclaration-csstext-setter.window.js asserts. Losing the
+    // declaration object is what made
     // `testEl.style = ""` - the first line of every css/css-values case -
     // replace the proxy with a string and every later property write vanish.
     is(R"JS((function () {
@@ -720,7 +724,7 @@ void test_a_same_object_attribute_survives_being_assigned_to() {
         e.style.color = 'blue';
         return (typeof e.style) + ',[' + forwarded + '],' + e.style.color;
     })())JS",
-       "object,[margin-top: 4px],blue");
+       "object,[margin-top: 4px;],blue");
     // The same rule for the rest of them: a page that assigns to one of these
     // must not be able to put a string where the next reader looks.
     is(R"JS((function () {

@@ -11,64 +11,33 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/script/compile.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
 
 namespace {
 
-// ONE LISTENER, CALLED THE WAY THE CALLBACK ASKED TO BE CALLED.
+// WHAT A THROWN VALUE IS CALLED, for the text side of a report.
 //
-// Two things were wrong and a page could see both.
-//
-// `this` WAS UNDEFINED. The specification binds it to the CURRENT TARGET, which
-// is the single most useful thing a listener has: `el.addEventListener('click',
-// function () { this.classList.add('on') })` is how a great deal of shipped
-// code is written, and here `this` was undefined and the assignment silently
-// went nowhere. dom/events/EventTarget-this-of-listener.html is six tests about
-// exactly this.
-//
-// AN OBJECT WITH A `handleEvent` METHOD IS A LISTENER. EventListener is a
-// callback INTERFACE, not a callback function: a page may register an object,
-// and the method is looked up on it at DISPATCH time rather than at
-// registration - EventListener-handleEvent.html registers an object whose
-// `handleEvent` is a GETTER and counts how many times it runs. A function is
-// never asked for one, even if it has one, which is the other half of the same
-// rule and is what the last two tests in that file check.
-void invoke_listener(context & cx, value callback, value receiver, value event) {
-    if (callback.is_callable()) {
-        (void)cx.call(callback, std::span<const value>{&event, 1}, receiver);
-        return;
-    }
-    // `is_object_like()` for the third time in this file and for the third
-    // reason: EventListener is "any object", and a page may register a Proxy
-    // wrapping one - dom/events/EventListener-handleEvent-cross-realm.html
-    // registers five. A callable one has already been handled above.
-    if (!callback.is_object_like()) { return; }
-    const value handler = cx.lookup_property(callback, "handleEvent");
-    // THE LOOKUP IS THE PAGE'S OWN CODE AND IT MAY THROW.
-    //
-    // `handleEvent` is fetched at DISPATCH time, and a page may make it an
-    // accessor - EventListener-handleEvent.html registers a listener whose
-    // getter throws and then asserts on the object it threw. WebIDL's "call a
-    // user object's operation" propagates an abrupt Get rather than swallowing
-    // it, so the fault stands and fire_at's reporter turns it into the page's
-    // `error` event. Returning here without the check would read the failure as
-    // "no handleEvent" and fall into the TypeError below, which would REPLACE
-    // the page's exception with one of ours.
-    if (cx.failed()) { return; }
-    // AND A LISTENER OBJECT WITHOUT A CALLABLE ONE IS A TypeError, not a
-    // listener that quietly does nothing. Same clause: if the fetched value is
-    // not callable, throw. `{handleEvent: null}` and `{handleEvent: 42}` are
-    // two of that file's tests and both expect to see a TypeError reported.
-    if (!handler.is_callable()) {
-        cx.throw_error("TypeError", "Failed to invoke an EventListener: the object's "
-                                    "'handleEvent' property is not a function.");
-        return;
-    }
-    // THE OBJECT IS THE RECEIVER, not the target: `handleEvent` is a method of
-    // the listener object and reads its own state.
-    (void)cx.call(handler, std::span<const value>{&event, 1}, callback);
+// `window.onerror` takes a STRING first - twenty years of shipped code reads it
+// as one, and Event-dispatch-throwing.html asserts `typeof e === "string"` - so
+// something has to flatten the value. An Error's `name` and `message` are data
+// properties on every Error this engine makes, which is why they are read
+// instead of calling `toString`: a page's own thrown object may have a
+// `toString` that throws, and a reporter that faults is the one thing worse
+// than a fault nobody reports. (`context::describe_thrown` is the same shape
+// and is private to the VM.)
+[[nodiscard]] std::string describe_thrown(context & cx, value thrown) {
+    if (!thrown.is_object()) { return cx.to_string(thrown); }
+    const value name = cx.lookup_property(thrown, "name");
+    const value message = cx.lookup_property(thrown, "message");
+    if (name.is_undefined() && message.is_undefined()) { return "an exception"; }
+    std::string text = name.is_undefined() ? std::string{"Error"} : cx.to_string(name);
+    const std::string body = message.is_undefined() ? std::string{} : cx.to_string(message);
+    if (!body.empty()) { text += ": " + body; }
+    return text;
 }
 
 } // namespace
@@ -481,6 +450,139 @@ void dom_bindings::reap_spent_listeners() {
     std::erase_if(listeners_, [](const listener & l) { return l.spent; });
 }
 
+// THE FENCE, COMPILED ONCE PER PAGE.
+//
+// See the note on `listener_fence_` in the header: the VM unwinds a throw to
+// the innermost `try` on the whole stack, so the only thing that can stop one
+// at the dispatch is a `try` INSIDE the callee. This is that `try`, and it
+// carries WebIDL's "call a user object's operation" with it, because every
+// step of that algorithm that can throw has to be on this side of the fence:
+//
+//   * the `handleEvent` GET, which a page may make an accessor -
+//     EventListener-handleEvent.html registers one whose getter throws and then
+//     asserts on the identity of the object it threw;
+//   * the TypeError for a listener object whose `handleEvent` is not callable,
+//     which the same file tests with `null` and with `42`.
+//
+// Both used to be C++ - a `cx.failed()` check after the lookup and a
+// `throw_error` after it - and both were wrong for the same reason: the
+// lookup's throw had already left for the page's `try`, so `failed()` was
+// clear, and the TypeError this file then raised replaced the page's exception
+// with one of ours.
+//
+// `typeof callback === "function"` IS THE WHOLE TEST for which arm to take. A
+// function is never asked for a `handleEvent`, even when it has one - that is
+// the other half of the same clause and is what the last two tests of that file
+// check. `this` is the CURRENT TARGET for a function and the listener object
+// for a `handleEvent`, which reads its own state.
+void dom_bindings::install_listener_fence(context & cx, script::native_object & keeper) {
+    // `invoke(fn, receiver, args)` - the trip back into C++, so that the CALL
+    // itself is still ours. `args` is the event, or an ARRAY of arguments for
+    // the one handler that is not handed one: `window.onerror` takes (message,
+    // filename, lineno, colno, error). One value in the common case rather than
+    // an array, because an array per mousemove is an allocation per mousemove.
+    //
+    // WHAT COMES BACK IS THE CALLEE'S RETURN VALUE IF IT WAS A BOOLEAN, and
+    // undefined otherwise. A handler property's `return false` cancels the
+    // event and nothing else about a return value is read, so a boolean is all
+    // the fence forwards - it is not a heap value, so nothing has to be rooted
+    // across the return, and it cannot be mistaken for the `[thrown]` array.
+    auto * runner = cx.allocate<script::native_object>(
+        "invokeEventListener", [](context & c, std::span<value> a) {
+            if (a.size() < 3 || !a[0].is_callable()) { return value::undefined(); }
+            value out = value::undefined();
+            if (a[2].is_array()) {
+                const std::vector<value> spread =
+                    static_cast<script::array_object *>(a[2].as_heap())->items;
+                out = c.call(a[0], spread, a[1]);
+            } else {
+                const value one = a[2];
+                out = c.call(a[0], std::span<const value>{&one, 1}, a[1]);
+            }
+            return out.is_boolean() ? out : value::undefined();
+        });
+    listener_invoke_ = value::object(runner);
+    keeper.retained.push_back(listener_invoke_);
+    fence_keeper_ = &keeper;
+}
+
+// COMPILED AT THE FIRST DISPATCH, NOT AT INSTALL. `run_nested` goes through
+// `context::call`, and `call` refuses every closure while no program has run
+// yet (`program_` is null until the page's first `execute`) - so a fence built
+// during install() came back `undefined`, every listener took the unfenced
+// path below, and a throw inside one reached the page's own `try`. By the
+// first dispatch a program is always running.
+void dom_bindings::compile_listener_fence(context & cx) {
+    if (listener_fence_.is_callable() || fence_keeper_ == nullptr) { return; }
+    // A `TypeError` AND NOT A STRING, because the page can see the difference:
+    // EventListener-handleEvent.html checks the reported value with
+    // `promise_rejects_js(t, TypeError, ...)`.
+    script::program compiled = script::compiler::compile(
+        "return (function (invoke, callback, receiver, args) {\n"
+        "    try {\n"
+        "        if (typeof callback === \"function\") {\n"
+        "            return invoke(callback, receiver, args);\n"
+        "        }\n"
+        "        var method = callback.handleEvent;\n"
+        "        if (typeof method !== \"function\") {\n"
+        "            throw new TypeError(\"Failed to invoke an EventListener: the object's \"\n"
+        "                + \"'handleEvent' property is not a function.\");\n"
+        "        }\n"
+        "        return invoke(method, callback, args);\n"
+        "    } catch (thrown) {\n"
+        "        return [thrown];\n"
+        "    }\n"
+        "});\n");
+    // A COMPILE FAILURE IS NOT FATAL. `invoke_listener` falls back to the
+    // unfenced C++ path, which is what this file did before the fence existed:
+    // every listener still runs and only the containment is lost.
+    if (compiled.ok) { listener_fence_ = cx.run_nested(cx.own_program(std::move(compiled))); }
+    fence_keeper_->retained.push_back(listener_fence_);
+}
+
+bool dom_bindings::invoke_listener(context & cx, value callback, value receiver, value args,
+                                   value & thrown, value & returned) {
+    thrown = value::undefined();
+    returned = value::undefined();
+    compile_listener_fence(cx);
+    if (listener_fence_.is_callable() && listener_invoke_.is_callable()) {
+        const value passed[4] = {listener_invoke_, callback, receiver, args};
+        const value answer = cx.call(listener_fence_, passed);
+        if (!answer.is_array()) {
+            returned = answer;
+            return false;
+        }
+        // THE THROWN VALUE COMES BACK IN A ONE-ELEMENT ARRAY rather than as
+        // itself, because `undefined` and `null` are both values a page can
+        // throw and neither can be told from "nothing was thrown" on its own.
+        const auto & items = static_cast<script::array_object *>(answer.as_heap())->items;
+        thrown = items.empty() ? value::undefined() : items.front();
+        return true;
+    }
+    // WITHOUT THE FENCE: the shape this had before it existed, minus the
+    // containment. A throw from here reaches whatever `try` the page was inside.
+    if (callback.is_callable()) {
+        if (args.is_array()) {
+            const std::vector<value> spread =
+                static_cast<script::array_object *>(args.as_heap())->items;
+            returned = cx.call(callback, spread, receiver);
+        } else {
+            returned = cx.call(callback, std::span<const value>{&args, 1}, receiver);
+        }
+        return false;
+    }
+    if (!callback.is_object_like()) { return false; }
+    const value handler = cx.lookup_property(callback, "handleEvent");
+    if (cx.failed()) { return false; }
+    if (!handler.is_callable()) {
+        cx.throw_error("TypeError", "Failed to invoke an EventListener: the object's "
+                                    "'handleEvent' property is not a function.");
+        return false;
+    }
+    (void)cx.call(handler, std::span<const value>{&args, 1}, callback);
+    return false;
+}
+
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
     // A LISTENER THAT THREW IS REPORTED TO THE PAGE, and not only to the
     // embedder.
@@ -504,17 +606,27 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // gives at length: every C++ entry into JavaScript declines while `failed_`
     // is set, so a report attempted with the flag still up runs no listener at
     // all and tells the page nothing twice.
-    const auto report_fault = [this, type] {
-        if (cx_ == nullptr || !cx_->failed() || type == "error") { return; }
-        // THE THROWN VALUE, READ BEFORE `take_error` CLEARS THE FLAG, and only
-        // when the failure WAS a throw: `last_thrown()` is stale after a run
-        // that succeeded, and a VM fault - the allocation ceiling, the call
-        // stack ceiling - fails without one. "uncaught " is the prefix the VM
-        // puts on the flattened text of a throw and on nothing else, so it is
-        // the question "was there a value?" asked where the answer is kept.
-        const bool threw = cx_->error().starts_with("uncaught ");
-        const value thrown = threw ? cx_->last_thrown() : value::undefined();
-        const std::string fault = std::string{type} + " listener: " + cx_->take_error();
+    //
+    // TWO WAYS TO FAIL AND ONLY ONE OF THEM IS A THROW. The fence hands back the
+    // value a listener threw and the VM's failure flag is never raised for it;
+    // a VM FAULT - the allocation ceiling, the call stack ceiling - is a failure
+    // that was never an exception, unwinds nothing, and is still only visible
+    // as `failed()`. Both are reported and both clear what they read, because a
+    // flag left up refuses every later callback of any kind.
+    const auto report_fault = [this, type](bool threw, value thrown) {
+        if (cx_ == nullptr) { return; }
+        const bool faulted = cx_->failed();
+        if (!threw && !faulted) { return; }
+        if (type == "error") {
+            // Reporting is itself a dispatch, so this is the recursion; bounded
+            // at one level with no state to keep. The flag still has to go.
+            if (faulted) { (void)cx_->take_error(); }
+            return;
+        }
+        const context::rooted keep_thrown{*cx_, thrown};
+        const std::string fault =
+            std::string{type} + " listener: " +
+            (faulted ? cx_->take_error() : "uncaught " + describe_thrown(*cx_, thrown));
         // The page gets it first. If nothing handled it - `preventDefault` on
         // an error event is how a page says it did - it goes to the embedder
         // as well, which is what a browser's console is for. The FIRST one is
@@ -581,17 +693,331 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // what concept-event-listener-inner-invoke steps 10 and 15 say.
         auto * carrier = static_cast<script::object_object *>(event.as_heap());
         if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
-        invoke_listener(*cx_, callback, object_of_step(*cx_, step), event);
+        value thrown = value::undefined();
+        value returned = value::undefined();
+        const bool threw =
+            invoke_listener(*cx_, callback, object_of_step(*cx_, step), event, thrown, returned);
         if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
         // PER LISTENER, not per dispatch. A throw from the first of three must
-        // not stop the other two - which it did, because every later `call`
-        // declines while the VM's failure flag is up - and each one that throws
-        // is its own report.
-        report_fault();
+        // not stop the other two - which it did twice over, first because every
+        // later `call` declines while the VM's failure flag is up and then
+        // because the throw left the dispatch entirely - and each one that
+        // throws is its own report.
+        report_fault(threw, thrown);
     }
     if (!capturing && !flag_of(*cx_, event, stop_immediate_property)) {
-        fire_handler_property(object_of_step(*cx_, step), type, event);
-        report_fault();
+        value thrown = value::undefined();
+        const bool threw = fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+        report_fault(threw, thrown);
+    }
+}
+
+namespace {
+
+// THE EVENT HANDLER IDL ATTRIBUTES, HTML 8.1.7.2, as one list per mixin.
+//
+// A REVERSAL, and it is worth naming because the opposite rule is written down
+// in element/methods.cpp: that file installs a handler property only for
+// "exactly the events this engine can dispatch, and no more", on the grounds
+// that a detection answering yes for an event that never fires is worse than
+// one answering no. That reasoning holds for a page choosing between two
+// spellings of the same event - which is the case it was written for,
+// `onwheel` against `onmousewheel` - and does not hold for the attribute's mere
+// existence: HTML requires all of these on every one of these objects,
+// `'onanimationend' in el` is true in every browser, and a page that branches
+// on it is depending on animations working rather than on the property. What
+// the engine does not dispatch is a gap in the DISPATCH, and hiding the
+// attribute does not close it.
+//
+// Those 19 names stay OWN null data properties on the wrapper, which shadow
+// the accessor here - so for them `el.onclick = ""` still reads "" until that
+// list moves. `onscroll` is what the unit tests use for that reason.
+//
+// Four files in dom/events ask for the ones no engine event uses:
+// Body-FrameSet-Event-Handlers.html wants `onscroll` and `onresize`, and the
+// four `webkit-*-event.html` files want the animation and transition pairs
+// prefixed and unprefixed at once. `ontouchstart` is deliberately NOT here: it
+// is the name a touch capability check asks about, and this engine has none.
+constexpr std::string_view global_event_handlers[] = {"onabort",
+                                                      "onanimationcancel",
+                                                      "onanimationend",
+                                                      "onanimationiteration",
+                                                      "onanimationstart",
+                                                      "onauxclick",
+                                                      "onbeforeinput",
+                                                      "onbeforematch",
+                                                      "onbeforetoggle",
+                                                      "onblur",
+                                                      "oncancel",
+                                                      "oncanplay",
+                                                      "oncanplaythrough",
+                                                      "onchange",
+                                                      "onclick",
+                                                      "onclose",
+                                                      "oncontextlost",
+                                                      "oncontextmenu",
+                                                      "oncontextrestored",
+                                                      "oncopy",
+                                                      "oncuechange",
+                                                      "oncut",
+                                                      "ondblclick",
+                                                      "ondrag",
+                                                      "ondragend",
+                                                      "ondragenter",
+                                                      "ondragleave",
+                                                      "ondragover",
+                                                      "ondragstart",
+                                                      "ondrop",
+                                                      "ondurationchange",
+                                                      "onemptied",
+                                                      "onended",
+                                                      "onerror",
+                                                      "onfocus",
+                                                      "onformdata",
+                                                      "ongotpointercapture",
+                                                      "oninput",
+                                                      "oninvalid",
+                                                      "onkeydown",
+                                                      "onkeypress",
+                                                      "onkeyup",
+                                                      "onload",
+                                                      "onloadeddata",
+                                                      "onloadedmetadata",
+                                                      "onloadstart",
+                                                      "onlostpointercapture",
+                                                      "onmousedown",
+                                                      "onmouseenter",
+                                                      "onmouseleave",
+                                                      "onmousemove",
+                                                      "onmouseout",
+                                                      "onmouseover",
+                                                      "onmouseup",
+                                                      "onpaste",
+                                                      "onpause",
+                                                      "onplay",
+                                                      "onplaying",
+                                                      "onpointercancel",
+                                                      "onpointerdown",
+                                                      "onpointerenter",
+                                                      "onpointerleave",
+                                                      "onpointermove",
+                                                      "onpointerout",
+                                                      "onpointerover",
+                                                      "onpointerup",
+                                                      "onprogress",
+                                                      "onratechange",
+                                                      "onreset",
+                                                      "onresize",
+                                                      "onscroll",
+                                                      "onscrollend",
+                                                      "onsecuritypolicyviolation",
+                                                      "onseeked",
+                                                      "onseeking",
+                                                      "onselect",
+                                                      "onslotchange",
+                                                      "onstalled",
+                                                      "onsubmit",
+                                                      "onsuspend",
+                                                      "ontimeupdate",
+                                                      "ontoggle",
+                                                      "ontransitioncancel",
+                                                      "ontransitionend",
+                                                      "ontransitionrun",
+                                                      "ontransitionstart",
+                                                      "onvolumechange",
+                                                      "onwaiting",
+                                                      "onwebkitanimationend",
+                                                      "onwebkitanimationiteration",
+                                                      "onwebkitanimationstart",
+                                                      "onwebkittransitionend",
+                                                      "onwheel"};
+
+// WindowEventHandlers - the ones that are the WINDOW's business rather than an
+// element's, and the reason `Body-FrameSet-Event-Handlers.html` exists at all:
+// HTML also puts these on `<body>` and `<frameset>`, where they FORWARD. See
+// install_event_handler_attributes for what is and is not wired here.
+constexpr std::string_view window_event_handlers[] = {
+    "onafterprint",       "onbeforeprint", "onbeforeunload",       "onhashchange",
+    "onlanguagechange",   "onmessage",     "onmessageerror",       "onoffline",
+    "ononline",           "onpagehide",    "onpageshow",           "onpopstate",
+    "onrejectionhandled", "onstorage",     "onunhandledrejection", "onunload"};
+
+// WHERE A HANDLER IS ACTUALLY KEPT. Three slots per name and each answers a
+// different question, which is why one would not do:
+//
+//   * `__on<name>` - what the IDL attribute was ASSIGNED. Its PRESENCE is the
+//     state, not its value: `el.onclick = null` is a null that has been set,
+//     and HTML says an assignment deactivates the content attribute's handler,
+//     so a present null must not fall back to the markup.
+//   * `__onsrc<name>` - the content attribute's text as it was when it was last
+//     compiled, so a changed attribute recompiles and an unchanged one does not.
+//   * `__onfn<name>`  - the function that text compiled to. `el.onclick ===
+//     el.onclick` has to hold, and it would not if each read compiled again.
+//
+// All three are `attr_none`, so a page enumerating the object never sees them.
+[[nodiscard]] std::string assigned_slot(const std::string & name) {
+    return "__on" + name;
+}
+[[nodiscard]] std::string source_slot(const std::string & name) {
+    return "__onsrc" + name;
+}
+[[nodiscard]] std::string compiled_slot(const std::string & name) {
+    return "__onfn" + name;
+}
+
+} // namespace
+
+// `onclick="doThing()"` AS A FUNCTION, which is the half of the event handler
+// attributes that is not a property at all.
+//
+// HTML calls what the markup leaves behind an "internal raw uncompiled
+// handler": the attribute's value is a function BODY, and it becomes a function
+// the first time anything asks for the handler. The parameter is named `event`,
+// which is what makes `onclick="alert(event.type)"` work.
+//
+// NOT CACHED PAST A CHANGE. The specification compiles once, at the moment the
+// attribute is set, because the attribute-change steps are a hook it has and
+// this does not - so the source text is kept beside the function and a
+// different text compiles again. That is one string compare on a read whose
+// slot is unset, and it is the difference between `setAttribute` taking effect
+// and not.
+//
+// A HANDLER THAT WILL NOT COMPILE IS NULL, which HTML says in as many words:
+// the uncompiled handler is discarded and the attribute reads null, rather than
+// the page taking a SyntaxError from a read.
+value dom_bindings::compile_handler_attribute(context & cx, value self, const std::string & name) {
+    const node_id id = handle_of(self);
+    if (!id || doc_ == nullptr || atoms_ == nullptr) { return value::undefined(); }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    std::string source;
+    {
+        const auto txn = doc_->read();
+        const atom key = atoms_->intern_lower(name);
+        if (!txn.has_attribute(id, key)) {
+            // The attribute has GONE, and so must anything compiled from it -
+            // `Body-FrameSet-Event-Handlers.html` calls removeAttribute at the
+            // end of every reflection case and the next case reads null.
+            (void)object->erase(source_slot(name));
+            (void)object->erase(compiled_slot(name));
+            return value::undefined();
+        }
+        source = std::string{txn.attribute_value(id, key)};
+    }
+    if (const value * had = object->find(source_slot(name));
+        had != nullptr && had->is_string() && cx.to_string(*had) == source) {
+        const value * made = object->find(compiled_slot(name));
+        return made == nullptr ? value::undefined() : *made;
+    }
+    script::program compiled =
+        script::compiler::compile("return (function (event) {\n" + source + "\n});");
+    const value made =
+        compiled.ok ? cx.run_nested(cx.own_program(std::move(compiled))) : value::undefined();
+    object->define(source_slot(name), cx.string(source), script::attr_none);
+    object->define(compiled_slot(name), made, script::attr_none);
+    return made;
+}
+
+// THE GETTER. Null when unset, and "unset" is the ABSENCE of the assigned slot
+// rather than a null in it - see assigned_slot.
+value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
+    if (!self.is_object()) { return value::null(); }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    if (const value * held = object->find(assigned_slot(name))) { return *held; }
+    if (const value made = compile_handler_attribute(cx, self, name); made.is_callable()) {
+        return made;
+    }
+    // THE BARE GLOBAL SPELLING, and only on the window. `window` IS the global
+    // object in HTML, so `onerror = report` and `window.onerror = report` are
+    // the same write - but the globals table and the window object are separate
+    // storage here, and defining these accessors made the window's own property
+    // win a lookup that used to fall through to the globals. A page that writes
+    // the bare form is not doing anything unusual and would silently stop being
+    // heard.
+    if (object == window_object() && cx.has_global(name)) {
+        if (const value held = cx.global(name); held.is_callable()) { return held; }
+    }
+    return value::null();
+}
+
+// THE SETTER, and the whole of it is one WebIDL annotation.
+//
+// `EventHandler` is `[LegacyTreatNonObjectAsNull] callback EventHandlerNonNull?`,
+// which says: anything that is not an Object becomes null. So `el.onclick = ""`
+// and `el.onclick = 42` both STORE NULL and both read back null - not the empty
+// string, which is what a plain data property answered and what twelve of
+// Body-FrameSet-Event-Handlers.html's assertions are about.
+//
+// An object that is not callable is stored as it is, which is the same
+// annotation read the other way: only a non-Object is nulled. It throws when it
+// is eventually invoked, which is where the specification puts the failure.
+void dom_bindings::event_handler_set(context & cx, value self, const std::string & name,
+                                     value given) {
+    if (!self.is_object()) { return; }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const value stored = given.is_object_like() ? given : value::null();
+    object->define(assigned_slot(name), stored, script::attr_none);
+    // AND THE ASSIGNMENT DISCARDS THE CONTENT ATTRIBUTE'S HANDLER - HTML's
+    // "deactivate an event handler". Dropping the compiled copy is what makes a
+    // later read see the assignment rather than the markup.
+    (void)object->erase(source_slot(name));
+    (void)object->erase(compiled_slot(name));
+    if (object == window_object()) { cx.define_global(name, stored); }
+}
+
+// EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.
+//
+// ONE PAIR OF NATIVES PER NAME, shared by all four hosts: the accessors find
+// their object through `this`, so there is no reason for HTMLElement.prototype
+// and Document.prototype to hold different functions for `onclick`.
+//
+// ON THE WINDOW OBJECT ITSELF rather than on Window.prototype, and this one is
+// load-bearing: the window is reached through a Proxy whose `set` trap writes a
+// GLOBAL for any name the target does not already own. An accessor one link up
+// the prototype chain is not owned, so `window.onload = fn` would define a
+// global and never run the setter.
+//
+// WHAT IS NOT HERE, said plainly. HTML forwards six of these from `<body>` and
+// `<frameset>` to the window - `onblur`, `onerror`, `onfocus`, `onload`,
+// `onresize`, `onscroll` are the WINDOW's when read or written through a body
+// element - and that is not wired, because forwarding without the other half
+// is worse than neither. The other half is the attribute-change hook: setting
+// the CONTENT attribute on a body element has to compile the handler onto the
+// window there and then, and the only place that can happen is `setAttribute`,
+// which is another file. With forwarding and no hook, `body.onblur` reads the
+// window's slot, which the previous case left explicitly null, and the
+// reflection case that passes today would fail instead.
+void dom_bindings::install_event_handler_attributes(context & cx) {
+    // The interface prototypes are built on the first `wrap()`, which is after
+    // this - so ask for them now. It is a no-op if they already exist and it is
+    // what makes `interface_prototype` answer at all this early.
+    ensure_dom_interfaces(cx);
+    std::vector<script::object_object *> hosts;
+    for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
+        if (const value proto = interface_prototype(interface); proto.is_object()) {
+            hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
+        }
+    }
+    if (auto * window = window_object()) { hosts.push_back(window); }
+    const auto install = [&](std::string_view attribute, std::span<script::object_object *> where) {
+        const std::string name{attribute};
+        const value getter = value::object(
+            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
+                return event_handler_get(c, c.current_this(), name);
+            }));
+        const value setter = value::object(
+            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
+                event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
+                return value::undefined();
+            }));
+        for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+    };
+    for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
+    // WindowEventHandlers is the window's alone here - see the note above on
+    // what forwarding would need.
+    if (auto * window = window_object()) {
+        for (const std::string_view attribute : window_event_handlers) {
+            install(attribute, std::span<script::object_object *>{&window, 1});
+        }
     }
 }
 
@@ -611,7 +1037,13 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
 // Observable only by a page that mixes both for one type and depends on the
 // order - and cheap, versus a listener list that must be rewritten whenever a
 // property is assigned.
-void dom_bindings::fire_handler_property(value target, std::string_view type, value event) {
+bool dom_bindings::fire_handler_property(value target, std::string_view type, value event,
+                                         value * thrown) {
+    value caught = value::undefined();
+    const auto answer = [&](bool threw) {
+        if (thrown != nullptr) { *thrown = caught; }
+        return threw;
+    };
     // `is_object_like()` AND NOT `is_object()`, and this one was load-bearing:
     // `value::is_object()` is heap_kind::object EXACTLY, and THE WINDOW IS A
     // PROXY. So this returned at the door for every window step of every
@@ -621,9 +1053,42 @@ void dom_bindings::fire_handler_property(value target, std::string_view type, va
     // an ordinary object and the only test covering handler properties used
     // one. Found by asserting on window.onerror rather than by a page
     // complaining, because a handler that is never called says nothing.
-    if (cx_ == nullptr || !target.is_object_like()) { return; }
-    const value handler = cx_->lookup_property(target, "on" + std::string{type});
-    if (!handler.is_callable()) { return; }
+    if (cx_ == nullptr || !target.is_object_like()) { return answer(false); }
+    // THE NAME IS ALL-LOWERCASE AND THE TYPE IS NOT.
+    //
+    // Every event handler IDL attribute HTML defines is lowercase, and the type
+    // it listens for is whatever the specification that named the event chose -
+    // which for the prefixed CSS ones is camelCase. `onwebkitanimationend` has
+    // an "event handler event type" of `webkitAnimationEnd`, so building the
+    // property name by concatenation found nothing for the four legacy families
+    // and would have gone on finding nothing. Folding also takes away an
+    // invention: `el.onMyEvent` was a handler here for a `MyEvent` dispatch and
+    // is not one in any browser, because only the attributes the IDL declares
+    // are handlers at all.
+    const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
+    if (!handler.is_callable()) { return answer(false); }
+    // WHAT THE HANDLER RETURNS IS PART OF WHAT IT DID - HTML, "processing the
+    // return value". A handler that returns exactly `false` CANCELS the event,
+    // which is `<a onclick="return false">` and twenty years of code written
+    // against it; the window's `onerror` is the one inversion, where `true`
+    // means "I reported it" and cancels instead.
+    //
+    // EXACTLY `false`, not merely falsy. `return 0` and `return ""` do not
+    // cancel in any browser - the return type is `any` and the rule names the
+    // boolean, so truthiness is the wrong question to ask here.
+    value returned = value::undefined();
+    const auto process_return = [this, event, &returned](bool cancel_on_true) {
+        if (!returned.is_boolean() || returned.as_boolean() != cancel_on_true) { return; }
+        // "Cancel the event" is the DOM's set-the-canceled-flag, so it obeys
+        // the same two refusals `preventDefault` does: an uncancellable event
+        // cannot be cancelled and a passive listener may not try.
+        if (!context::truthy(cx_->lookup_property(event, "cancelable")) ||
+            flag_of(*cx_, event, passive_property)) {
+            return;
+        }
+        static_cast<script::object_object *>(event.as_heap())
+            ->set("defaultPrevented", value::boolean(true));
+    };
     // `window.onerror` IS THE ONE HANDLER THAT IS NOT HANDED ITS EVENT.
     //
     // HTML's OnErrorEventHandler takes (message, filename, lineno, colno,
@@ -640,14 +1105,26 @@ void dom_bindings::fire_handler_property(value target, std::string_view type, va
     // specification draws with the ErrorEvent type rather than the name.
     if (type == "error" &&
         target.bits() == object_of_step(*cx_, path_step{node_id{}, listen_on::window}).bits()) {
-        const value arguments[5] = {
-            cx_->lookup_property(event, "message"), cx_->lookup_property(event, "filename"),
-            cx_->lookup_property(event, "lineno"), cx_->lookup_property(event, "colno"),
-            cx_->lookup_property(event, "error")};
-        (void)cx_->call(handler, arguments, target);
-        return;
+        // AN ARRAY, because that is what the fence spreads. The five arguments
+        // are built into one so that the handler still runs behind the same
+        // `try` every listener does - `window.onerror` is exactly the handler a
+        // page is most likely to throw out of, and
+        // window-event-restored-after-throwing-onerror.html throws out of it on
+        // purpose.
+        const value arguments = cx_->make_array();
+        auto * items = static_cast<script::array_object *>(arguments.as_heap());
+        items->items.push_back(cx_->lookup_property(event, "message"));
+        items->items.push_back(cx_->lookup_property(event, "filename"));
+        items->items.push_back(cx_->lookup_property(event, "lineno"));
+        items->items.push_back(cx_->lookup_property(event, "colno"));
+        items->items.push_back(cx_->lookup_property(event, "error"));
+        const bool threw = invoke_listener(*cx_, handler, target, arguments, caught, returned);
+        process_return(/*cancel_on_true*/ true);
+        return answer(threw);
     }
-    (void)cx_->call(handler, std::span<const value>{&event, 1}, target);
+    const bool threw = invoke_listener(*cx_, handler, target, event, caught, returned);
+    process_return(/*cancel_on_true*/ false);
+    return answer(threw);
 }
 
 } // namespace ctbrowser::shell

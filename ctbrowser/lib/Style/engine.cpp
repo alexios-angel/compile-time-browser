@@ -234,15 +234,24 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     // elements, which would make `html ~ x` match across two documents.
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
     ancestor_filter ancestors;
-    enter_level(txn, txn.root(), 0);
+    // The top of the tree `root` is in. For a connected root that is the document
+    // element; for a DETACHED one - `box.innerHTML = ...; box.querySelector(s)` -
+    // it is the subtree's own top, which a walk from the document would never
+    // reach.
+    node_id top = root ? root : txn.root();
+    while (const node_id up = txn.parent(top)) { top = up; }
+    enter_level(txn, top, 0);
 
     // Returns false to unwind the whole walk, which is how first_only stops.
     const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
             // A non-element does not occupy a depth - see resolve_subtree, which has
-            // to agree with this or `+` would mean two different things.
+            // to agree with this or `+` would mean two different things. It can
+            // still BE the root - a ShadowRoot is a fragment - and its children
+            // are the descendants a subtree search collects.
+            const bool below = collect || node == root;
             for (const node_id child : txn.children(node)) {
-                if (!self(self, child, depth, collect)) { return false; }
+                if (!self(self, child, depth, below)) { return false; }
             }
             return true;
         }
@@ -290,7 +299,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     };
     // An empty root is the whole document, and the document's own root element is
     // one of the answers - there is no Document node above <html> in this tree.
-    (void)walk(walk, txn.root(), 0, !root);
+    (void)walk(walk, top, 0, !root);
     return found;
 }
 

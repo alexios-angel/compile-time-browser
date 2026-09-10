@@ -263,11 +263,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // THROUGH `cx.global`, NOT `window_`. The window a page can name is a PROXY
     // over `window_` - that is how the object and the globals stay one storage -
     // so handing back the raw object makes `frame.contentWindow.parent ===
-    // window` false, which is exactly the identity a page tests.
-    if (const value page_window = cx.global("window"); page_window.is_object()) {
-        frame_window->set("parent", page_window);
-        frame_window->set("top", page_window);
-    }
+    // window` false, which is exactly the identity a page tests. And NOT
+    // behind `is_object()`, which is kind-exact and false for a proxy: that
+    // guard was never taken, and `parent` was undefined.
+    const value page_window = cx.global("window");
+    frame_window->set("parent", page_window);
+    frame_window->set("top", page_window);
     frame_object->set("contentWindow", value::object(frame_window));
 
     frame_loads_.push_back(pending_frame{id, ok});

@@ -58,12 +58,13 @@ void browser::load_author_styles() {
 // replaced only when the TEXT differs, so the ordinary case - a script that
 // changed a class - pays the walk and nothing else.
 //
-// It goes through the DOM's own text and NOT through the CSSOM's serialisation,
-// deliberately. `dom_bindings::author_style_text()` would also carry a page's
-// `insertRule` edits, and it is a canonical re-serialisation: a rule this
-// front end cannot represent comes back changed, and `p::before` comes back as
-// `*`, which would apply a rule to every element on the page. Making an
-// `insertRule` reach the cascade needs that serialisation to be lossless first.
+// It goes through the DOM's own text and NOT through the CSSOM, and that is the
+// path a page which never touches the object model keeps taking, byte for byte.
+// The CSSOM's serialisation is a CANONICAL one - `author_style_text()` rebuilds
+// every rule from the compiled form rather than repeating the author's bytes -
+// so routing every page through it would re-spell every sheet in the corpus for
+// no gain. A page that HAS used the object model is the other case, and the
+// `set_author_styles_hook` installed by run_scripts is where it is answered.
 void browser::refresh_author_styles() {
     if (!author_sheet_loaded_) { return; }
     std::string css = collect_author_styles();

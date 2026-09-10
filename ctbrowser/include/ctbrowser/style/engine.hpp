@@ -1305,21 +1305,20 @@ public:
         const atom head_tag = atoms_->intern("head");
         const atom equiv = atoms_->intern("http-equiv");
         const atom content = atoms_->intern("content");
-        for (const node_id top : txn.children(txn.root())) {
-            if (txn.kind(top).value_or(node_kind::text) != node_kind::element) { continue; }
-            for (const node_id child : txn.children(top)) {
-                if (txn.tag(child).value_or(atom{}) != head_tag) { continue; }
-                for (const node_id meta : txn.children(child)) {
-                    if (!ascii_iequals(txn.attribute_value(meta, equiv), "content-language")) {
-                        continue;
-                    }
-                    const std::string_view value = txn.attribute_value(meta, content);
-                    if (value.find(',') != std::string_view::npos) { continue; }
-                    const std::string_view tag = first_word(value);
-                    // Each meta sets the pragma as it is processed, so a later one
-                    // replaces an earlier one - hence no early exit.
-                    if (!tag.empty()) { pragma_language_ = tag; }
+        // The root IS `<html>` - tree_builder::parse sets it as such - so `<head>`
+        // is one of its children, not a grandchild.
+        for (const node_id child : txn.children(txn.root())) {
+            if (txn.tag(child).value_or(atom{}) != head_tag) { continue; }
+            for (const node_id meta : txn.children(child)) {
+                if (!ascii_iequals(txn.attribute_value(meta, equiv), "content-language")) {
+                    continue;
                 }
+                const std::string_view value = txn.attribute_value(meta, content);
+                if (value.find(',') != std::string_view::npos) { continue; }
+                const std::string_view tag = first_word(value);
+                // Each meta sets the pragma as it is processed, so a later one
+                // replaces an earlier one - hence no early exit.
+                if (!tag.empty()) { pragma_language_ = tag; }
             }
         }
         return pragma_language_;

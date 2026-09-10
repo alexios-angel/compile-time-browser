@@ -7,6 +7,7 @@
 // in compiler_impl.hpp beside the directory; nothing about that header changed.
 
 #include "../compiler_impl.hpp"
+#include <algorithm>
 
 namespace ctbrowser::script::detail {
 
@@ -22,7 +23,9 @@ compiler_impl::loop_context * compiler_impl::loop_for(std::string_view label) {
     if (loops_.empty()) { return nullptr; }
     if (label.empty()) { return &loops_.back(); }
     for (std::size_t i = loops_.size(); i-- > 0;) {
-        if (loops_[i].label == label) { return &loops_[i]; }
+        if (std::ranges::find(loops_[i].labels, label) != loops_[i].labels.end()) {
+            return &loops_[i];
+        }
     }
     return nullptr;
 }
@@ -77,13 +80,13 @@ void compiler_impl::compile_labeled(const vp::node & n) {
     const bool owns_its_label = labelled == vp::nk::while_stmt || labelled == vp::nk::do_stmt ||
                                 labelled == vp::nk::for_stmt || labelled == vp::nk::forof_stmt ||
                                 labelled == vp::nk::switch_stmt || labelled == vp::nk::labeled;
+    pending_labels_.emplace_back(n.text);
     if (owns_its_label) {
-        pending_label_ = std::string{n.text};
         compile_stmt(n.a);
-        pending_label_.clear();
+        pending_labels_.clear();
         return;
     }
-    loops_.push_back(loop_context{std::string{n.text}, {}, {}, handler_depth_});
+    loops_.push_back(loop_context{take_labels(), {}, {}, handler_depth_});
     compile_stmt(n.a);
     patch_breaks(loops_.back());
     if (!loops_.back().continues.empty()) {
@@ -94,7 +97,7 @@ void compiler_impl::compile_labeled(const vp::node & n) {
 
 void compiler_impl::compile_while(const vp::node & n) {
     const std::size_t top = proto().code.size();
-    loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
+    loops_.push_back(loop_context{take_labels(), {}, {}, handler_depth_});
     const std::uint32_t mark = reg_mark();
     const std::uint16_t cond = alloc_reg();
     compile_expr(n.a, cond);
@@ -110,7 +113,7 @@ void compiler_impl::compile_while(const vp::node & n) {
 
 void compiler_impl::compile_do_while(const vp::node & n) {
     const std::size_t top = proto().code.size();
-    loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
+    loops_.push_back(loop_context{take_labels(), {}, {}, handler_depth_});
     compile_stmt(n.a);
     const std::size_t test = proto().code.size();
     patch_continues(loops_.back(), test);
@@ -127,7 +130,7 @@ void compiler_impl::compile_do_while(const vp::node & n) {
 
 void compiler_impl::compile_for(const vp::node & n) {
     push_scope();
-    const std::string label = take_label();
+    const std::vector<std::string> label = take_labels();
     const std::size_t init_mark = fn().scope_marks.back();
     if (n.a >= 0) { compile_stmt(n.a); }
     // THE PER-ITERATION BINDINGS. `for (let i = 0; ...)` gives every
@@ -197,7 +200,7 @@ void compiler_impl::compile_for(const vp::node & n) {
 
 void compiler_impl::compile_for_of(const vp::node & n) {
     push_scope();
-    const std::string label = take_label();
+    const std::vector<std::string> label = take_labels();
     const std::uint32_t mark = reg_mark();
 
     const std::uint16_t source = alloc_reg();
@@ -294,7 +297,7 @@ void compiler_impl::compile_switch(const vp::node & n) {
 
     // `break` inside a switch leaves the switch, so it needs a loop context
     // even though nothing here loops.
-    loops_.push_back(loop_context{take_label(), {}, {}, handler_depth_});
+    loops_.push_back(loop_context{take_labels(), {}, {}, handler_depth_});
     for (std::size_t i = 0; i < clauses.size(); ++i) {
         if (i == default_clause) {
             patch_here(to_default);
@@ -309,9 +312,9 @@ void compiler_impl::compile_switch(const vp::node & n) {
     pop_scope();
 }
 
-std::string compiler_impl::take_label() {
-    std::string out = std::move(pending_label_);
-    pending_label_.clear();
+std::vector<std::string> compiler_impl::take_labels() {
+    std::vector<std::string> out = std::move(pending_labels_);
+    pending_labels_.clear();
     return out;
 }
 

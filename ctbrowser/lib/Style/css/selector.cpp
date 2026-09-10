@@ -314,6 +314,11 @@ private:
     // because neither argument is a CSS VALUE: they are compared as text, and
     // `:lang("*-Latn")` has a wildcard in it that no ident may hold.
     //
+    // AN UNQUOTED WILDCARD IS SEVERAL TOKENS. `*` is a delim and no ident may
+    // contain one, so `:lang(*-CH)` arrives as delim `*` then ident `-CH` and
+    // `:lang(*)` as a delim alone. Selectors 4 §7.2 takes both spellings, so
+    // adjacent tokens - no whitespace between them - are one range.
+    //
     // A `:dir()` keyword this engine does not know is accepted and simply never
     // matches, which is what Selectors 4 §7.2 asks for; a malformed argument makes
     // the compound unmatchable rather than reporting a syntax error, on the same
@@ -321,26 +326,39 @@ private:
     [[nodiscard]] bool parse_text_arguments(std::span<const component_value> inner, bool single,
                                             std::vector<std::string> & out) const {
         bool want_argument = true;
+        bool spaced = false;
         for (const component_value & v : inner) {
             if (v.kind != cv_kind::token) { return false; }
             const css_token & t = token(v);
-            if (t.type == token_type::whitespace) { continue; }
+            if (t.type == token_type::whitespace) {
+                spaced = true;
+                continue;
+            }
             if (t.type == token_type::comma) {
                 if (single || want_argument) { return false; } // `:lang(,)`, `:lang(a,,b)`
                 want_argument = true;
+                spaced = false;
                 continue;
             }
-            if (!want_argument) { return false; } // two arguments with no comma
             std::string_view body = text(v);
+            const bool wildcard = !single && t.type == token_type::delim && body == "*";
             if (t.type == token_type::string) {
+                if (!want_argument) { return false; } // two arguments with no comma
                 if (body.size() < 2) { return false; }
                 body = body.substr(1, body.size() - 2);
-            } else if (t.type != token_type::ident) {
+            } else if (t.type != token_type::ident && !wildcard) {
                 return false;
             }
             if (body.empty()) { return false; }
-            out.push_back(ascii_lower_copy(body));
-            want_argument = false;
+            if (want_argument) {
+                out.push_back(ascii_lower_copy(body));
+                want_argument = false;
+            } else if (spaced) {
+                return false; // two arguments with no comma
+            } else {
+                out.back() += ascii_lower_copy(body);
+            }
+            spaced = false;
         }
         return !want_argument && !(single && out.size() != 1);
     }

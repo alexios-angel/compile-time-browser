@@ -1220,13 +1220,24 @@ private:
     // The JavaScript object for one step, which is what `currentTarget` reports
     // and what an `on<type>` handler property is looked up on.
     [[nodiscard]] value object_of_step(context & cx, path_step step);
+    // AND BACK AGAIN: which event target a value IS. `object_of_step` is the
+    // other direction and the two have to agree. It exists because
+    // EventTarget.prototype's three methods are INHERITED by every node
+    // wrapper - the interface chain ends at EventTarget - so `this` inside
+    // `addEventListener` is as often a node as it is a standalone target, and
+    // reading it as standalone gives an element a listener list no dispatch
+    // through the tree ever visits.
+    [[nodiscard]] path_step step_of(value self);
 
     [[nodiscard]] static bool prevented(value event);
 
     void fire_at(path_step step, std::string_view type, value event, bool capturing);
 
-    // `onclick`, `onload` - the handler PROPERTY, run after the listeners.
-    void fire_handler_property(value target, std::string_view type, value event);
+    // `onclick`, `onload` - the handler PROPERTY, run after the listeners. True
+    // when it threw, with the thrown value written through `thrown` if a caller
+    // asked for it; a caller that does not is one with nowhere to report to.
+    bool fire_handler_property(value target, std::string_view type, value event,
+                               value * thrown = nullptr);
     [[nodiscard]] value value_of_wrapper(node_id id) const;
 
     // --- lookups ----------------------------------------------------------
@@ -1506,6 +1517,75 @@ private:
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
 
+    // --- the listener fence ---
+    //
+    // THE FENCE EVERY LISTENER IS CALLED BEHIND, and it is a JavaScript
+    // function rather than a C++ try because the exception it has to stop is
+    // not a C++ one.
+    //
+    // `context::throw_error` unwinds to the innermost live `try` ANYWHERE
+    // below it on the stack - `handlers_` is one list for the whole VM - so a
+    // listener that threw did not stop at `dispatchEvent`: it landed in
+    // whatever `try` the page happened to be inside, which for the suite is
+    // testharness's own wrapper around `test(...)`. That is why
+    // Event-dispatch-throwing.html reported the LISTENER's error as the test's
+    // result, why the second of two listeners never ran, and why nothing was
+    // ever reported to `window.onerror`. The DOM says the opposite: "if this
+    // throws an exception, then report the exception" - the dispatch continues
+    // and the page is told through an `error` event.
+    //
+    // A `try` INSIDE the callee is the only thing the VM's unwinder stops at,
+    // so the fence is
+    //
+    //     function (invoke, callback, receiver, args) {
+    //         try { ...call it... } catch (e) { return [e]; }
+    //         return null;
+    //     }
+    //
+    // compiled once per page. It is also where WebIDL's "call a user object's
+    // operation" lives, because both halves of that algorithm can throw and
+    // both have to be INSIDE the fence: the `handleEvent` Get - which a page
+    // may make an accessor - and the TypeError for a listener object whose
+    // `handleEvent` is not callable.
+    value listener_fence_;
+    // The native the fence calls back into: `invoke(fn, receiver, args)`, where
+    // `args` is one value or an array of them. Kept because the window's
+    // `onerror` takes five positional arguments rather than the event.
+    value listener_invoke_;
+    // Build the native at install and the fence at the first dispatch - see
+    // compile_listener_fence for why not sooner. A compile failure leaves the
+    // fence undefined and the unfenced C++ path stands in.
+    void install_listener_fence(context & cx, script::native_object & keeper);
+    void compile_listener_fence(context & cx);
+    // The native that keeps both alive: the EventTarget constructor.
+    script::native_object * fence_keeper_ = nullptr;
+    // Call one listener - a function, or an object with a `handleEvent` - with
+    // `this` bound to `receiver`. True when it threw, with the thrown value in
+    // `thrown`; a VM fault that was never an exception reports false and leaves
+    // `context::failed()` set, as it always did. `returned` is what the callee
+    // returned when that was a BOOLEAN and undefined otherwise - the one part
+    // of a return value HTML's "processing the return value" reads, and the
+    // one part the fence can hand back without an allocation per call.
+    [[nodiscard]] bool invoke_listener(context & cx, value callback, value receiver, value args,
+                                       value & thrown, value & returned);
+
+    // --- event handler IDL attributes (HTML 8.1.7.2) -----------------------
+    //
+    // `el.onclick`, `document.onclick`, `window.onload`: an ACCESSOR on the
+    // interface prototype, null when unset, and the setter takes only an
+    // object - `el.onclick = ""` stores null, which is what
+    // Body-FrameSet-Event-Handlers.html spends a third of its assertions on.
+    void install_event_handler_attributes(context & cx);
+    // The handler currently registered for `name` on `self`, compiling the
+    // content attribute if that is where it still is.
+    [[nodiscard]] value event_handler_get(context & cx, value self, const std::string & name);
+    void event_handler_set(context & cx, value self, const std::string & name, value given);
+    // `onclick="doThing()"` as a function, compiled once and cached on the
+    // object it belongs to. Undefined when the attribute is absent or will not
+    // compile - HTML says a handler that fails to compile is null.
+    [[nodiscard]] value compile_handler_attribute(context & cx, value self,
+                                                  const std::string & name);
+
     // --- shadow DOM workstream ---
     //
     // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS, and that is why this is
@@ -1557,14 +1637,6 @@ private:
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
-    // `querySelectorAll` INSIDE A DETACHED SUBTREE, which `query()` cannot
-    // answer: `style::engine::select` walks from `txn.root()` and a shadow root
-    // is not reachable from there, and `element_matches` anchors its cursor at
-    // depth 0 on the document node - so for a detached chain it measures the
-    // wrong element. See the definition in bindings/element/shadow.cpp for what this
-    // costs and for the one-line change to `style::engine` that would retire it.
-    [[nodiscard]] std::vector<node_id> select_in_subtree(std::string_view selector, node_id root,
-                                                         bool first_only, bool * invalid = nullptr);
 };
 
 } // namespace ctbrowser::shell

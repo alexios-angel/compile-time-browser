@@ -876,8 +876,9 @@ CT_OPCODE(/* name */ delete_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind
 /* Emitted as `{op::own_keys, source, source}` (statements/loops.cpp's compile_for_of), so a
  * and b ALIAS - safe only because make_array() runs first (1229) and
  * reg(in.a) is written last (1246); an AOT backend must preserve that
- * order. Deviations: OWN keys only (no prototype walk), no proxy ownKeys
- * trap, and a proxy/native/string/closure operand yields an EMPTY array. GC
+ * order. Deviations: OWN keys only (no prototype walk), a proxy enumerates
+ * its TARGET (no ownKeys trap), and a native/string/closure operand yields an
+ * EMPTY array. GC
  * HAZARD FOR AN AOT BACKEND: `out` lives only in a C++ local across N
  * allocations and context::collect (vm/objects/gc.cpp) does not root C++
  * locals - inserting a real allocation-triggered safepoint here, as the
