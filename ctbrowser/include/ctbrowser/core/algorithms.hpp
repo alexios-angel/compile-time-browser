@@ -27,27 +27,15 @@ namespace ctbrowser {
     return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
 }
 
-// `boost::algorithm::to_lower` and friends, pinned to the classic locale - the
-// same discipline as ascii_iequals below, and the same trap: the default
-// overloads take std::locale(), the global one. Verified with the classic
-// locale they fold A-Z and leave bytes above 127 untouched.
-//
-// The single-character ascii_lower above is NOT these: it is constexpr and used
-// per character in scanners, where a function call into Boost would not be.
+// Whole strings, through the single-character folds above: A-Z only, bytes
+// above 127 untouched, no locale consulted.
 void ascii_lower_in_place(std::string & text) noexcept;
 [[nodiscard]] std::string ascii_lower_copy(std::string_view text);
 void ascii_upper_in_place(std::string & text) noexcept;
 
-// `boost::algorithm::iequals` implements it, but NOT its default overload -
-// that one takes `std::locale()`, the global locale, which is the host
-// dependence above. The definition passes `std::locale::classic()`, and having
-// one function here is what stops the next caller reaching for the convenient
-// overload by accident. Verified: with the classic locale it folds A-Z, leaves
-// bytes above 127 alone, and so never merges two different UTF-8 sequences.
-//
-// Defined in algorithms.cpp so no consumer of the engine has to parse
-// boost/algorithm/string/predicate.hpp - the rule core/cpu_time.hpp follows for
-// <windows.h>.
+// Equal after ascii_lower on both sides, and nothing else: NOT
+// `boost::algorithm::iequals`, whose default overload takes the global locale -
+// the host dependence above - and never merges two different UTF-8 sequences.
 [[nodiscard]] bool ascii_iequals(std::string_view a, std::string_view b) noexcept;
 
 // The prefix form. CSS FUNCTION NAMES ARE ASCII CASE-INSENSITIVE - Bootstrap
