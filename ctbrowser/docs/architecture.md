@@ -71,7 +71,7 @@ script --------- bindings ------------------------------ shell drives all of it
 | `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 333 |
 | `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `algorithm.hpp` 561, `box.hpp` 530 |
 | `paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.hpp`, `record.hpp` |
-| `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool | `backend/pipeline.hpp`, `draw.hpp`, `text/ttf.hpp` |
+| `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool | `backend/compositor.hpp`, `draw.hpp`, `text/ttf.hpp` |
 | `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `ctbrowser/lib/Script/compile/` (eleven files), `ctbrowser/lib/Script/vm/run_loop.cpp` 1694 |
 | `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 1539, `bindings.hpp` 685 |
 | `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `ctbrowser/lib/App/app/` (two files, from one of 1,034) |

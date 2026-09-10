@@ -42,8 +42,7 @@ target_sources(ctbrowser-raster
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/backend.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/software.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/renderer.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/compositor.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/pipeline.hpp")
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/compositor.hpp")
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)

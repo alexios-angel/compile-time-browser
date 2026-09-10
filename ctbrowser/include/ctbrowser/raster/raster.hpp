@@ -14,15 +14,12 @@
 //               fall back to software when there is no GPU and still use one
 //               interface everywhere
 //   compositor  draw() for a full frame, recomposite() for a scroll
-//   pipeline    the compositor THREAD - one thread owns the device, raster
-//               workers reach it over per-worker lock-free channels
 //   svg         vector graphics -> a bitmap AT THE SIZE ASKED FOR, through
 //               plutosvg; optional, and the only third-party rasteriser the
 //               engine calls that is not SDL
 
 #include <ctbrowser/raster/backend/backend.hpp>
 #include <ctbrowser/raster/backend/compositor.hpp>
-#include <ctbrowser/raster/backend/pipeline.hpp>
 #include <ctbrowser/raster/backend/renderer.hpp>
 #include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/draw.hpp>
