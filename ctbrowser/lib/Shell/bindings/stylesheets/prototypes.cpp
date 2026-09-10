@@ -41,6 +41,11 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                         }});
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
+        // `@@toStringTag`, which is what `Object.prototype.toString` - and so
+        // `rule.toString()` - reads: `[object CSSFontFaceRule]`, not
+        // `[object Object]`. The same key element/interfaces.cpp stamps on the
+        // element prototypes; Web IDL puts one on every interface prototype.
+        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
         internals->set(std::string{name} + ".prototype", value::object(proto));
         internals->set(std::string{name}, value::object(ctor));
         cx.define_global(name, value::object(ctor));
@@ -65,6 +70,18 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                 std::string{"set "} + name, std::move(write))),
                             script::attr_configurable);
     };
+    // `@@iterator` on every collection here. `for (const x of list)` already
+    // worked - context::iterable_values reads `length` and the indices - but
+    // `Symbol.iterator in CSSStyleDeclaration.prototype` is asked by name, and
+    // a page driving the iterator by hand needs a real one. Web IDL gives an
+    // indexed-getter interface exactly the Array iterator, so it IS that one,
+    // over the snapshot iterable_values already takes.
+    const auto iterable = [&](script::object_object * on) {
+        method(on, "@@iterator", [](context & c, std::span<value>) {
+            const value items = c.iterable_values(c.current_this());
+            return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);
+        });
+    };
 
     // --- MediaList
     //
@@ -74,6 +91,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // `rule.media.appendMedium('print')` change `rule.cssText` - the two are one
     // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto = interface("MediaList", nullptr, nullptr);
+    iterable(media_proto);
     method(media_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
     accessor(
@@ -151,11 +169,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
 
     // --- StyleSheetList
     script::object_object * list_proto = interface("StyleSheetList", nullptr, nullptr);
+    iterable(list_proto);
     method(list_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
 
     // --- CSSRuleList
     script::object_object * rules_proto = interface("CSSRuleList", nullptr, nullptr);
+    iterable(rules_proto);
     method(rules_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
 
@@ -850,6 +870,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // CSSStyleDeclaration has), so ~290 accessors on one shared prototype answer
     // every rule in the document and `instanceof` works.
     script::object_object * declaration_proto = interface("CSSStyleDeclaration", nullptr, nullptr);
+    iterable(declaration_proto);
     const auto property_accessor = [&](const std::string & idl, const std::string & css) {
         declaration_proto->define_accessor(
             idl,
