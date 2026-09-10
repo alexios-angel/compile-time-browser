@@ -413,6 +413,11 @@ void test_date() {
                   "return new Date(d.getTime()).toISOString() === d.toISOString();",
                   "true");
     expect_result("return new Date(1234567890123).getFullYear();", "2009");
+    // The two formatters, pinned byte-for-byte on a known instant, and a month
+    // past December rolling into the next year.
+    expect_result("return new Date(1234567890123).toISOString();", "2009-02-13T23:31:30.123Z");
+    expect_result("return new Date(1234567890123).toString();", "2009-02-13 23:31:30");
+    expect_result("return new Date(2024, 12, 1).toISOString();", "2025-01-01T00:00:00.000Z");
     expect_result("return Date.UTC(1970, 0, 2);", "86400000");
     expect_result("return new Date(0) instanceof Date;", "true");
     // valueOf, so a Date works in arithmetic - `end - start` is the reason it

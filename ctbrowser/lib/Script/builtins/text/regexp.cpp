@@ -8,6 +8,8 @@
 
 #include "../internal.hpp"
 
+#include <map>
+
 namespace ctbrowser::script::builtins_detail {
 
 // --- regular expressions ---------------------------------------------------

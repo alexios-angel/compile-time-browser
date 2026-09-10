@@ -6,6 +6,10 @@
 
 #include "internal.hpp"
 
+#include <chrono>
+#include <format>
+#include <numbers>
+
 namespace ctbrowser::script::builtins_detail {
 
 // Math
@@ -520,30 +524,15 @@ void install_date(context & cx) {
 
     object_object * date_proto = new_table(cx);
 
-    // Days since the epoch to y/m/d, by Howard Hinnant's civil_from_days - the
-    // standard branch-free algorithm, valid for any year a double can hold.
-    // Written out rather than reached for through <chrono>'s calendar types
-    // because those are C++20 library, and this file is the standard library
-    // for a different language.
-    const auto civil_from_days = [](long long z, int & y, unsigned & m, unsigned & d) {
-        z += 719468;
-        const long long era = (z >= 0 ? z : z - 146096) / 146097;
-        const auto doe = static_cast<unsigned long long>(z - era * 146097);
-        const unsigned long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-        const long long yr = static_cast<long long>(yoe) + era * 400;
-        const unsigned long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        const unsigned long long mp = (5 * doy + 2) / 153;
-        d = static_cast<unsigned>(doy - (153 * mp + 2) / 5 + 1);
-        m = static_cast<unsigned>(mp < 10 ? mp + 3 : mp - 9);
-        y = static_cast<int>(yr + (m <= 2 ? 1 : 0));
-    };
+    // Days since the epoch <-> y/m/d, through <chrono>'s proleptic Gregorian
+    // calendar. `m` and `d` may be OUT OF RANGE - `new Date(2024, 12, 1)` is
+    // 1 January 2025 - so the month is added as a duration and the day as
+    // days, both of which normalise, rather than building a year_month_day
+    // that would not be ok().
     const auto days_from_civil = [](int y, unsigned m, unsigned d) -> long long {
-        y -= m <= 2 ? 1 : 0;
-        const long long era = (y >= 0 ? y : y - 399) / 400;
-        const auto yoe = static_cast<unsigned long long>(y - era * 400);
-        const unsigned long long doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
-        const unsigned long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        return era * 146097 + static_cast<long long>(doe) - 719468;
+        using namespace std::chrono;
+        const year_month ym = year{y} / January + months{static_cast<int>(m) - 1};
+        return (sys_days{ym / 1} + days{static_cast<int>(d) - 1}).time_since_epoch().count();
     };
 
     // The instant this Date holds, in milliseconds. Kept as an ordinary
@@ -565,7 +554,7 @@ void install_date(context & cx) {
         int second;
         int weekday; // 0 = Sunday
     };
-    const auto split = [civil_from_days](double ms) {
+    const auto split = [](double ms) {
         fields out{};
         const auto total = static_cast<long long>(std::floor(ms));
         long long days = total / 86400000;
@@ -574,12 +563,15 @@ void install_date(context & cx) {
             rest += 86400000;
             --days;
         }
-        civil_from_days(days, out.year, out.month, out.day);
+        const std::chrono::sys_days day{std::chrono::days{static_cast<int>(days)}};
+        const std::chrono::year_month_day ymd{day};
+        out.year = static_cast<int>(ymd.year());
+        out.month = static_cast<unsigned>(ymd.month());
+        out.day = static_cast<unsigned>(ymd.day());
         out.hour = static_cast<int>(rest / 3600000);
         out.minute = static_cast<int>(rest / 60000 % 60);
         out.second = static_cast<int>(rest / 1000 % 60);
-        // 1970-01-01 was a Thursday, which is what anchors the cycle.
-        out.weekday = static_cast<int>(((days % 7) + 11) % 7);
+        out.weekday = static_cast<int>(std::chrono::weekday{day}.c_encoding());
         return out;
     };
     const auto field_method = [&](const char * name, int fields::* which) {
@@ -614,19 +606,15 @@ void install_date(context & cx) {
            [](context &, std::span<value>) { return value::number(0); });
     method(cx, date_proto, "toISOString", 0, [epoch_ms, split](context & c, std::span<value>) {
         const fields f = split(epoch_ms(c));
-        std::array<char, 40> out{};
-        const int written = std::snprintf(
-            out.data(), out.size(), "%04d-%02u-%02uT%02d:%02d:%02d.%03dZ", f.year, f.month, f.day,
-            f.hour, f.minute, f.second,
-            static_cast<int>(std::fmod(std::fmod(epoch_ms(c), 1000.0) + 1000.0, 1000.0)));
-        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
+        const auto millis =
+            static_cast<int>(std::fmod(std::fmod(epoch_ms(c), 1000.0) + 1000.0, 1000.0));
+        return c.string(std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", f.year, f.month,
+                                    f.day, f.hour, f.minute, f.second, millis));
     });
     method(cx, date_proto, "toString", 0, [epoch_ms, split](context & c, std::span<value>) {
         const fields f = split(epoch_ms(c));
-        std::array<char, 48> out{};
-        const int written = std::snprintf(out.data(), out.size(), "%04d-%02u-%02u %02d:%02d:%02d",
-                                          f.year, f.month, f.day, f.hour, f.minute, f.second);
-        return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
+        return c.string(std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", f.year, f.month, f.day,
+                                    f.hour, f.minute, f.second));
     });
 
     auto * ctor = cx.allocate<native_object>(

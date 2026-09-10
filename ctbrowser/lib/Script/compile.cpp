@@ -4,6 +4,8 @@
 #include "compile/compiler_impl.hpp"
 #include "compile/early_errors.hpp"
 
+#include <ctbrowser/script/source_lines.hpp>
+
 namespace ctbrowser::script {
 
 namespace {
@@ -13,18 +15,9 @@ namespace {
 // same kind of answer about the same source and there is no reason for them to
 // be spelled differently.
 [[nodiscard]] std::string position_in(std::string_view source, std::size_t offset) {
-    std::size_t line = 1;
-    std::size_t column = 1;
-    const std::size_t stopped = std::min(offset, source.size());
-    for (std::size_t i = 0; i < stopped; ++i) {
-        if (source[i] == '\n') {
-            ++line;
-            column = 1;
-        } else {
-            ++column;
-        }
-    }
-    return " - at " + std::to_string(line) + ":" + std::to_string(column);
+    const line_table lines{source};
+    const auto at = static_cast<std::uint32_t>(std::min(offset, source.size()));
+    return " - at " + std::to_string(lines.line_of(at)) + ":" + std::to_string(lines.column_of(at));
 }
 
 } // namespace

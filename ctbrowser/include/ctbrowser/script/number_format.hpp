@@ -2,44 +2,15 @@
 #include <string>
 #include <string_view>
 
-// NUMBERS AS JAVASCRIPT WRITES THEM, and reads them.
+// NUMBERS AS JAVASCRIPT WRITES THEM, and reads them - ECMA-262, not C. The
+// C conversions (`%g`, `std::to_string`, `strtod`) differ from the
+// specification on the exponential threshold, on tie rounding in `toFixed`,
+// and on the locale: they read `LC_NUMERIC`, and this repository byte-compares
+// rendered output across Linux and Windows. Built on the locale-independent
+// `std::to_chars`/`std::from_chars`, which both toolchains provide in full, so
+// Boost.Charconv would add a compiled dependency for nothing.
 //
-// Five functions, all of them ECMA-262 rather than C. The distinction is not
-// pedantic - before this file the engine used `std::to_string(double)`, `%.*f`,
-// `%.*e`, `%.*g` and `std::stod`, and every one of them is a different function
-// from the one the specification names:
-//
-//   * `std::to_string(double)` is `%f` to six decimals, so `String(1/3)` was
-//     "0.333333", `String(1e-7)` was "0" - as was every smaller number - and
-//     `String(1.7976931348623157e308)` was 309 literal digits. The specification
-//     asks for the SHORTEST digit string that reads back as the same double,
-//     which is a different thing from "enough digits" and cannot be reached by
-//     raising a precision.
-//   * `%g` switches to exponential on PRECISION; JavaScript switches on the
-//     decimal exponent, printing 1e20 as "100000000000000000000" and 1e-7 as
-//     "1e-7". C also writes at least two exponent digits where JavaScript writes
-//     the fewest that suffice - "1e+21", never "1e+021".
-//   * `toFixed` rounds a tie AWAY FROM ZERO; correctly-rounded conversion, which
-//     is what `std::to_chars` does, rounds a tie to even. They disagree on
-//     `(0.5).toFixed(0)`, `(8.5).toFixed(0)`, `(0.25).toFixed(1)` and every
-//     other value whose scaled form lands exactly halfway.
-//
-// AND ALL FIVE OF THE OLD ONES CONSULT THE LOCALE. `std::to_string`, `strtod`
-// and the printf conversions read `LC_NUMERIC` for the decimal separator, and
-// this repository byte-compares rendered output across Linux and the Windows
-// cross-build. `std::to_chars`/`std::from_chars` are the locale-independent
-// pair - which is the argument docs/build.md already makes for preferring
-// `from_chars` to `strtod`, applied to the other direction as well.
-//
-// NOT Boost.Charconv, and it was considered: every floating-point `to_chars`
-// overload including the format+precision forms is present in both toolchains
-// this repository builds with - libstdc++ since GCC 11, and llvm-mingw's libc++
-// exports all nine - so it would have cost a compiled dependency, a sixth
-// cross-build script and a Boost floor raise for nothing the standard library
-// does not already do.
-//
-// `unittests/js/number_format.cpp` pins every one of these against V8, and the
-// round-trip property against the engine itself.
+// `unittests/js/number_format.cpp` pins every one of these against V8.
 
 namespace ctbrowser::script {
 

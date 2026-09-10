@@ -85,7 +85,7 @@ void set_prototype_of(value of, value proto) {
             cx.throw_error("TypeError", "Property description must be an object");
             return false;
         }
-        const context::property_descriptor read = read_descriptor(cx, descriptor);
+        const context::property_descriptor read = cx.to_property_descriptor(descriptor);
         if (!valid_descriptor(cx, read)) { return false; }
         wanted.emplace_back(key, read);
     }
@@ -516,7 +516,7 @@ void install_object(context & cx) {
             c.throw_error("TypeError", "Property description must be an object");
             return value::undefined();
         }
-        const context::property_descriptor wanted = read_descriptor(c, a[2]);
+        const context::property_descriptor wanted = c.to_property_descriptor(a[2]);
         if (!valid_descriptor(c, wanted)) { return value::undefined(); }
         if (!c.define_own_property(a[0], key, wanted)) {
             c.throw_error("TypeError", "Cannot redefine property: " + key);
@@ -625,7 +625,7 @@ void install_object(context & cx) {
     //
     // A WELL-KNOWN symbol key is `@@iterator`, not `@@sym:N:...`, so it is not
     // reported here and IS reported by getOwnPropertyNames. That is
-    // value.hpp's `each_own_string_key` filter, which for-in, JSON.stringify
+    // value.hpp's `each_own_enumerable_key` filter, which for-in, JSON.stringify
     // and Object.keys all share; making this walk disagree with those four
     // would be worse than the gap.
     method(cx, object_ctor, "getOwnPropertySymbols", 1, [](context & c, std::span<value> a) {

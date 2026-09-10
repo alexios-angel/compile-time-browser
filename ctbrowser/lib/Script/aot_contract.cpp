@@ -1,23 +1,10 @@
-// THE RUNTIME COMPILES ITS OWN ABI, which until now nothing did.
-//
-// `ctbrowser/include/ctbrowser/aot/aot.hpp` expands aot_helpers.def into an
-// enum and sixty-eight `extern "C"` prototypes, and the ONLY file in the
-// repository that included it was `ctcompile/test/Inventories.cpp`. That is the
-// wrong way round twice over. The runtime owns the table - Principle 11 says so
-// - and the presets that most need the check are exactly the ones that never
-// ran it: `browser`, `browser-no-llvm`, `asan`, `tsan` and `windows` all
-// configure with `CTBROWSER_ENABLE_PROJECTS` empty, so ctcompile is not built
-// and neither the ABI nor `EngineContract.hpp` is parsed at all. Verified in
-// the asan build tree, which has no `ctcompile/` directory in it.
-//
-// So this translation unit exists to be COMPILED. It defines nothing and
-// declares nothing; every line in it is a `static_assert` about the contract,
-// and it is part of `ctbrowser-script`, so every configuration checks it.
-//
-// WHY NOT A NEW `lib/AOT/` SUBSYSTEM, which the master plan asks for: the tree
-// documents ten subsystems, each one directory, one aggregate header and one
-// CMake target, and an eleventh with no functions in it would break that for a
-// file of assertions. It gets its own directory when Phase 4 gives it bodies.
+// THE RUNTIME COMPILES ITS OWN ABI. `ctbrowser/include/ctbrowser/aot/aot.hpp`
+// expands aot_helpers.def into an enum and the `extern "C"` prototypes, and
+// the presets that most need the check - `browser`, `browser-no-llvm`, `asan`,
+// `tsan`, `windows` - build no ctcompile at all. So this translation unit
+// exists to be COMPILED: it defines nothing and declares nothing; every line
+// in it is a `static_assert` about the contract, and it is part of
+// `ctbrowser-script`, so every configuration checks it.
 #include <ctbrowser/aot/aot.hpp>
 
 #include <ctbrowser/script/bytecode.hpp>
@@ -80,9 +67,8 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
 #undef CT_AOT_HELPER
 
 // --- NOTHING COMES BACK IN MEMORY -----------------------------------------
-// Phase 2 rejected the plan's `struct ct_aot_result { uint64_t; kind; }` in
-// favour of a status in the return register and data through an out-pointer,
-// and nothing enforced it. A helper returning a struct by value would put a
+// A status in the return register and data through an out-pointer, never a
+// struct by value. A helper returning a struct by value would put a
 // hidden pointer in the first argument slot on every ABI this targets, which
 // silently shifts every other parameter - and the two backends would disagree
 // about where the frame handle is.
@@ -114,11 +100,5 @@ static_assert(script::value::from_bits(0ull).bits() == 0ull &&
                   script::value::from_bits(~0ull).bits() == ~0ull,
               "at both ends of the range, so a mask or a sign extension in "
               "either direction is caught too");
-// WHAT THIS DOES NOT COVER, said rather than left to be assumed: it pins
-// from_bits/bits(), which is the pair the ABI boundary uses. It cannot pin the
-// engine's own constructors - `value::undefined()` and its siblings are not
-// constexpr - so a change that made `number(1.0).bits()` disagree with the
-// NaN-boxing the table assumes would pass here. That belongs in a test rather
-// than an assertion, and the js/vm_*.cpp suites already exercise every constructor.
 
 } // namespace ctbrowser::aot

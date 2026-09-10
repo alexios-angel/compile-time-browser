@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <format>
+#include <fstream>
+#include <iterator>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -268,51 +272,47 @@ void type_recorder::step(std::size_t depth, const program * owner, const functio
     }
 }
 
-bool type_recorder::write(const std::string & path) const {
-    std::FILE * out = std::fopen(path.c_str(), "wb");
-    if (out == nullptr) { return false; }
+namespace {
+template <typename... Args>
+void put(std::string & text, std::format_string<Args...> fmt, Args &&... args) {
+    std::format_to(std::back_inserter(text), fmt, std::forward<Args>(args)...);
+}
+} // namespace
 
+bool type_recorder::write(const std::string & path) const {
     // Programs in source-hash order, so two runs that happen to load the same
     // scripts in a different order still produce byte-identical recordings.
     std::vector<std::size_t> order(programs_.size());
-    for (std::size_t i = 0; i < order.size(); ++i) { order[i] = i; }
-    std::sort(order.begin(), order.end(), [this](std::size_t a, std::size_t b) {
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::ranges::sort(order, [this](std::size_t a, std::size_t b) {
         return programs_[a].source_hash < programs_[b].source_hash;
     });
 
+    std::string text;
     // VERSION 2: version 1 plus the escape half - one `escape` header line,
     // an `alloc` line per static site and a `site` line per adjudicated one.
     // tools/check/type-oracle.py reads both versions and skips the new lines;
     // tools/check/escape-oracle.py reads only 2.
-    std::fprintf(out, "ctbrowser-type-recording 2\n");
-    std::fprintf(out, "opcodes %zu writers %zu\n", opcode_count, opcode_writer_count);
-    std::fprintf(out, "defs recorded %llu dropped %llu orphan-frames %llu\n",
-                 static_cast<unsigned long long>(recorded_),
-                 static_cast<unsigned long long>(dropped_),
-                 static_cast<unsigned long long>(orphans_));
+    put(text, "ctbrowser-type-recording 2\n");
+    put(text, "opcodes {} writers {}\n", opcode_count, opcode_writer_count);
+    put(text, "defs recorded {} dropped {} orphan-frames {}\n", recorded_, dropped_, orphans_);
     if (budget_ == 0) {
-        std::fprintf(out, "escape budget unlimited");
+        put(text, "escape budget unlimited");
     } else {
-        std::fprintf(out, "escape budget %llu", static_cast<unsigned long long>(budget_));
+        put(text, "escape budget {}", budget_);
     }
-    std::fprintf(out, " pops %llu unwinds %llu checks %llu unframed %llu unresolved %llu\n",
-                 static_cast<unsigned long long>(pops_), static_cast<unsigned long long>(unwinds_),
-                 static_cast<unsigned long long>(checks_),
-                 static_cast<unsigned long long>(unframed_),
-                 static_cast<unsigned long long>(unresolved_));
-    std::fprintf(out, "programs %zu\n", programs_.size());
+    put(text, " pops {} unwinds {} checks {} unframed {} unresolved {}\n", pops_, unwinds_, checks_,
+        unframed_, unresolved_);
+    put(text, "programs {}\n", programs_.size());
     const std::vector<std::vector<site_observation>> sites = all_sites();
     for (const std::size_t id : order) {
         const program_observation & prog = programs_[id];
-        std::fprintf(out, "program %016llx size %zu functions %zu label %s\n",
-                     static_cast<unsigned long long>(prog.source_hash), prog.source_size,
-                     prog.count, sanitised(prog.label).c_str());
+        put(text, "program {:016x} size {} functions {} label {}\n", prog.source_hash,
+            prog.source_size, prog.count, sanitised(prog.label));
         for (std::size_t i = 0; i < prog.count; ++i) {
             const function_observation & fn = functions_[prog.first + i];
-            std::fprintf(out, "fn %u entries %llu params %u frame %u name %s\n", fn.index,
-                         static_cast<unsigned long long>(fn.entries),
-                         static_cast<unsigned>(fn.param_count),
-                         static_cast<unsigned>(fn.frame_size), sanitised(fn.name).c_str());
+            put(text, "fn {} entries {} params {} frame {} name {}\n", fn.index, fn.entries,
+                fn.param_count, fn.frame_size, sanitised(fn.name));
             // ONLY THE OBSERVED REGISTERS get a line. `frame` above is the
             // denominator, so the ones missing here are exactly the ones
             // nothing reached - which is the number the checker must not
@@ -320,45 +320,39 @@ bool type_recorder::write(const std::string & path) const {
             for (std::size_t r = 0; r < fn.regs.size(); ++r) {
                 const register_observation & obs = fn.regs[r];
                 if (!obs.observed()) { continue; }
-                std::fprintf(out, "r %zu defs %llu kinds %08x num %08x\n", r,
-                             static_cast<unsigned long long>(obs.defs), obs.kinds, obs.numbers);
+                put(text, "r {} defs {} kinds {:08x} num {:08x}\n", r, obs.defs, obs.kinds,
+                    obs.numbers);
             }
             // EVERY STATIC SITE, then ONLY THE ADJUDICATED ONES - the same
             // denominator discipline for the escape half. A site that made
             // nothing has no `site` line.
             for (const static_site & a : fn.allocs) {
-                std::fprintf(out, "alloc %u kind %s\n", a.pc,
-                             std::string{site_kind_name(a.kind)}.c_str());
+                put(text, "alloc {} kind {}\n", a.pc, site_kind_name(a.kind));
             }
             for (const site_observation & s : sites[prog.first + i]) {
                 if (s.pc == prologue_pc) {
-                    std::fprintf(out, "site prologue");
+                    put(text, "site prologue");
                 } else {
-                    std::fprintf(out, "site %u", s.pc);
+                    put(text, "site {}", s.pc);
                 }
-                std::fprintf(out,
-                             " kind %s made %llu confined %llu escaped %llu unresolved %llu "
-                             "unchecked %llu routes",
-                             std::string{site_kind_name(s.kind)}.c_str(),
-                             static_cast<unsigned long long>(s.made),
-                             static_cast<unsigned long long>(s.confined),
-                             static_cast<unsigned long long>(s.escaped),
-                             static_cast<unsigned long long>(s.unresolved),
-                             static_cast<unsigned long long>(s.unchecked));
+                put(text,
+                    " kind {} made {} confined {} escaped {} unresolved {} unchecked {} routes",
+                    site_kind_name(s.kind), s.made, s.confined, s.escaped, s.unresolved,
+                    s.unchecked);
                 bool first = true;
                 for (std::size_t l = 0; l < root_label_count; ++l) {
                     if (s.routes[l] == 0) { continue; }
-                    std::fprintf(out, "%c%s:%llu", first ? ' ' : ',',
-                                 std::string{root_label_names[l]}.c_str(),
-                                 static_cast<unsigned long long>(s.routes[l]));
+                    put(text, "{}{}:{}", first ? ' ' : ',', root_label_names[l], s.routes[l]);
                     first = false;
                 }
-                std::fprintf(out, first ? " -\n" : "\n");
+                text += first ? " -\n" : "\n";
             }
         }
     }
-    const bool ok = std::fclose(out) == 0;
-    return ok;
+    std::ofstream out{path, std::ios::binary};
+    if (!out) { return false; }
+    out << text;
+    return static_cast<bool>(out);
 }
 
 // ===================== THE ESCAPE HALF - ctcompile Phase 55O ==================
