@@ -270,6 +270,33 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
             calc_result computed = answer.value;
+            // AN INFINITY OR A NaN IS CLAMPED AT COMPUTED-VALUE TIME. CSS Values 4
+            // §10.10: a math function's result is clamped to the property's
+            // range when the computed value is made, and an infinite one lands
+            // on whichever bound it overflowed. A NaN has no bound to land on and
+            // computes to zero - `width: calc(NaN * 1px)` is `0px` in every
+            // browser, and `calc-infinity-nan-computed` asserts it 63 times over
+            // lengths, times, numbers and percentages. Before this the fold wrote
+            // `calc(NaN * 1px)` back as text, layout could not read it, and the
+            // width was `auto`.
+            //
+            // THE BOUND IS 2^25, which is Chrome's LayoutUnit maximum and,
+            // just as much to the point, small enough that a used value's
+            // `x * 64` is still a finite float. The specification leaves the
+            // magnitude to the implementation; every engine picks one and the
+            // corpus only asks that it be at least a million. The SPECIFIED value
+            // keeps `calc(infinity * 1px)` - that is simplify_math's, not this.
+            //
+            // ponytail: one bound for every family and every property; the
+            // per-property range (opacity's [0, 1], a non-negative width) is
+            // the cascade's to apply after this.
+            constexpr double bound = 33554432.0;
+            const auto clamped = [](double v) {
+                if (std::isnan(v)) { return 0.0; }
+                return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
+            };
+            computed.px = clamped(computed.px);
+            computed.percent = clamped(computed.percent);
             // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
             // says which way: to the nearest integer, with a value exactly halfway
             // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not

@@ -47,9 +47,32 @@ void test_a_position_computes_to_percentages() {
     CHECK_EQ(horizontal("garbage"), std::string{});
 }
 
+// calc-infinity-nan-computed: at computed-value time a NaN is zero and an
+// infinity is the bound it overflowed. The specified value keeps its calc().
+void test_infinity_and_nan_are_clamped_when_computed() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::simplify_math;
+    const length_context ctx;
+    CHECK_EQ(fold_math("calc(NaN * 1px)", ctx, math_context::length).text, std::string{"0px"});
+    CHECK_EQ(fold_math("calc(NaN * 1%)", ctx, math_context::length).text, std::string{"0px"});
+    CHECK_EQ(fold_math("calc(infinity * 1px)", ctx, math_context::length).text,
+             std::string{"33554432px"});
+    CHECK_EQ(fold_math("calc(-infinity * 1%)", ctx, math_context::length).text,
+             std::string{"-33554432%"});
+    CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
+    CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
+    CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
+    // ...and only when computed: `el.style` reads the calc() back.
+    CHECK_EQ(simplify_math("calc(NaN * 1px)"), std::string{"calc(NaN * 1px)"});
+    CHECK_EQ(simplify_math("calc(1 / 0)"), std::string{"calc(infinity)"});
+}
+
 } // namespace
 
 int main() {
     test_a_position_computes_to_percentages();
+    test_infinity_and_nan_are_clamped_when_computed();
     REPORT("css_values_wpt");
 }
