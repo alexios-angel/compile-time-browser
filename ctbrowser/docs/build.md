@@ -401,10 +401,8 @@ whose parent directory is excluded.
 
 ## CPU AND THE PROFILER (2026-07-27)
 
-**`CTBROWSER_PROFILE=out.csv CTBROWSER_PROFILE_SECONDS=10 ./widgets.exe`** — a
-record per loop iteration (poll / tick / frame / present / asleep, layouts,
-whether it drew), a summary on stdout, and **CPU time against wall time**,
-because "it uses 65% of my CPU" is not the same question as frames per second.
+The in-app profiler (`CTBROWSER_PROFILE`, `CTBROWSER_PROFILE_SECONDS`) is gone
+(2026-09-10): `benchmarks/` measures every stage it reported.
 
 **`frame` is broken into styles / layout / record / raster since 2026-08-08.**
 It was one bucket for all four, so the profiler could say a frame was slow and

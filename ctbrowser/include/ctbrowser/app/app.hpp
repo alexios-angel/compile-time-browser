@@ -215,22 +215,6 @@ struct app_options {
     // the system-browser fallback, which is how ctbrowse silently swallowed
     // every external link it was given.
     std::function<bool(const std::string & url)> on_navigate;
-
-    // --- profiling ---------------------------------------------------------
-    //
-    // WHERE THE TIME GOES, per loop iteration, written as CSV and summarised
-    // on stdout. Guessing at this is how you end up optimising the wrong
-    // thing: an application that feels busy might be re-rasterising every
-    // frame, or re-laying-out on every mouse move, or simply never sleeping,
-    // and those have nothing to do with each other.
-    //
-    // Reports CPU time against wall time, because "it uses 65% of my CPU" is
-    // the complaint and frames-per-second is not the same question.
-    //
-    // `CTBROWSER_PROFILE=out.csv` and `CTBROWSER_PROFILE_SECONDS=n` set these
-    // from the environment, so any example can be profiled without a rebuild.
-    std::string profile_path;   // "" = off; "-" = summary only, no file
-    double profile_seconds = 0; // >0: stop after this long, like max_frames
 };
 
 // Environment overrides, applied by run_app before anything else:
@@ -251,8 +235,6 @@ struct app_options {
 //   CTBROWSER_DOC_ROOT     -> document_root, what a leading `/` in a
 //                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
-//   CTBROWSER_PROFILE      -> profile_path ("-" = summary only)
-//   CTBROWSER_PROFILE_SECONDS -> profile_seconds
 //
 // Carried over from the previous engine because it is what lets an example BE a ctest without
 // the example containing any test scaffolding.
@@ -283,10 +265,6 @@ inline void apply_environment(app_options & options) {
     // and this is a property of the corpus rather than of the driver.
     if (const char * root = std::getenv("CTBROWSER_DOC_ROOT")) { options.document_root = root; }
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
-    if (const char * profile = std::getenv("CTBROWSER_PROFILE")) { options.profile_path = profile; }
-    if (const char * seconds = std::getenv("CTBROWSER_PROFILE_SECONDS")) {
-        options.profile_seconds = std::atof(seconds);
-    }
     // A bounded run has to be reproducible, or comparing its screenshot is a
     // coin flip.
     if (options.max_frames > 0 && options.fixed_dt <= 0) { options.fixed_dt = 1.0 / 60.0; }
