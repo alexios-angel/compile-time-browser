@@ -234,6 +234,18 @@ bool context::assign_through_accessor(value target, const std::string & name, va
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
     }
+    // ...AND THE IMPLICIT Object.prototype the chain fell through to, which is
+    // where `o.__proto__ = p` and an object literal's `__proto__: p` land: both
+    // are a [[Set]] that B.2.2.1's setter turns into [[SetPrototypeOf]].
+    object_object * table = prototype(proto_kind::object);
+    if (table == nullptr) { return false; }
+    if (accessor_entry * entry = table->find_accessor(name)) {
+        if (entry->setter.is_callable()) {
+            const value args[1] = {v};
+            (void)call(entry->setter, args, target);
+        }
+        return true;
+    }
     return false;
 }
 

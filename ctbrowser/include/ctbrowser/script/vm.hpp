@@ -1290,6 +1290,11 @@ public:
     // every static accessor.
     void define_accessor(value target, const std::string & name, value getter, value setter);
 
+    // What the implicit Object.prototype answers for `name` on `receiver` - a
+    // data member or an accessor called with that receiver. The fallback every
+    // arm of lookup_property ends in; see the definition for why.
+    [[nodiscard]] value from_object_prototype(value receiver, const std::string & name);
+
     // `delete o.k` - the NAMED form. delete_index is the computed one and they
     // are separate opcodes because the key arrives differently: a name is a
     // constant-pool index here and a VALUE there, and converting a value key

@@ -407,3 +407,11 @@ ctbrowser_test(js/early_errors)
 # after the turn drains, and each one is exercised over an input that is still
 # pending when the combinator is called.
 ctbrowser_test(js/promise_combinators)
+# --- the object model's exotic corners --------------------------------------
+# `Object.prototype.__proto__` and the Proxy traps past get/set/has. Each case
+# is a WPT subtest that stood on the behaviour: a page asks a prototype
+# `x.__proto__.hasOwnProperty(...)`, and a DOMStringMap's `delete` and
+# `getOwnPropertyDescriptor` reach a handler through the traps. Its own file
+# for the reason property_attributes has one: every case is about the SHAPE of
+# a property rather than the value an expression computes.
+ctbrowser_test(js/object_model)

@@ -42,6 +42,19 @@ namespace {
     return false;
 }
 
+// [[SetPrototypeOf]] over the three tables that carry a link - shared by
+// Object.setPrototypeOf and the `__proto__` setter. A primitive receiver is a
+// no-op that succeeds.
+void set_prototype_of(value of, value proto) {
+    if (of.is_object()) {
+        static_cast<object_object *>(of.as_heap())->prototype = proto;
+    } else if (of.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
+    } else if (of.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(of.as_heap())->proto_link = proto;
+    }
+}
+
 // 7.3.7 ObjectDefineProperties, shared by `Object.defineProperties` and the
 // second argument of `Object.create` - which ignored it entirely, and which is
 // 304 of test262's 320 files in built-ins/Object/create.
@@ -411,6 +424,40 @@ void install_object(context & cx) {
     };
     method(cx, object_proto, "__lookupGetter__", 1, lookup_accessor(true));
     method(cx, object_proto, "__lookupSetter__", 1, lookup_accessor(false));
+    // B.2.2.1 `Object.prototype.__proto__` - an ACCESSOR whose getter is
+    // [[GetPrototypeOf]] and whose setter is [[SetPrototypeOf]], both over the
+    // same answers Object.getPrototypeOf and Object.setPrototypeOf give. It was
+    // absent, so `x.__proto__.hasOwnProperty(...)` - which is how a WPT page
+    // asks whether an interface prototype carries a property - read `undefined`
+    // and called it. Non-enumerable and configurable, as every Object.prototype
+    // member is.
+    object_proto->define_accessor(
+        "__proto__",
+        value::object(cx.allocate<native_object>(
+            "get __proto__",
+            [](context & c, std::span<value>) {
+                const value self = c.current_this();
+                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                    return value::undefined();
+                }
+                return prototype_of(c, self);
+            })),
+        value::object(cx.allocate<native_object>(
+            "set __proto__",
+            [](context & c, std::span<value> a) {
+                const value self = c.current_this();
+                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                    return value::undefined();
+                }
+                // B.2.2.1.2 steps 2-3: a non-object prototype and a primitive
+                // receiver are each a silent no-op, NOT the TypeError
+                // Object.setPrototypeOf raises - and an object literal's
+                // `__proto__: 5` relies on the first.
+                const value proto = arg_at(a, 0);
+                if (proto.is_object_like() || proto.is_null()) { set_prototype_of(self, proto); }
+                return value::undefined();
+            })),
+        attr_configurable);
     cx.set_prototype(context::proto_kind::object, object_proto);
 
     // `Object` IS CALLABLE. `Object(x)` coerces to an object and is what a
@@ -544,13 +591,7 @@ void install_object(context & cx) {
             c.throw_error("TypeError", "Object prototype may only be an Object or null");
             return value::undefined();
         }
-        if (of.is_object()) {
-            static_cast<object_object *>(of.as_heap())->prototype = proto;
-        } else if (of.is_kind(heap_kind::function)) {
-            static_cast<closure_object *>(of.as_heap())->proto_link = proto;
-        } else if (of.is_kind(heap_kind::native)) {
-            static_cast<native_object *>(of.as_heap())->proto_link = proto;
-        }
+        set_prototype_of(of, proto);
         return of;
     });
     // NAMES, so string keys only - Reflect.ownKeys is the one that reports
