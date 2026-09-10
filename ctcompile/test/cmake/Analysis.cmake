@@ -420,7 +420,21 @@ if(CTCOMPILE_ENABLE_MLIR)
   # checkSharedMap - the shared two- and three-method Map family and its refusals -
   # has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
   # reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
-  add_executable(ctcompile-test-owned-global-shared-map OwnedGlobalSharedMap.cpp)
+  add_executable(ctcompile-test-owned-global-shared-map
+    OwnedGlobalSharedMap/Main.cpp
+    OwnedGlobalSharedMap/SavedScalarReads.cpp
+    OwnedGlobalSharedMap/EntryNumericOwner.cpp
+    OwnedGlobalSharedMap/CapturedMapClearOwner.cpp
+    OwnedGlobalSharedMap/CapturedMapZeroSizeOwner.cpp
+    OwnedGlobalSharedMap/CapturedMapExactSizeOwner.cpp
+    OwnedGlobalSharedMap/CapturedMapDeleteSizeOwner.cpp
+    OwnedGlobalSharedMap/DefiniteMapAbsenceOwner.cpp
+    OwnedGlobalSharedMap/LeafReadbackOwner.cpp
+    OwnedGlobalSharedMap/LeafOwner.cpp
+    OwnedGlobalSharedMap/NestedOwner.cpp
+    OwnedGlobalSharedMap/ObjectKeyArguments.cpp
+    OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
+    OwnedGlobalSharedMap/SharedMap.cpp)
   target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-shared-map)
   add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)
