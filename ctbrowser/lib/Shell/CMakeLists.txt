@@ -36,6 +36,7 @@ target_sources(ctbrowser-shell
     bindings/document/as_node.cpp
     bindings/document/tree_ops.cpp
     bindings/document/collections.cpp
+    bindings/document/traversal.cpp
     # The element wrapper. element.cpp reached 5,442 lines and was split on
     # 2026-09-08 into a directory of twelve, one concern each, sharing
     # bindings/element/internal.hpp.

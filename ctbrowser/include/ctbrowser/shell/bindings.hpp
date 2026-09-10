@@ -1062,6 +1062,9 @@ private:
     // `install_document_as_node` in bindings/document/as_node.cpp - read it before
     // adding to any of these.
     void install_document_as_node(context & cx, script::object_object & doc);
+    // DOM 6: `createTreeWalker`, `createNodeIterator` and the `NodeFilter`
+    // constants - bindings/document/traversal.cpp.
+    void install_traversal(context & cx, script::object_object & doc);
 
     // Is this value the `document` object itself? By IDENTITY, because shape
     // cannot tell: the Document is the one node-like object with no handle

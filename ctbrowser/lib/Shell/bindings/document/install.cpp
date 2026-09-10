@@ -867,6 +867,7 @@ void dom_bindings::install_document(context & cx) {
     // that belongs in one place rather than spread over install_document.
     install_document_as_node(cx, *doc);
     install_tree_accessors(cx, *doc);
+    install_traversal(cx, *doc);
     document_target_ = value::object(doc);
     document_ = make_document_proxy(cx, document_target_);
     // NOT A GLOBAL WHEN THIS IS A DOCUMENT A PAGE MADE. There is one `document`

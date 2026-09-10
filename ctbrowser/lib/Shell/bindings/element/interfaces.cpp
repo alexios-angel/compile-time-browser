@@ -68,6 +68,10 @@ constexpr dom_interface interface_table[] = {
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
     {"DOMStringMap", "", ""},
+    // DOM 6's two walkers - not nodes, not constructible; made by
+    // bindings/document/traversal.cpp.
+    {"TreeWalker", "", ""},
+    {"NodeIterator", "", ""},
 
     // EVERY TAG THAT IS A PLAIN HTMLElement, listed rather than left to the
     // fallback, so that anything NOT here can be told apart from them: HTML
