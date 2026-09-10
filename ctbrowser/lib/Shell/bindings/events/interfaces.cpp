@@ -493,6 +493,156 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("isPrimary", value::boolean(dict_flag(c, init, "isPrimary")));
                  });
 
+    // --- Touch, TouchList and TouchEvent ----------------------------------
+    //
+    // NO TOUCH EVENT IS EVER DISPATCHED HERE, and the interface exists anyway,
+    // which is the same call every desktop browser makes: Chrome exposes
+    // `window.TouchEvent` on a machine with no touchscreen, so a library that
+    // treats the CONSTRUCTOR as a capability signal is already wrong everywhere
+    // and the ones that are right ask `'ontouchstart' in window` - a name
+    // dispatch.cpp's handler list deliberately does not define.
+    //
+    // What needs it is `passive`, which is DEFINED in terms of these.
+    // `default_passive_value` makes a `touchstart` or `touchmove` listener on
+    // the window passive unless the page said otherwise, and the file that
+    // proves that rule - non-cancelable-when-passive/synthetic-events-
+    // cancelable.html - CONSTRUCTS one event of each interface and asserts it
+    // cannot be cancelled. Four of its twelve assertions stopped at
+    // `assert_implements("TouchEvent" in self)`, so the rule they exist to
+    // check was never reached. A name the suite feature-detects is the gate in
+    // front of the behaviour, not decoration.
+    //
+    // A TouchList IS NOT AN ARRAY, and the difference is observable: the
+    // interface has `length` and `item()` and no `map` or `forEach`, and a page
+    // that indexes one writes `touches[0]`. Both spellings, then - indexed
+    // properties beside the method - which is the shape NamedNodeMap already
+    // has here.
+    auto * touch_list_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const value touch_list_prototype = value::object(touch_list_proto);
+    method_on(touch_list_proto, "item", [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_object()) { return value::null(); }
+        // OUT OF RANGE IS `null` AND NOT undefined - the getter is `Touch?`.
+        // The bounds are checked on the DOUBLE before the cast, because
+        // converting a NaN or a 1e300 to an integer type is undefined
+        // behaviour and an index is whatever the page passed.
+        const double at = a.empty() ? 0.0 : context::to_number(a[0]);
+        if (!(at >= 0.0) || at >= 4294967296.0) { return value::null(); }
+        const value * held = static_cast<script::object_object *>(self.as_heap())
+                                 ->find(std::to_string(static_cast<std::uint32_t>(at)));
+        return held == nullptr ? value::null() : *held;
+    });
+    // NOT CONSTRUCTIBLE: a TouchList has no constructor in the IDL, and saying
+    // so is better than handing back an empty object that is not one.
+    {
+        auto * list_ctor =
+            cx.allocate<script::native_object>("TouchList", [](context & c, std::span<value>) {
+                c.throw_error("TypeError",
+                              "Illegal constructor: TouchList cannot be constructed by a page");
+                return value::undefined();
+            });
+        list_ctor->retained.push_back(touch_list_prototype);
+        list_ctor->define("prototype", touch_list_prototype, script::attr_none);
+        touch_list_proto->define("constructor", value::object(list_ctor), script::attr_builtin);
+        cx.define_global("TouchList", value::object(list_ctor));
+    }
+
+    // `new Touch({identifier: 0, target: el})` - and BOTH of those members are
+    // REQUIRED by TouchInit, which is the one place this interface has a rule
+    // rather than a list of numbers. WebIDL raises a TypeError for a missing
+    // required member, so a Touch with no target is refused rather than made
+    // with a null one.
+    auto * touch_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const value touch_prototype = value::object(touch_proto);
+    {
+        auto * touch_ctor = cx.allocate<script::native_object>(
+            "Touch", [touch_prototype](context & c, std::span<value> args) -> value {
+                const value self = c.current_this();
+                if (!self.is_object()) {
+                    c.throw_error("TypeError",
+                                  "Failed to construct 'Touch': please use the 'new' operator.");
+                    return value::undefined();
+                }
+                const value init = arg(args, 0);
+                if (!init.is_object_like()) {
+                    c.throw_error("TypeError", "Failed to construct 'Touch': parameter 1 is not of "
+                                               "type 'TouchInit'.");
+                    return value::undefined();
+                }
+                for (const char * required : {"identifier", "target"}) {
+                    if (!dict_member(c, init, required).is_undefined()) { continue; }
+                    c.throw_error("TypeError",
+                                  std::string{"Failed to construct 'Touch': required member "} +
+                                      required + " is undefined.");
+                    return value::undefined();
+                }
+                auto * touch = static_cast<script::object_object *>(self.as_heap());
+                if (!touch->prototype.is_object()) { touch->prototype = touch_prototype; }
+                touch->set("identifier", value::number(dict_number(c, init, "identifier")));
+                touch->set("target", dict_member(c, init, "target"));
+                for (const char * name :
+                     {"screenX", "screenY", "clientX", "clientY", "pageX", "pageY", "radiusX",
+                      "radiusY", "rotationAngle", "force", "altitudeAngle", "azimuthAngle"}) {
+                    touch->set(name, value::number(dict_number(c, init, name)));
+                }
+                // The one member with a default that is not zero.
+                touch->set("touchType", c.string(dict_member(c, init, "touchType").is_undefined()
+                                                     ? std::string{"direct"}
+                                                     : dict_string(c, init, "touchType")));
+                return self;
+            });
+        touch_ctor->retained.push_back(touch_prototype);
+        touch_ctor->define("prototype", touch_prototype, script::attr_none);
+        touch_proto->define("constructor", value::object(touch_ctor), script::attr_builtin);
+        cx.define_global("Touch", value::object(touch_ctor));
+    }
+
+    // `sequence<Touch>` to TouchList. Read as an ARRAY-LIKE rather than copied
+    // out of an array, because that is what WebIDL's sequence conversion does
+    // and because a page may hand over anything carrying a `length`.
+    const auto touch_list_from = [touch_list_prototype](context & c, value sequence) {
+        const value made = c.make_object();
+        // ROOTED ACROSS THE READS BELOW. Every `lookup_property` here can run a
+        // page's own getter and every one of those can allocate, and a list
+        // held only in a C++ local is not somewhere the collector looks.
+        const context::rooted keep{c, made};
+        auto * list = static_cast<script::object_object *>(made.as_heap());
+        list->prototype = touch_list_prototype;
+        const double length =
+            sequence.is_object_like()
+                ? context::to_number(c.lookup_property(sequence, std::string{"length"}))
+                : 0.0;
+        const std::uint32_t count = (std::isnan(length) || length <= 0.0) ? 0u
+                                    : length >= 4294967295.0 ? 4294967295u
+                                                             : static_cast<std::uint32_t>(length);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            // `lookup_index` AND NOT `lookup_property`, because the commonest
+            // sequence a page passes is an ARRAY LITERAL and an array's
+            // elements are not in its property table - `lookup_property(arr,
+            // "0")` reads undefined for every one of them. The two entry points
+            // are not interchangeable and this is the case that shows it.
+            list->set(std::to_string(i), c.lookup_index(sequence, value::number(i)));
+        }
+        // READ-ONLY AND NOT ENUMERABLE, like every interface's own attribute:
+        // `for (var k in touches)` yields the indices and not `length`.
+        list->define("length", value::number(count), script::attr_builtin);
+        return made;
+    };
+    interface_of("TouchEvent", ui_prototype,
+                 [ui_members, modifier_members,
+                  touch_list_from](context & c, script::object_object & e, value init) {
+                     ui_members(c, e, init);
+                     // TouchEventInit inherits EventModifierInit, so the four
+                     // booleans are the same four every modifier-carrying event
+                     // has - TouchEvent redeclares them rather than inheriting
+                     // them from an interface, which is why they are written
+                     // here and not reached through MouseEvent.
+                     modifier_members(c, e, init);
+                     for (const char * name : {"touches", "targetTouches", "changedTouches"}) {
+                         e.set(name, touch_list_from(c, dict_member(c, init, name)));
+                     }
+                 });
+
     const value keyboard_prototype = interface_of(
         "KeyboardEvent", ui_prototype,
         [ui_members, modifier_members](context & c, script::object_object & e, value init) {
@@ -537,6 +687,36 @@ void dom_bindings::install_event_interfaces(context & cx) {
                                        : c.string(dict_string(c, init, "data")));
                      e.set("isComposing", value::boolean(dict_flag(c, init, "isComposing")));
                      e.set("inputType", c.string(dict_string(c, init, "inputType")));
+                 });
+
+    // --- AnimationEvent and TransitionEvent -------------------------------
+    //
+    // THE INTERFACE HAS TO EXIST EVEN WHERE THE EVENT DOES NOT FIRE, and that
+    // is not a contradiction. `new AnimationEvent("webkitAnimationEnd")` is how
+    // a page - and each of the four `webkit-*-event.html` files - SYNTHESISES
+    // one to check that the prefixed and unprefixed handlers are separate
+    // listeners for separate types, which is a question about dispatch and not
+    // about whether this engine runs CSS animations. Without the constructor
+    // that check cannot be written, let alone answered. Be plain: the engine
+    // runs no animations, so nothing here ever FIRES one.
+    //
+    // FROM `Event` AND NOT FROM `UIEvent`, which is what CSS Animations and CSS
+    // Transitions say: they carry no `view` and no `detail` because nothing
+    // about them came from a user interface. `elapsedTime` is a double and
+    // `animationName`, `propertyName` and `pseudoElement` are DOMStrings
+    // defaulting to "" - the same dictionary shape for both, with one member
+    // named differently, which is why they are written out rather than shared.
+    interface_of("AnimationEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("animationName", c.string(dict_string(c, init, "animationName")));
+                     e.set("elapsedTime", value::number(dict_number(c, init, "elapsedTime")));
+                     e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
+                 });
+    interface_of("TransitionEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("propertyName", c.string(dict_string(c, init, "propertyName")));
+                     e.set("elapsedTime", value::number(dict_number(c, init, "elapsedTime")));
+                     e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
                  });
 
     // `ErrorEvent`, which is what an uncaught exception is reported as. It is
