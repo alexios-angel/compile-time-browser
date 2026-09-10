@@ -332,14 +332,42 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return px_text(len.resolve(0.0f, at.font_size));
     };
 
-    const auto value_of = [at, declared,
+    const auto value_of = [this, at, id, atoms, declared,
                            computed_length](std::string_view property) -> std::string {
         // 0. A CUSTOM PROPERTY IS NOT A KEYWORD. Its value is an arbitrary token
         //    sequence whose case is significant and whose computed value is the
         //    substituted text, so it is handed back as written rather than folded
         //    the way `display: BLOCK` is.
         if (property.starts_with("--")) {
-            return std::string{trim(declared(property), html_whitespace)};
+            std::string text{trim(declared(property), html_whitespace)};
+            // ...WITH ITS SUBSTITUTIONS PERFORMED. The cascade keeps a custom
+            //    property as written so a later `var()` can read it lazily, but
+            //    its COMPUTED value has every `var()` and `attr()` replaced
+            //    (CSS Variables 1 §2.2, CSS Values 5 §attr), and that is what a
+            //    page reading `--x: attr(data-foo px) 11px` back is owed:
+            //    `10px 11px`. The same lookups the cascade used, asked of this
+            //    element - its own custom properties, inherited ones included,
+            //    and its attributes.
+            if (style::css::may_have_var(text)) {
+                const style::css::custom_lookup custom =
+                    [&](atom name) -> std::optional<std::string_view> {
+                    const std::string_view held = declared(atoms->text(name));
+                    if (held.empty() || held == style::guaranteed_invalid) { return std::nullopt; }
+                    return held;
+                };
+                const style::css::attribute_lookup attributes =
+                    [&](std::string_view name) -> std::optional<std::string> {
+                    const auto txn = doc_->read();
+                    const atom key = atoms->intern(name);
+                    if (!txn.has_attribute(id, key)) { return std::nullopt; }
+                    return std::string{txn.attribute_value(id, key)};
+                };
+                if (std::optional<std::string> done =
+                        style::css::substitute_var(text, custom, *atoms, attributes)) {
+                    text = std::move(*done);
+                }
+            }
+            return text;
         }
         // 1. USED SIZES, from the fragment - and WHICH BOX depends on box-sizing.
         //

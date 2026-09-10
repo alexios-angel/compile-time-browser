@@ -820,6 +820,15 @@ public:
             }
             return std::nullopt;
         };
+        // ...AND THE ELEMENT'S ATTRIBUTES, for `attr()`. Absent and empty are
+        // different answers here too: `attr(data-x)` on an element without the
+        // attribute takes its fallback, and one with `data-x=""` is `""`.
+        const css::attribute_lookup attributes =
+            [&txn, node, this](std::string_view name) -> std::optional<std::string> {
+            const atom key = atoms_->intern(name);
+            if (!txn.has_attribute(node, key)) { return std::nullopt; }
+            return std::string{txn.attribute_value(node, key)};
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -861,7 +870,7 @@ public:
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_);
+                        css::substitute_var(value, lookup, *atoms_, attributes);
                     if (!done) { return; }
                     value = *done;
                 }
@@ -929,7 +938,8 @@ public:
             };
             const bool had_var = css::may_have_var(value);
             if (had_var) {
-                const std::optional<std::string> done = css::substitute_var(value, lookup, *atoms_);
+                const std::optional<std::string> done =
+                    css::substitute_var(value, lookup, *atoms_, attributes);
                 // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
                 // property lets the inherited value through and otherwise means absent.
                 // NOT "drop it and let an earlier declaration win" - that is the classic

@@ -217,6 +217,70 @@ void test_the_tree_counting_functions() {
     }
 }
 
+// attr-all-types, attr-argument-grammar, attr-length-specified: attr() is a
+// substitution like var(), judged by the type it asks for.
+void test_attr_substitution() {
+    using ctbrowser::style::css::attribute_lookup;
+    using ctbrowser::style::css::custom_lookup;
+    using ctbrowser::style::css::substitute_var;
+    atom_table atoms;
+    const custom_lookup none = [](atom) -> std::optional<std::string_view> { return std::nullopt; };
+    const attribute_lookup attrs = [](std::string_view name) -> std::optional<std::string> {
+        if (name == "data-foo") { return "10"; }
+        if (name == "data-str") { return "ab\"c"; }
+        if (name == "data-len") { return "3EM"; }
+        if (name == "data-calc") { return "calc(1px + 3px)"; }
+        if (name == "data-empty") { return ""; }
+        return std::nullopt;
+    };
+    const auto sub = [&](std::string_view value) {
+        return substitute_var(value, none, atoms, attrs).value_or("<invalid>");
+    };
+    // No type: a string, whatever the text says.
+    CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
+    CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});
+    CHECK_EQ(sub("attr(data-empty)"), std::string{"\"\""});
+    CHECK_EQ(sub("attr(missing)"), std::string{"\"\""});
+    CHECK_EQ(sub("attr(missing, serif)"), std::string{"serif"});
+    CHECK_EQ(sub("attr(missing raw-string)"), std::string{"<invalid>"});
+    // A unit: a bare number gains it.
+    CHECK_EQ(sub("attr(data-foo px)"), std::string{"10px"});
+    CHECK_EQ(sub("attr(data-foo %)"), std::string{"10%"});
+    CHECK_EQ(sub("attr(data-foo number)"), std::string{"10"});
+    CHECK_EQ(sub("calc(attr(data-foo px) + 1px)"), std::string{"calc(10px + 1px)"});
+    CHECK_EQ(sub("attr(data-calc px)"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-foo xx, 3px)"), std::string{"3px"});
+    // A syntax: the text must parse as the type.
+    CHECK_EQ(sub("attr(data-foo type(<number>))"), std::string{"10"});
+    CHECK_EQ(sub("attr(data-foo type(<length>), 3px)"), std::string{"3px"});
+    CHECK_EQ(sub("attr(data-foo type(<length>))"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-len type(<length>))"), std::string{"3em"});
+    CHECK_EQ(sub("attr(data-calc type(<length>))"), std::string{"calc(1px + 3px)"});
+    CHECK_EQ(sub("attr(data-foo type(<number> | lighter | bold))"), std::string{"10"});
+    CHECK_EQ(sub("attr(data-str type(<string>), x)"), std::string{"x"});
+    CHECK_EQ(sub("attr(data-foo type(*)) 11"), std::string{"10 11"});
+    // Malformed argument lists are syntax errors whatever the attribute holds.
+    CHECK_EQ(sub("attr(data-foo type(< number>))"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-foo type(<url>))"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-foo type(<number>) !)"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(!)"), std::string{"<invalid>"});
+    // ...and a var() whose name is followed by anything but a comma is too.
+    CHECK_EQ(sub("var(--foo type(*))"), std::string{"<invalid>"});
+    {
+        fixture f;
+        f.load("<p id=a data-foo=\"10\" data-name=\"anim\"></p>",
+               "p { --x: data-foo type(<number>); font-weight: attr(var(--x));"
+               "    content: attr(data-name); width: calc(attr(data-foo px) + 1px);"
+               "    animation-name: attr(data-name type(<custom-ident>));"
+               "    opacity: 0.5; opacity: attr(data-name type(<number>)) }");
+        expect_value(f, f.find_id("a"), "font-weight", "10", "attr(var())");
+        expect_value(f, f.find_id("a"), "content", "\"anim\"", "the string form");
+        expect_value(f, f.find_id("a"), "width", "11px", "a unit inside a calc");
+        expect_value(f, f.find_id("a"), "animation-name", "anim", "a custom ident");
+        expect_value(f, f.find_id("a"), "opacity", "", "no match, no fallback: unset");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -227,5 +291,6 @@ int main() {
     test_the_range_of_a_property_is_applied_when_computed();
     test_typed_arithmetic();
     test_the_tree_counting_functions();
+    test_attr_substitution();
     REPORT("css_values_wpt");
 }
