@@ -74,10 +74,37 @@ void test_nonce_is_a_slot_in_front_of_the_attribute() {
        "c");
 }
 
+// --- HTMLHyperlinkElementUtils ----------------------------------------------
+
+void test_an_anchor_reports_the_parts_of_its_url() {
+    // reflection.js's resolveUrl: `protocol + "//" + host + pathname + search
+    // + hash` read off an <a>, which every URL-typed reflection subtest
+    // compares against `el.href`. The two have to agree.
+    is("(function () { var a = document.createElement('a');"
+       " a.href = 'HTTP://Site.Example:8080/p/q?x=1#frag';"
+       " return [a.protocol, a.host, a.hostname, a.port, a.pathname, a.search, a.hash,"
+       " a.origin].join('|'); })()",
+       "http:|site.example:8080|site.example|8080|/p/q|?x=1|#frag|http://site.example:8080");
+    is("(function () { var a = document.createElement('a');"
+       " a.href = 'http://site.example/'; "
+       " return a.protocol + '//' + a.host + a.pathname + a.search + a.hash === a.href; })()",
+       "true");
+    // No href: protocol is ":" and everything else is "".
+    is("(function () { var a = document.createElement('a');"
+       " return a.protocol + '|' + a.host + '|' + a.pathname + '|' + a.hash; })()",
+       ":|||");
+    // A part written rewrites the href, and an <area> has the same surface.
+    is("(function () { var a = document.createElement('area');"
+       " a.href = 'http://site.example/a?q'; a.hash = 'h'; a.pathname = 'b'; a.search = '';"
+       " return a.href; })()",
+       "http://site.example/b#h");
+}
+
 } // namespace
 
 int main() {
     test_legacy_null_to_empty_string_rows_write_nothing_for_null();
     test_nonce_is_a_slot_in_front_of_the_attribute();
+    test_an_anchor_reports_the_parts_of_its_url();
     REPORT("html_dom_wpt");
 }
