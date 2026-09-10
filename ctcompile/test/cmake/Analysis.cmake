@@ -53,7 +53,15 @@ endif()
 #
 # Behind the MLIR guard, like every other target that names a dialect.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-type-inference TypeInference.cpp)
+  add_executable(ctcompile-test-type-inference
+    TypeInference/Main.cpp
+    TypeInference/Helpers.cpp
+    TypeInference/IdentityFields.cpp
+    TypeInference/MapPresence.cpp
+    TypeInference/MapDeletePresence.cpp
+    TypeInference/FieldEffects.cpp
+    TypeInference/ComparisonIdentity.cpp
+    TypeInference/ScalarGlobals.cpp)
   target_link_libraries(ctcompile-test-type-inference
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)

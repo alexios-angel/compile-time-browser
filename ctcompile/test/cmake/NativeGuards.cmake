@@ -172,7 +172,10 @@ endif()
 # Source invocation recovery is structural only until native admission and
 # emission consume both completions. Keep its original checks available for rollback.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-exception-recovery ExceptionRecovery.cpp)
+  add_executable(ctcompile-test-exception-recovery
+    ExceptionRecovery/Main.cpp
+    ExceptionRecovery/Completion.cpp
+    ExceptionRecovery/Guards.cpp)
   target_link_libraries(ctcompile-test-exception-recovery
     PRIVATE ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import)
   ctcompile_target(ctcompile-test-exception-recovery)
