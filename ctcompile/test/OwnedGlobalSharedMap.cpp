@@ -2345,6 +2345,168 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     check(joinRows == 22, "all independent exact-join owner controls ran");
     rows = deletionRows;
 
+    const std::string absentDelete =
+        "    %absentDelete = ctjs.call %eraser(%state, %three) {mutation}\n";
+    const std::string inserted =
+        "    %inserted = ctjs.call %setter(%state, %three, %value) {mutation}\n";
+    const std::string overwrite =
+        "    %overwrite = ctjs.call %setter(%state, %anotherOne, %value)\n";
+    const std::string common =
+        clear + seed +
+        branch("      %leftSet = ctjs.call %setter(%state, %two, %value)\n",
+               "      %rightSet = ctjs.call %setter(%state, %three, %value)\n");
+    for (const char * flag : {"true", "false"}) {
+        const auto choice = [&](const std::string & text) {
+            return replaced(text, "#ctjs.boolean<true>",
+                            std::string("#ctjs.boolean<") + flag + ">");
+        };
+        variant(choice(program(joinBody + inserted + size, "%two")), true,
+                "a definitely absent insertion increases either joined cardinality to two");
+        variant(choice(program(joinBody + absentDelete + size, "%one")), true,
+                "deleting a definitely absent key preserves either joined cardinality");
+        variant(choice(program(common + overwrite + size, "%two")), true,
+                "overwriting a common present key preserves the independently joined size");
+        variant(choice(program(common + erase + size, "%one")), true,
+                "deleting a common present key decrements the independently joined size");
+    }
+    variant(program(joinBody + inserted + absentDelete + size, "%one"), true,
+            "inserting then deleting a new key restores the joined cardinality");
+    variant(program(joinBody + absentDelete +
+                        replaced(absentDelete, "%absentDelete", "%againAbsent") + size,
+                    "%one"),
+            true, "repeated known-absent deletion never decrements the joined cardinality");
+    variant(program(joinBody + inserted + replaced(inserted, "%inserted", "%overwritten") + size,
+                    "%two"),
+            true, "a proved overwrite of the new common member cannot count as another insertion");
+    variant(program(joinBody + size + inserted, "%one"), true,
+            "a saved pre-insertion joined size retains its original one");
+    variant(program(joinBody + inserted + size + absentDelete, "%two"), true,
+            "a saved post-insertion size retains two through a later known deletion");
+    variant(program(joinBody + size + inserted, "%two"), false,
+            "later insertion cannot retroactively increase a saved joined scalar");
+    variant(program(joinBody + inserted + size + absentDelete, "%one"), false,
+            "later deletion cannot retroactively decrease a saved joined scalar");
+    variant(program(joinBody + replaced(inserted, "%three", "%one") + size, "%two"), false,
+            "a possibly present insertion cannot choose the increasing branch effect");
+    variant(program(joinBody + replaced(absentDelete, "%three", "%one") + size), false,
+            "a possibly present deletion cannot choose the decreasing branch effect");
+    variant(program(common + replaced(erase, "%one", "%entryKey") + size, "%two"), true,
+            "a String formal is independently disjoint from every numeric candidate");
+    variant(program(clear +
+                        branch(replaced(seed, "%one", "%entryKey"),
+                               replaced(extra, "%two", "%aliasKey")) +
+                        replaced(inserted, "%three", "%entryKey") + size,
+                    "%one"),
+            false, "unrelated same-category formals cannot prove a joined overwrite");
+    const std::string fluent =
+        "    %aliasSetter = ctjs.get_property %seeded[%setKey]\n"
+        "    %inserted = ctjs.call %aliasSetter(%seeded, %three, %value) {mutation}\n";
+    variant(program(joinBody + fluent + size, "%two"), true,
+            "the actual fluent Map alias receives the independently proved insertion effect");
+    variant(
+        program(joinBody + replaced(fluent, "%aliasSetter(%seeded", "%aliasSetter(%state") + size,
+                "%two"),
+        false, "a fluent method lookup does not authorize a mismatched receiver");
+    variant(program(joinBody + inserted + "    %effect = ctjs.call %this(%this)\n" + size, "%two"),
+            false, "an unknown effect cannot preserve newly updated mutable cardinality");
+    for (unsigned candidates : {64u, 65u}) {
+        std::string mutations = inserted;
+        for (unsigned index = 3; index < candidates; ++index) {
+            mutations += "    %overwrite" + std::to_string(index) +
+                         " = ctjs.call %setter(%state, %three, %value)\n";
+        }
+        variant(program(joinBody + mutations + size, "%two"), candidates == 64,
+                candidates == 64
+                    ? "known mutations preserve cardinality within the complete candidate limit"
+                    : "known overwrites cannot extend cardinality past the candidate limit");
+    }
+    for (unsigned candidates : {31u, 33u}) {
+        std::string left;
+        std::string right;
+        for (unsigned index = 0; index < candidates; ++index) {
+            left += "      %left" + std::to_string(index) +
+                    " = ctjs.call %setter(%state, %one, %value)\n";
+            right += "      %right" + std::to_string(index) +
+                     " = ctjs.call %setter(%state, %two, %value)\n";
+        }
+        variant(program(clear + branch(left, right) + absentDelete + size, "%one"),
+                candidates == 31,
+                candidates == 31
+                    ? "a bounded branch union proves the later deleted key absent"
+                    : "a discarded branch union cannot authorize a supposedly absent deletion");
+    }
+    const unsigned mutationRows = rows - deletionRows;
+    check(mutationRows == 26, "all after-join known-mutation owner controls ran");
+    rows = deletionRows;
+
+    for (const auto & [body, expectedKey] : {std::pair{joinBody + inserted + size, "%two"},
+                                             {joinBody + absentDelete + size, "%one"}}) {
+        auto mutated =
+            mlir::parseSourceString<mlir::ModuleOp>(program(body, expectedKey), &context);
+        check(static_cast<bool>(mutated), "joined mutation live-control fixture parses");
+        if (!mutated) { continue; }
+        auto contract = requested(*mutated);
+        OwnedGlobalRoots complete(*mutated, contract);
+        const unsigned completion = complete.steps();
+        check(complete.proved() && completion < 30000,
+              "the known-mutation owner proof has a bounded completion");
+        if (!complete.proved() || completion < 2 || completion >= 30000) { continue; }
+        std::vector<unsigned> budgets{0, 1, completion / 2, completion - 1};
+        for (unsigned budget = 2; budget < completion; budget *= 2) { budgets.push_back(budget); }
+        llvm::sort(budgets);
+        budgets.erase(std::unique(budgets.begin(), budgets.end()), budgets.end());
+        for (unsigned budget : budgets) {
+            OwnedGlobalRoots limited(*mutated, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*mutated, limited),
+                  "incomplete mutation proof work publishes no partial ownership");
+        }
+        check(OwnedGlobalRoots(*mutated, contract, completion).proved(),
+              "the exact known-mutation budget reproduces complete ownership");
+        auto setter = mutated->lookupSymbol<ctjs::FuncOp>("put$4");
+        ctjs::CallOp mutation;
+        ctjs::ConstantOp one;
+        setter.walk([&](ctjs::CallOp op) {
+            if (op->hasAttr("mutation")) { mutation = op; }
+        });
+        setter.walk([&](ctjs::ConstantOp op) {
+            const auto number = llvm::dyn_cast<ctjs::NumberAttr>(op.getValue());
+            if (number && number.getBits() == 4607182418800017408ULL) { one = op; }
+        });
+        check(mutation && one, "known mutation retains its actual key and receiver operands");
+        if (!mutation || !one) { continue; }
+        mlir::Builder attrs(&context);
+        mutated->walk([&](mlir::Operation * op) {
+            op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(2));
+            op->setAttr("ctnative.map_present", attrs.getUnitAttr());
+        });
+        contract = requested(*mutated);
+        const auto refuse = [&] {
+            OwnedGlobalRoots stale(*mutated, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*mutated, stale),
+                  "live known-mutation edits invalidate their original fingerprint");
+            OwnedGlobalRoots fresh(*mutated, requested(*mutated));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*mutated, fresh),
+                  "fresh fingerprints and forged reports cannot prove changed key relations");
+        };
+        const auto key = mutation.getArgs().front();
+        mutation->setOperand(2, one.getResult());
+        refuse();
+        mutation->setOperand(2, key);
+        check(OwnedGlobalRoots(*mutated, contract).proved(),
+              "restoring the independently absent key restores the mutation proof");
+        const auto receiver = mutation.getReceiver();
+        mutation->setOperand(1, setter.getBody().front().getArgument(0));
+        refuse();
+        mutation->setOperand(1, receiver);
+        check(OwnedGlobalRoots(*mutated, contract).proved(),
+              "restoring the actual runtime Map restores known mutation cardinality");
+        std::printf("known-mutation owner %s %s: %u rows, four live edits, %zu cutoffs / %u work\n",
+                    prepared ? "prepared" : "source", expectedKey, mutationRows, budgets.size(),
+                    completion);
+    }
+
     auto joinedModule = mlir::parseSourceString<mlir::ModuleOp>(joinedOne, &context);
     check(static_cast<bool>(joinedModule), "joined size budget and live-edit fixture parses");
     if (joinedModule) {

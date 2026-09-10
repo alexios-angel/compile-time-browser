@@ -61,7 +61,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     llvm::SmallVector<mlir::Value> possibleKeys;
     // Equal arm cardinalities survive even when their keys differ. This is
     // mutable Map state, never evidence that any particular key is present.
-    // Writes/deletes invalidate it; saved size SSA values remain independent.
+    // Only a proved membership/absence fact can carry it through mutation;
+    // saved size SSA values remain independent.
     std::optional<unsigned> currentSize;
     llvm::DenseSet<mlir::Operation *> observations;
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
@@ -149,7 +150,47 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     };
     const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {},
                             mlir::Value object = {}) {
+        auto nextSize = currentSize;
         currentSize.reset();
+        // Read membership before changing the entries. A possible overwrite
+        // versus insertion (or successful versus unsuccessful deletion) has
+        // no exact size effect. Do not bypass the candidate limit by keeping
+        // an independent size after the complete census exceeds its budget.
+        if (nextSize && completeKeys && possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+            bool present = false;
+            for (const auto & entry : entries) {
+                if (!step()) { return false; }
+                if (entry.present &&
+                    comparePrimitiveMapKeys(entry.key, key, keyEvidence(entry.key),
+                                            keyEvidence(key)) == PrimitiveMapKeyRelation::Same) {
+                    present = true;
+                    break;
+                }
+            }
+            const auto missing = absent(key, entries, completeKeys, possibleKeys);
+            if (!missing) { return false; }
+            if (present) {
+                if (erase) {
+                    if (*nextSize == 0) {
+                        nextSize.reset();
+                    } else {
+                        --*nextSize;
+                    }
+                }
+            } else if (*missing) {
+                if (!erase) {
+                    if (*nextSize == kMaxPrimitiveMapSizeCandidates) {
+                        nextSize.reset();
+                    } else {
+                        ++*nextSize;
+                    }
+                }
+            } else {
+                nextSize.reset();
+            }
+        } else {
+            nextSize.reset();
+        }
         bool hasExactAbsence = false;
         for (auto it = entries.begin(); it != entries.end();) {
             if (!step()) { return false; }
@@ -220,6 +261,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 possibleKeys.push_back(key);
             }
         }
+        if (possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) { currentSize = nextSize; }
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {

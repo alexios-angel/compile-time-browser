@@ -60,8 +60,9 @@ struct state {
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> possibleKeys{};
     llvm::DenseMap<mlir::Value, unsigned> exactSizes{};
     // Mutable cardinality of an actual runtime instance. Equal structural
-    // arms can preserve it without sharing any definite key. Mutations clear
-    // this fact independently of already-read, immutable SSA exactSizes.
+    // arms can preserve it without sharing any definite key. Only independently
+    // proved mutation effects preserve it; already-read SSA exactSizes remain
+    // immutable.
     llvm::DenseMap<mlir::Value, unsigned> currentSizes{};
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
@@ -117,6 +118,32 @@ struct state {
                 currentSizes[instance] = *fact.exact;
             }
         }
+    }
+
+    std::optional<unsigned> sizeAfterMutation(fact value, bool erase) const {
+        const auto size = currentSizes.find(value.instance);
+        const auto possible = possibleKeys.find(value.instance);
+        if (size == currentSizes.end() || possible == possibleKeys.end()) { return std::nullopt; }
+        // Query the actual instance before mutation. The schema family is
+        // only an alias upper bound and cannot prove this key's membership.
+        const bool present = llvm::any_of(entries, [&](const fact & old) {
+            return old.present && old.instance == value.instance &&
+                   comparePrimitiveMapKeys(old.key, value.key, keyEvidence(old.key),
+                                           keyEvidence(value.key)) == PrimitiveMapKeyRelation::Same;
+        });
+        if (present) {
+            if (!erase) { return size->second; }
+            return size->second ? std::optional(size->second - 1) : std::nullopt;
+        }
+        const bool absent = llvm::all_of(possible->second, [&](mlir::Value key) {
+            return comparePrimitiveMapKeys(key, value.key, keyEvidence(key),
+                                           keyEvidence(value.key)) ==
+                   PrimitiveMapKeyRelation::Distinct;
+        });
+        if (!absent) { return std::nullopt; }
+        if (erase) { return size->second; }
+        return size->second < kMaxPrimitiveMapSizeCandidates ? std::optional(size->second + 1)
+                                                             : std::nullopt;
     }
 
     PrimitiveAlternatives alternatives(mlir::Value value) const {
@@ -329,6 +356,7 @@ struct presenceAnalysis {
 
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call);
+        const auto nextSize = current.sizeAfterMutation(affected, true);
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
             if (familyOf(instance) == familyOf(affected.instance)) {
                 current.currentSizes.erase(instance);
@@ -360,6 +388,7 @@ struct presenceAnalysis {
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
             if (mayErase(entry(llvm::cast<ctjs::CallOp>(op)))) { current.observations.erase(op); }
         }
+        if (nextSize) { current.currentSizes[affected.instance] = *nextSize; }
     }
 
     // Literal, parameter and saved scalar alternatives do not depend on Map
@@ -368,6 +397,7 @@ struct presenceAnalysis {
     // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
+        const auto nextSize = current.sizeAfterMutation(added, false);
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
             if (familyOf(instance) == familyOf(added.instance)) {
                 current.currentSizes.erase(instance);
@@ -396,6 +426,11 @@ struct presenceAnalysis {
             }
         }
         current.add(added);
+        // The census may have reached its limit while adding this key. Never
+        // turn the saved cardinality into a way around that bounded proof.
+        if (nextSize && current.possibleKeys.contains(added.instance)) {
+            current.currentSizes[added.instance] = *nextSize;
+        }
     }
 
     void region(mlir::Region & body, state & current) {

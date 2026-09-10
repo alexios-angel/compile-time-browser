@@ -88,6 +88,28 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_alias_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_nested_unequal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_insert.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_absent_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_overwrite_common.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_delete_common.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_insert_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_repeated_absent.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_repeated_overwrite.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_saved_before_insert.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_saved_before_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_fluent_insert.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MUTATION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_old_snapshot_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_old_snapshot_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_uncertain_insert.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_uncertain_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_one_arm_insert.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutation_no_common_member.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// MUTATION: emitc.func
+// MUTATION-DAG: call_opaque "ctnative::map_size"
+// MUTATION-DAG: call_opaque "ctnative::map_set"
+// MUTATION-DAG: call_opaque "ctnative::map_get_present"
+
 // JOIN: emitc.func
 // JOIN-DAG: call_opaque "ctnative::map_size"
 // JOIN-DAG: call_opaque "ctnative::map_get_present"
@@ -1354,5 +1376,294 @@ function probe(flag) {
     outer.clear();
     outer.set(saved, inner);
     return outer.get(1).size;
+}
+var result = probe(true);
+//--- mutation_insert.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_absent_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.delete(3);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_overwrite_common.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    if (flag) { outer.set(2, inner); }
+    else { outer.set(3, inner); }
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_delete_common.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    if (flag) { outer.set(2, inner); }
+    else { outer.set(3, inner); }
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_insert_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    outer.delete(3);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_repeated_absent.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.delete(3);
+    outer.delete(3);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_repeated_overwrite.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    outer.set(3, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_saved_before_insert.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    const saved = outer.size;
+    outer.set(3, inner);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_saved_before_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    const saved = outer.size;
+    outer.delete(3);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_fluent_insert.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    const alias = outer.set(3, inner);
+    alias.set(3, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_old_snapshot_growth.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    const saved = outer.size;
+    outer.set(3, inner);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_old_snapshot_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    const saved = outer.size;
+    outer.delete(3);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- mutation_uncertain_insert.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_uncertain_delete.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- mutation_one_arm_insert.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    if (flag) { outer.set(3, inner); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- mutation_no_common_member.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(2); }
+    outer.set(3, inner);
+    const saved = outer.size;
+    return outer.get(saved).size;
 }
 var result = probe(true);

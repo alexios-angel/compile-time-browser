@@ -1500,6 +1500,89 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                  : "a single over-budget arm withholds joined exact cardinality",
              clear + branch(left, right) + size + oneSuffix, writes == 64});
     }
+    const size_t joinedRows = rows.size() - deletionRows;
+    const std::string inserted = "  %inserted = ctjs.call %setter(%map, %three, %one) {mutation}\n";
+    const std::string absentDelete =
+        "  %absentDelete = ctjs.call %eraser(%map, %three) {mutation}\n";
+    const std::string common = clear + seed +
+                               branch("    %leftSet = ctjs.call %setter(%map, %two, %one)\n",
+                                      "    %rightSet = ctjs.call %setter(%map, %three, %one)\n");
+    const auto twoSuffix = reset + store + replace(read, "%zero", "%two");
+    const std::vector<presenceRow> mutationRows = {
+        {"definitely absent post-join insertion increases exact cardinality",
+         joined + inserted + size + twoSuffix, true},
+        {"definitely absent post-join deletion preserves exact cardinality",
+         joined + absentDelete + size + oneSuffix, true},
+        {"overwriting a common member preserves the independently joined size",
+         common + replace(seed, "%seeded", "%overwrite") + size + twoSuffix, true},
+        {"deleting a common member decrements the independently joined size",
+         common + erase + size + oneSuffix, true},
+        {"insert then delete restores the original joined cardinality",
+         joined + inserted + absentDelete + size + oneSuffix, true},
+        {"repeated absent deletes cannot decrement the joined size",
+         joined + absentDelete + replace(absentDelete, "%absentDelete", "%againAbsent") + size +
+             oneSuffix,
+         true},
+        {"overwriting the newly inserted common key does not increase size again",
+         joined + inserted + replace(inserted, "%inserted", "%overwrite") + size + twoSuffix, true},
+        {"saved joined size remains one across a later insertion",
+         joined + size + inserted + oneSuffix, true},
+        {"saved post-insertion size remains two across a later deletion",
+         joined + inserted + size + absentDelete + twoSuffix, true},
+        {"later insertion cannot change the value of an earlier snapshot",
+         joined + size + inserted + twoSuffix, false},
+        {"later deletion cannot change the value of an earlier snapshot",
+         joined + inserted + size + absentDelete + oneSuffix, false},
+        {"a possible overwrite cannot choose the increasing insertion effect",
+         joined + replace(inserted, "%three", "%one") + size + twoSuffix, false},
+        {"a possible deletion cannot choose the decreasing cardinality effect",
+         joined + replace(absentDelete, "%three", "%one") + size + suffix, false},
+        {"a fluent alias applies a known insertion to the actual Map instance",
+         joined +
+             "  %aliasSetter = ctjs.get_property %seeded[%setName]\n"
+             "  %inserted = ctjs.call %aliasSetter(%seeded, %three, %one)\n" +
+             size + twoSuffix,
+         true},
+        {"a fluent alias applies a known deletion to the actual Map instance",
+         joined + replace(aliasDelete, "%one", "%three") + size + oneSuffix, true},
+        {"unknown effects cannot retain an updated mutable size",
+         joined + inserted + "  %effect = ctjs.call %p(%receiver)\n" + size + twoSuffix, false,
+         false},
+        {"known cardinality does not supply a common member at the saved key",
+         joined + inserted + size + replace(read, "%zero", "%saved"), false},
+        {"known insertion supplies membership independently of the joined size",
+         joined + inserted + size + replace(read, "%zero", "%three"), true},
+        {"known deletion removes membership independently of the saved cardinality",
+         joined + inserted + size + absentDelete + replace(read, "%zero", "%three"), false},
+        {"unknown incoming keys cannot borrow a later mutation's exact effect",
+         seed + extra + differentDeletes + inserted + size + twoSuffix, false},
+    };
+    rows.insert(rows.end(), mutationRows.begin(), mutationRows.end());
+    for (unsigned candidates : {64u, 65u}) {
+        std::string mutations = inserted;
+        for (unsigned index = 3; index < candidates; ++index) {
+            mutations += "  %overwrite" + std::to_string(index) +
+                         " = ctjs.call %setter(%map, %three, %one)\n";
+        }
+        rows.push_back({candidates == 64
+                            ? "known mutations remain within the complete candidate limit"
+                            : "known overwrites cannot bypass the complete candidate limit",
+                        joined + mutations + size + twoSuffix, candidates == 64});
+    }
+    for (unsigned candidates : {31u, 33u}) {
+        std::string left;
+        std::string right;
+        for (unsigned index = 0; index < candidates; ++index) {
+            left +=
+                "    %left" + std::to_string(index) + " = ctjs.call %setter(%map, %one, %one)\n";
+            right +=
+                "    %right" + std::to_string(index) + " = ctjs.call %setter(%map, %two, %one)\n";
+        }
+        rows.push_back(
+            {candidates == 31 ? "a bounded branch union proves the later deleted key absent"
+                              : "a discarded branch union cannot prove later deletion absent",
+             clear + branch(left, right) + absentDelete + size + oneSuffix, candidates == 31});
+    }
     const auto marked = [](mlir::ModuleOp module, llvm::StringRef name) {
         mlir::Operation * result = nullptr;
         module.walk([&](mlir::Operation * op) {
@@ -1622,9 +1705,53 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             verify(*joinedModule, "restoring actual lookup key recovers membership", true);
             std::printf("joined-size Map presence: %zu source/mixed rows and eight live edits, "
                         "reused/fresh modules\n",
-                        (rows.size() - deletionRows) * 2);
+                        joinedRows * 2);
         }
     }
+    for (const auto & [body, suffixBody] : {std::pair{joined + inserted + size, twoSuffix},
+                                            {joined + absentDelete + size, oneSuffix}}) {
+        auto mutated = mlir::parseSourceString<mlir::ModuleOp>(
+            prologue() + prelude + body + suffixBody + mixedSuffix + "  ctjs.return %observed\n}\n",
+            &context);
+        if (!mutated) {
+            std::printf("FAIL live joined-mutation fixture did not parse\n");
+            ++failures;
+            continue;
+        }
+        auto * mutation = marked(*mutated, "mutation");
+        auto * snapshot = marked(*mutated, "snapshot");
+        auto * resetting = marked(*mutated, "reset");
+        ctjs::ConstantOp one;
+        ctjs::ConstantOp three;
+        mutated->walk([&](ctjs::ConstantOp op) {
+            const auto number = llvm::dyn_cast<ctjs::NumberAttr>(op.getValue());
+            if (number && number.getBits() == 4607182418800017408ULL) { one = op; }
+            if (number && number.getBits() == 4613937818241073152ULL) { three = op; }
+        });
+        if (!mutation || !snapshot || !resetting || !one || !three) {
+            std::printf("FAIL live joined-mutation fixture lost a marked source operation\n");
+            ++failures;
+            continue;
+        }
+        verify(*mutated, "live known mutation updates the independently joined size", true);
+        const auto key = mutation->getOperand(2);
+        mutation->setOperand(2, one.getResult());
+        verify(*mutated, "a changed possibly present key invalidates old mutation facts", false);
+        mutation->setOperand(2, key);
+        verify(*mutated, "restoring the definitely absent key restores the exact effect", true);
+        snapshot->moveAfter(resetting);
+        verify(*mutated, "a snapshot after reset cannot borrow an earlier mutation's size", false);
+        snapshot->moveBefore(resetting);
+        verify(*mutated, "restoring the actual read position restores known cardinality", true);
+        const auto readKey = marked(*mutated, "check")->getOperand(2);
+        marked(*mutated, "check")->setOperand(2, three.getResult());
+        verify(*mutated, "changing the later lookup cannot inherit saved-key membership", false);
+        marked(*mutated, "check")->setOperand(2, readKey);
+        verify(*mutated, "restoring the actual lookup key restores membership", true);
+    }
+    std::printf("known-mutation Map presence: %zu source/mixed rows and twelve live edits, "
+                "reused/fresh modules\n",
+                (mutationRows.size() + 4) * 2);
     auto module = mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + clear + seed +
                                                               erase + size + suffix + mixedSuffix +
                                                               "  ctjs.return %observed\n}\n",
