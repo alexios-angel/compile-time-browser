@@ -202,6 +202,10 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     }
     dirty_ = dirty::nothing;
     ++frames_;
+    // Paint Timing's first-paint: the first rendering update this document
+    // has had. Idempotent, and the bindings are rebuilt per document, so a
+    // navigation gets its own.
+    if (bindings_) { bindings_->record_first_paint(); }
     auto drawn =
         ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
     timing_.raster_ms = ms_since(at);

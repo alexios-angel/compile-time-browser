@@ -97,6 +97,9 @@ target_sources(ctbrowser-shell
     bindings/window/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp
+    # `performance` and Paint Timing: the entry list, getEntries*, and the
+    # PerformanceEntry / PerformancePaintTiming globals a page feature-detects.
+    bindings/performance.cpp
     # WebGL: the context and its wrapper, the constant table, and the methods in
     # two halves - one 1,431-line file until 2026-09-08, four now, with the
     # argument helpers every one of them needs in webgl/internal.hpp.

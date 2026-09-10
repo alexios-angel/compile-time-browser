@@ -207,6 +207,9 @@ public:
     // is resolved through the asset registry, so a frame loads from wherever
     // the page's other subresources load from and reaches no socket of its own.
     void reconcile_frames();
+    // Paint Timing: `first-paint` and `first-contentful-paint`, at the page
+    // clock's current reading, once. The browser calls it from its first frame.
+    void record_first_paint();
 
     [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     // When the next callback is due, in milliseconds from now. Infinity when
@@ -976,6 +979,12 @@ private:
 
     void install_resources(context & cx);
 
+    // `performance`: `now`, the entry list and `getEntries*` over it, plus the
+    // `PerformanceEntry` and `PerformancePaintTiming` globals. Returns the
+    // object so install_window can hang it on the window and the global scope.
+    // Its own file: lib/Shell/bindings/performance.cpp.
+    [[nodiscard]] script::object_object * install_performance(context & cx);
+
     // A FETCH THAT HAS NOT HAPPENED YET.
     //
     // fetch() used to do the work and hand back an already-settled promise,
@@ -1510,6 +1519,14 @@ private:
     // seeded: three example pages byte-compare their render against a golden,
     // and a clock that differs run to run cannot have one.
     double now_ms_ = 1;
+    // `performance.getEntries()`. Plain data: the objects a page sees are built
+    // when it asks, with PerformancePaintTiming.prototype behind them.
+    struct performance_entry {
+        std::string name;
+        std::string type;
+        double start_ms;
+    };
+    std::vector<performance_entry> performance_entries_;
 
     std::vector<listener> listeners_;
     std::vector<timer> timers_;
