@@ -276,11 +276,6 @@ struct box_node {
         }
         return has_in_flow_child;
     }
-    [[nodiscard]] std::size_t descendant_count() const noexcept {
-        std::size_t n = 1;
-        for (const box_node & c : children) { n += c.descendant_count(); }
-        return n;
-    }
 };
 
 // Builds the box tree from a document read view plus resolved styles.

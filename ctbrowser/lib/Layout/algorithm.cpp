@@ -135,8 +135,7 @@ float shrink_to_fit_width(const box_node & b, const constraints & c, const resol
     return std::max(0.0f, out);
 }
 
-fragment layout_box(const box_node & b, const constraints & c, const measure_text_fn & measure,
-                    precomputed * ready) {
+fragment layout_box(const box_node & b, const constraints & c, const measure_text_fn & measure) {
     if (b.kind == box_kind::text) {
         fragment f;
         f.box = &b;
@@ -174,13 +173,13 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
     }
     fragment out;
     if (b.kind == box_kind::table) {
-        out = table_flow{}.arrange(b, c, measure, ready);
+        out = table_flow{}.arrange(b, c, measure);
     } else if (b.kind == box_kind::flex) {
-        out = flex_flow{}.arrange(b, c, measure, ready);
+        out = flex_flow{}.arrange(b, c, measure);
     } else if (b.kind == box_kind::inline_) {
-        out = inline_flow{}.arrange(b, c, measure, ready);
+        out = inline_flow{}.arrange(b, c, measure);
     } else {
-        out = block_flow{}.arrange(b, c, measure, ready);
+        out = block_flow{}.arrange(b, c, measure);
     }
     // A flex or table container does not use block_flow, but it is still a
     // block-level participant in its PARENT's formatting context and its own

@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -67,9 +66,6 @@ struct resolved_edges {
 [[nodiscard]] resolved_edges resolve_edges(const box_node & b, const constraints & c);
 
 // How wide a block-level box gets, and how much of that its content sees.
-// Factored out because the parallel driver has to compute the SAME width to
-// hand its workers, and two copies of this arithmetic would be two things to
-// keep in agreement forever.
 [[nodiscard]] float outer_width_of(const box_node & b, const constraints & c,
                                    const resolved_edges & e);
 [[nodiscard]] float content_width_of(const box_node & b, const constraints & c,
@@ -80,22 +76,10 @@ struct resolved_edges {
 [[nodiscard]] float auto_margin_left(const box_node & b, const constraints & c,
                                      const resolved_edges & e, float outer_width);
 
-// Fragments already laid out for ONE box's children.
-//
-// This is how the parallel driver hands its results back to the ordinary
-// sequential pass rather than reimplementing the assembly itself. That matters:
-// it means "parallel layout equals sequential layout" is STRUCTURAL - the same
-// stacking code runs either way - instead of two implementations that have to
-// be kept agreeing by hand.
-struct precomputed {
-    const box_node * parent = nullptr;
-    std::span<fragment> children; // index-parallel to parent->children
-};
-
 // Forward declaration: block and inline contexts nest inside each other, so
 // each needs to be able to lay the other out.
 [[nodiscard]] fragment layout_box(const box_node & b, const constraints & c,
-                                  const measure_text_fn & measure, precomputed * ready = nullptr);
+                                  const measure_text_fn & measure);
 
 // THE MEASURE-SIDE TWIN OF layout_box: how wide a box's content wants to be,
 // dispatched on what the box IS.
@@ -146,9 +130,7 @@ struct precomputed {
     return b.height.u != unit::percent || c.available_height > 0;
 }
 
-// Apply the block used-height constraints. Shared with the parallel driver:
-// it has to derive the SAME content-height basis down to its split point before
-// workers lay out percentage-height descendants.
+// Apply the block used-height constraints.
 [[nodiscard]] inline float clamp_used_height(const box_node & b, const constraints & c,
                                              float value) {
     const float min = b.min_height.is_auto()
@@ -175,8 +157,7 @@ struct precomputed {
 //
 // Here rather than inside either context because BOTH need exactly this, and two
 // copies would be two answers to one question. It needs the measure function,
-// which is why it cannot live in outer_width_of - that one is also called by the
-// parallel driver, which has no business measuring anything.
+// which is why it cannot live in outer_width_of.
 [[nodiscard]] float shrink_to_fit_width(const box_node & b, const constraints & c,
                                         const resolved_edges & e, const measure_text_fn & measure);
 
@@ -252,8 +233,7 @@ struct inline_flow {
     }
 
     [[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
-                                   const measure_text_fn & measure_text,
-                                   precomputed * ready = nullptr) const {
+                                   const measure_text_fn & measure_text) const {
         fragment out;
         out.box = &b;
         out.source = b.source;
@@ -386,8 +366,8 @@ struct inline_flow {
             // depends on the containing block's width and not on where the pen
             // happens to be, so the answer is the same either way and this call
             // was going to happen regardless.
-            fragment f = layout_box(child, constraints{c.available_width, 0, child.font_size},
-                                    measure_text, ready);
+            fragment f =
+                layout_box(child, constraints{c.available_width, 0, child.font_size}, measure_text);
             // AN INLINE-LEVEL BOX'S MARGINS ARE PART OF THE LINE. They were
             // ignored outright, so `.form-label`'s `margin-bottom: .5rem` - which
             // is what separates every Bootstrap label from its field - did
@@ -562,8 +542,7 @@ struct block_flow {
     }
 
     [[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
-                                   const measure_text_fn & measure_text,
-                                   precomputed * ready = nullptr) const {
+                                   const measure_text_fn & measure_text) const {
         const resolved_edges edges = resolve_edges(b, c);
         // AN INLINE-LEVEL BLOCK SHRINKS TO FIT rather than filling its containing
         // block - `display: inline-block`, which is what a `.badge` and a `.btn`
@@ -576,8 +555,6 @@ struct block_flow {
                                       ? shrink_to_fit_width(b, c, edges, measure_text)
                                       : outer_width_of(b, c, edges);
         const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
-        const bool use_ready =
-            ready != nullptr && ready->parent == &b && ready->children.size() == b.children.size();
 
         // THE BOX'S OWN HEIGHT, resolved BEFORE its children are laid out, because
         // a child's percentage height resolves against it. Left until afterwards -
@@ -678,8 +655,7 @@ struct block_flow {
                     out.children.push_back(std::move(placeholder));
                     continue;
                 }
-                fragment f = use_ready ? std::move(ready->children[i])
-                                       : layout_box(child, child_c, measure_text, ready);
+                fragment f = layout_box(child, child_c, measure_text);
                 all_in_flow_children_collapse_through &= f.block_margins.through;
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
                 // centres a box with a definite width, and that is the whole of how
@@ -848,8 +824,7 @@ struct table_flow {
     }
 
     [[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
-                                   const measure_text_fn & measure_text,
-                                   precomputed * = nullptr) const {
+                                   const measure_text_fn & measure_text) const {
         const resolved_edges edges = resolve_edges(b, c);
         const float spacing = spacing_of(b, c);
         std::vector<float> widths = column_widths(b, c, measure_text);
@@ -948,6 +923,6 @@ static_assert(LayoutAlgorithm<inline_flow>);
 
 // Dispatch: pick the formatting context this box establishes.
 [[nodiscard]] fragment layout_box(const box_node & b, const constraints & c,
-                                  const measure_text_fn & measure, precomputed * ready);
+                                  const measure_text_fn & measure);
 
 } // namespace ctbrowser::layout

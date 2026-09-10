@@ -138,7 +138,6 @@ ctbrowser_test(unit/layout_margins)
 ctbrowser_test(unit/layout_inline)
 # PARALLEL LAYOUT IS IDENTICAL TO SEQUENTIAL, fragment for fragment, to the
 # float - the load-bearing claim of the whole stage.
-ctbrowser_test(unit/layout_parallel)
 # The flex formatting context. Its own file rather than more of the layout_*
 # files: S9.7's freeze loop has more cases than the other three contexts together.
 ctbrowser_test(unit/flex_basics)

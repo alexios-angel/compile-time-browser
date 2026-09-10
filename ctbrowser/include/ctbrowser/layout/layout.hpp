@@ -13,7 +13,7 @@
 //   position   relative and absolute placement, as a PASS over the finished
 //              fragments - the one part of CSS where a box's position is
 //              decided by an ancestor rather than by its parent
-//   engine     the driver, sequential and parallel
+//   engine     the driver
 //
 // the previous engine wrote geometry back onto the DOM node. That single decision is what made
 // its layout unparallelisable, what put thirty layout-only fields on `node`,
