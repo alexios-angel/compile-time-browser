@@ -715,6 +715,10 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // constructor, and `retained` is how a native says "these are mine" - see
     // native_object::retained. A `value` in a C++ member is not a root.
     install_listener_fence(cx, *target_ctor);
+    // AFTER `event_target_prototype_` IS SET, because this builds the DOM
+    // interface prototypes it hangs the accessors on, and `ensure_dom_interfaces`
+    // refuses until EventTarget exists - see the comment there.
+    install_event_handler_attributes(cx);
 
     // `window.dispatchEvent`. The window is the LAST stop on every path, so
     // dispatching AT it runs only the window's own listeners - which is what the

@@ -704,6 +704,315 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     }
 }
 
+namespace {
+
+// THE EVENT HANDLER IDL ATTRIBUTES, HTML 8.1.7.2, as one list per mixin.
+//
+// A REVERSAL, and it is worth naming because the opposite rule is written down
+// in element/methods.cpp: that file installs a handler property only for
+// "exactly the events this engine can dispatch, and no more", on the grounds
+// that a detection answering yes for an event that never fires is worse than
+// one answering no. That reasoning holds for a page choosing between two
+// spellings of the same event - which is the case it was written for,
+// `onwheel` against `onmousewheel` - and does not hold for the attribute's mere
+// existence: HTML requires all of these on every one of these objects,
+// `'onanimationend' in el` is true in every browser, and a page that branches
+// on it is depending on animations working rather than on the property. What
+// the engine does not dispatch is a gap in the DISPATCH, and hiding the
+// attribute does not close it.
+//
+// Those 19 names stay OWN null data properties on the wrapper, which shadow
+// the accessor here - so for them `el.onclick = ""` still reads "" until that
+// list moves. `onscroll` is what the unit tests use for that reason.
+//
+// Four files in dom/events ask for the ones no engine event uses:
+// Body-FrameSet-Event-Handlers.html wants `onscroll` and `onresize`, and the
+// four `webkit-*-event.html` files want the animation and transition pairs
+// prefixed and unprefixed at once. `ontouchstart` is deliberately NOT here: it
+// is the name a touch capability check asks about, and this engine has none.
+constexpr std::string_view global_event_handlers[] = {"onabort",
+                                                      "onanimationcancel",
+                                                      "onanimationend",
+                                                      "onanimationiteration",
+                                                      "onanimationstart",
+                                                      "onauxclick",
+                                                      "onbeforeinput",
+                                                      "onbeforematch",
+                                                      "onbeforetoggle",
+                                                      "onblur",
+                                                      "oncancel",
+                                                      "oncanplay",
+                                                      "oncanplaythrough",
+                                                      "onchange",
+                                                      "onclick",
+                                                      "onclose",
+                                                      "oncontextlost",
+                                                      "oncontextmenu",
+                                                      "oncontextrestored",
+                                                      "oncopy",
+                                                      "oncuechange",
+                                                      "oncut",
+                                                      "ondblclick",
+                                                      "ondrag",
+                                                      "ondragend",
+                                                      "ondragenter",
+                                                      "ondragleave",
+                                                      "ondragover",
+                                                      "ondragstart",
+                                                      "ondrop",
+                                                      "ondurationchange",
+                                                      "onemptied",
+                                                      "onended",
+                                                      "onerror",
+                                                      "onfocus",
+                                                      "onformdata",
+                                                      "ongotpointercapture",
+                                                      "oninput",
+                                                      "oninvalid",
+                                                      "onkeydown",
+                                                      "onkeypress",
+                                                      "onkeyup",
+                                                      "onload",
+                                                      "onloadeddata",
+                                                      "onloadedmetadata",
+                                                      "onloadstart",
+                                                      "onlostpointercapture",
+                                                      "onmousedown",
+                                                      "onmouseenter",
+                                                      "onmouseleave",
+                                                      "onmousemove",
+                                                      "onmouseout",
+                                                      "onmouseover",
+                                                      "onmouseup",
+                                                      "onpaste",
+                                                      "onpause",
+                                                      "onplay",
+                                                      "onplaying",
+                                                      "onpointercancel",
+                                                      "onpointerdown",
+                                                      "onpointerenter",
+                                                      "onpointerleave",
+                                                      "onpointermove",
+                                                      "onpointerout",
+                                                      "onpointerover",
+                                                      "onpointerup",
+                                                      "onprogress",
+                                                      "onratechange",
+                                                      "onreset",
+                                                      "onresize",
+                                                      "onscroll",
+                                                      "onscrollend",
+                                                      "onsecuritypolicyviolation",
+                                                      "onseeked",
+                                                      "onseeking",
+                                                      "onselect",
+                                                      "onslotchange",
+                                                      "onstalled",
+                                                      "onsubmit",
+                                                      "onsuspend",
+                                                      "ontimeupdate",
+                                                      "ontoggle",
+                                                      "ontransitioncancel",
+                                                      "ontransitionend",
+                                                      "ontransitionrun",
+                                                      "ontransitionstart",
+                                                      "onvolumechange",
+                                                      "onwaiting",
+                                                      "onwebkitanimationend",
+                                                      "onwebkitanimationiteration",
+                                                      "onwebkitanimationstart",
+                                                      "onwebkittransitionend",
+                                                      "onwheel"};
+
+// WindowEventHandlers - the ones that are the WINDOW's business rather than an
+// element's, and the reason `Body-FrameSet-Event-Handlers.html` exists at all:
+// HTML also puts these on `<body>` and `<frameset>`, where they FORWARD. See
+// install_event_handler_attributes for what is and is not wired here.
+constexpr std::string_view window_event_handlers[] = {
+    "onafterprint",       "onbeforeprint", "onbeforeunload",       "onhashchange",
+    "onlanguagechange",   "onmessage",     "onmessageerror",       "onoffline",
+    "ononline",           "onpagehide",    "onpageshow",           "onpopstate",
+    "onrejectionhandled", "onstorage",     "onunhandledrejection", "onunload"};
+
+// WHERE A HANDLER IS ACTUALLY KEPT. Three slots per name and each answers a
+// different question, which is why one would not do:
+//
+//   * `__on<name>` - what the IDL attribute was ASSIGNED. Its PRESENCE is the
+//     state, not its value: `el.onclick = null` is a null that has been set,
+//     and HTML says an assignment deactivates the content attribute's handler,
+//     so a present null must not fall back to the markup.
+//   * `__onsrc<name>` - the content attribute's text as it was when it was last
+//     compiled, so a changed attribute recompiles and an unchanged one does not.
+//   * `__onfn<name>`  - the function that text compiled to. `el.onclick ===
+//     el.onclick` has to hold, and it would not if each read compiled again.
+//
+// All three are `attr_none`, so a page enumerating the object never sees them.
+[[nodiscard]] std::string assigned_slot(const std::string & name) {
+    return "__on" + name;
+}
+[[nodiscard]] std::string source_slot(const std::string & name) {
+    return "__onsrc" + name;
+}
+[[nodiscard]] std::string compiled_slot(const std::string & name) {
+    return "__onfn" + name;
+}
+
+} // namespace
+
+// `onclick="doThing()"` AS A FUNCTION, which is the half of the event handler
+// attributes that is not a property at all.
+//
+// HTML calls what the markup leaves behind an "internal raw uncompiled
+// handler": the attribute's value is a function BODY, and it becomes a function
+// the first time anything asks for the handler. The parameter is named `event`,
+// which is what makes `onclick="alert(event.type)"` work.
+//
+// NOT CACHED PAST A CHANGE. The specification compiles once, at the moment the
+// attribute is set, because the attribute-change steps are a hook it has and
+// this does not - so the source text is kept beside the function and a
+// different text compiles again. That is one string compare on a read whose
+// slot is unset, and it is the difference between `setAttribute` taking effect
+// and not.
+//
+// A HANDLER THAT WILL NOT COMPILE IS NULL, which HTML says in as many words:
+// the uncompiled handler is discarded and the attribute reads null, rather than
+// the page taking a SyntaxError from a read.
+value dom_bindings::compile_handler_attribute(context & cx, value self, const std::string & name) {
+    const node_id id = handle_of(self);
+    if (!id || doc_ == nullptr || atoms_ == nullptr) { return value::undefined(); }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    std::string source;
+    {
+        const auto txn = doc_->read();
+        const atom key = atoms_->intern_lower(name);
+        if (!txn.has_attribute(id, key)) {
+            // The attribute has GONE, and so must anything compiled from it -
+            // `Body-FrameSet-Event-Handlers.html` calls removeAttribute at the
+            // end of every reflection case and the next case reads null.
+            (void)object->erase(source_slot(name));
+            (void)object->erase(compiled_slot(name));
+            return value::undefined();
+        }
+        source = std::string{txn.attribute_value(id, key)};
+    }
+    if (const value * had = object->find(source_slot(name));
+        had != nullptr && had->is_string() && cx.to_string(*had) == source) {
+        const value * made = object->find(compiled_slot(name));
+        return made == nullptr ? value::undefined() : *made;
+    }
+    script::program compiled =
+        script::compiler::compile("return (function (event) {\n" + source + "\n});");
+    const value made =
+        compiled.ok ? cx.run_nested(cx.own_program(std::move(compiled))) : value::undefined();
+    object->define(source_slot(name), cx.string(source), script::attr_none);
+    object->define(compiled_slot(name), made, script::attr_none);
+    return made;
+}
+
+// THE GETTER. Null when unset, and "unset" is the ABSENCE of the assigned slot
+// rather than a null in it - see assigned_slot.
+value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
+    if (!self.is_object()) { return value::null(); }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    if (const value * held = object->find(assigned_slot(name))) { return *held; }
+    if (const value made = compile_handler_attribute(cx, self, name); made.is_callable()) {
+        return made;
+    }
+    // THE BARE GLOBAL SPELLING, and only on the window. `window` IS the global
+    // object in HTML, so `onerror = report` and `window.onerror = report` are
+    // the same write - but the globals table and the window object are separate
+    // storage here, and defining these accessors made the window's own property
+    // win a lookup that used to fall through to the globals. A page that writes
+    // the bare form is not doing anything unusual and would silently stop being
+    // heard.
+    if (object == window_object() && cx.has_global(name)) {
+        if (const value held = cx.global(name); held.is_callable()) { return held; }
+    }
+    return value::null();
+}
+
+// THE SETTER, and the whole of it is one WebIDL annotation.
+//
+// `EventHandler` is `[LegacyTreatNonObjectAsNull] callback EventHandlerNonNull?`,
+// which says: anything that is not an Object becomes null. So `el.onclick = ""`
+// and `el.onclick = 42` both STORE NULL and both read back null - not the empty
+// string, which is what a plain data property answered and what twelve of
+// Body-FrameSet-Event-Handlers.html's assertions are about.
+//
+// An object that is not callable is stored as it is, which is the same
+// annotation read the other way: only a non-Object is nulled. It throws when it
+// is eventually invoked, which is where the specification puts the failure.
+void dom_bindings::event_handler_set(context & cx, value self, const std::string & name,
+                                     value given) {
+    if (!self.is_object()) { return; }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const value stored = given.is_object_like() ? given : value::null();
+    object->define(assigned_slot(name), stored, script::attr_none);
+    // AND THE ASSIGNMENT DISCARDS THE CONTENT ATTRIBUTE'S HANDLER - HTML's
+    // "deactivate an event handler". Dropping the compiled copy is what makes a
+    // later read see the assignment rather than the markup.
+    (void)object->erase(source_slot(name));
+    (void)object->erase(compiled_slot(name));
+    if (object == window_object()) { cx.define_global(name, stored); }
+}
+
+// EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.
+//
+// ONE PAIR OF NATIVES PER NAME, shared by all four hosts: the accessors find
+// their object through `this`, so there is no reason for HTMLElement.prototype
+// and Document.prototype to hold different functions for `onclick`.
+//
+// ON THE WINDOW OBJECT ITSELF rather than on Window.prototype, and this one is
+// load-bearing: the window is reached through a Proxy whose `set` trap writes a
+// GLOBAL for any name the target does not already own. An accessor one link up
+// the prototype chain is not owned, so `window.onload = fn` would define a
+// global and never run the setter.
+//
+// WHAT IS NOT HERE, said plainly. HTML forwards six of these from `<body>` and
+// `<frameset>` to the window - `onblur`, `onerror`, `onfocus`, `onload`,
+// `onresize`, `onscroll` are the WINDOW's when read or written through a body
+// element - and that is not wired, because forwarding without the other half
+// is worse than neither. The other half is the attribute-change hook: setting
+// the CONTENT attribute on a body element has to compile the handler onto the
+// window there and then, and the only place that can happen is `setAttribute`,
+// which is another file. With forwarding and no hook, `body.onblur` reads the
+// window's slot, which the previous case left explicitly null, and the
+// reflection case that passes today would fail instead.
+void dom_bindings::install_event_handler_attributes(context & cx) {
+    // The interface prototypes are built on the first `wrap()`, which is after
+    // this - so ask for them now. It is a no-op if they already exist and it is
+    // what makes `interface_prototype` answer at all this early.
+    ensure_dom_interfaces(cx);
+    std::vector<script::object_object *> hosts;
+    for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
+        if (const value proto = interface_prototype(interface); proto.is_object()) {
+            hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
+        }
+    }
+    if (auto * window = window_object()) { hosts.push_back(window); }
+    const auto install = [&](std::string_view attribute, std::span<script::object_object *> where) {
+        const std::string name{attribute};
+        const value getter = value::object(
+            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
+                return event_handler_get(c, c.current_this(), name);
+            }));
+        const value setter = value::object(
+            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
+                event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
+                return value::undefined();
+            }));
+        for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+    };
+    for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
+    // WindowEventHandlers is the window's alone here - see the note above on
+    // what forwarding would need.
+    if (auto * window = window_object()) {
+        for (const std::string_view attribute : window_event_handlers) {
+            install(attribute, std::span<script::object_object *>{&window, 1});
+        }
+    }
+}
+
 // `el.onclick = fn` - an EVENT HANDLER PROPERTY, which is the other half of the
 // event API and was entirely absent. addEventListener worked; assigning a
 // handler stored a function nothing ever called, so a page written the older way

@@ -1565,6 +1565,23 @@ private:
     [[nodiscard]] bool invoke_listener(context & cx, value callback, value receiver, value args,
                                        value & thrown, value & returned);
 
+    // --- event handler IDL attributes (HTML 8.1.7.2) -----------------------
+    //
+    // `el.onclick`, `document.onclick`, `window.onload`: an ACCESSOR on the
+    // interface prototype, null when unset, and the setter takes only an
+    // object - `el.onclick = ""` stores null, which is what
+    // Body-FrameSet-Event-Handlers.html spends a third of its assertions on.
+    void install_event_handler_attributes(context & cx);
+    // The handler currently registered for `name` on `self`, compiling the
+    // content attribute if that is where it still is.
+    [[nodiscard]] value event_handler_get(context & cx, value self, const std::string & name);
+    void event_handler_set(context & cx, value self, const std::string & name, value given);
+    // `onclick="doThing()"` as a function, compiled once and cached on the
+    // object it belongs to. Undefined when the attribute is absent or will not
+    // compile - HTML says a handler that fails to compile is null.
+    [[nodiscard]] value compile_handler_attribute(context & cx, value self,
+                                                  const std::string & name);
+
     // --- shadow DOM workstream ---
     //
     // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS, and that is why this is
