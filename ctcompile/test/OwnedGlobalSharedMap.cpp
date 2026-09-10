@@ -2037,6 +2037,288 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     }
 }
 
+void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::string & source,
+                                     bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    auto fixture =
+        replaced(source, "%entryKey: !ctjs.value)",
+                 "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
+    fixture = replaced(fixture, "    %actual =",
+                       "    %other = ctjs.constant #ctjs.string<\"z\">\n"
+                       "    %choice = ctjs.constant #ctjs.boolean<true>\n    %actual =");
+    for (const auto & [name, actual] :
+         {std::pair{"putterEnv", "actual"}, {"repeatEnv", "actual"}, {"laterEnv", "future"}}) {
+        const std::string prefix = prepared ? std::string("%") + name + ", " : "%owned, ";
+        fixture = replaced(fixture, prefix + "%" + actual + ")",
+                           prefix + "%" + actual + ", %other, %choice)");
+    }
+    const std::string setup =
+        "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
+        "    %clearer = ctjs.get_property %state[%clearKey]\n"
+        "    %deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
+        "    %eraser = ctjs.get_property %state[%deleteKey]\n"
+        "    %getKey = ctjs.constant #ctjs.string<\"get\">\n"
+        "    %reader = ctjs.get_property %state[%getKey]\n"
+        "    %zero = ctjs.constant #ctjs.number<0>\n"
+        "    %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n"
+        "    %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+        "    %anotherOne = ctjs.constant #ctjs.number<4607182418800017408>\n"
+        "    %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+        "    %three = ctjs.constant #ctjs.number<4613937818241073152>\n"
+        "    %nan = ctjs.constant #ctjs.number<9221120237041090560>\n"
+        "    %anotherNan = ctjs.constant #ctjs.number<9221120237041090561>\n"
+        "    %false = ctjs.constant #ctjs.boolean<false>\n"
+        "    %stringOne = ctjs.constant #ctjs.string<\"1\">\n"
+        "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
+        "    ctjs.set_property %value[%fieldKey], %one\n";
+    const std::string clear = "    %cleared = ctjs.call %clearer(%state)\n";
+    const std::string seed = "    %seeded = ctjs.call %setter(%state, %one, %value)\n";
+    const std::string extra = "    %extra = ctjs.call %setter(%state, %two, %value)\n";
+    const std::string erase = "    %erased = ctjs.call %eraser(%state, %one) {erase}\n";
+    const std::string size = "    %saved = ctjs.get_property %state[%sizeKey] {snapshot}\n";
+    const std::string reset = "    %reset = ctjs.call %clearer(%state)\n";
+    const std::string store = "    %stored = ctjs.call %setter(%state, %zero, %value)\n";
+    const std::string read = "    %loaded = ctjs.call %reader(%state, %saved)\n"
+                             "    %answer = ctjs.get_property %loaded[%fieldKey]\n"
+                             "    ctjs.return %answer\n  }\n}\n";
+    const auto program = [&](const std::string & body, const char * key = "%zero") {
+        return replaced(fixture,
+                        "    %size = ctjs.get_property %state[%sizeKey]\n"
+                        "    ctjs.return %size\n  }\n}\n",
+                        setup + body + reset + replaced(store, "%zero", key) + read);
+    };
+    const auto last = program(clear + seed + erase + size);
+    const auto remaining =
+        program(clear + seed + extra + replaced(erase, "%one", "%two") + size, "%one");
+    const std::string both = "    %flag = ctjs.truthy %choice\n    scf.if %flag {\n" + erase +
+                             "      scf.yield\n    } else {\n"
+                             "      %right = ctjs.call %eraser(%state, %anotherOne)\n"
+                             "      %again = ctjs.call %eraser(%state, %one)\n"
+                             "      scf.yield\n    }\n";
+    const auto census = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query) {
+        check(query.roots().size() == 1 && query.roots().front().methodTable &&
+                  query.roots().front().methodTable->capturedMap,
+              "delete cardinality retains a complete callable table and its owning Map");
+        if (query.roots().size() != 1 || !query.roots().front().methodTable ||
+            !query.roots().front().methodTable->capturedMap) {
+            return;
+        }
+        const auto & table = *query.roots().front().methodTable;
+        auto setter = module.lookupSymbol<ctjs::FuncOp>("put$4");
+        auto getter = module.lookupSymbol<ctjs::FuncOp>("get$3");
+        std::vector<ctjs::CallOp> calls;
+        std::vector<ctjs::GetPropertyOp> reads;
+        std::vector<ctjs::GetPropertyOp> fields;
+        getter.walk([&](ctjs::GetPropertyOp op) { reads.push_back(op); });
+        setter.walk([&](ctjs::GetPropertyOp op) {
+            auto key = op.getKey().getDefiningOp<ctjs::ConstantOp>();
+            auto name = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+            if (name && name.getValue() == "value") {
+                fields.push_back(op);
+            } else {
+                reads.push_back(op);
+            }
+        });
+        setter.walk([&](ctjs::CallOp op) { calls.push_back(op); });
+        bool complete = table.methods.size() == 2 && table.calls.size() == 4 && fields.size() == 1;
+        for (const auto & edge : table.calls) {
+            complete &= edge.capturedMap && edge.capturedMap->calls == calls &&
+                        edge.capturedMap->reads == reads && edge.capturedMap->leafReads == fields &&
+                        edge.capturedMap->allocation == table.capturedMap->allocation;
+            if (edge.function == setter) { complete &= edge.arguments.size() == 3; }
+        }
+        check(complete, "delete cardinality preserves every call and the actual own-field read");
+    };
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & text, bool expected, const char * message) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "source/prepared delete cardinality fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        check(query.proved() == expected && !query.exhausted() &&
+                  (expected || empty(*module, query)),
+              message);
+        if (query.proved() != expected || query.exhausted()) {
+            std::fprintf(stderr, "delete-size owner %s row %u: %s\n",
+                         prepared ? "prepared" : "source", rows, query.reason().str().c_str());
+        }
+        if (expected && query.proved()) { census(*module, query); }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "delete cardinality leaves all executable source and read positions intact");
+    };
+    variant(last, true, "deleting the last proved literal key establishes a saved zero");
+    variant(remaining, true, "deleting one of two distinct keys establishes a saved one");
+    variant(program(clear + seed + replaced(erase, "%one", "%three") + size, "%one"), true,
+            "deleting a proved absent key leaves the exact cardinality unchanged");
+    variant(program(clear + seed + erase + replaced(erase, "%erased", "%again") + size), true,
+            "repeated deletion of an absent key cannot decrement cardinality below zero");
+    variant(program(clear + seed + extra + erase +
+                    replaced(replaced(erase, "%erased", "%again"), "%one", "%two") + size),
+            true, "deleting both distinct keys proves zero only after both operations");
+    variant(program(clear + seed + size + erase, "%one"), true,
+            "an immutable saved one survives deletion of its former only key");
+    variant(program(clear + seed + extra + erase + size +
+                        replaced(replaced(erase, "%erased", "%again"), "%one", "%two"),
+                    "%one"),
+            true, "a saved one between deletions retains its actual read-time value");
+    variant(program(clear + seed + size + erase), false,
+            "the later deletion cannot turn a pre-delete saved one into zero");
+    variant(program(clear + seed + erase + size, "%one"), false,
+            "the post-delete saved zero cannot inherit the pre-delete one");
+    variant(program(seed + erase + size), false,
+            "deleting a local key cannot exclude older unknown invocation contents");
+    variant(replaced(last, size,
+                     "    %evaluated = ctjs.get_property %state[%sizeKey]\n"
+                     "    %saved = ctjs.constant #ctjs.number<0>\n"),
+            true, "the independent literal-zero repair retains the evaluated size read");
+    variant(program(clear + seed + replaced(erase, "%one", "%anotherOne") + size), true,
+            "different equal literal SSA constants remove the same key");
+    for (const auto & [left, right] :
+         {std::pair{"%zero", "%negativeZero"}, {"%nan", "%anotherNan"}}) {
+        variant(
+            program(clear + replaced(seed, "%one", left) + replaced(erase, "%one", right) + size),
+            true, "SameValueZero deletes signed zero and all NaN encodings as equal keys");
+    }
+    for (const auto & [left, right] : {std::pair{"%zero", "%false"}, {"%one", "%stringOne"}}) {
+        variant(program(clear + replaced(seed, "%one", left) + replaced(extra, "%two", right) +
+                            replaced(erase, "%one", left) + size,
+                        "%one"),
+                true,
+                "coercively equal values in different primitive categories remain separate keys");
+    }
+    const std::string alias = "    %aliasEraser = ctjs.get_property %seeded[%deleteKey]\n"
+                              "    %erased = ctjs.call %aliasEraser(%seeded, %one) {erase}\n";
+    variant(program(clear + seed + alias + size), true,
+            "an exact fluent set alias deletes from the same runtime Map");
+    variant(program(clear + seed + replaced(alias, "%aliasEraser(%seeded", "%aliasEraser(%state") +
+                    size),
+            false, "method lookup aliases cannot authorize a different call receiver");
+    variant(replaced(last, "%eraser(%state, %one)", "%eraser(%state, %one, %two)"), false,
+            "extra delete actuals remain outside the proved standard method contract");
+    variant(replaced(last, size, "    %effect = ctjs.call %this(%this)\n" + size), false,
+            "unknown effects cannot preserve mutable cardinality evidence");
+    const std::string partial = "    %flag = ctjs.truthy %choice\n    scf.if %flag {\n" + erase +
+                                "      scf.yield\n    }\n";
+    for (const char * flag : {"true", "false"}) {
+        const auto choice = [&](const std::string & text) {
+            return replaced(text, "#ctjs.boolean<true>",
+                            std::string("#ctjs.boolean<") + flag + ">");
+        };
+        variant(choice(program(clear + seed + both + size)), true,
+                "both nonidentical structural arms independently delete the last key");
+        variant(choice(program(clear + seed + partial + size)), false,
+                "a startup flag cannot eliminate a future arm that keeps the key");
+    }
+    const std::string unknown = "    %leftKey = ctjs.call %setter(%state, %entryKey, %value)\n"
+                                "    %rightKey = ctjs.call %setter(%state, %aliasKey, %value)\n"
+                                "    %deleted = ctjs.call %eraser(%state, %entryKey)\n";
+    variant(program(clear + unknown + size), false,
+            "deleting one formal key retains possibly equal other keys in the upper census");
+    variant(program(clear + unknown + size, "%one"), false,
+            "possibly equal formal keys cannot establish a remaining lower bound of one");
+    variant(program(clear + unknown + size + "    %effect = ctjs.call %this(%this)\n"), false,
+            "an immutable size fact does not authorize unrelated unknown calls");
+    const std::string selected =
+        "    %flag = ctjs.truthy %choice\n"
+        "    %saved = scf.if %flag -> (!ctjs.value) {\n"
+        "      %left = ctjs.get_property %state[%sizeKey]\n"
+        "      scf.yield %left : !ctjs.value\n"
+        "    } else {\n      scf.yield %negativeZero : !ctjs.value\n    }\n";
+    variant(program(clear + seed + erase + selected), true,
+            "selected post-delete zero and literal negative zero have the same exact value");
+    variant(program(clear + seed + erase +
+                    replaced(selected, "scf.yield %negativeZero", "scf.yield %one")),
+            false, "one nonzero selection arm cannot inherit the other arm's post-delete zero");
+    for (unsigned writes : {64u, 65u}) {
+        std::string repeated = seed;
+        for (unsigned index = 1; index < writes; ++index) {
+            repeated += "    %repeat" + std::to_string(index) +
+                        " = ctjs.call %setter(%state, %anotherOne, %value)\n";
+        }
+        variant(program(clear + repeated + erase + size), writes == 64,
+                writes == 64 ? "deleting all sixty-four equal candidates proves exact zero"
+                             : "deletion cannot revive a census that exceeded its complete limit");
+    }
+    check(rows == 31, "all independent delete-size owner source controls ran");
+
+    for (const auto & [text, label] : {std::pair{last, "last key"}, {remaining, "one of two"}}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "delete-size live mutation fixture parses");
+        if (!module) { continue; }
+        auto contract = requested(*module);
+        OwnedGlobalRoots complete(*module, contract);
+        const unsigned completion = complete.steps();
+        check(complete.proved() && completion < 20000, "delete-size complete proof is bounded");
+        if (!complete.proved() || completion >= 20000) { continue; }
+        for (unsigned budget = 0; budget < completion; ++budget) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "every incomplete delete-size budget withholds the complete owner proof");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion,
+              "the exact charged deletion budget reproduces complete ownership");
+        ctjs::GetPropertyOp snapshot;
+        ctjs::CallOp deletion;
+        ctjs::ConstantOp wrong;
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        setter.walk([&](ctjs::GetPropertyOp op) {
+            if (op->hasAttr("snapshot")) { snapshot = op; }
+        });
+        setter.walk([&](ctjs::CallOp op) {
+            if (op->hasAttr("erase")) { deletion = op; }
+        });
+        setter.walk([&](ctjs::ConstantOp op) {
+            auto number = llvm::dyn_cast<ctjs::NumberAttr>(op.getValue());
+            if (number && number.getBits() == 4613937818241073152ULL) { wrong = op; }
+        });
+        check(snapshot && deletion && wrong, "live deletion controls keep their marked operations");
+        if (!snapshot || !deletion || !wrong) { continue; }
+        mlir::Builder attrs(&context);
+        module->walk([&](mlir::Operation * op) {
+            op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(0));
+            op->setAttr("ctnative.map_present", attrs.getUnitAttr());
+        });
+        contract = requested(*module);
+        const auto refused = [&] {
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "live deletion edits invalidate the original owner fingerprint");
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+                  "fresh fingerprints and forged reports cannot repair changed deletion evidence");
+        };
+        snapshot->moveBefore(deletion);
+        refused();
+        snapshot->moveAfter(deletion);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the snapshot after deletion restores the current proof");
+        const auto key = deletion.getArgs().front();
+        deletion->setOperand(2, wrong.getResult());
+        refused();
+        deletion->setOperand(2, key);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the actual deleted key restores exact cardinality");
+        const auto receiver = deletion.getReceiver();
+        deletion->setOperand(1, setter.getBody().front().getArgument(0));
+        refused();
+        deletion->setOperand(1, receiver);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the actual runtime Map restores deletion's ownership proof");
+        std::printf("delete-size owner %s %s: %u rows, six live edits and all %u incomplete "
+                    "budgets checked\n",
+                    prepared ? "prepared" : "source", label, rows, completion);
+    }
+}
+
 void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string & source,
                                   bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -3393,6 +3675,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
         checkCapturedMapClearOwner(context, program, lifted);
         checkCapturedMapZeroSizeOwner(context, program, lifted);
         checkCapturedMapExactSizeOwner(context, program, lifted);
+        checkCapturedMapDeleteSizeOwner(context, program, lifted);
     }
     for (const bool lifted : {false, true}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(

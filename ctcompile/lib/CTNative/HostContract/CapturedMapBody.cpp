@@ -136,6 +136,25 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             }
         }
         if (erase) {
+            // Deletion cannot introduce a key. Keep the complete upper bound
+            // through this mutation, removing only keys proved equal to the
+            // erased key. A possibly equal key may survive and must remain in
+            // the census even though it lost definite presence above.
+            // An oversized census cannot recover an exact size by pruning
+            // after its limit was exceeded. Retain that conservative upper
+            // bound for absence queries until a real clear starts a new one.
+            if (possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+                size_t retained = 0;
+                for (mlir::Value possible : possibleKeys) {
+                    if (!step()) { return false; }
+                    if (comparePrimitiveMapKeys(possible, key, keyEvidence(possible),
+                                                keyEvidence(key)) !=
+                        PrimitiveMapKeyRelation::Same) {
+                        possibleKeys[retained++] = possible;
+                    }
+                }
+                possibleKeys.resize(retained);
+            }
             // The invocation's initial contents are unknown, but this exact
             // key is now absent even if no earlier local set mentioned it.
             // Keep earlier payload evidence whenever present: a branch join

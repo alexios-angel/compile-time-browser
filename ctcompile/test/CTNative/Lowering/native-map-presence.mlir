@@ -59,6 +59,29 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_unknown_key_equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_last.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_of_two.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_absent.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_repeated.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_snapshot_before.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_both_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_zero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_fluent_alias.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_before_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_after_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_different_survivors.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_nonzero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_signed_zero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_alias_after_store.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_other_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_disjoint_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_possibly_equal_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// DELETE: emitc.func
+// DELETE-DAG: call_opaque "ctnative::map_delete"
+// DELETE-DAG: call_opaque "ctnative::map_get_present"
+
 // EXACT: emitc.func
 // EXACT: call_opaque "ctnative::map_get_present"
 
@@ -876,5 +899,290 @@ function probe(left, right) {
     outer.clear();
     outer.set(saved, inner);
     return outer.get(2).size;
+}
+var result = probe("x", "y");
+
+//--- delete_last.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_one_of_two.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    outer.delete(2);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_absent.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(3);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_repeated.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_snapshot_before.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.delete(1);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_both_arms.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    if (flag) { outer.delete(1); }
+    else { outer.delete(1); outer.delete(1); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_selected_zero.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    const saved = flag ? outer.size : 0;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_fluent_alias.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const alias = outer.set(1, inner);
+    alias.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_before_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.delete(1);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_after_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_one_arm.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    if (flag) { outer.delete(1); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_different_survivors.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    if (flag) { outer.delete(1); } else { outer.delete(2); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_selected_nonzero.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    const saved = flag ? outer.size : 1;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_signed_zero.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(0, inner);
+    outer.delete(-0);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_alias_after_store.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.delete(1);
+    const saved = outer.size;
+    outer.clear();
+    const alias = outer.set(saved, inner);
+    alias.delete(0);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_same_schema_other_instance.js
+function identity(map) { return map; }
+function probe(flag) {
+    const first = new Map();
+    const second = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    identity(first);
+    identity(second);
+    first.clear();
+    first.set(1, inner);
+    second.delete(1);
+    const saved = first.size;
+    first.clear();
+    first.set(saved, inner);
+    return first.get(0).size;
+}
+var result = probe(true);
+
+//--- delete_same_schema_disjoint_key.js
+function identity(map) { return map; }
+function probe(flag) {
+    const first = new Map();
+    const second = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    identity(first);
+    identity(second);
+    first.clear();
+    first.set(1, inner);
+    second.delete(2);
+    const saved = first.size;
+    first.clear();
+    first.set(saved, inner);
+    return first.get(1).size;
+}
+var result = probe(true);
+
+//--- delete_possibly_equal_keys.js
+function probe(left, right) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(left, inner);
+    outer.set(right, inner);
+    outer.delete(left);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
 }
 var result = probe("x", "y");

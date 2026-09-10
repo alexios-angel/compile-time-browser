@@ -268,10 +268,17 @@ struct presenceAnalysis {
 
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call);
-        for (const auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
-            if (!possible.empty() && familyOf(instance) == familyOf(affected.instance)) {
-                current.possibleKeys.erase(instance);
-            }
+        // Only this runtime instance definitely lost the erased key. Other
+        // Maps in its schema family may alias it, so their upper bounds remain
+        // unchanged while mayErase below invalidates definite membership.
+        // Deletion never adds keys, including when equality is unproved.
+        if (auto found = current.possibleKeys.find(affected.instance);
+            found != current.possibleKeys.end()) {
+            llvm::erase_if(found->second, [&](mlir::Value key) {
+                return comparePrimitiveMapKeys(key, affected.key, current.keyEvidence(key),
+                                               current.keyEvidence(affected.key)) ==
+                       PrimitiveMapKeyRelation::Same;
+            });
         }
         const auto mayErase = [&](fact value) {
             // A schema family may contain several runtime instances. Without

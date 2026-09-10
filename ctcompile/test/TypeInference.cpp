@@ -1259,6 +1259,277 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
                 rows.size() * 2);
 }
 
+void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
+    using namespace ctcompile;
+    const std::string prelude = R"mlir(
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %anotherOne = ctjs.constant #ctjs.number<4607182418800017408>
+  %two = ctjs.constant #ctjs.number<4611686018427387904>
+  %three = ctjs.constant #ctjs.number<4613937818241073152>
+  %zero = ctjs.constant #ctjs.number<0>
+  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>
+  %nan = ctjs.constant #ctjs.number<9221120237041090560>
+  %anotherNan = ctjs.constant #ctjs.number<9221120237041090561>
+  %false = ctjs.constant #ctjs.boolean<false>
+  %stringOne = ctjs.constant #ctjs.string<"1">
+  %setName = ctjs.constant #ctjs.string<"set">
+  %getName = ctjs.constant #ctjs.string<"get">
+  %clearName = ctjs.constant #ctjs.string<"clear">
+  %sizeName = ctjs.constant #ctjs.string<"size">
+  %deleteName = ctjs.constant #ctjs.string<"delete">
+  %constructor = ctjs.load_global "Map"
+  %map = ctjs.construct %constructor(%constructor)
+  %setter = ctjs.get_property %map[%setName]
+  %getter = ctjs.get_property %map[%getName]
+  %clearer = ctjs.get_property %map[%clearName]
+  %eraser = ctjs.get_property %map[%deleteName]
+)mlir";
+    const std::string clear = "  %cleared = ctjs.call %clearer(%map) {mutate_clear}\n";
+    const std::string seed = "  %seeded = ctjs.call %setter(%map, %one, %one) {seed}\n";
+    const std::string extra = "  %extra = ctjs.call %setter(%map, %two, %one) {extra}\n";
+    const std::string erase = "  %erased = ctjs.call %eraser(%map, %one) {erase}\n";
+    const std::string size = "  %saved = ctjs.get_property %map[%sizeName] {snapshot}\n";
+    const std::string reset = "  %reset = ctjs.call %clearer(%map) {reset}\n";
+    const std::string store = "  %stored = ctjs.call %setter(%map, %saved, %one) {mutate_store}\n";
+    const std::string read = "  %observed = ctjs.call %getter(%map, %zero) {check}\n";
+    const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
+        const auto position = text.find(from.str());
+        if (position == std::string::npos) {
+            std::printf("FAIL delete-size fixture replacement did not match\n");
+            ++failures;
+            return text;
+        }
+        text.replace(position, from.size(), to.str());
+        return text;
+    };
+    const std::string both = "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + erase +
+                             "  } else {\n    %right = ctjs.call %eraser(%map, %anotherOne)\n"
+                             "    %again = ctjs.call %eraser(%map, %one)\n  }\n";
+    const std::string selected = "  %bit = ctjs.truthy %p\n"
+                                 "  %saved = scf.if %bit -> (!ctjs.value) {\n"
+                                 "    %left = ctjs.get_property %map[%sizeName]\n"
+                                 "    scf.yield %left : !ctjs.value\n"
+                                 "  } else {\n    scf.yield %negativeZero : !ctjs.value\n  }\n";
+    const auto suffix = reset + store + read;
+    const auto oneSuffix = reset + store + replace(read, "%zero", "%one");
+    struct presenceRow {
+        const char * what;
+        std::string body;
+        bool present;
+    };
+    std::vector<presenceRow> rows = {
+        {"deleting the last key saves exact zero", clear + seed + erase + size + suffix, true},
+        {"deleting one of two keys saves exact one",
+         clear + seed + extra + replace(erase, "%one", "%two") + size + oneSuffix, true},
+        {"deleting a distinct absent key preserves exact one",
+         clear + seed + replace(erase, "%one", "%three") + size + oneSuffix, true},
+        {"repeated deletion cannot decrement an already empty Map",
+         clear + seed + erase + replace(erase, "%erased", "%again") + size + suffix, true},
+        {"deleting both keys establishes zero after both operations",
+         clear + seed + extra + erase +
+             replace(replace(erase, "%erased", "%again"), "%one", "%two") + size + suffix,
+         true},
+        {"a saved one survives subsequent deletion", clear + seed + size + erase + oneSuffix, true},
+        {"a saved size between deletes survives the later deletion",
+         clear + seed + extra + erase + size +
+             replace(replace(erase, "%erased", "%again"), "%one", "%two") + oneSuffix,
+         true},
+        {"a later delete cannot establish an earlier zero", clear + seed + size + erase + suffix,
+         false},
+        {"a post-delete zero cannot inherit the old cardinality one",
+         clear + seed + erase + size + oneSuffix, false},
+        {"deleting a tracked key does not exclude unknown initial keys",
+         seed + erase + size + suffix, false},
+        {"the literal-zero repair retains the actual evaluated size",
+         clear + seed + erase + replace(size, "%saved", "%evaluated") +
+             "  %saved = ctjs.constant #ctjs.number<0>\n" + suffix,
+         true},
+        {"equal independent literal values identify the deleted key",
+         clear + seed + replace(erase, "%one", "%anotherOne") + size + suffix, true},
+        {"negative zero removes positive zero in SameValueZero",
+         clear + replace(seed, "%one, %one", "%zero, %one") +
+             replace(erase, "%one", "%negativeZero") + size + suffix,
+         true},
+        {"different NaN encodings identify one erased key",
+         clear + replace(seed, "%one, %one", "%nan, %one") + replace(erase, "%one", "%anotherNan") +
+             size + suffix,
+         true},
+        {"Boolean false remains after deleting Number zero",
+         clear + replace(seed, "%one, %one", "%zero, %one") + replace(extra, "%two", "%false") +
+             replace(erase, "%one", "%zero") + size + oneSuffix,
+         true},
+        {"String one remains after deleting Number one",
+         clear + seed + replace(extra, "%two", "%stringOne") + erase + size + oneSuffix, true},
+        {"every structural arm deletes the same last key", clear + seed + both + size + suffix,
+         true},
+        {"one surviving structural arm prevents exact zero",
+         clear + seed + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + erase + "  }\n" + size +
+             suffix,
+         false},
+        {"different singleton survivors cannot borrow an intersected exact count",
+         clear + seed + extra +
+             replace(replace(both, "%anotherOne", "%two"),
+                     "    %again = ctjs.call %eraser(%map, %one)\n", "") +
+             size + oneSuffix,
+         false},
+        {"both selected arms establish zero after deletion",
+         clear + seed + erase + selected + suffix, true},
+        {"one selected one cannot borrow a deleted Map's zero",
+         clear + seed + erase + replace(selected, "scf.yield %negativeZero", "scf.yield %one") +
+             suffix,
+         false},
+        {"a fluent alias deletes from the actual Map instance",
+         clear + seed +
+             "  %aliasEraser = ctjs.get_property %seeded[%deleteName]\n"
+             "  %erased = ctjs.call %aliasEraser(%seeded, %one)\n" +
+             size + suffix,
+         true},
+        {"an alias deletion after the final store destroys current membership",
+         clear + seed + erase + size + reset + store +
+             "  %aliasEraser = ctjs.get_property %stored[%deleteName]\n"
+             "  %erasedLater = ctjs.call %aliasEraser(%stored, %zero)\n" +
+             read,
+         false},
+        {"a saved zero survives later growth and another deletion",
+         clear + seed + erase + size + extra +
+             replace(replace(erase, "%erased", "%again"), "%one", "%two") + suffix,
+         true},
+    };
+    for (unsigned writes : {64u, 65u}) {
+        std::string repeated = seed;
+        for (unsigned index = 1; index < writes; ++index) {
+            repeated += "  %repeat" + std::to_string(index) +
+                        " = ctjs.call %setter(%map, %anotherOne, %one)\n";
+        }
+        rows.push_back({writes == 64 ? "deletion removes all sixty-four equal candidates"
+                                     : "deletion cannot repair an overflowed complete census",
+                        clear + repeated + erase + size + suffix, writes == 64});
+    }
+    const auto marked = [](mlir::ModuleOp module, llvm::StringRef name) {
+        mlir::Operation * result = nullptr;
+        module.walk([&](mlir::Operation * op) {
+            if (op->hasAttr(name)) { result = op; }
+        });
+        return result;
+    };
+    const auto verify = [&](mlir::ModuleOp module, const char * what, bool expected,
+                            bool mixed = true) {
+        for (bool clone : {false, true}) {
+            mlir::OwningOpRef<mlir::ModuleOp> fresh;
+            auto current = module;
+            if (clone) {
+                fresh = mlir::OwningOpRef<mlir::ModuleOp>{module.clone()};
+                current = *fresh;
+            }
+            mlir::Builder attrs(&context);
+            current.walk([&](mlir::Operation * op) {
+                op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(0));
+                if (op->hasAttr("check")) {
+                    op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
+                    op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("number"));
+                }
+            });
+            std::vector<mlir::Operation *> before;
+            std::vector<std::vector<mlir::Value>> operands;
+            current.walk([&](mlir::Operation * op) {
+                before.push_back(op);
+                operands.emplace_back(op->operand_begin(), op->operand_end());
+            });
+            ctnative::prepareNativeMaps(current);
+            auto * observed = marked(current, "check");
+            if (!observed || ctnative::nativeMapAction(observed) != "get" ||
+                observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
+                std::printf("FAIL %s: %s delete-size membership differs from %d\n", what,
+                            clone ? "fresh" : "reused", static_cast<int>(expected));
+                ++failures;
+            }
+            std::vector<mlir::Operation *> after;
+            current.walk([&](mlir::Operation * op) { after.push_back(op); });
+            bool intact = before == after;
+            for (size_t index = 0; intact && index < before.size(); ++index) {
+                intact &= llvm::equal(before[index]->getOperands(), operands[index]);
+            }
+            if (!intact) {
+                std::printf("FAIL %s: delete-size preparation changed executable source\n", what);
+                ++failures;
+            }
+            check(current, what,
+                  !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
+                  : expected
+                      ? "!ctnative.num<f64>"
+                      : "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>");
+        }
+    };
+    const std::string mixedSuffix = "  %booleanWrite = ctjs.call %setter(%map, %three, %false)\n";
+    for (const presenceRow & r : rows) {
+        for (bool mixed : {false, true}) {
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                prologue() + prelude + r.body + (mixed ? mixedSuffix : "") +
+                    "  ctjs.return %observed\n}\n",
+                &context);
+            if (!module) {
+                std::printf("FAIL %s: delete-size presence fixture did not parse\n", r.what);
+                ++failures;
+                continue;
+            }
+            // A homogeneous local Number read retains its optional public
+            // type; the later mixed store independently requests presence.
+            verify(*module, r.what, mixed && r.present, mixed);
+        }
+    }
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + clear + seed +
+                                                              erase + size + suffix + mixedSuffix +
+                                                              "  ctjs.return %observed\n}\n",
+                                                          &context);
+    if (!module) {
+        std::printf("FAIL live delete-size fixture did not parse\n");
+        ++failures;
+        return;
+    }
+    auto * snapshot = marked(*module, "snapshot");
+    auto * seeded = marked(*module, "seed");
+    auto * deletion = marked(*module, "erase");
+    auto * resetting = marked(*module, "reset");
+    auto * storing = marked(*module, "mutate_store");
+    auto * observed = marked(*module, "check");
+    if (!snapshot || !seeded || !deletion || !resetting || !storing || !observed) {
+        std::printf("FAIL live delete-size fixture lost its marked operations\n");
+        ++failures;
+        return;
+    }
+    verify(*module, "current post-delete zero snapshot", true);
+    snapshot->moveBefore(deletion);
+    verify(*module, "moving size before deletion keeps the old one", false);
+    snapshot->moveAfter(deletion);
+    verify(*module, "restoring read after deletion recovers zero", true);
+    deletion->moveAfter(storing);
+    verify(*module, "a later deletion cannot justify an earlier zero", false);
+    deletion->moveBefore(snapshot);
+    verify(*module, "restoring deletion before size recovers zero", true);
+    const auto erasedKey = deletion->getOperand(2);
+    deletion->setOperand(2, observed->getOperand(2));
+    verify(*module, "deleting absent zero leaves one present at the size read", false);
+    deletion->setOperand(2, erasedKey);
+    verify(*module, "restoring the deleted key recovers zero", true);
+    const auto saved = storing->getOperand(2);
+    storing->setOperand(2, erasedKey);
+    verify(*module, "a store at one cannot borrow saved-zero equality", false);
+    storing->setOperand(2, saved);
+    verify(*module, "restoring the store key recovers exact zero", true);
+    const auto zero = observed->getOperand(2);
+    observed->setOperand(2, erasedKey);
+    verify(*module, "a lookup at one cannot borrow saved-zero membership", false);
+    observed->setOperand(2, zero);
+    verify(*module, "restoring the literal lookup key recovers membership", true);
+    resetting->moveAfter(storing);
+    verify(*module, "later clear destroys membership despite an immutable saved zero", false);
+    resetting->moveBefore(storing);
+    verify(*module, "restoring clear before the final store recovers membership", true);
+    std::printf("delete-size Map presence: %zu source/mixed rows and twelve live edits, "
+                "reused/fresh modules\n",
+                rows.size() * 2);
+}
+
 void checkStaleFieldEffects(mlir::MLIRContext & context) {
     const auto checkBoth = [&](mlir::ModuleOp module, const char * what, bool assigned) {
         const char * expected =
@@ -2832,6 +3103,7 @@ int main() {
     checkIdentityMapFieldRows(context);
     checkMapZeroSizePresence(context);
     checkMapExactSizePresence(context);
+    checkMapDeleteSizePresence(context);
     checkComparisonIdentityRows(context);
     checkComparisonIdentityMutations(context);
     checkStaleFieldEffects(context);
