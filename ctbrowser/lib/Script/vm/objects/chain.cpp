@@ -34,6 +34,14 @@
 namespace ctbrowser::script {
 
 value context::own_keys(value source) {
+    // A PROXY ENUMERATES ITS TARGET: no handler here defines ownKeys or
+    // getOwnPropertyDescriptor, and an absent trap is the target's own
+    // [[OwnPropertyKeys]] (10.5.11 step 6) - the same fall-through
+    // own_property and Object.keys already take. `for (k in el.dataset)`
+    // walked nothing while `Object.keys(el.dataset)` walked the store.
+    if (source.is_kind(heap_kind::proxy)) {
+        return own_keys(static_cast<proxy_object *>(source.as_heap())->target);
+    }
     value out = make_array();
     auto * keys = static_cast<array_object *>(out.as_heap());
     if (source.is_object()) {
