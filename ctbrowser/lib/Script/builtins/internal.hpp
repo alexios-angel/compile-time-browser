@@ -1369,30 +1369,12 @@ inline void link_constructor(context & cx, object_object * table, const char * n
 // at all. test262 devotes ~250 files in built-ins/Object/defineProperties to
 // exactly that shape (15.2.3.7-5-b-*), and each one names the property it
 // inherits.
+//
+// The reader itself is context::to_property_descriptor, because a proxy's
+// defineProperty trap answers in the same objects and is called from inside
+// the VM; this is the name the standard library has always used for it.
 [[nodiscard]] inline context::property_descriptor read_descriptor(context & cx, value from) {
-    context::property_descriptor out;
-    const auto field = [&](const char * name, bool & has, value & into) {
-        if (cx.has_property(from, cx.string(name))) {
-            has = true;
-            into = cx.lookup_property(from, name);
-        }
-    };
-    const auto flag = [&](const char * name, bool & has, bool & into) {
-        value held = value::undefined();
-        bool present = false;
-        field(name, present, held);
-        if (present) {
-            has = true;
-            into = cx.truthy(held);
-        }
-    };
-    field("value", out.has_value, out.held);
-    field("get", out.has_get, out.getter);
-    field("set", out.has_set, out.setter);
-    flag("writable", out.has_writable, out.writable);
-    flag("enumerable", out.has_enumerable, out.enumerable);
-    flag("configurable", out.has_configurable, out.configurable);
-    return out;
+    return cx.to_property_descriptor(from);
 }
 
 inline bool define_one(context & cx, value target, const std::string & key, value descriptor) {

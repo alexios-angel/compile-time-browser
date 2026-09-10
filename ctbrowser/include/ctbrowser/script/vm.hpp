@@ -1372,6 +1372,17 @@ public:
         }
     };
 
+    // 6.2.6.4 FromPropertyDescriptor and 6.2.6.5 ToPropertyDescriptor: the
+    // descriptor OBJECT a page sees, and the one it hands back. Members of the
+    // context rather than of the standard library because a proxy's
+    // getOwnPropertyDescriptor and defineProperty traps speak in these objects
+    // too, and those are called from inside own_property / define_own_property.
+    // Only the fields the descriptor MENTIONS are written; a field of the
+    // object is read with HasProperty then Get, so an inherited or accessor
+    // field counts. `from` must be an object - the callers check.
+    [[nodiscard]] value from_property_descriptor(const property_descriptor & from);
+    [[nodiscard]] property_descriptor to_property_descriptor(value from);
+
     // [[GetOwnProperty]]. False when the property is not an OWN one - the
     // prototype chain is not consulted, which is the point.
     [[nodiscard]] bool own_property(value target, const std::string & name,

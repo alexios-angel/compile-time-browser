@@ -46,5 +46,50 @@ int main() {
     js_expect("Object.getOwnPropertyDescriptor(Object.prototype,'__proto__').enumerable", "false");
     js_expect("Object.keys(Object.prototype).length", "0");
 
+    // ================================================================
+    // 4. PROXY: deleteProperty - both delete forms reach the trap, and an
+    //    absent trap falls through to the target (10.5.10)
+    // ================================================================
+    js_expect("(function(){var log='';var p=new Proxy({x:1,y:2},{deleteProperty:function(t,k){"
+              "log+=k;return true;}});delete p.x;delete p['y'];return log+p.x+p.y;})()",
+              "xy12");
+    js_expect("(function(){var t={x:1};delete new Proxy(t,{}).x;return 'x' in t;})()", "false");
+    js_expect(
+        "Reflect.deleteProperty(new Proxy({},{deleteProperty:function(){return false;}}),'x')",
+        "false");
+
+    // ================================================================
+    // 5. PROXY: getOwnPropertyDescriptor - the trap's object is read as a
+    //    descriptor and COMPLETED (10.5.5 steps 13-14)
+    // ================================================================
+    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(t,k){return "
+              "{value:k+'!',writable:true,enumerable:true,configurable:true};}});"
+              "var d=Object.getOwnPropertyDescriptor(p,'a');"
+              "return d.value+','+d.writable+','+d.enumerable+','+d.configurable;})()",
+              "a!,true,true,true");
+    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(){return "
+              "{value:1};}});var d=Object.getOwnPropertyDescriptor(p,'a');"
+              "return d.writable+','+d.enumerable+','+d.configurable;})()",
+              "false,false,false");
+    js_expect("Object.getOwnPropertyDescriptor(new Proxy({a:1},{getOwnPropertyDescriptor:"
+              "function(){return undefined;}}),'a')",
+              "undefined");
+    js_expect("Object.getOwnPropertyDescriptor(new Proxy({},{getOwnPropertyDescriptor:"
+              "function(){return 1;}}),'a')",
+              "THREW");
+    js_expect("Object.getOwnPropertyDescriptor(new Proxy({a:1},{}),'a').value", "1");
+
+    // ================================================================
+    // 6. PROXY: defineProperty - the trap sees only the fields the
+    //    descriptor mentions (10.5.6 step 8, FromPropertyDescriptor)
+    // ================================================================
+    js_expect("(function(){var seen='';var p=new Proxy({},{defineProperty:function(t,k,d){"
+              "seen=k+':'+d.value+':'+d.enumerable+':'+('writable' in d);return true;}});"
+              "Object.defineProperty(p,'q',{value:3,enumerable:true});return seen;})()",
+              "q:3:true:false");
+    js_expect("(function(){var t={};Object.defineProperty(new Proxy(t,{}),'z',{value:9});"
+              "return t.z;})()",
+              "9");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
