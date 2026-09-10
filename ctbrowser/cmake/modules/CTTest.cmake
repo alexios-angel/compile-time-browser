@@ -109,7 +109,7 @@ endfunction()
 # perf regression should be read, not silently failed. Build and run by hand.
 function(ctbrowser_bench path)
   get_filename_component(name "${path}" NAME_WE)
-  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${path}.cpp ${ARGN})
+  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${path}.cpp)
   target_link_libraries(ctbrowser-test-${name}
     PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})
