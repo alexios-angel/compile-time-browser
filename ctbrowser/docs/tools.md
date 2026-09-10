@@ -72,6 +72,9 @@ with it.
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
+- `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
+  `ratchet.py <corpus> ratchet|api [--advance]`; the `<corpus>-ratchet.py` and
+  `<corpus>-api.py` names below are shims onto it.
 - `tools/corpus/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
   runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
   it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
