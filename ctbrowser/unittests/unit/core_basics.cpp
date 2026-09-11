@@ -129,11 +129,12 @@ void test_pin_defers_recycling() {
 
 void test_slab_grows_past_a_chunk() {
     epoch_domain domain;
-    slab<int, thing_tag, 4> s{domain}; // 16 slots per chunk, so this spans several
+    slab<int, thing_tag> s{domain};
+    constexpr int n = 2 * static_cast<int>(decltype(s)::chunk_size) + 1; // spans three chunks
     std::vector<thing_id> ids;
-    for (int i = 0; i < 100; ++i) { ids.push_back(s.insert(i)); }
-    CHECK_EQ(s.size(), 100u);
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < n; ++i) { ids.push_back(s.insert(i)); }
+    CHECK_EQ(s.size(), static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
         const int * v = s.get(ids[static_cast<std::size_t>(i)]);
         CHECK(v != nullptr && *v == i); // every handle still resolves after growth
     }
