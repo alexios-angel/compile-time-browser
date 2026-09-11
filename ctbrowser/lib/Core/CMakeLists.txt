@@ -1,5 +1,5 @@
 # ctbrowser.core - the foundation: slab allocation, generation-tagged handles, epochs,
-# atoms, the thread pool, geometry, CPU time. Knows nothing about browsers.
+# atoms, the thread pool, geometry. Knows nothing about browsers.
 #
 # Sources are relative to this directory; headers are named in full under
 # ${CTBROWSER_INCLUDE_DIR}. Dependencies are found in cmake/dependencies.cmake.
@@ -12,7 +12,6 @@ target_sources(ctbrowser-core
     atom.cpp
     epoch.cpp
     scheduler.cpp
-    cpu_time.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -26,7 +25,6 @@ target_sources(ctbrowser-core
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/algorithms.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/atom.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/scheduler.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/cpu_time.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/geometry.hpp")
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-core)

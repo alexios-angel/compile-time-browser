@@ -10,7 +10,6 @@
 //   epoch      the reclamation scheme that lets those reads take no locks
 //   atom       interned strings, so name comparison is an integer compare
 //   scheduler  work-stealing pool for style, layout and raster
-//   cpu_time   process CPU seconds, which std::clock() does not portably give
 //   geometry   points, rects, sides, colors
 //
 // This header includes all of them, so `#include <ctbrowser/core/core.hpp>` is
@@ -20,7 +19,6 @@
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/core/containers.hpp>
-#include <ctbrowser/core/cpu_time.hpp>
 #include <ctbrowser/core/epoch.hpp>
 #include <ctbrowser/core/geometry.hpp>
 #include <ctbrowser/core/handle.hpp>
