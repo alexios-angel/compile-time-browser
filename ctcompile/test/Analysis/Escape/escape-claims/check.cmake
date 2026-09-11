@@ -178,6 +178,7 @@ endif()
 # teeth. On a corpus the escapes claims still carry evidence (an EXACT count),
 # and sound/precision are printed for the record.
 if(STRICT)
+  include("${CMAKE_CURRENT_LIST_DIR}/InheritedAccessors.cmake")
   if(_sound LESS_EQUAL 0)
     message(FATAL_ERROR "${NAME}: no confined claim was proved sound - the analysis said escapes everywhere, which is right the way a stopped clock is")
   endif()

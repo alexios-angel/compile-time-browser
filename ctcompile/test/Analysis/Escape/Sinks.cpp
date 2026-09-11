@@ -79,14 +79,14 @@ int main() {
          .expected = "confined",
          .roles = "ctjs.own_keys neither",
          .boxed = "runtime_array"},
-        {.what = "iterable: $source CARRY - the site stays confined through it",
+        {.what = "iterable: $source CARRY - inherited getters can retain the source",
          .body = S + "  %i = ctjs.iterable of %s\n" + R,
-         .expected = "confined",
-         .roles = "ctjs.iterable carry",
+         .expected = "escapes:passed",
+         .roles = "ctjs.iterable sink:passed",
          .boxed = "runtime_array"},
         {.what = "iterable CARRIES: returning the iterable returns the site (c.cpp:555)",
          .body = S + "  %i = ctjs.iterable of %s\n  ctjs.return %i\n",
-         .expected = "escapes:returned"},
+         .expected = "escapes:passed"},
         {.what = "make_arguments is a boxed site, reason arguments",
          .body = "  %a = ctjs.make_arguments\n" + S + R,
          .expected = "confined",
@@ -145,10 +145,10 @@ int main() {
                  "  ctjs.store_global \"g\", %outer\n" +
                  R,
          .expected = "escapes:stored_global"},
-        {.what = "set_property: $object NEITHER, the star proof (o.cpp:397-419 walks null)",
+        {.what = "set_property: inherited setters can retain the receiver",
          .body = S + "  ctjs.set_property %s[%p], %q\n" + R,
-         .expected = "confined",
-         .roles = "ctjs.set_property neither sink:converted sink:stored"},
+         .expected = "escapes:passed",
+         .roles = "ctjs.set_property sink:passed sink:converted sink:stored"},
         {.what = "set_property: $key SINK(converted), to_string o.cpp:193 -> coerce.cpp:171-179",
          .body = S + "  ctjs.set_property %p[%s], %q\n" + R,
          .expected = "escapes:converted"},
@@ -157,10 +157,10 @@ int main() {
          .expected = "escapes:stored",
          .storageTarget = "{external}",
          .storageTargetVerdicts = ""},
-        {.what = "get_property: $object NEITHER (o.cpp:445-464, data-only find on the table)",
+        {.what = "get_property: inherited getters can retain the receiver",
          .body = S + "  %r = ctjs.get_property %s[%p]\n" + R,
-         .expected = "confined",
-         .roles = "ctjs.get_property neither sink:converted"},
+         .expected = "escapes:passed",
+         .roles = "ctjs.get_property sink:passed sink:converted"},
         {.what = "get_property: $key SINK(converted), o.cpp:154",
          .body = S + "  %r = ctjs.get_property %p[%s]\n" + R,
          .expected = "escapes:converted"},
@@ -431,12 +431,13 @@ int main() {
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_array}",
          .storageTargetVerdicts = "confined"},
-        {.what = "an iterable alias of the spread argument array remains confined",
+        {.what =
+             "an iterable alias of the spread argument array retains conservative source exposure",
          .body = A +
                  "  %args = ctjs.iterable of %s\n"
                  "  %r = ctjs.call_spread %p(%q, %args)\n" +
                  R,
-         .expected = "confined"},
+         .expected = "escapes:passed"},
         {.what = "a spread receiver that aliases the argument array still escapes",
          .body = A +
                  "  %args = ctjs.iterable of %s\n"
@@ -449,7 +450,7 @@ int main() {
                  "  %r = ctjs.call_spread %p(%q, %args)\n"
                  "  ctjs.store_global \"arguments\", %args\n" +
                  R,
-         .expected = "escapes:stored_global"},
+         .expected = "escapes:passed"},
         {.what = "dynamic_import SINK(converted) - the specifier's toString is user code",
          .body = S + "  %m = ctjs.dynamic_import %s\n" + R,
          .expected = "escapes:converted",

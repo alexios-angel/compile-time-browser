@@ -321,7 +321,7 @@ int main() {
                  "    ctjs.store_global \"held\", %alias\n"
                  "  }\n" +
                  R,
-         .expected = "escapes:unknown_op"},
+         .expected = "escapes:passed"},
         {.what = "a nested NEITHER use still requires a region proof",
          .body = S +
                  "  %t = ctjs.truthy %p\n"

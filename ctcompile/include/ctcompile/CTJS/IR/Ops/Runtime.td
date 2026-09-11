@@ -408,19 +408,9 @@ def CTJS_IterableOp
     eagerly under a bound rather than iterated lazily, so an infinite one hangs.
     Both are the interpreter's semantics, reproduced rather than repaired.
   }];
-  // PHASE 55 (may_reenter 1: iterable). $source CARRY, the one carrier: the
-  // array arm returns THE SAME ARRAY (iterable_values, vm/call/invoke.cpp), so
-  // the result aliases
-  // the source. Every other arm builds a fresh array (559, 579, 595, 603,
-  // 611) - the result's boxed-site claim, reason runtime_array - and reads
-  // the source with `find` (578, 594, 602, 610) or lookup_property (615),
-  // which for an object site is data-only by the star proof on get_property.
-  // The re-entering arm resumes a generator (582): generator_resume reads
-  // the source once, in generator_resume (vm/call/coroutines.cpp,
-  // `find("__co")`), stores it nowhere and
-  // resumes with the coroutine's own saved receiver - no site of this
-  // function is handed to the body.
-  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_Carry]>:$source);
+  // The array arm returns the same array, so retain its alias edge even though
+  // an ordinary object's inherited numeric getter can retain the source.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_Carry, CTJS_SinkPassed]>:$source);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedRuntimeArray]>:$result);
   let assemblyFormat = "`of` $source attr-dict";
 }

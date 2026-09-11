@@ -539,20 +539,16 @@ int main() {
                  "1");
 
     // =======================================================================
-    // ND-3: a getter on Object.prototype does not fire for a plain object.
+    // ND-3: inherited accessors also receive a plain literal as `this`.
     // =======================================================================
     //
-    // lookup_property (vm/objects/lookup.cpp) walks the chain calling accessors,
-    // but a
-    // plain literal's chain is null, and the shared Object.prototype table is
-    // consulted afterwards with `find` - data properties only. The same getter
-    // DOES fire when the table is on an explicit chain, which is what makes
-    // this a pin on the shortcut and not on accessors in general. V8 answers
-    // 42 for both.
-    probe_expect("ND-3: Object.prototype getter on a literal - undefined here, 42 in V8",
+    // Runtime 552a4ba0 closed the implicit-prototype shortcut. The escape oracle
+    // in escape-claims/ separately compares the retained receivers and setter
+    // argument with the compiler's claims, including iteration's numeric read.
+    probe_expect("ND-3: Object.prototype getter on a literal returns a number",
                  "(function () { Object.defineProperty(Object.prototype, \"nd3\", "
                  "{get: function () { return 42; }}); return typeof ({}).nd3; })()",
-                 "undefined");
+                 "number");
     probe_expect("ND-3: the same getter fires through an explicit chain",
                  "(function () { Object.defineProperty(Object.prototype, \"nd3\", "
                  "{get: function () { return 42; }}); "
@@ -560,6 +556,31 @@ int main() {
                  "42");
     probe_expect("ND-3: a data property on Object.prototype IS seen by a literal",
                  "(function () { Object.prototype.nd3d = 7; return ({}).nd3d; })()", "7");
+    probe_expect("ND-3: inherited getter retains its literal receiver",
+                 "(function () { var retained; "
+                 "Object.defineProperty(Object.prototype, \"nd3\", "
+                 "{get: function () { retained = this; return 42; }}); "
+                 "function read() { var local = {}; return local.nd3; } "
+                 "return read() === 42 && typeof retained === \"object\"; })()",
+                 "true");
+    probe_expect("ND-3: inherited setter retains receiver and deleted child",
+                 "(function () { var receiver, child; "
+                 "Object.defineProperty(Object.prototype, \"nd3\", "
+                 "{set: function (value) { receiver = this; child = value; }}); "
+                 "function write() { var local = {}, value = {}; "
+                 "local.nd3 = value; delete local.nd3; } write(); "
+                 "return typeof receiver === \"object\" && typeof child === \"object\" "
+                 "&& !receiver.hasOwnProperty(\"nd3\"); })()",
+                 "true");
+    probe_expect("ND-3: iteration's inherited numeric getter retains its receiver",
+                 "(function () { var retained, seed = {length: 1}; "
+                 "Object.defineProperty(Object.prototype, \"0\", "
+                 "{get: function () { retained = this; return 42; }}); "
+                 "function iterate(input) { var local = {...input}, sum = 0; "
+                 "for (var item of local) { sum += item; } return sum; } "
+                 "return iterate(seed) === 42 && typeof retained === \"object\" "
+                 "&& retained.length === 1; })()",
+                 "true");
 
     // =======================================================================
     // F. THE PRINTED MODULE CONTAINS NO `ctnative.weak`. Gate 4(f).

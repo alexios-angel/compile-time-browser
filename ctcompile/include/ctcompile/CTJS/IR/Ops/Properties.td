@@ -27,20 +27,10 @@ def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS
     the inline cache Phase 26 attaches to it - needs a SECOND operation carrying
     a name attribute, which is a specialisation rather than a fold.
   }];
-  // PHASE 55 (may_reenter 1: get_prop/get_index). $object NEITHER, THE STAR
-  // PROOF for a confined base: a fresh object's prototype is null
-  // (value.hpp:569) and its accessor table empty, lookup_property walks the
-  // own chain (lookup_property, vm/objects/lookup.cpp) - a getter runs only if
-  // found on THAT
-  // chain - and then consults the shared table with data-only `find`
-  // (462-464; value.hpp:575-580); the proxy arm (425-433) is unreachable for
-  // a site and the array arm (467-511) runs no call(). The two operations
-  // that could give a confined base an accessor, set_proto and
-  // define_accessor, sink the base itself. $key SINK(converted): to_string
-  // (lookup_index, vm/objects/lookup.cpp) -> to_primitive_string
-  // (coerce.cpp:171-179) calls the
-  // key's own toString/valueOf with the key as receiver.
-  let arguments = (ins CTJS_ValueType:$object,
+  // An inherited getter, including on implicit Object.prototype, can retain
+  // the receiver. A fresh allocation alone does not prove an own data field.
+  // Key conversion can likewise invoke the key's toString/valueOf.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
@@ -48,16 +38,10 @@ def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS
 
 def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_index", CTJS_GenericEffects> {
   let summary = "Generic property write with full ECMAScript semantics";
-  // PHASE 55 (may_reenter 1: set_prop/set_index). $object NEITHER by the
-  // star proof: the object arm (store_property, vm/objects/store.cpp) goes
-  // through assign_through_accessor, which walks ONLY obj->prototype - null
-  // for a site - and the array arm (361-378) resizes on `length` only; the
-  // proxy arm is unreachable for a site. $key SINK(converted):
-  // to_string (store_index, vm/objects/store.cpp) runs the key's own toString.
-  // $value
-  // SINK(stored): object_object::set (value.hpp:632-639) / store_index
-  // (vm/objects/store.cpp), traced (trace_object, vm/objects/gc.cpp).
-  let arguments = (ins CTJS_ValueType:$object,
+  // An inherited setter can retain the receiver and value without creating
+  // an own field. Stored-value refinement therefore needs an independent
+  // own-data proof; receiver exposure alone cannot justify removing that sink.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$object `[` $key `]` `,` $value attr-dict";

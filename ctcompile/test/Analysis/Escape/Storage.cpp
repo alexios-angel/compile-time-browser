@@ -123,7 +123,7 @@ int main() {
     const std::vector<row> rows = {
         // DIRECT STORAGE TARGETS ARE DIAGNOSTICS, not contents proofs. The
         // original Stored verdict remains even when every target is confined.
-        {.what = "a fixed property store identifies its confined object target",
+        {.what = "a fixed property store identifies its exposed object target",
          .body = S +
                  "  %outer = ctjs.create_object\n"
                  "  %key = ctjs.constant #ctjs.string<\"child\">\n"
@@ -131,18 +131,19 @@ int main() {
                  R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_object}",
-         .storageTargetVerdicts = "confined"},
+         .storageTargetVerdicts = "escapes:passed"},
         {.what = "a returned target remains escaping despite its local allocation",
          .body = S + "  %outer = ctjs.create_array [%s]\n"
                      "  ctjs.return %outer\n",
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_array}",
          .storageTargetVerdicts = "escapes:returned"},
-        {.what = "a self-cycle keeps its Stored verdict when target and value share one site",
+        {.what = "a self-cycle keeps the earlier receiver exposure when target and value share one "
+                 "site",
          .body = S + "  ctjs.set_property %s[%q], %s\n" + R,
-         .expected = "escapes:stored",
-         .storageTarget = "{ctjs.create_object}",
-         .storageTargetVerdicts = "escapes:stored",
+         .expected = "escapes:passed",
+         .storageTarget = "<uninitialized>",
+         .storageTargetVerdicts = "",
          .storageWrites = "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object}",
          .completeStorage = true},
         {.what = "a local target with an accessor does not prove direct field retention",
@@ -173,11 +174,11 @@ int main() {
                  R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_object, external}",
-         .storageTargetVerdicts = "confined",
+         .storageTargetVerdicts = "escapes:passed",
          .storageWrites =
              "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object, external}",
          .completeStorage = true},
-        {.what = "a local storage target join retains both confinement verdicts",
+        {.what = "a local storage target join retains both exposure verdicts",
          .body = S +
                  "  %local = ctjs.create_object\n"
                  "  %published = ctjs.create_object\n"
@@ -189,7 +190,7 @@ int main() {
                  R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_object, ctjs.create_object}",
-         .storageTargetVerdicts = "confined,escapes:stored_global"},
+         .storageTargetVerdicts = "escapes:passed,escapes:stored_global"},
         {.what = "a loop-carried storage target keeps its allocation identity",
          .body = S +
                  "  %outer = ctjs.create_array []\n"
@@ -307,13 +308,13 @@ int main() {
          .storageWrites = "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object}; "
                           "ctjs.set_property[2] {} -> {ctjs.create_object}",
          .completeStorage = true},
-        {.what = "a confined target's external and primitive contents both enter the census",
+        {.what = "a fresh target's external and primitive contents both enter the census",
          .body = S +
                  "  %zero = ctjs.constant #ctjs.number<0>\n"
                  "  ctjs.set_property %s[%zero], %p\n"
                  "  ctjs.set_property %s[%zero], %zero\n" +
                  R,
-         .expected = "confined",
+         .expected = "escapes:passed",
          .storageWrites = "ctjs.set_property[2] {external} -> {ctjs.create_object}; "
                           "ctjs.set_property[2] {} -> {ctjs.create_object}",
          .completeStorage = true},
@@ -359,7 +360,7 @@ int main() {
                  "  ctjs.set_property %s[%q], %other\n"
                  "  ctjs.set_property %other[%q], %s\n" +
                  R,
-         .expected = "escapes:stored",
+         .expected = "escapes:passed",
          .storageWrites =
              "ctjs.set_property[2] {ctjs.create_object@other} -> {ctjs.create_object@s}; "
              "ctjs.set_property[2] {ctjs.create_object@s} -> {ctjs.create_object@other}",
@@ -537,7 +538,7 @@ int main() {
          .body = "  %read = ctjs.get_property %p[%q] {check}\n"
                  "  ctjs.resume_throw\n",
          .expected = "<no lattice>",
-         .unvisitedOperands = 1,
+         .unvisitedOperands = 2,
          .alias = true,
          .withAnalysis = false,
          .loadReads = "ctjs.get_property <uninitialized> <- []",
@@ -635,17 +636,20 @@ int main() {
                  R,
          .expected = "escapes:stored",
          .provenanceReads = "{ctjs.create_array} -> {ctjs.create_object, external}",
-         .provenanceExposures = "ctjs.create_array[0]:stored; ctjs.store_global[0]:stored_global",
+         .provenanceExposures = "ctjs.create_array[0]:stored; ctjs.iterable[0]:passed; "
+                                "ctjs.store_global[0]:stored_global",
          .provenanceInputs = true},
         {.what = "self-cycle provenance converges and does not prove the cycle confined",
          .body = S + "  ctjs.set_property %s[%q], %s\n"
                      "  %first = ctjs.get_property %s[%q]\n"
                      "  %second = ctjs.get_property %first[%q]\n"
                      "  ctjs.return %second\n",
-         .expected = "escapes:stored",
+         .expected = "escapes:passed",
          .provenanceReads = "{ctjs.create_object} -> {ctjs.create_object, external}; "
                             "{ctjs.create_object, external} -> {ctjs.create_object, external}",
-         .provenanceExposures = "ctjs.set_property[2]:stored; ctjs.return[0]:returned",
+         .provenanceExposures = "ctjs.set_property[0]:passed; ctjs.set_property[2]:stored; "
+                                "ctjs.get_property[0]:passed; ctjs.get_property[0]:passed; "
+                                "ctjs.return[0]:returned",
          .provenanceInputs = true},
         {.what = "mutual-cycle provenance retains exact distinct allocation identities",
          .body = "  %s = ctjs.create_object {check, storage_test_id = \"s\"}\n"
@@ -655,11 +659,12 @@ int main() {
                  "  %first = ctjs.get_property %s[%q]\n"
                  "  %second = ctjs.get_property %first[%q]\n"
                  "  ctjs.return %second\n",
-         .expected = "escapes:stored",
+         .expected = "escapes:passed",
          .provenanceReads =
              "{ctjs.create_object@s} -> {ctjs.create_object@other, external}; "
              "{ctjs.create_object@other, external} -> {ctjs.create_object@s, external}",
-         .provenanceExposures = "ctjs.set_property[2]:stored; ctjs.return[0]:returned",
+         .provenanceExposures = "ctjs.set_property[0]:passed; ctjs.set_property[2]:stored; "
+                                "ctjs.get_property[0]:passed; ctjs.return[0]:returned",
          .provenanceInputs = true},
         {.what =
              "loaded candidates cross loop-carried aliases without asserting per-instance identity",

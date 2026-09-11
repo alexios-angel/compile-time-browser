@@ -456,6 +456,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {
+    // Preserve the historical object cases and their later mutations. Their
+    // first assignment now refuses: an inherited setter may retain either
+    // operand without installing an own field, so no later graph is evidence.
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %key = ctjs.constant #ctjs.string<\"child\">\n"
@@ -477,6 +480,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
     const std::vector<object_row> rows = {
         {.contents = {.what = "private own object fields discharge their children",
                       .body = values + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "zero -> {}",
                       .objects = "x:{}; y:{}; o:{child:x}",
                       .propertyReads = "",
@@ -484,10 +488,12 @@ void checkObjectContents(mlir::MLIRContext & context) {
          .discharged = "x"},
         {.contents = {.what = "a returned object retains its current own child",
                       .body = values + "  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "o -> {o,x}",
                       .objects = "x:{}; y:{}; o:{child:x}"}},
         {.contents = {.what = "a saved own read keeps its origin after replacement",
                       .body = values + read + replace + "  ctjs.return %before\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "x -> {x}",
                       .objects = "x:{}; y:{}; o:{child:y}",
                       .propertyReads = "o[child]=x"},
@@ -495,6 +501,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
         {.contents = {.what = "returned object replacement preserves every earlier read",
                       .body = values + read + replace +
                               "  %after = ctjs.get_property %o[%key]\n  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "o -> {o,y}",
                       .objects = "x:{}; y:{}; o:{child:y}",
                       .propertyReads = "o[child]=x; o[child]=y",
@@ -506,6 +513,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                               "  %same = ctjs.constant #ctjs.string<\"child\">\n"
                               "  ctjs.set_property %o[%same], %y\n" +
                               read + "  ctjs.return %before\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "y -> {y}",
                       .objects = "x:{}; y:{}; o:{child:y}",
                       .propertyReads = "o[child]=y"},
@@ -515,6 +523,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                        "  %alias = ctjs.get_property %a[%zero]\n"
                                        "  ctjs.set_property %alias[%key], %y\n"
                                        "  ctjs.return %a\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[o]",
                       .reads = "a[0]=o",
                       .exit = "a -> {a,o,y}",
@@ -526,6 +535,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                        "  %alias = ctjs.get_property %o[%key]\n"
                                        "  ctjs.set_property %alias[%zero], %y\n"
                                        "  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[y]",
                       .exit = "o -> {a,o,y}",
                       .objects = "x:{}; y:{}; o:{child:a}",
@@ -535,6 +545,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                       .body = values + read + replace +
                               "  %a = ctjs.create_array [%before] {storage_test_id = \"a\"}\n"
                               "  ctjs.return %a\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[x]",
                       .exit = "a -> {a,x}",
                       .objects = "x:{}; y:{}; o:{child:y}",
@@ -542,22 +553,22 @@ void checkObjectContents(mlir::MLIRContext & context) {
          .discharged = "y"},
         {.contents = {.what = "an absent own field cannot use prototype or builtin lookup",
                       .body = values + "  %read = ctjs.get_property %o[%other]\n" + done,
-                      .failure = ArrayContentsFailure::MissingProperty}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "constructor lookup still needs an actual own write",
                       .body = values +
                               "  %constructor = ctjs.constant #ctjs.string<\"constructor\">\n"
                               "  %read = ctjs.get_property %o[%constructor]\n" +
                               done,
-                      .failure = ArrayContentsFailure::MissingProperty}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "literal array append cannot initialize an object property",
                       .body = values + "  ctjs.append %y to %o\n" + done,
-                      .failure = ArrayContentsFailure::UnknownArray}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "external own-property values remain unknown",
                       .body = values + "  ctjs.set_property %o[%key], %p\n" + done,
-                      .failure = ArrayContentsFailure::UnknownValue}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "external property keys cannot borrow fixed own fields",
                       .body = values + "  %read = ctjs.get_property %o[%p]\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what =
                           "an object-loaded String write key preserves the original array child",
                       .body = values + "  %string = ctjs.constant #ctjs.string<\"0\">\n"
@@ -565,7 +576,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                        "  %keyValue = ctjs.get_property %o[%other]\n"
                                        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n"
                                        "  ctjs.set_property %a[%keyValue], %y\n  ctjs.return %a\n",
-                      .failure = ArrayContentsFailure::UnknownIndex}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "an object-loaded String read key cannot borrow dense array contents",
                       .body = values + "  %string = ctjs.constant #ctjs.string<\"0\">\n"
                                        "  ctjs.set_property %o[%other], %string\n"
@@ -573,13 +584,13 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n"
                                        "  %read = ctjs.get_property %a[%keyValue]\n"
                                        "  ctjs.return %read\n",
-                      .failure = ArrayContentsFailure::UnknownIndex}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "__proto__ spelling never establishes an ordinary own field",
                       .body = values +
                               "  %proto = ctjs.constant #ctjs.string<\"__proto__\">\n"
                               "  ctjs.set_property %o[%proto], %x\n" +
                               done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "a late prototype change invalidates prior own-field evidence",
                       .body = values + read + "  ctjs.set_proto %x on %o\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -589,6 +600,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "private own-field deletion preserves its saved read origin",
                       .body = values + read + "  ctjs.delete_property %o[%key]\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "zero -> {}",
                       .objects = "x:{}; y:{}; o:{}",
                       .propertyReads = "o[child]=x",
@@ -603,11 +615,13 @@ void checkObjectContents(mlir::MLIRContext & context) {
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "an own-field self cycle terminates without selecting an owner",
                       .body = values + "  ctjs.set_property %o[%key], %o\n  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "o -> {o}",
                       .objects = "x:{}; y:{}; o:{child:o}"},
          .acyclic = false},
         {.contents = {.what = "an object-to-object cycle enters the complete all-write graph",
                       .body = values + "  ctjs.set_property %x[%key], %o\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "zero -> {}",
                       .objects = "x:{child:o}; y:{}; o:{child:x}"},
          .acyclic = false},
@@ -617,6 +631,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                               "  ctjs.set_property %o[%key], %a\n"
                               "  ctjs.set_property %o[%key], %zero\n" +
                               done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[o]",
                       .exit = "zero -> {}",
                       .objects = "x:{}; y:{}; o:{child:zero}"},
@@ -624,12 +639,14 @@ void checkObjectContents(mlir::MLIRContext & context) {
         {.contents = {.what = "both object branches overwrite a child before their shared return",
                       .body = values + split + replace + "  cf.br ^join\n^right:\n" + replace +
                               "  cf.br ^join\n^join:\n  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "o -> {o,y}; o -> {o,y}",
                       .objects = "x:{}; y:{}; o:{child:y} | x:{}; y:{}; o:{child:y}"},
          .discharged = "x"},
         {.contents = {.what = "an untouched object branch retains its original child",
                       .body = values + split + replace +
                               "  ctjs.return %o\n^right:\n  ctjs.return %o\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "o -> {o,y}; o -> {o,x}",
                       .objects = "x:{}; y:{}; o:{child:y} | x:{}; y:{}; o:{child:x}"}},
         {.contents = {.what = "a joined object target cannot overwrite both incoming objects",
@@ -643,6 +660,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                               "^join(%selected: !ctjs.value):\n"
                               "  ctjs.set_property %selected[%key], %zero\n"
                               "  ctjs.return %a\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[o,b] | a:[o,b]",
                       .exit = "a -> {a,b,o,y}; a -> {a,b,o,x}",
                       .objects = "x:{}; y:{}; o:{child:zero}; b:{child:y} | "
@@ -654,15 +672,16 @@ void checkObjectContents(mlir::MLIRContext & context) {
                               "^join:\n"
                               "  %read = ctjs.get_property %o[%other]\n" +
                               done,
-                      .failure = ArrayContentsFailure::MissingProperty}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "unknown second-path own values discard an earlier complete exit",
                       .body = values + split + done +
                               "^right:\n  ctjs.set_property %o[%key], %p\n" + done,
-                      .failure = ArrayContentsFailure::UnknownValue}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "mutually exclusive mixed edges still refuse a cycle owner",
                       .body = values + "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n" +
                               split + "  ctjs.set_property %o[%key], %a\n" + done +
                               "^right:\n  ctjs.append %o to %a\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[] | a:[o]",
                       .exit = "zero -> {}; zero -> {}",
                       .objects = "x:{}; y:{}; o:{child:a} | x:{}; y:{}; o:{child:x}"},
@@ -672,6 +691,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                               "  ctjs.root %o in %frame\n  ctjs.root %x in %frame\n"
                               "  ctjs.frame_exit %frame\n" +
                               done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "zero -> {}"},
          .discharged = "x"},
     };
@@ -681,7 +701,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
         budgets += checkArrayRetention(
             module, {.what = expected.contents.what,
                      .body = expected.contents.body,
-                     .discharged = expected.discharged,
+                     .discharged = "",
                      .complete = expected.contents.failure == ArrayContentsFailure::None &&
                                  expected.acyclic});
     };
@@ -717,8 +737,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                   "\n  ctjs.set_property %o[%fixed], %y\n"
                                   "  %result = ctjs.get_property %o[%fixed]\n"
                                   "  ctjs.return %result\n",
-                          .failure = supported ? ArrayContentsFailure::None
-                                               : ArrayContentsFailure::UnknownPropertyKey,
+                          .failure = ArrayContentsFailure::UnsupportedOperation,
                           .exit = supported ? "y -> {y}" : ""},
              .discharged = supported ? "x" : ""});
     }
@@ -750,35 +769,22 @@ void checkObjectContents(mlir::MLIRContext & context) {
         child.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
         check(*module, mutation);
         changed->setOperand(2, child);
-        mutation.contents.objects = "x:{}; y:{}; o:{child:x}";
-        mutation.contents.exit = "o -> {o,x}";
-        mutation.contents.propertyReads = "o[child]=x; o[child]=x";
-        mutation.contents.propertyWrites = nullptr;
-        mutation.discharged = "";
         check(*module, mutation);
         changed->setOperand(2, parameter);
-        mutation.contents.failure = ArrayContentsFailure::UnknownValue;
         check(*module, mutation);
         changed->setOperand(2, original);
         readOp->setOperand(1, other);
-        mutation.contents.failure = ArrayContentsFailure::MissingProperty;
         check(*module, mutation);
         readOp->setOperand(1, parameter);
-        mutation.contents.failure = ArrayContentsFailure::UnknownPropertyKey;
         check(*module, mutation);
         readOp->setOperand(1, key);
         readOp->setOperand(0, parameter);
-        mutation.contents.failure = ArrayContentsFailure::UnknownArray;
         check(*module, mutation);
         readOp->setOperand(0, base);
         changed->setOperand(0, child);
-        mutation.contents.failure = ArrayContentsFailure::None;
-        mutation.contents.objects = "x:{child:y}; y:{}; o:{child:x}";
-        mutation.contents.exit = "o -> {o,x,y}";
         check(*module, mutation);
         changed->setOperand(0, base);
         auto publication = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", base);
-        mutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
         check(*module, mutation);
         publication.erase();
         mutation = rows[3];
@@ -793,6 +799,7 @@ void checkObjectContents(mlir::MLIRContext & context) {
                                       "  %keyValue = ctjs.get_property %o[%other]\n"
                                       "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n"
                                       "  ctjs.set_property %a[%keyValue], %y\n  ctjs.return %a\n",
+                     .failure = ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[y]",
                      .exit = "a -> {a,y}",
                      .objects = "x:{}; y:{}; o:{child:x,other:zero}",
@@ -812,12 +819,8 @@ void checkObjectContents(mlir::MLIRContext & context) {
         function->setAttr("ctnative.confined", builder.getUnitAttr());
         check(*keyModule, keyMutation);
         index->setAttr("value", ctjs::StringAttr::get(&context, "0"));
-        keyMutation.contents.failure = ArrayContentsFailure::UnknownIndex;
-        keyMutation.discharged = "";
         check(*keyModule, keyMutation);
         index->setAttr("value", number);
-        keyMutation.contents.failure = ArrayContentsFailure::None;
-        keyMutation.discharged = "x";
         check(*keyModule, keyMutation);
     } else {
         fail(row{.what = keyMutation.contents.what,
@@ -825,9 +828,30 @@ void checkObjectContents(mlir::MLIRContext & context) {
                  .expected = ""},
              "the live array key mutation fixture did not parse");
     }
+    const row setter{.what =
+                         "an inherited setter may retain a child despite later property deletion",
+                     .body = "  %zero = ctjs.constant #ctjs.number<0>\n"
+                             "  %key = ctjs.constant #ctjs.string<\"nd3slot\">\n"
+                             "  %child = ctjs.create_object {check}\n"
+                             "  %local = ctjs.create_object\n"
+                             "  ctjs.set_property %local[%key], %child\n"
+                             "  ctjs.delete_property %local[%key]\n"
+                             "  ctjs.return %zero\n",
+                     .expected = "escapes:stored",
+                     .by = "ctjs.set_property",
+                     .position = 2};
+    ctcompile::test::escape::check(context, setter);
+    if (auto setterModule = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + setter.body + "}\n", &context)) {
+        checkArrayContents(*setterModule, {.what = setter.what,
+                                           .body = setter.body,
+                                           .failure = ArrayContentsFailure::UnsupportedOperation});
+    } else {
+        fail(setter, "the inherited-setter retention fixture did not parse");
+    }
     std::printf("object contents/retention: %zu rows, %zu key controls, twelve live states, "
                 "%zu retention budget cutoffs\n",
-                rows.size(), keys.size(), budgets);
+                rows.size() + 1, keys.size(), budgets);
 }
 
 } // namespace ctcompile::test::escape::arrays

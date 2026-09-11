@@ -43,7 +43,7 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
          .failure = ArrayContentsFailure::UnknownValue},
         {.what = "forwarded opaque entries never become own-property contents",
          .body = values + forward + "  ctjs.set_property %x[%key], %opaque\n" + done,
-         .failure = ArrayContentsFailure::UnknownValue},
+         .failure = ArrayContentsFailure::UnsupportedOperation},
         {.what = "a forwarded opaque array base remains unknown",
          .body = values + forward + "  %read = ctjs.get_property %opaque[%zero]\n" + done,
          .failure = ArrayContentsFailure::UnknownArray},
@@ -52,7 +52,7 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
          .failure = ArrayContentsFailure::UnknownIndex},
         {.what = "a forwarded opaque property key remains unknown",
          .body = values + forward + "  ctjs.set_property %x[%opaque], %zero\n" + done,
-         .failure = ArrayContentsFailure::UnknownPropertyKey},
+         .failure = ArrayContentsFailure::UnsupportedOperation},
         {.what = "a forwarded opaque deletion key remains unknown",
          .body = values + forward + "  ctjs.delete_property %x[%opaque]\n" + done,
          .failure = ArrayContentsFailure::UnknownPropertyKey},
@@ -280,7 +280,7 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
         {.contents = {.what = "a converted Boolean is not an exact own String key",
                       .body = values + compare + boolean +
                               "  ctjs.set_property %x[%boolean], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "a comparison Boolean cannot become a container",
                       .body =
                           values + compare + "  %read = ctjs.get_property %same[%zero]\n" + done,
@@ -516,7 +516,7 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
                       .failure = ArrayContentsFailure::UnknownIndex}},
         {.contents = {.what = "a negation Boolean is not an own String key",
                       .body = values + negate + "  ctjs.set_property %x[%negated], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "a negation Boolean is not a copy endpoint",
                       .body = values + negate + "  ctjs.copy_props %negated into %x\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -736,7 +736,7 @@ void checkTotalUnaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "a unary String or Undefined is not a proved own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "a unary result is not an own-data copy endpoint",
                           .body = values + produce + "  ctjs.copy_props %produced into %x\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -780,7 +780,7 @@ void checkTotalUnaryProducers(mlir::MLIRContext & context) {
                                   " %zero\n"
                                   "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
         std::size_t budgets = 0;
         const auto check = [&](mlir::ModuleOp module, const unary_row & expected) {

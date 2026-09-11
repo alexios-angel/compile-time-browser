@@ -399,11 +399,13 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
     const auto check = [&](mlir::ModuleOp module, const conditional_row & expected) {
         checkArrayContents(module, expected.contents);
         budgets += checkArrayRetention(
-            module, {.what = expected.contents.what,
-                     .body = expected.contents.body,
-                     .discharged = expected.discharged,
-                     .complete = expected.contents.failure == ArrayContentsFailure::None &&
-                                 expected.acyclicWrites});
+            module,
+            {.what = expected.contents.what,
+             .body = expected.contents.body,
+             .discharged =
+                 expected.contents.failure == ArrayContentsFailure::None ? expected.discharged : "",
+             .complete = expected.contents.failure == ArrayContentsFailure::None &&
+                         expected.acyclicWrites});
     };
     for (const auto & expected : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
@@ -604,6 +606,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                               "^join(%replacement: !ctjs.value):\n"
                               "  ctjs.set_property %o[%key], %replacement\n"
                               "  %read = ctjs.get_property %o[%key]\n  ctjs.return %read\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .exit = "y -> {y}; zero -> {}; one -> {}",
                       .objects = "x:{}; y:{}; o:{child:y} | x:{}; y:{}; o:{child:zero} | "
                                  "x:{}; y:{}; o:{child:one}",
@@ -624,6 +627,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                               "  %target = ctjs.get_property %c[%index]\n"
                               "  ctjs.set_property %target[%key], %replacement\n"
                               "  ctjs.return %c\n",
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "c:[o,b] | c:[o,b] | c:[o,b]",
                       .reads = "c[0]=o; c[1]=b; c[0]=o",
                       .exit = "c -> {b,c,o,y}; c -> {b,c,o,x}; c -> {b,c,o,y}",
@@ -643,6 +647,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                               split + "  ctjs.append %o to %a\n" + done +
                               "^zero:\n  ctjs.set_property %o[%key], %a\n" + done + "^one:\n" +
                               done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation,
                       .arrays = "a:[o] | a:[] | a:[]",
                       .exit = "zero -> {}; zero -> {}; zero -> {}",
                       .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{child:a} | "
@@ -679,7 +684,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                               "^zero:\n  ctjs.set_property %o[%key], %y\n  cf.br ^join\n"
                               "^one:\n  cf.br ^join\n^join:\n"
                               "  %read = ctjs.get_property %o[%key]\n  ctjs.return %read\n",
-                      .failure = ArrayContentsFailure::MissingProperty}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "exhaustive case values cannot hide publication on the default edge",
                       .body = array + split + "  ctjs.store_global \"held\", %a\n" + done +
                               "^zero:\n" + done + "^one:\n" + done,
@@ -735,11 +740,13 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
     const auto check = [&](mlir::ModuleOp module, const switch_row & expected) {
         checkArrayContents(module, expected.contents);
         budgets += checkArrayRetention(
-            module, {.what = expected.contents.what,
-                     .body = expected.contents.body,
-                     .discharged = expected.discharged,
-                     .complete = expected.contents.failure == ArrayContentsFailure::None &&
-                                 expected.acyclicWrites});
+            module,
+            {.what = expected.contents.what,
+             .body = expected.contents.body,
+             .discharged =
+                 expected.contents.failure == ArrayContentsFailure::None ? expected.discharged : "",
+             .complete = expected.contents.failure == ArrayContentsFailure::None &&
+                         expected.acyclicWrites});
     };
     for (const auto & expected : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
@@ -852,8 +859,8 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
              "the live switch fixture did not parse");
     }
 
-    // Three edges at each of ten joins create 3^10 paths from a small CFG.
-    // Snapshot charges include both array slots and object properties.
+    // Preserve the 3^10-path source. Its initial ordinary-object assignment
+    // now refuses before any switch snapshot can establish own properties.
     std::string expanding = array + "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
                                     "  ctjs.set_property %o[%key], %a\n  cf.br ^b0\n";
     for (unsigned i = 0; i < 10; ++i) {
@@ -870,22 +877,32 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
         solver.load<mlir::dataflow::DeadCodeAnalysis>();
         solver.load<mlir::dataflow::SparseConstantPropagation>();
         solver.load<EscapeAnalysis>();
-        const row r{.what = "switch path explosion is budgeted", .body = expanding, .expected = ""};
+        const row r{.what = "switch path expansion refuses its initial ordinary-object write",
+                    .body = expanding,
+                    .expected = ""};
         if (failed(solver.initializeAndRun(*explosion))) {
             fail(r, "the switch path-budget fixture's solver did not converge");
             return;
         }
         const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+        const ArrayContentsEvidence refusal = computeArrayContents(function);
+        if (refusal.complete || refusal.failure != ArrayContentsFailure::UnsupportedOperation ||
+            refusal.refusedBy == nullptr || !llvm::isa<ctjs::SetPropertyOp>(refusal.refusedBy)) {
+            fail(r, "switch paths did not refuse their initial ordinary-object assignment");
+        }
         for (std::size_t limit : {0U, 1U, 32U, 128U, 1024U}) {
             const auto result = computeArrayContents(function, limit);
             const EscapeVerdicts refined = computeVerdicts(solver, function, limit);
-            if (result.complete || result.failure != ArrayContentsFailure::WorkLimit ||
-                result.work != limit || !result.arrays.empty() || !result.reads.empty() ||
-                !result.writes.empty() || !result.objects.empty() ||
-                !result.propertyReads.empty() || !result.propertyWrites.empty() ||
-                !result.propertyDeletions.empty() || !result.propertyCopies.empty() ||
-                !result.exits.empty() || refined.arrayRetentionComplete ||
-                refined.confinedStoredSites != 0 || refined.arrayRetentionWork != limit ||
+            const auto failure = limit < refusal.work ? ArrayContentsFailure::WorkLimit
+                                                      : ArrayContentsFailure::UnsupportedOperation;
+            const std::size_t work = std::min(limit, refusal.work);
+            if (result.complete || result.failure != failure || result.work != work ||
+                !result.arrays.empty() || !result.reads.empty() || !result.writes.empty() ||
+                !result.objects.empty() || !result.propertyReads.empty() ||
+                !result.propertyWrites.empty() || !result.propertyDeletions.empty() ||
+                !result.propertyCopies.empty() || !result.exits.empty() ||
+                refined.arrayRetentionComplete || refined.confinedStoredSites != 0 ||
+                refined.arrayRetentionWork != work ||
                 !llvm::all_of(original.sites, [&](const auto & entry) {
                     auto found = refined.sites.find(entry.first);
                     return found != refined.sites.end() &&
@@ -893,7 +910,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                            found->second.by == entry.second.by &&
                            found->second.position == entry.second.position;
                 })) {
-                fail(r, "bounded switch enumeration published partial evidence");
+                fail(r, "bounded switch-prefix refusal published evidence or changed verdicts");
             }
         }
     } else {
@@ -901,7 +918,7 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
              "the switch path-budget fixture did not parse");
     }
     std::printf("container switches: %zu rows, six live states, four malformed controls, "
-                "%zu retention budget cutoffs, five path-explosion cutoffs\n",
+                "%zu retention budget cutoffs, five bounded refusal checks\n",
                 rows.size(), budgets);
 }
 

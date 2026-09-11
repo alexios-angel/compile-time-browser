@@ -65,7 +65,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
             {.contents = {.what = "String BigInt category supplies no concrete object key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
         unsigned rowCount = 0;
         unsigned liveStates = 0;
@@ -169,8 +169,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                                           "  ctjs.set_property %x[%key], %text\n"
                                           "  ctjs.delete_named \"operand\" from %x\n" +
                                           withBig("%input") + done,
-                                  .failure = supported ? ArrayContentsFailure::None
-                                                       : ArrayContentsFailure::UnsupportedOperation,
+                                  .failure = ArrayContentsFailure::UnsupportedOperation,
                                   .arrays = "a:[x]",
                                   .exit = "produced -> {}"}});
             }
@@ -390,7 +389,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         {.contents = {.what = "a BigInt comparison result is not a literal own String key",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "even equal BigInts cannot hide publication on an untaken arm",
                       .body = values + compare("%lhs", "%lhs") + branch + done +
                               "^no:\n  ctjs.store_global \"held\", %x\n" + done,
@@ -496,7 +495,6 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                   "  %bad = ctjs.binary pow %operand, %zero\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}});
         for (const std::string saved : {"%lhs", "%zero", "%text", "%x"}) {
-            const bool primitive = saved != "%x";
             run({.contents = {
                      .what = "both saved comparison operands survive independent slot mutations",
                      .body = values +
@@ -513,8 +511,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                              (left ? compare("%operand", "%savedBig")
                                    : compare("%savedBig", "%operand")) +
                              done,
-                     .failure = primitive ? ArrayContentsFailure::None
-                                          : ArrayContentsFailure::UnsupportedOperation,
+                     .failure = ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[zero]",
                      .reads = "a[0]=rhs",
                      .exit = "produced -> {}"}});
@@ -548,6 +545,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                       "  ctjs.set_property %x[%key], %zero\n"
                                       "  ctjs.delete_named \"operand\" from %x\n" +
                                       compareInput("%operand") + done,
+                              .failure = ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[x]",
                               .exit = "produced -> {}"}});
         }
@@ -596,8 +594,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                              "  ctjs.set_property %x[%key], %rhs\n"
                              "  ctjs.delete_named \"operand\" from %x\n" +
                              compareInput("%operand") + done,
-                     .failure = input != "%x" ? ArrayContentsFailure::None
-                                              : ArrayContentsFailure::UnsupportedOperation,
+                     .failure = ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[x]",
                      .exit = "produced -> {}"}});
         }

@@ -45,7 +45,7 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
         {.contents = {.what = "Plus cannot supply an exact String key after its error",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "Plus cannot erase an explicit thrown child",
                       .body = values + produce + "  ctjs.throw %x\n",
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -129,6 +129,7 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
                                   "^next(%operand: !ctjs.value):\n"
                                   "  %produced = ctjs.unary plus %operand\n" +
                                   done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}",
                           .objects = "x:{}",
@@ -282,7 +283,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
         {.contents = {.what = "Sub cannot supply an exact String key after its error",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "Sub cannot erase an explicit thrown child",
                       .body = values + produce + "  ctjs.throw %x\n",
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -366,6 +367,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                                   "^next(%operand: !ctjs.value):\n"
                                   "  %produced = ctjs.binary sub %operand, %zero\n" +
                                   done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}",
                           .objects = "x:{}",
@@ -603,7 +605,7 @@ void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKi
         {.contents = {.what = "Mul cannot supply an exact String key after its error",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "Mul cannot erase an explicit thrown child",
                       .body = values + produce + "  ctjs.throw %x\n",
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -697,6 +699,7 @@ void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKi
                                   "^next(%operand: !ctjs.value):\n"
                                   "  %produced = ctjs.binary mul %operand, %zero\n" +
                                   done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}",
                           .objects = "x:{}",

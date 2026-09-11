@@ -101,7 +101,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         {.contents = {.what = "a primitive binary result is not a literal own String key",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
-                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
         {.contents = {.what = "a primitive comparison does not authorize an opaque return",
                       .body = values + produce + "  ctjs.return %p\n",
                       .failure = ArrayContentsFailure::UnknownValue}},
@@ -220,9 +220,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                              "  ctjs.set_property %x[%key], " +
                              replacement + "\n  ctjs.delete_named \"operand\" from %x\n" +
                              compareInput("%operand") + "  ctjs.return %produced\n",
-                     .failure = savedBigInt && !isComparison && !isConcat && !isMixedError
-                                    ? ArrayContentsFailure::UnsupportedOperation
-                                    : ArrayContentsFailure::None,
+                     .failure = ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[x]",
                      .exit = "produced -> {}"}});
         }

@@ -47,8 +47,8 @@ def CTJS_CreateObjectOp
   let summary = "A fresh empty object";
   // PHASE 55: A TRACKED SITE, one of two (EscapeAnalysis::isTrackedSite).
   // run_loop.cpp:552-553 make_object, vm.hpp:245 allocate<object_object>.
-  // No operands, so nothing to annotate; the site is a C++ fact because the
-  // NEITHER proofs above are valid for this kind and arrays only.
+  // No operands, so nothing to annotate. Tracking is limited to ordinary
+  // objects and arrays; property operations still expose their receivers.
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "attr-dict";
 }

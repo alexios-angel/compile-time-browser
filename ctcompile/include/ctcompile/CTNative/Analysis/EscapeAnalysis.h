@@ -77,11 +77,10 @@ namespace ctcompile::ctnative {
 // height is sites-in-function + 1, so termination is by construction.
 //
 // A SITE IS A ctjs.create_object OR A ctjs.create_array AND NOTHING ELSE. The
-// NEITHER rows on the property operations are proved for those two kinds only
-// - a closure base breaks them (lookup_property -> ensure_prototype, the
-// `constructor` back-edge) - so the constructor asserts it, onlyTrackedSites
-// re-checks it, and the unit test has rows for every other allocating
-// operation showing its result enters no alias set.
+// remaining NEITHER rows apply only to these ordinary allocation kinds;
+// property access still exposes them through possible inherited accessors.
+// The constructor asserts the restriction, onlyTrackedSites re-checks it,
+// and tests ensure other allocating operations enter no alias set.
 class AliasValue {
 public:
     AliasValue() = default;
@@ -433,16 +432,16 @@ struct ArrayContentsEvidence {
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
 /// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
-/// reads/overwrites, own String-property object writes/reads/deletes/copies,
+/// reads/overwrites, empty-object deletions/copies,
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
 /// binary operations on independently non-BigInt origins, arithmetic unary
 /// operations, dynamic Sub/Mul/Div/Mod/Pow/Add/Concat, loose equality and relational
 /// comparisons on independently primitive origins, including mixed BigInt constants
-/// or computed results, truthy and return. Object reads
-/// require an earlier own write; keys longer than 256 bytes and
-/// __proto__ refuse. Named/computed object deletions erase only the current own
-/// property; absent deletion is a no-op, absent reads still refuse. All earlier
-/// writes remain in the cycle graph and saved reads retain their exact origins.
+/// or computed results, truthy and return. Ordinary-object writes refuse:
+/// an inherited setter can retain their value without installing an own field.
+/// Object reads require independently proved own data; absent reads, keys longer
+/// than 256 bytes and __proto__ refuse. Absent deletion is a no-op. Array writes
+/// remain in the cycle graph and saved reads retain their exact origins.
 /// copy_props requires known fresh own-data objects at both ends and snapshots
 /// every source field before writing, including self-copy. Copied fields retain
 /// their origins; source-container identity is not copied. Arrays and unknown

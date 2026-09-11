@@ -73,6 +73,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                                   "  ctjs.delete_named \"value\" from %x\n"
                                   "  %next = ctjs.compare eq %saved, %big "
                                   "{storage_test_id = \"next\"}\n  ctjs.return %next\n",
+                          .failure = ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "next -> {}"}},
             {.contents = {.what = "computed BigInt cannot supply a numeric array index",
@@ -82,7 +83,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "computed BigInt cannot supply an own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "computed BigInt Plus errors carry no local object identity",
                           .body = values + produce + "  %next = ctjs.unary plus %produced\n" + done,
                           .arrays = "a:[x]",
@@ -357,7 +358,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "computed BigInt cannot serve as an own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "binary BigInt category survives exact frame and edge transport",
                           .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
                                   "  cf.br ^next(%produced : !ctjs.value)\n"
@@ -479,6 +480,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                       "  ctjs.set_property %x[%key], %zero\n"
                                       "  ctjs.delete_named \"operand\" from %x\n" +
                                       operate("%saved") + done,
+                              .failure = ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[x]",
                               .exit = "produced -> {}"}});
         }

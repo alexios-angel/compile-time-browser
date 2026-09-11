@@ -103,7 +103,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "a static Number result is not an exact own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "a static result cannot authorize returning an opaque value",
                           .body = values + produce + "  ctjs.return %p\n",
                           .failure = ArrayContentsFailure::UnknownValue}},
@@ -371,7 +371,7 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "a Number origin is not a literal own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "an independent Number cannot authorize an opaque return",
                           .body = values + produce + "  ctjs.return %p\n",
                           .failure = ArrayContentsFailure::UnknownValue}},

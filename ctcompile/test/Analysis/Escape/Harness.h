@@ -158,15 +158,16 @@ inline std::string roleString(const RoleOf & role) {
 inline std::string roleThroughInterface(ctjs::EscapeEffectOpInterface roles, unsigned index) {
     llvm::SmallVector<mlir::SideEffects::EffectInstance<ctjs::EscapeEffects::Effect>, 6> effects;
     roles.getEffects(effects);
+    std::string role = "neither";
     for (const auto & effect : effects) {
         mlir::OpOperand * on = effect.getEffectValue<mlir::OpOperand *>();
         if (on == nullptr || on->getOperandNumber() != index) { continue; }
         if (llvm::isa<ctjs::EscapeEffects::Sink>(effect.getEffect())) {
             return "sink:" + effect.getResource()->getName().str();
         }
-        if (llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) { return "carry"; }
+        if (llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) { role = "carry"; }
     }
-    return "neither";
+    return role;
 }
 
 inline void fail(const row & r, const std::string & message) {

@@ -179,8 +179,8 @@ RoleOf operandRole(mlir::Operation * op, unsigned index) {
             mlir::OpOperand * on = effect.getEffectValue<mlir::OpOperand *>();
             if (on == nullptr || on->getOperandNumber() != index) { continue; }
             if (llvm::isa<ctjs::EscapeEffects::Sink>(effect.getEffect())) {
-                // A sink outranks a carry on the same position, should both
-                // ever be written: sinking is the conservative answer.
+                // A sink outranks a carry on the same position. Alias and
+                // provenance propagation must still retain the carry edge.
                 return RoleOf{OperandRole::Sink, reasonOf(effect.getResource())};
             }
             if (llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) {
@@ -670,11 +670,17 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
                 const RoleOf role = operandRole(&op, index);
                 if (role.role == OperandRole::Sink) {
                     sinks.push_back({&op, index, role.reason, {}});
-                } else if (role.role == OperandRole::Carry) {
+                }
+            }
+            if (auto roles = llvm::dyn_cast<ctjs::EscapeEffectOpInterface>(&op)) {
+                llvm::SmallVector<EscapeInstance, 6> effects;
+                roles.getEffects(effects);
+                for (const EscapeInstance & effect : effects) {
+                    if (!llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) { continue; }
+                    auto * on = effect.getEffectValue<mlir::OpOperand *>();
+                    if (on == nullptr) { continue; }
                     for (mlir::Value result : op.getResults()) {
-                        if (isValueTyped(result)) {
-                            copies.emplace_back(op.getOperand(index), result);
-                        }
+                        if (isValueTyped(result)) { copies.emplace_back(on->get(), result); }
                     }
                 }
             }
@@ -1379,27 +1385,22 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
                 auto object = state.objects.find(container);
                 if (object != state.objects.end() && !llvm::isa<ctjs::AppendOp>(&op)) {
-                    // CreateObject has a null explicit prototype and no accessors
-                    // (Containers/Properties.td). Only known own writes/reads are
-                    // modeled; no call, descriptor or prototype mutation is allowed.
-                    // Refuse __proto__ even though the current VM stores it as data.
+                    // The implicit prototype can intercept even a first write
+                    // and retain its value. Until an own-data/prototype proof
+                    // exists, an assignment cannot establish object contents.
+                    if (llvm::isa<ctjs::SetPropertyOp>(&op)) {
+                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                    }
                     const mlir::Value keyValue = origin(op.getOperand(1));
                     const auto key = keyValue ? ownObjectKey(keyValue) : mlir::StringAttr{};
                     if (!key) { return refuse(ArrayContentsFailure::UnknownPropertyKey, &op); }
                     auto & properties = object->second;
-                    if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
-                        const mlir::Value value = origin(store.getValue());
-                        if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                        properties[key] = value;
-                        out.propertyWrites.push_back({&op, 2, container, key, value});
-                    } else {
-                        auto found = properties.find(key);
-                        if (found == properties.end()) {
-                            return refuse(ArrayContentsFailure::MissingProperty, &op);
-                        }
-                        state.origins[op.getResult(0)] = found->second;
-                        out.propertyReads.push_back({&op, container, key, found->second});
+                    auto found = properties.find(key);
+                    if (found == properties.end()) {
+                        return refuse(ArrayContentsFailure::MissingProperty, &op);
                     }
+                    state.origins[op.getResult(0)] = found->second;
+                    out.propertyReads.push_back({&op, container, key, found->second});
                     continue;
                 }
                 auto found = state.arrays.find(container);
