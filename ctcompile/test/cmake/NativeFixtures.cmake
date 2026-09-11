@@ -664,5 +664,5 @@ if(TARGET ctcompile-test-type-claims AND Python3_Interpreter_FOUND)
                    -DCORPUS=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-scalar-unions-fixture.js
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -DNAME=scalar_unions
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-type-claims.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-claims.cmake)
 endif()

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../OwnedGlobalMethodsFixtures.h"
+#include "../GlobalMethodsFixtures.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
 

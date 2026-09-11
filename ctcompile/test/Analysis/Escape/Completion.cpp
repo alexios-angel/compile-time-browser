@@ -8,7 +8,7 @@
 // themselves are verbatim, in their original order, and every one is still
 // run. Registered one target each in test/cmake/Analysis.cmake.
 
-#include "EscapeAnalysisHarness.h"
+#include "Harness.h"
 
 using namespace ctcompile::test::escape;
 

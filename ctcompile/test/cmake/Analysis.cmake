@@ -16,7 +16,7 @@
 #
 # It needs no MLIR: a recording is the INTERPRETER's opinion, and asking the
 # compiler anything here would beg the question.
-add_executable(ctcompile-test-type-oracle Analysis/Types/TypeOracle.cpp)
+add_executable(ctcompile-test-type-oracle Analysis/Types/Oracle.cpp)
 target_link_libraries(ctcompile-test-type-oracle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-type-oracle)
 
@@ -36,7 +36,7 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-type-oracle.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-oracle.cmake)
 else()
   message(STATUS "ctcompile: no Python3 - the type oracle's checker is not registered")
 endif()
@@ -85,7 +85,7 @@ endif()
 # Phase 54B wrote for it - and its precision is stated against the registers
 # it actually reaches, which is an eighth of the bundle.
 if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
-  add_executable(ctcompile-test-type-claims Analysis/Types/TypeClaims.cpp)
+  add_executable(ctcompile-test-type-claims Analysis/Types/Claims.cpp)
   target_link_libraries(ctcompile-test-type-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -100,9 +100,9 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
   foreach(_corpus fixture bootstrap p5 phaser)
     set(_prefix "")
     if(_corpus STREQUAL "fixture")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-claims-fixture.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/claims.js")
     elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-oracle-bootstrap.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/bootstrap-driver.js")
       set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
     else()
       set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
@@ -117,7 +117,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -DPREFIX=${_prefix}
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-type-claims.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-claims.cmake)
   endforeach()
 endif()
 
@@ -141,7 +141,7 @@ endif()
 # build printed. Gate 4(d) - the recorder over this file - belongs to the
 # escape-oracle work and its check-escape-claims.cmake; 4(g) is deferred by the
 # design itself until 55B emits anything.
-set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-cycle.js")
+set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/cycle.js")
 # THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
 # claims, the printed module - for gc-roots.js's reason: two copies of one
 # fixture are two programs.
@@ -153,7 +153,7 @@ add_custom_command(
   DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
   COMMENT "Embedding escape-cycle.js for the driver"
   VERBATIM)
-set(_cyc_sources Analysis/Escape/EscapeCycle.cpp "${_cyc_inc}")
+set(_cyc_sources Analysis/Escape/Cycle.cpp "${_cyc_inc}")
 set(_cyc_has_module OFF)
 if(TARGET ctjs-translate)
   # THE PRINTED MODULE, embedded the same way. ctjs-translate is an
@@ -208,14 +208,14 @@ add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
 # the all-write census, loads, provenance) and the array contents/retention
 # tables. Every row is where it was, verbatim; they share EscapeAnalysisHarness.h.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-analysis-sinks Analysis/Escape/EscapeAnalysisSinks.cpp)
+  add_executable(ctcompile-test-escape-analysis-sinks Analysis/Escape/Sinks.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-sinks
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
   ctcompile_target(ctcompile-test-escape-analysis-sinks)
   add_test(NAME ctcompile_escape_analysis_sinks COMMAND ctcompile-test-escape-analysis-sinks)
 
-  add_executable(ctcompile-test-escape-analysis-completion Analysis/Escape/EscapeAnalysisCompletion.cpp)
+  add_executable(ctcompile-test-escape-analysis-completion Analysis/Escape/Completion.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-completion
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -223,7 +223,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_test(NAME ctcompile_escape_analysis_completion
            COMMAND ctcompile-test-escape-analysis-completion)
 
-  add_executable(ctcompile-test-escape-analysis-storage Analysis/Escape/EscapeAnalysisStorage.cpp)
+  add_executable(ctcompile-test-escape-analysis-storage Analysis/Escape/Storage.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-storage
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -257,7 +257,7 @@ endif()
 # interpreter's recording are registered with the recorder (55O), which they
 # need and which lands separately.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-claims Analysis/Escape/EscapeClaims.cpp)
+  add_executable(ctcompile-test-escape-claims Analysis/Escape/Claims.cpp)
   target_link_libraries(ctcompile-test-escape-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -292,7 +292,7 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-oracle.cmake)
 else()
   message(STATUS "ctcompile: no Python3 - the escape oracle's checker is not registered")
 endif()
@@ -334,7 +334,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
       set(_js "${_escape_fixture}")
       set(_strict ON)
     elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-oracle-bootstrap.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/bootstrap-driver.js")
       set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
     else()
       set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
@@ -363,7 +363,7 @@ endif()
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
 # allowing their uninstrumented allocations to join native escape claims.
-add_executable(ctcompile-test-escape-oracle-aot Analysis/Escape/EscapeOracleAOT.cpp)
+add_executable(ctcompile-test-escape-oracle-aot Analysis/Escape/AOTOracle.cpp)
 target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-escape-oracle-aot)
 add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
@@ -374,13 +374,13 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle-aot.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-aot-oracle.cmake)
 endif()
 
 # Observe the real boxed emitter's normalized return value, retaining the
 # compiled sentinel coordinate rather than inventing a static source site.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-oracle-aot-return.js")
+  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/aot-return.js")
   set(_aot_return_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.js.inc")
   set(_aot_return_cpp "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.generated.cpp")
   add_custom_command(OUTPUT "${_aot_return_inc}"
@@ -397,7 +397,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_aot_return_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
   add_executable(ctcompile-test-escape-oracle-aot-return
-    Analysis/Escape/EscapeOracleAOTReturn.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
+    Analysis/Escape/AOTReturnOracle.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
   target_include_directories(ctcompile-test-escape-oracle-aot-return PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-escape-oracle-aot-return)
@@ -407,21 +407,21 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
       COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot-return>
         -DPYTHON=${Python3_EXECUTABLE} -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
         -DWORK=${CMAKE_CURRENT_BINARY_DIR} -DNAME=aot-return -DUNCLAIMED=5
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle-aot.cmake)
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-aot-oracle.cmake)
   endif()
 endif()
 
 # A slot census is usable only after its entire bounded proof completes.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-owned-method-table-slots Analysis/Ownership/OwnedMethodTableSlots.cpp)
+  add_executable(ctcompile-test-owned-method-table-slots Analysis/Ownership/MethodTableSlots.cpp)
   target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-method-table-slots)
   add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
-  add_executable(ctcompile-test-owned-global-roots Analysis/Ownership/OwnedGlobalRoots.cpp)
+  add_executable(ctcompile-test-owned-global-roots Analysis/Ownership/GlobalRoots.cpp)
   target_link_libraries(ctcompile-test-owned-global-roots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-roots)
   add_test(NAME ctcompile_owned_global_roots COMMAND ctcompile-test-owned-global-roots)
-  add_executable(ctcompile-test-owned-global-methods Analysis/Ownership/OwnedGlobalMethods.cpp)
+  add_executable(ctcompile-test-owned-global-methods Analysis/Ownership/GlobalMethods.cpp)
   target_link_libraries(ctcompile-test-owned-global-methods PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-methods)
   add_test(NAME ctcompile_owned_global_methods COMMAND ctcompile-test-owned-global-methods)
@@ -431,15 +431,15 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-owned-global-shared-map
     Analysis/Ownership/OwnedGlobalSharedMap/Main.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/SavedScalarReads.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/EntryNumericOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapClearOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapZeroSizeOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapExactSizeOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapDeleteSizeOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/DefiniteMapAbsenceOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbackOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafOwner.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/NestedOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/NumericEntry.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedClear.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedZeroSize.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedExactSize.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedDeleteSize.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/DefiniteAbsence.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbacks.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafObjects.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/NestedCalls.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/ObjectKeyArguments.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp)

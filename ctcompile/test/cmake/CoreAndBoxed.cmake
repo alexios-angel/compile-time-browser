@@ -172,7 +172,7 @@ find_program(MLIR_TRANSLATE_EXE mlir-translate HINTS "${LLVM_TOOLS_BINARY_DIR}")
 # generated file in the tree is a copy that can disagree with the generator -
 # and this test's whole value is that it exercises the CURRENT backend.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_gc_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/GC/gc-roots.js")
+  set(_gc_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/GC/roots.js")
   # THE DRIVER READS THE SAME FILE THE PIPELINE COMPILES, for the reason
   # spelled out over differential.js below - and gc-roots.js had the defect in
   # a worse form. Its C++ copy was not a transcription that had drifted but a
@@ -220,7 +220,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_gc_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
 
-  add_executable(ctcompile-test-gc_roots Runtime/GC/GCRoots.cpp "${_gc_cpp}" "${_gc_inc}")
+  add_executable(ctcompile-test-gc_roots Runtime/GC/Roots.cpp "${_gc_cpp}" "${_gc_inc}")
   target_include_directories(ctcompile-test-gc_roots PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-gc_roots)
@@ -299,9 +299,9 @@ endif()
 # which is what holds one variable still: dep is where the live binding is
 # written, and user is the only thing that can see what bind_export decided.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_mod_main "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/module-main.js")
-  set(_mod_dep "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/module-dep.js")
-  set(_mod_user "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/module-user.js")
+  set(_mod_main "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/main.js")
+  set(_mod_dep "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/dep.js")
+  set(_mod_user "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/user.js")
   # ALL THREE ARE EMBEDDED, for the reason differential.js is: the driver must
   # read the same bytes the pipeline compiled. A compiled body bakes the
   # function INDEX of every closure it builds, so a transcription that drifted
@@ -309,7 +309,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_mod_incs "")
   foreach(_mod_js IN ITEMS "${_mod_main}" "${_mod_dep}" "${_mod_user}")
     get_filename_component(_mod_name "${_mod_js}" NAME)
-    set(_mod_inc "${CMAKE_CURRENT_BINARY_DIR}/${_mod_name}.inc")
+    set(_mod_inc "${CMAKE_CURRENT_BINARY_DIR}/module-${_mod_name}.inc")
     add_custom_command(
       OUTPUT "${_mod_inc}"
       COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_mod_js} -DOUTPUT=${_mod_inc}
@@ -347,7 +347,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_mod_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
   add_executable(ctcompile-test-module_differential
-                 Runtime/Modules/ModuleDifferential.cpp "${_mod_cpp}" ${_mod_incs})
+                 Runtime/Modules/Differential.cpp "${_mod_cpp}" ${_mod_incs})
   target_include_directories(ctcompile-test-module_differential
                              PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-module_differential PRIVATE ctbrowser::script)

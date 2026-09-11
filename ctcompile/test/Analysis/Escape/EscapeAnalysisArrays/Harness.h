@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../EscapeAnalysisHarness.h"
+#include "../Harness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 namespace ctcompile::test::escape::arrays {

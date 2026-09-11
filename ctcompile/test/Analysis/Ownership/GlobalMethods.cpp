@@ -6,7 +6,7 @@
 // executable) and the fixtures, `check`, `contractFor`, `empty` and `replaced`
 // to OwnedGlobalMethodsFixtures.h. Everything else is verbatim, in order.
 
-#include "OwnedGlobalMethodsFixtures.h"
+#include "GlobalMethodsFixtures.h"
 
 using namespace ctcompile::test::owned_global_methods;
 
