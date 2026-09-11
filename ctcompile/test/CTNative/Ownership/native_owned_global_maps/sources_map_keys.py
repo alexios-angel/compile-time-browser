@@ -712,10 +712,11 @@ var trace = host.slot.get({});
     host.slot.set(key, 11);
     var trace = host.slot.get(alias);
 }''')
-    # The current importer leaks these block-scoped consts into script globals.
-    # Re-measure this exact source after the d99ddf7b block-scope fix lands;
-    # ordinary var/global key arguments have a separate ownership boundary.
-    add('siblings_named', siblings, 15, 11, functions=7)
+    # d99ddf7b keeps these block consts local; ordinary var/global key arguments
+    # retain their separate ownership boundary.
+    add('siblings_named', siblings, 15, 11, True, functions=7)
+    add('siblings_global', siblings.replace('    const key =', '    var key ='),
+        15, 11, functions=7)
     siblings = siblings.replace('    const key = {}, alias = key, other = {};\n', '')
     for actual in ('key', 'alias', 'other'):
         siblings = siblings.replace('(' + actual + ',', '({},').replace(
@@ -732,6 +733,10 @@ var trace = host.slot.get({});
         '7b592b8354bb285a71e0b9fc72ab6f811c567156b1f6294f06bab9fcd0fa135c')
     assert rows['object_argument_key_write']['sha256'].startswith('7381e2fb')
     assert rows['object_argument_seeded']['sha256'].startswith('5eba229d')
+    assert rows['object_argument_siblings_named']['sha256'] == (
+        'b6d341ad2c2ad02ca5ca78483291c5c66f0636720c022dfdf33b39ae52eef8d1')
+    assert rows['object_argument_siblings_global']['sha256'] == (
+        '600b8fb69ef191ed02c4f4fb9db9a9d204a011aeb516a072025d81c2edd15882')
     assert rows['object_argument_exact']['sha256'] == (
         '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
     assert rows['object_argument_evaluated_number']['sha256'] == (

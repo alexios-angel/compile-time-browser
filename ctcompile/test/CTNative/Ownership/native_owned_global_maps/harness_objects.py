@@ -602,10 +602,12 @@ int main() {
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f'{name}.{mode}.lifetime.cpp'
-    observer = (retained_key_lifetime_cpp if name == 'object_argument_siblings'
+    observer = (retained_key_lifetime_cpp if name in {
+                    'object_argument_siblings', 'object_argument_siblings_named'}
                 else parameter_object_lifetime_cpp if name == 'parameter_object'
                 else object_argument_lifetime_cpp)
-    source.write_text(observer(cpp))
+    source.write_text(observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
+                      else observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
     host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
               str(source), '-o', str(binary)])
@@ -647,14 +649,14 @@ def retained_key_observer_source(source):
 ''', 63
 
 
-def retained_key_lifetime_cpp(cpp):
-    return instrument_leaf_objects(cpp, allocations=6) + r'''
+def retained_key_lifetime_cpp(cpp, allocations=6, retained=4):
+    return (instrument_leaf_objects(cpp, allocations=allocations) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
-        ctn_test_objects.size() != 6) { return 210; }
-    for (std::size_t index = 0; index < 6; ++index) {
-        if (ctn_test_objects[index].expired() != (index != 4)) { return 224; }
+        ctn_test_objects.size() != CTN_ALLOCATIONS) { return 210; }
+    for (std::size_t index = 0; index < CTN_ALLOCATIONS; ++index) {
+        if (ctn_test_objects[index].expired() != (index != CTN_RETAINED)) { return 224; }
     }
     auto owner = g_host;
     auto table = owner->slot;
@@ -671,7 +673,7 @@ int main() {
     g_host.reset(); owner.reset(); table.reset();
     if (!owner_lifetime.expired() || !table_lifetime.expired() ||
         ctn_test_maps[0].expired() || clear() != 0 ||
-        !ctn_test_objects[4].expired()) { return 211; }
+        !ctn_test_objects[CTN_RETAINED].expired()) { return 211; }
     auto other = std::make_shared<ctnative::identity_object>();
     for (int call = 0; call < 128; ++call) {
         auto key = std::make_shared<ctnative::identity_object>();
@@ -712,7 +714,7 @@ int main() {
     }
     return 0;
 }
-'''
+''').replace('CTN_ALLOCATIONS', str(allocations)).replace('CTN_RETAINED', str(retained))
 
 
 def parameter_object_lifetime_cpp(cpp):

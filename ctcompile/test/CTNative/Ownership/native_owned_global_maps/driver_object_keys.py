@@ -144,6 +144,8 @@ def check_object_argument_controls(args, saved):
     check_budgets(args, ir, config, 'object_argument_exact', functions=4)
     ir, config, _ = saved['object_argument_key_write']
     check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
+    ir, config, _ = saved['object_argument_siblings_named']
+    check_budgets(args, ir, config, 'object_argument_siblings_named', functions=7)
     ir, config, _ = saved['parameter_object']
     check_budgets(args, ir, config, 'parameter_object', functions=5)
     for name, row in object_argument_cases().items():
