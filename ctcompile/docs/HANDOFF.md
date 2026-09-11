@@ -6,6 +6,67 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited accessor proof repair, 2026-09-11
+
+Resumed the interrupted ND-3 repair recorded by **bff05404** and the
+**2026-09-11 02:07:03 UTC** synchronization journal. The checkout was clean at
+**b5d66b38**; the old codex-wip branch was already an ancestor. Claude's runtime
+**552a4ba0** had since integrated through **ec83e488**. Three agents handled
+array expectations, fresh-context oracle regressions, and native admission
+review while root repaired the shared escape proof and serialized all gates.
+No browser/runtime source changed.
+
+**8f56f1d4** marks property receivers as Passed and iterable sources as both
+Passed and Carry. Candidate load provenance retains both effects. Ordinary
+object assignments now refuse the independent contents proof: an inherited
+setter can retain its argument without creating a field, so subsequent deletion
+cannot justify discharging that child. Dense in-bounds Number-index array
+proofs remain. The original 631 test body expressions and 95,603-byte fixture
+(SHA-256 **c03c5607**) are preserved. All 530 existing observation rows retain
+their nonclaim fields; 405 compiler claims change from fresh measurements.
+Separate getter/setter/iteration programs pass exact receiver/child retention
+checks and report zero oracle violations.
+The strict fixture reports **737 claims, 760 observed sites, 24 unclaimed,
+zero violations/partial/pending, and precision 8/139**. Ordinary-object
+precision needs a new own-data/prototype proof; these conservative refusals
+do not supply a native ownership proof.
+
+**8bc3563a** rejects `__proto__` accesses in the shared native closed-shape proof.
+Before the fix, the exact scalar, computed-key and lifted-method sources
+emitted `trace="number"` while the interpreter returned `trace="object"` in
+both optimization modes. All six now refuse; ordinary fields and `toString`
+shadowing still compile and execute without Script symbols. Custom inherited
+accessor setup already refuses through current module/call admission. This
+one-key repair does not prove arbitrary external caller prototype environments.
+
+The frozen **282-step rebuild** passes **10/10 focused CTests in 9.57 seconds**
+and the expanded field-name lit test passes **1/1 in 0.15 seconds**. Stable
+clang-format **22.1.8** passes **795 files**; bundled 23 retains its same nine
+pre-existing differences. All **1,238 frozen inputs** remain unchanged.
+An intermediate gate used stale array test objects: local changes predated
+compilation of the first remote snapshot, and the next rsync preserved those
+older source mtimes. Refreshing only authored input mtimes after freeze and
+rebuilding resolves all 846 stale assertions; three genuine switch-budget
+expectations now check the earlier refusal. The full standard **530-test**
+monorepo gate is running at **8bc3563a**; it is not yet a full pass.
+Evidence: `/tmp/ctcompile-nd3-{frozen-focused,full}.log`,
+`/tmp/ctcompile-nd3-{native-before,native-after}/summary.json`,
+`/tmp/ctcompile-nd3-measured-pins/verification.json`.
+
+**Next: named empty-object keys for Bootstrap Data**, exact **7573e89b**
+(`object_argument_global` in `native_owned_global_maps/sources_map_keys.py`).
+Prove one allocation, its sole unconditional store and each dominated global
+load across the complete captured-Map call family. Preserve the actual
+LoadGlobal in HostMethodArgument; carry allocation identity on an independent
+checked edge, following `scalarGlobalRead`. Revalidate it in OwnedGlobalMethods
+before type, identity, Map and typed-global emission consume it. Early loads,
+second stores including late ones, fields, unknown consumers, payload/return
+escapes and incompatible later arguments remain refusals. **600b8fb6** adds
+aliases and two identities and remains a later extension. Remeasure block-const
+**b6d341ad** with the now-integrated **d99ddf7b** scope fix. Full native Bootstrap,
+field/nested-Map ownership, and direct browser API integration remain unfinished.
+Independent boundary audit: `/tmp/ctcompile-nd3-native-review/report.md`.
+
 ## Retained object keys, mixed key carriers and test splits, 2026-09-10
 
 Continued the exact **7381e2fb / 5eba229d** boundaries left by **637f4e8c**

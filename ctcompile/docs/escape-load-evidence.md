@@ -1,5 +1,29 @@
 # Direct loads and candidate provenance
 
+## Inherited accessor correction, 2026-09-11
+
+Runtime commit **552a4ba0**, merged as **ec83e488**, invokes accessors on the
+implicit `Object.prototype` chain. Fresh allocation alone therefore proves
+neither receiver confinement nor that an assignment creates an own field.
+Property reads/writes now expose the receiver as `Passed`. Iteration exposes
+its source while retaining the array alias edge; load provenance records both
+effects independently, including later publication of a loaded candidate.
+
+The separate contents query refuses ordinary-object assignments until an
+independent own-data/prototype proof exists. This prevents an intercepted
+assignment followed by deletion from incorrectly discharging the stored child.
+Dense arrays keep their existing in-bounds Number-index proof. The earlier
+ordinary-object refinement measurements below are historical; those admissions
+are withdrawn by this correction, and their original source cases remain tests.
+
+The inherited getter, setter and iteration regressions record receiver/child
+retention through globals and report zero oracle violations. Their matching
+compiler claims are `Passed` for receivers and `Stored` for the setter argument.
+See [HANDOFF.md](HANDOFF.md) for the complete measured gate and remaining native
+admission boundaries.
+
+## Direct candidate links
+
 `EscapeVerdicts::directLoads` connects live top-level `ctjs.get_property`
 operations to the [direct writes](escape-storage-evidence.md) whose targets
 share a known local allocation site with the read's base. Each read keeps its

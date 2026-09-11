@@ -217,49 +217,70 @@ choice — and the entry above is amended by the commit that adds it.
 
 ---
 
-## ND-3 — a getter installed on `Object.prototype` does not fire for a plain object
+## ND-3 — inherited accessors on plain objects (runtime divergence closed)
 
-**Status:** declared. **Against:** ECMA-262 / V8. **Inherited from the engine.**
-**Introduced:** Phase 55 (found while pinning ND-2; it bears on the
-"getter/setter on the path" refusal of part 24 Stage 55A).
+**Status:** runtime divergence closed by **552a4ba0**, integrated in
+**ec83e488**. **Against:** ECMA-262 / V8. **Introduced:** Phase 55, while
+pinning ND-2 and the "getter/setter on the path" refusal of Stage 55A.
 
-### The divergence
+Previously a plain literal's implicit `Object.prototype` fallback read only
+data properties. An inherited getter returned `undefined` there, while the
+same getter returned `42` through `Object.create(Object.prototype)`. The
+runtime now invokes inherited accessors on both paths, using the original
+receiver. An inherited setter can retain both that receiver and its argument;
+array-like iteration can invoke an inherited numeric getter.
 
-In V8, `Object.defineProperty(Object.prototype, "x", {get() { return 42 }})`
-followed by `({}).x` answers **42**: an object literal's `[[Prototype]]` is
-`Object.prototype`, and property lookup calls the accessor it finds there.
+### The compiler obligation
 
-Here `({}).x` is **undefined**. `context::lookup_property`
-(`ctbrowser/lib/Script/vm/objects/lookup.cpp`) walks the object's chain calling any
-accessor it finds — but a fresh literal's `prototype` field is `null`, so the
-walk is one level long, and the shared `Object.prototype` table is consulted
-**afterwards** with `find`, which sees data properties only. The same getter
-DOES fire when that table is on an explicit chain: `Object.create(Object.prototype).x`
-is 42. A data property on `Object.prototype` is seen by a literal either way.
+The former receiver-NEITHER escape rules relied on the removed shortcut.
+The measured 220-byte `readInherited` witness (`441a8930` source SHA-256 prefix)
+was claimed confined before the repair, but the corrected runtime retained
+its object through globals: one soundness violation.
 
-### What the native backend does about it
+`GetPropertyOp` and `SetPropertyOp` now mark their receiver `SinkPassed`.
+`IterableOp` marks its source `SinkPassed` and retains `Carry`, including both
+effects in load provenance. Ordinary-object assignments refuse the separate
+contents proof until an independent own-data-property proof exists. Without
+that refusal, an inherited setter can retain a child while a later deletion
+incorrectly discharges its Stored claim. Dense array overwrite/read proofs
+retain their existing bounds and Number-key requirements.
 
-Nothing the backend emits changes this — it is the interpreter's lookup, and
-the boxed tier calls the same one. It is recorded because Stage 55A's escape
-table treats a constant-key `get_property` on a confined object as NEITHER
-sink nor carry on the cited grounds that no user code runs there, and one of
-those grounds is this shortcut: in this engine a getter on `Object.prototype`
-cannot reach a plain literal. **Obligation (Phase 55/56):** any lowering that
-relies on that must cite this entry, so the day the engine walks the shared
-table for accessors, the row is re-examined rather than silently wrong.
+**8f56f1d4** repairs generic escape and contents analysis. Native object admission
+has separate proofs. The standard `__proto__` accessor exposed a native bug:
+`o.__proto__ = 1; typeof o.__proto__` printed `"number"` instead of the
+interpreter's `"object"`. **8bc3563a** rejects that key in the shared closed-shape
+proof. Exact scalar, computed-key and lifted-method sources now refuse in both
+optimization modes; ordinary fields and `toString` shadowing still execute.
+`shape-field-names.mlir` also checks direct reads of the accessor.
 
-### The test
+Custom inherited getter/setter setup and explicit accessor sources remain
+refused by existing module/call admission. Neither this one-key repair nor the
+escape effects certify arbitrary external caller prototype environments; those
+require an independent environment and own-data proof before admission expands.
 
-`ctcompile/test/Analysis/Escape/Cycle.cpp`, the ND-3 block, in a fresh context each:
+### The tests
 
-* the literal read after the getter is installed is `typeof … === "undefined"`
-  (V8: 42);
-* `Object.create(Object.prototype).nd3` after the same install is `42` — the
-  shortcut, not accessors, is what diverges;
-* `Object.prototype.nd3d = 7; ({}).nd3d` is `7` — data properties on the shared
-  table are seen.
+`ctcompile/test/Analysis/Escape/Cycle.cpp`, registered as
+`ctcompile_escape_cycle`, asks the VM in a fresh context for each probe:
 
-Registered as `ctcompile_escape_cycle`.
+* the literal getter's `typeof` is `"number"`;
+* the explicit-chain getter still returns `42`, and the inherited data
+  property still returns `7`;
+* inherited getter, setter and iteration accessors retain their receiver;
+  the setter also retains its child argument after the apparent field is deleted.
+
+`ctcompile_escape_claims_fixture` additionally runs the separate
+`escape-claims/inherited-{getter,setter,iteration}.js` sources. Each oracle
+process starts a fresh context, records retention through globals, and joins
+the matching compiler claim by program/function/pc. The check requires Passed
+receiver claims, the setter child's Stored claim, and zero oracle violations.
+The historical fixture sources and allocation coordinates are unchanged.
+
+The first post-repair devbox measurements report **zero violations** for all
+three sources. `readInherited` pc1 and `iterateInherited` pc1 each retain one
+receiver through globals with a Passed claim. `writeInherited` retains both
+its pc2 child (Stored) and pc4 receiver (Passed) through globals. Iteration's
+separate runtime array at pc6 is observed confined and remains unclaimed.
 
 ---
 
