@@ -1,5 +1,5 @@
 // RUN: split-file %s %t
-// RUN: python3 %S/check-direct-callbacks.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables
+// RUN: python3 %S/direct-callbacks.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables
 
 // The checker names selected callback calls in source-derived IR, preserving
 // their actual callback values. Both forms must lower and run identically.

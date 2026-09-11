@@ -9,7 +9,7 @@ import struct
 
 
 spec = importlib.util.spec_from_file_location(
-    "exceptions", Path(__file__).parents[2] / "CTNative/Lowering/Exceptions/native-exceptions.py")
+    "exceptions", Path(__file__).parents[2] / "CTNative/Lowering/Exceptions/exceptions.py")
 exceptions = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(exceptions)
 run = exceptions.run

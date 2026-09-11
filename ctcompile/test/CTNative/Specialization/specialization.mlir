@@ -10,9 +10,9 @@
 // RUN: ctjs-opt %t/observe.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=OBSERVE
 // RUN: ctjs-opt %t/capture.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CAPTURE
 // RUN: ctjs-opt %t/alternate-direct.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=DIRECT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-specialization-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize | FileCheck %s --check-prefix=SOURCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/specialization-dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate | FileCheck %s --check-prefix=DISPATCH
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/specialization-dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/specialization.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize | FileCheck %s --check-prefix=SOURCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate | FileCheck %s --check-prefix=DISPATCH
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 // SOURCE-LABEL: ctjs.func @_script_$0
 // SOURCE: %[[GENERIC:[0-9]+]] = ctjs.load_global "mixed"

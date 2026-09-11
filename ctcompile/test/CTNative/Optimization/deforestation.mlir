@@ -3,7 +3,7 @@
 // the original snapshot's observation time.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-deforestation-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/native.mlir
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/deforestation.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/native.mlir
 // RUN: ctjs-opt --ctnative-deforest %t/native.mlir | FileCheck %s --check-prefix=FUSED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-opt --ctnative-deforest='report=true' --mlir-print-op-on-diagnostic=false %t/native.mlir -o /dev/null 2>&1 | FileCheck %s --check-prefix=REPORT
 // RUN: ctjs-opt --ctnative-deforest %t/native.mlir | ctjs-opt --ctnative-deforest='report=true' --mlir-print-op-on-diagnostic=false -o /dev/null 2>&1 | FileCheck %s --check-prefix=REPEAT

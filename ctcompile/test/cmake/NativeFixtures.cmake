@@ -17,12 +17,12 @@
 # was defined in, so this reads it rather than editing that block.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(divergence
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-divergence-fixture.js")
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/divergence.js")
   # ND-8 is now fixed: the reference truncates indices before bounds checks.
   # Keep the original defect witness as a passing differential regression,
   # with an injected off-by-one proving that the comparison still has teeth.
   ctcompile_add_native_pipeline(index_truncation
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-index-truncation-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/index-truncation.js"
                                 idx_fractional)
 endif()
 
@@ -49,7 +49,7 @@ endif()
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
-  ctcompile_add_native_pipeline(closures "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-closure-fixture.js")
+  ctcompile_add_native_pipeline(closures "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/closure.js")
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR. Twenty functions and all of them claimed:
 # the top level, nine that make a closure, and ten closures. A change that
@@ -63,7 +63,7 @@ endif()
 # callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(closures
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-closure-fixture.js" 20 9 23 17)
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/closure.js" 20 9 23 17)
 endif()
 
 # ============================================================================
@@ -89,7 +89,7 @@ endif()
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
-  ctcompile_add_native_pipeline(receivers "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-receiver-fixture.js")
+  ctcompile_add_native_pipeline(receivers "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/receiver.js")
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR. Sixteen functions and all of them claimed:
 # the top level, seven that build a method table, and eight methods. A change
@@ -103,7 +103,7 @@ endif()
 # callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(receivers
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-receiver-fixture.js" 16 7 8 10)
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/receiver.js" 16 7 8 10)
 endif()
 
 # ============================================================================
@@ -149,7 +149,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(object_arguments
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-object-argument-fixture.js")
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-argument.js")
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR. Fifteen functions and all of them claimed:
 # the top level, seven that build a literal, and seven callees - `both()` making
@@ -163,7 +163,7 @@ endif()
 # callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(object_arguments
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-object-argument-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-argument.js"
                               16 7 15 9)
 endif()
 
@@ -199,7 +199,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(constructors
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-constructor-fixture.js")
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/constructor.js")
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR. A change that stops lifting one of them
 # fails HERE even if the fixture above were deleted, which is what
@@ -208,7 +208,7 @@ endif()
 # `direct` count cannot see it.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(constructors
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-constructor-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/constructor.js"
                               14 6 7 8)
 endif()
 
@@ -259,7 +259,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(nested_closures
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-nested-closure-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/nested-closure.js"
                                 twice727)
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
@@ -268,7 +268,7 @@ endif()
 # ctjs.call_direct count, which the resolver's `direct` cannot see.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(nested_closures
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-nested-closure-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/nested-closure.js"
                               27 8 33 27)
 endif()
 
@@ -294,7 +294,7 @@ if(TARGET ctjs-translate)
                    -DINDEXED=219
                    -DOPERANDS=1021
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-capture-census.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/capture-census.cmake)
 endif()
 
 # ============================================================================
@@ -343,7 +343,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(hoisted_captures
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-hoisted-capture-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/hoisted-capture.js"
                                 three32)
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
@@ -353,7 +353,7 @@ endif()
 # were deleted.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(hoisted_captures
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-hoisted-capture-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/hoisted-capture.js"
                               18 7 21 14)
 endif()
 
@@ -394,7 +394,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(shared_cells
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-shared-cell-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/shared-cell.js"
                                 twice2)
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
@@ -404,7 +404,7 @@ endif()
 # were deleted.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(shared_cells
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-shared-cell-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/shared-cell.js"
                               25 10 28 20)
 endif()
 
@@ -453,7 +453,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(local_functions
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-local-function-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/local-function.js"
                                 recur15)
 endif()
 # AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
@@ -464,7 +464,7 @@ endif()
 # fixture above were deleted.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(local_functions
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-local-function-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/local-function.js"
                               28 8 16 23)
 endif()
 
@@ -496,7 +496,7 @@ endif()
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(deep_bindings
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-deep-binding-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/deep-binding.js"
                                 two10)
 endif()
 
@@ -505,33 +505,33 @@ endif()
 # is the right call and is why these are measured here instead.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(deep_bindings
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-deep-binding-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/deep-binding.js"
                               44 9 29 37)
 endif()
 
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(callbacks
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-callback-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/callback.js"
                                 startup42)
 endif()
 
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(callbacks
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-callback-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/callback.js"
                               21 2 13 33)
 endif()
 
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(strings
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-string-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/string.js"
                                 startup42)
   ctcompile_add_native_pipeline(string_snapshots
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-string-snapshots-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/string-snapshots.js"
                                 bootstrap_message)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(strings
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-string-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/string.js"
                               17 12 28 11)
 endif()
 
@@ -540,12 +540,12 @@ endif()
 # ordered snapshots and argument evaluation through lifted shared cells.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(maps
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map.js"
                                 numeric275)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(maps
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map.js"
                               22 19 23 2)
 endif()
 
@@ -553,79 +553,79 @@ endif()
 # Shared schemas must preserve distinct allocations and formal argument slots.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(map_flow
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-flow-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map-flow.js"
                                 lifetime42)
 endif()
 
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(map_flow
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-flow-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map-flow.js"
                               29 22 44 8)
 endif()
 
 # A returned callable owns immutable captures and preserves Map aliasing.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(returned_closures
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-returned-closure-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/returned-closure.js"
                                 lifetime42)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(returned_closures
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-returned-closure-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/returned-closure.js"
                               35 22 36 23)
 endif()
 
 # Stored functions own their captures through a returned method table.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(method_tables
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-method-table-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/method-table.js"
                                 lifetime42)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(method_tables
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-method-table-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/method-table.js"
                               28 15 24 21)
 endif()
 
 # A confined ordinary field owns a returned table beyond its container's lifetime.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(owned_method_table_slots
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/native-owned-method-table-slot-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Closures/owned-method-table-slot.js"
                                 NO_DEFAULT_OPTIMIZATIONS)
 endif()
 
 # Finite nested Map schemas own child handles; every child lookup proves presence.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(nested_maps
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-nested-map-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/nested-map.js"
                                 lifetime42)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(nested_maps
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-nested-map-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/nested-map.js"
                               14 12 25 1)
 endif()
 
 # Identity-only object keys own fresh allocations across closed calls/returns.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(object_keys
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-object-key-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/object-key.js"
                                 lifetime42)
 endif()
 
 # Conditional has/set/get follows must-presence and erasure effects.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(map_presence
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-presence-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map-presence.js"
                                 lifetime42)
 endif()
 
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(object_keys
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-object-key-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/object-key.js"
                               14 10 22 12)
   ctcompile_add_native_claims(map_presence
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/native-map-presence-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Maps/map-presence.js"
                               15 14 30 0)
 endif()
 
@@ -633,12 +633,12 @@ endif()
 # calls, control flow, fields, array/Map reads and returned method tables.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(optional_scalars
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-optional-scalars-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/optional-scalars.js"
                                 number_present)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(optional_scalars
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-optional-scalars-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/optional-scalars.js"
                               29 25 119 11)
 endif()
 
@@ -646,12 +646,12 @@ endif()
 # short-circuit getter and its retained nested Map environment.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(scalar_unions
-                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-scalar-unions-fixture.js"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/scalar-unions.js"
                                 zz_lifetime)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(scalar_unions
-                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-scalar-unions-fixture.js"
+                              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/scalar-unions.js"
                               24 18 87 18)
 endif()
 if(TARGET ctcompile-test-type-claims AND Python3_Interpreter_FOUND)
@@ -661,7 +661,7 @@ if(TARGET ctcompile-test-type-claims AND Python3_Interpreter_FOUND)
                    -DCLAIMS=$<TARGET_FILE:ctcompile-test-type-claims>
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
-                   -DCORPUS=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-scalar-unions-fixture.js
+                   -DCORPUS=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/scalar-unions.js
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -DNAME=scalar_unions
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-claims.cmake)

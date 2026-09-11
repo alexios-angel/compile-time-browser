@@ -17,11 +17,11 @@ from urllib.parse import quote
 DRIVERS = Path(__file__).resolve().parent
 
 spec = importlib.util.spec_from_file_location(
-    "methods", DRIVERS.with_name("native-owned-global-methods.py"))
+    "methods", DRIVERS.with_name("global-methods.py"))
 methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
-SOURCE = (DRIVERS.parent.parent / "Exports/native-export-boundary.js").read_text()
+SOURCE = (DRIVERS.parent.parent / "Exports/boundary.js").read_text()
 SHARED = SOURCE.replace("get() { return state.size; }",
     "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
 SHARED = SHARED.replace("var trace = host.slot.get();",

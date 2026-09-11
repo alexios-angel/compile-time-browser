@@ -61,8 +61,8 @@ endif()
 # these forms, its output for native-values-fixture.js should be this module up
 # to value names, and nothing here has to change.
 if(COMMAND ctcompile_add_native_unit AND COMMAND ctcompile_add_compile_clean)
-  set(_values_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-values-fixture.emitc.mlir")
-  set(_values_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/native-values-fixture.js")
+  set(_values_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.emitc.mlir")
+  set(_values_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.js")
 
   # THE GATE, over all five kinds at once.
   ctcompile_add_native_unit(values "${_values_module}" "${_values_js}")
@@ -163,7 +163,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND UNIX)
                         "so the refactor goldens would have no proof they still work")
   endif()
   add_test(NAME ctcompile_native_snapshot_selftest
-           COMMAND ${CTCOMPILE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/native-snapshot.sh
+           COMMAND ${CTCOMPILE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/snapshot.sh
                    selftest ${CMAKE_BINARY_DIR})
   set_tests_properties(ctcompile_native_snapshot_selftest PROPERTIES
                        ENVIRONMENT "CMAKE=${CMAKE_COMMAND}")

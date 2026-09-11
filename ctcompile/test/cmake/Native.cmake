@@ -47,11 +47,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
                        -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                        -DNAME=${name}
                        ${ARGN}
-                       -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-native-unit.cmake)
+                       -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/compilation-unit.cmake)
     endfunction()
 
-    set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.emitc.mlir")
-    set(_native_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js")
+    set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
+    set(_native_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js")
 
     # THE GATE.
     ctcompile_add_native_unit(fixture "${_native_module}" "${_native_js}")
@@ -113,11 +113,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${name}
                      ${ARGN}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-compile-clean.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/compile-clean.cmake)
   endfunction()
   # the hand-written fixture module, and the negative proof
-  ctcompile_add_compile_clean(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.emitc.mlir")
-  ctcompile_add_compile_clean(fixture_unused_variable "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.emitc.mlir"
+  ctcompile_add_compile_clean(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
+  ctcompile_add_compile_clean(fixture_unused_variable "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir"
     -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
@@ -143,8 +143,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
               -DSPECIALIZE=${_pipeline_SPECIALIZE}
               -DSUPERCOMPILE=${_pipeline_SUPERCOMPILE}
               -DDEFOREST=${_pipeline_DEFOREST}
-              -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/native-pipeline.cmake"
-      DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/native-pipeline.cmake" ctjs-translate ctjs-opt
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+      DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake" ctjs-translate ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
     add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}")
     ctcompile_add_native_unit(pipeline_${name} "${_module}" "${js}")
@@ -199,28 +199,28 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
                      -DCXX=${CMAKE_CXX_COMPILER}
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${name}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-print-deduced.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/print-deduced.cmake)
   endfunction()
   # numbers and booleans, no functions
-  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-pipeline-fixture.js" total)
+  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/globals.js" total)
   # the gate's own eight functions: recursion, loops, a boolean predicate
-  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js" sum100)
+  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" sum100)
   # Phase 56: object literals with closed shapes, on the stack
-  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-struct-fixture.js" swap_answer)
+  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/struct.js" swap_answer)
   # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
-  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/native-array-fixture.js" sum)
+  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array.js" sum)
 
   add_test(NAME ctcompile_native_optimization_defaults
            COMMAND ${CMAKE_COMMAND}
                    -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
                    -DOPT=$<TARGET_FILE:ctjs-opt>
-                   -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/native-default-optimizations-fixture.js
+                   -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/default-optimizations.js
                    -DCXX=${CMAKE_CXX_COMPILER}
                    -DNM=${_native_nm}
                    -DREFERENCE=$<TARGET_FILE:ctcompile-test-native-reference>
                    -DVM_LINKED=$<TARGET_FILE:ctcompile-test-type-oracle>
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-native-optimization-defaults.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/optimization-defaults.cmake)
 endif()
 
 # === PART 24 §3.3: the deduction probe ===
@@ -235,7 +235,7 @@ add_test(NAME ctcompile_deduction_probe
                  -DPROBE=${CMAKE_CURRENT_SOURCE_DIR}/../probes/deduction.cpp
                  "-DCOMPILERS=/usr/bin/g++;/usr/bin/clang++;${CMAKE_CXX_COMPILER}"
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/check-deduction-probe.cmake)
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/deduction-probe.cmake)
 
 # === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
 # ============================================================================
@@ -365,7 +365,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   endfunction()
   # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
   # claimed anywhere is not mistaken for a clean sheet.
-  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js" 9 8 16 0)
+  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0)
   # TWO CLOSED PROGRAMS, ADDED BECAUSE THE FLOORS ABOVE ARE NOT ENOUGH.
   # differential.js and launcher.js are already compiled through the EmitC
   # backend by the blocks further up this file, so they cost nothing to fetch
@@ -382,7 +382,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(phaser
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 45 0 48 283)
   ctcompile_add_native_claims(default_fixture
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js" 9 8 16 0 DEFAULT_OPTIMIZATIONS)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0 DEFAULT_OPTIMIZATIONS)
   ctcompile_add_native_claims(default_bootstrap
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     19 0 21 208 DEFAULT_OPTIMIZATIONS)
@@ -408,7 +408,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   endfunction()
   # 1: the floor bites. The fixture claims 9 of 9; a floor of 10 must fail.
   ctcompile_add_native_claims_negative(floor_bites
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --min-claimed 10 "--expect-failure=the native tier NARROWED")
   # 2: a function left behind with no diagnostic is caught. One refusal reason
   # is deleted from the lowered module, and the check must name the count.
@@ -420,18 +420,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # rather than the claimed set - the two are different numbers and a check
   # that confused them would have missed the regression this floor exists for.
   ctcompile_add_native_claims_negative(resolved_floor_bites
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --min-claimed 9 --min-resolved 9 --min-direct 16
     "--expect-failure=the CLOSED WORLD NARROWED")
   # 4: and the pass cannot report a rewrite it did not make. Every
   # ctjs.call_direct is renamed before counting, so the remark says 16 and the
   # IR holds none.
   ctcompile_add_native_claims_negative(call_direct_counter_agrees
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --mutate-drop-call-direct
     "--expect-failure=the counter and the rewrite disagree")
   ctcompile_add_native_claims_negative(pruned_counter_agrees
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/native-fixture.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --mutate-pruned-count
     "--expect-failure=source function conservation failed")
 endif()
