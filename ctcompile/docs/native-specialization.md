@@ -82,14 +82,14 @@ initialization and residual execution together.
 
 ## Validation
 
-`test/CTNative/specialization.mlir` checks exact tuple reuse, distinct signed-zero
+`test/CTNative/Specialization/specialization.mlir` checks exact tuple reuse, distinct signed-zero
 variants, both budgets, reuse after a budget is reached, a repeated pass,
 recursive refusal, retained argument producers and body effects, original callee
 values, forged provenance on observing or captured targets, and parameter
 preservation when a closure serves alternate symbolic targets. Existing PE/BTA
 cases cover the shared callable proof.
 
-`test/native-specialization-fixture.js` combines arithmetic variants, shared
+`test/CTNative/Fixtures/Optimization/specialization.js` combines arithmetic variants, shared
 static tuples, runtime Map mutation after initialized prefixes, global writes,
 argument ordering, boolean/null coercion and an unspecialized recursive helper.
 The pass creates 12 variants and redirects 17 calls with 175 cloned operations.

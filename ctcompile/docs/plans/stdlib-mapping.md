@@ -5,7 +5,7 @@ The specification's §8 table maps a JavaScript global onto a C++ or Boost
 facility. This document is the verdict on each row.
 
 The table itself is `ctcompile/include/ctcompile/StdLib/StdLibMap.td` and the
-test that keeps this document honest is `ctcompile/test/StdLibMap.cpp`
+test that keeps this document honest is `ctcompile/test/Runtime/StdLibMap.cpp`
 (`ctest -R ctcompile_stdlib_map`). **Nothing here is asserted that the test does
 not check**, and the two places a claim can be made — the `.td`'s `Verdict`
 field and the probe beside it — disagree loudly rather than quietly.

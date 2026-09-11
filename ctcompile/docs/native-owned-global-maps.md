@@ -384,7 +384,7 @@ unowned **0/5** and need a separate definite-absence proof; `present=false` is
 not sufficient. Full Bootstrap Data and browser API integration remain open.
 
 
-The [publication specimen](../test/CTNative/native-export-boundary.js)
+The [publication specimen](../test/CTNative/Exports/boundary.js)
 admits **4/4 native** with a fingerprinted `host-manifest` that selects
 `host.slot`, the numeric `trace` observation and `initial_intrinsics: ["Map"]`.
 Without the manifest, or without its explicit standard Map identity, admission
@@ -631,7 +631,7 @@ browser baseline and the separate evidence-collector Node-path correction.
 
 ## Preceding argument gate, 2026-09-07
 
-`CTNative/native-owned-global-maps.test` covers **25 complete native programs**:
+`CTNative/Ownership/global-maps.test` covers **25 complete native programs**:
 fourteen at **4/4**, ten shared setter/getter variants at **5/5**, and one
 three-method variant at **6/6**. They cover publication, mutation, growing keys,
 repeated growth, primitive operations, overwrite/deletion, fluent calls, and
@@ -1412,5 +1412,5 @@ ownership (seven nullable or six all-String calls), as do the direct repairs
 trace is String. Numeric comparison observers retain their separate host-prefix
 refusal. Their current measurements are in `/tmp/ctcompile-nested-method-next.json`.
 The dual-nested local conditional retains its merged-callee identity refusal in
-`native-map-mixed.mlir`. Full Bootstrap Data, browser API integration, general
+`ctcompile/test/CTNative/Lowering/Maps/map-mixed.mlir`. Full Bootstrap Data, browser API integration, general
 exports, future-call contracts and native throwing calls remain unfinished.

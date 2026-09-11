@@ -402,12 +402,12 @@ recursive folding, retained argument effects, divergent residual calls, repeated
 passes, forged metadata and each independent budget. Integration and vendor
 measurements are recorded in [the roadmap](native-pe-roadmap.md).
 
-The [generalization fixture](../test/native-supercompilation-generalization-fixture.js)
+The [generalization fixture](../test/CTNative/Fixtures/Optimization/supercompilation-generalization.js)
 drives three numeric/string/reset kernels into 14 configurations, with 12 folds,
 nine whistles and nine generalizations. The graph contains 320 residual operations;
 native lowering admits all 23 original/residual functions. Its 16 numeric
 observations include complete string equality checks and argument-effect order.
-The [dedicated lit test](../test/CTNative/supercompilation-generalization.mlir)
+The [dedicated lit test](../test/CTNative/Supercompilation/generalization.mlir)
 also pins exact signed-zero/NaN generalization, unchanged ancestor bodies, promise
 reuse in both directions between external and generalized entries, literal-reset
 monotonicity, rollback after partial construction, and repeated-pass stability.

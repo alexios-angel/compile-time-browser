@@ -60,12 +60,12 @@ literal still consumes its original budget step. It uses `PatternApplicator`
 directly, so greedy folding or dead-code elimination cannot remove producers,
 retry candidates, or perform unbudgeted work.
 
-The source fixture `test/native-symbolic-fixture.js` covers literal coercions,
+The source fixture `test/CTNative/Fixtures/Optimization/symbolic.js` covers literal coercions,
 NaN, signed zero, infinities, symbolic boolean/string results, varying inputs,
 effectful producers and chosen branch order. Standalone lit cases pin retained
 unknown operations, original call multiplicity, precise numeric literals,
 forged-fact rejection, repeated invocation, and budget exhaustion. The dedicated
-`test/CTNative/precompute-pdll.mlir` exercises every scalar pattern with proved
+`test/CTNative/Precomputation/precompute-pdll.mlir` exercises every scalar pattern with proved
 and unknown values, integer widths, and exact step limits around scalar and
 branch rewrites. Native reference comparison remains separate from structural
 optimization evidence.

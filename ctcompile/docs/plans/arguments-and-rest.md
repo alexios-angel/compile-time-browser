@@ -442,15 +442,15 @@ a case covers it.
 
 **10 — the tests, in one commit with the code.**
 
-* `ctcompile/test/ImporterCoverage.cpp` — delete the `gather_rest` and
+* `ctcompile/test/CTJS/Import/Coverage.cpp` — delete the `gather_rest` and
   `make_arguments` rows from `not_yet`.
-* `ctcompile/test/linkable.js` — a body with `arguments` and a body with a rest
+* `ctcompile/test/Runtime/Linking/linkable.js` — a body with `arguments` and a body with a rest
   parameter, so all four new symbols are link-checked. "Anything the backend
   learns to lower belongs here on the same day."
-* `ctcompile/test/differential.js`, `Differential.cpp`, and the `-DENTRIES=`
+* `ctcompile/test/Runtime/Differential/differential.js`, `Differential.cpp`, and the `-DENTRIES=`
   list in `ctcompile/test/CMakeLists.txt` — the four cases below. All three, or
   the entry is compiled and never declared, or declared and never compiled.
-* `ctcompile/test/gc-roots.js` and `GCRoots.cpp` — an `arguments` array built by
+* `ctcompile/test/Runtime/GC/roots.js` and `Roots.cpp` — an `arguments` array built by
   a compiled body, held only in a frame slot across a collection. Both helpers
   are `is_safepoint 1` and allocate.
 
@@ -578,7 +578,7 @@ any one line enforces, and it is the assumption design (a) trades a copy for.
 ## What could not be verified
 
 **Every DELEGATES TO citation in both rows is rotted, and the citation test
-cannot see it.** `check-def-citations.cmake` only catches a line past
+cannot see it.** `test/Core/source-citations.cmake` only catches a line past
 end-of-file; all four of these land inside a file that has since grown.
 
 * `ct_aot_make_arguments` cites `run_loop.cpp:1083-1100` — that is inside
@@ -636,7 +636,7 @@ the subsequent call accepts without a cast, are both plausible and unchecked.
 at the start; partway through it carried `own_keys` and `delete_prop` landing
 across `run_loop.cpp`, `vm.hpp`, `aot_bridge/`, `objects.cpp` (now `vm/objects/`), `CTJSOps.td`,
 `BytecodeImport.cpp`, `CTJSToEmitC.cpp`, `Differential.cpp`, `differential.js`,
-`ImporterCoverage.cpp` and `test/CMakeLists.txt`, and by the end it carried a
+`Coverage.cpp` and `test/CMakeLists.txt`, and by the end it carried a
 different set with `aot_helpers.def` in it — `load_bigint`, which is the third
 of Phase 13's remaining three, and which is also **repairing rotted DELEGATES TO
 citations by name in the same file**. The two rows quoted above were re-read at

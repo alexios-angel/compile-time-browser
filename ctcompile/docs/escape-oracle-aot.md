@@ -12,7 +12,7 @@ existing checker reports as **UNCLAIMED**. A compiled return can now supply an
 explicit result handoff and observe lifetimes without claiming a source site.
 Legacy exits, failed exits and mixed AOT/VM unwind remain **UNCHECKED**.
 
-`EscapeOracleAOT.cpp` executes real AOT entries with returned objects, thrown
+`AOTOracle.cpp` executes real AOT entries with returned objects, thrown
 objects and an encoded catch pad whose low bits collide with a static object
 allocation. Six compiled allocations produce four unchecked site records.
 An interpreted child still records its thrown object as escaping, and a
@@ -35,8 +35,8 @@ allocations unchecked. A separate per-function compiled check counter uses the
 configured budget without spending the interpreted function's checks; the
 format-v2 total check count includes both tiers.
 
-`EscapeOracleAOTReturn.cpp` runs bodies generated from
-`escape-oracle-aot-return.js` by the boxed pipeline. It distinguishes returned
+`AOTReturnOracle.cpp` runs bodies generated from
+`aot-return.js` by the boxed pipeline. It distinguishes returned
 objects and their children from local objects left in dead frame slots, and
 checks the child of a constructor receiver when the body returns a primitive.
 That case calls the generated ABI without a caller root for the receiver, so

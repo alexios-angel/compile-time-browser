@@ -4,7 +4,7 @@
 reachability pruning by default. Both run after the caller's global resolution
 and control-flow structuring, before native closure lifting and type inference.
 The native entry owns this policy, so direct command-line and C++ pass clients
-receive the same defaults as `test/native-pipeline.cmake`.
+receive the same defaults as `test/CTNative/Checks/pipeline.cmake`.
 
 Precomputation replaces proved primitive expressions and selects known
 structured branches. Runtime producers, including effectful calls, remain at
@@ -59,7 +59,7 @@ and then lowers. This permits reproducible experiments with individual stages.
 Running an explicit stage without disabling its corresponding default invokes
 it twice; diagnostics are rederived on each invocation.
 
-`test/native-pipeline.cmake` accepts `-DOPTIMIZE=OFF` for the disabled baseline,
+`test/CTNative/Checks/pipeline.cmake` accepts `-DOPTIMIZE=OFF` for the disabled baseline,
 `-DPRECOMPUTE=OFF` and `-DPRUNE_UNREACHABLE=OFF` for individual opt-outs, and
 `-DOPTIMIZATION_REPORT=ON` for counters. Undefined options inherit the native
 entry's defaults. Existing explicit `PRECOMPUTE=ON` and `PRUNE_UNREACHABLE=ON`
@@ -69,9 +69,9 @@ internal stage disabled. Explicit stages still run with `OPTIMIZE=OFF`.
 default stages. The CMake fixture helper's `NO_DEFAULT_OPTIMIZATIONS` option
 selects the disabled baseline.
 
-`test/CTNative/default-optimizations.mlir` checks the native entry's defaults,
+`test/CTNative/Optimization/default-optimizations.mlir` checks the native entry's defaults,
 stage order, individual and combined opt-outs, zero budgets and diagnostics.
-`test/check-native-optimization-defaults.cmake` builds the same JavaScript with
+`test/CTNative/Checks/optimization-defaults.cmake` builds the same JavaScript with
 defaults enabled and disabled, checks generated C++ actually differs, and runs
 the existing standalone compilation, no-VM-symbol and interpreter comparisons
 for both. Its eight fixed observations include call order, NaN, signed zero

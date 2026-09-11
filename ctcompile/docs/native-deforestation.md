@@ -75,7 +75,7 @@ claim a runtime speedup.
 
 ## Validation
 
-`native-deforestation-fixture.js` covers empty and populated Maps, dynamic and
+`ctcompile/test/CTNative/Fixtures/Optimization/deforestation.js` covers empty and populated Maps, dynamic and
 fractional indices, NaN, infinity, boolean/null/undefined indices, signed zero,
 numeric keys on nested Maps, overwritten values and deletion/reinsertion.
 It also covers reused scalar results, conflicting snapshot consumers, direct

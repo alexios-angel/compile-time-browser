@@ -272,7 +272,7 @@ unchanged. An ordinary call's effective `this` stays unknown.
 
 ## Focused semantic and lifetime checks
 
-`host-provider-mutations.test` passes 38 source cases plus contract, rerun and
+`ctcompile/test/CTNative/HostContract/Provider/mutations.test` passes 38 source cases plus contract, rerun and
 work-limit controls. Independent Node execution matches all 38 source oracles.
 The tests cover:
 
@@ -297,7 +297,7 @@ The standalone `ProviderState` test passes key equality, insertion order,
 allocation provenance, resource-cycle and transaction checks. It exhausts
 budgets through lookup, replacement, insertion, deletion, allocation, size and
 complete state copying, checking failure leaves state and outputs unchanged.
-The existing `host-provider-reads.test` also passes its 23 source cases and
+The existing `ctcompile/test/CTNative/HostContract/Provider/reads.test` also passes its 23 source cases and
 controls with the original read-only boundary.
 
 The exact driver checks the measured counts above, source hashes and native

@@ -108,7 +108,7 @@ observations; the reference printer does not expose globals after a throw.
 | Checked lookups, iterator consumption and messages | `lib/CTNative/HostContract/ProviderDiagnostics.{h,cpp}` |
 | Primitive callback paths and global effects | `lib/CTNative/HostContract/ProviderCallbacks.{h,cpp}` |
 | Enclosing transaction commit | `lib/CTNative/HostContract/PrefixMutations.cpp` |
-| Source regression | `test/CTNative/host-provider-diagnostics.{py,test}` |
+| Source regression | `test/CTNative/HostContract/Provider/diagnostics.{py,test}` |
 | Exact Bootstrap oracle and boxed differential | `tools/check/bootstrap-host-prefix.py`, `test/cmake/BootstrapData.cmake` |
 
 See [the next provider proof](bootstrap-provider-next.md) for the ordinary

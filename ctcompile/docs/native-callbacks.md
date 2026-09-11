@@ -77,7 +77,7 @@ work ahead.
 
 ## Verification
 
-`native-callback-fixture.js` admits 21/21 functions. Its eight observable
+`ctcompile/test/CTNative/Fixtures/Closures/callback.js` admits 21/21 functions. Its eight observable
 results cover both branches, repeated calls, argument side effects, missing
 arguments, multiple callback parameters and loops. The standard pipeline
 compares the executable with the interpreter, checks for VM symbols, compiles

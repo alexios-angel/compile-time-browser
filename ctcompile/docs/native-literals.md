@@ -25,7 +25,7 @@ The C++ emitter enables that policy only for modules carrying the unit attribute
 retains upstream spelling, including when nested inside a marked module.
 Vendored upstream emitter tests remain unchanged.
 
-`CTNative/Lowering/readable-strings.test` checks readable output and compares
+`CTNative/Lowering/Emission/readable-strings.test` checks readable output and compares
 returned native strings against independent numeric byte arrays under GCC and
 Clang. Its 12 cases include all 256 bytes, embedded NUL, UTF-8/WTF-8, raw-string
 terminators and trigraphs. `Target/Cpp/readable-floats.mlir` checks spelling and

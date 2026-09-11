@@ -109,7 +109,7 @@ mechanism.
 
 ## Validation
 
-`CTNative/binding-time-effect-queries.mlir` checks disjoint object and Map heaps,
+`CTNative/BindingTime/effect-queries.mlir` checks disjoint object and Map heaps,
 transitive own-field paths, Map-key and closure/cell reachability, and repeated
 analysis. It also checks conservative behavior for missing own fields, dirty
 reachable objects, read-after-write paths, unknown receivers, prototype access,

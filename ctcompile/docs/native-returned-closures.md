@@ -134,7 +134,7 @@ IR tests pin refusals for mixed producers, mutation, late initialization, open
 boundaries, inspection and forged annotations. Type tests cover nominal
 identity, joins, optionality and escaped target names.
 
-`CTNative/Lowering/native-owning-callables.mlir` adds a focused source regression
+`CTNative/Lowering/Closures/owning-callables.mlir` adds a focused source regression
 for named owning lambdas. Its checker compares nine observations in ordinary
 and deduced output under GCC and Clang, and repeats both with Clang ASan/UBSan
 and stack-use-after-return detection. It covers retained factory results,

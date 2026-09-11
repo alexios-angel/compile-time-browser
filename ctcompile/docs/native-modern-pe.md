@@ -174,7 +174,7 @@ Speculation must not introduce one implicitly.
 1. **Make BTA's summary fixed point explicit.** The first implementation replaces
    completion-only sweeps with full-summary comparison and a bounded reverse-call
    worklist. Recursive calls stay dynamic; exhaustion rederives local facts with
-   every direct call dynamic. `test/CTNative/binding-time-summaries.mlir` adds
+   every direct call dynamic. `test/CTNative/BindingTime/summaries.mlir` adds
    source-order permutations, exact literal propagation, joined keys and recursive
    heap invalidation; existing effect tests cover dynamic mutations. The devbox
    compiler build, all eight focused BTA/PE lit tests and both exact-source Data

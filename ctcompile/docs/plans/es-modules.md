@@ -1,6 +1,6 @@
 # ES modules — `load_import`, `bind_export`, `load_namespace`, `dyn_import`
 
-The four opcodes `ImporterCoverage.cpp` labels "ES modules - Phases 15-16".
+The four opcodes `Coverage.cpp` labels "ES modules - Phases 15-16".
 They are the last four non-suspending opcodes the importer does not dispatch
 that belong to a phase rather than to a blocker, and unlike Phase 13's list
 they share one problem that is not a missing helper:
@@ -8,7 +8,7 @@ they share one problem that is not a missing helper:
 **NOTHING IN `ctcompile/test/` COMPILES A MODULE.** `ctjs-translate` has two
 translations and both call `compiler::compile(text)` with the default
 `script_kind::classic`; `Differential.cpp` runs one classic script through
-`cx.run`; `linkable.js` and `gc-roots.js` are classic. A module opcode is
+`cx.run`; `linkable.js` and `roots.js` are classic. A module opcode is
 emitted only by `compile_program`'s `if (module_scope_)` arm, so today there is
 no path by which any of these four could reach the importer at all — and
 therefore no path by which a lowering for one could be shown to compute
@@ -697,7 +697,7 @@ than an accident.
 
 **8 — the tests, in one commit with the code.**
 
-* `ctcompile/test/ImporterCoverage.cpp` — delete the four `not_yet` rows. The
+* `ctcompile/test/CTJS/Import/Coverage.cpp` — delete the four `not_yet` rows. The
   ratchet fails until they go.
 * `ctcompile/test/CTJS/Import/unsupported.mlir` — **must be repointed**. It uses
   `import(u)` — `op::dyn_import` — as its example of a genuinely unsupported
@@ -714,12 +714,12 @@ than an accident.
   `--ctbrowser-module-to-ctjs`, three lines beside `--ctbrowser-js-to-ctjs`,
   differing only in `script_kind::module`. Without it no fixture in
   `ctcompile/test/` can contain a module opcode.
-* `ctcompile/test/compile-js-to-cpp.cmake` — an optional `-DKIND=module` that
+* `ctcompile/test/Support/compile-js-to-cpp.cmake` — an optional `-DKIND=module` that
   selects the flag. Defaulting to the classic one keeps every existing caller
   unchanged.
-* `ctcompile/test/ModuleDifferential.cpp` + `module-main.js` + `module-dep.js` —
+* `ctcompile/test/Runtime/Modules/Differential.cpp` + `main.js` + `dep.js` —
   the new harness, below.
-* `ctcompile/test/linkable.js` — **cannot carry these**, and that is worth saying
+* `ctcompile/test/Runtime/Linking/linkable.js` — **cannot carry these**, and that is worth saying
   out loud rather than discovering: it is compiled as a classic script, and a
   module opcode in it would be a syntax error. The link check for the four new
   symbols is the module harness's own translation unit, which links against
@@ -730,7 +730,7 @@ than an accident.
 The harness could not be `Differential.cpp`, for the reason at the top of this
 file: it compiles ONE classic script and runs it with `cx.run`. Three of the
 four opcodes cannot appear in a classic script at all. So
-`ctcompile/test/ModuleDifferential.cpp` is a new binary that builds a
+`ctcompile/test/Runtime/Modules/Differential.cpp` is a new binary that builds a
 THREE-MODULE GRAPH the way `browser/scripts.cpp` does — register the records, fill
 `resolved`, instantiate every module, then evaluate in dependency order — and
 installs a compiled entry on the importing module's TOP LEVEL. That is the
@@ -739,21 +739,21 @@ named function.
 
 Two things about the shape are load-bearing rather than convenient.
 
-**`module-dep.js` and `module-user.js` stay interpreted in every arm.** dep is
+**`dep.js` and `user.js` stay interpreted in every arm.** dep is
 where the live binding is written; user is the only thing in the world that can
-see what `op::bind_export` decided. Reading `mine` from inside `module-main.js`
+see what `op::bind_export` decided. Reading `mine` from inside `main.js`
 proves its local works whatever cell it holds — what bind_export decides is
 whether the cell in main's RECORD is that same box, and only a second module
 taking that box can tell.
 
-**`resolved` is deliberately not the identity map.** `module-main.js` writes
+**`resolved` is deliberately not the identity map.** `main.js` writes
 `./dep.js` and the registry is keyed by `dep`, so a lowering that skipped the
 resolution step raises ``module `./dep.js` was not loaded`` instead of
 answering. A one-directory fixture produces an identity map by accident, and
 under one the mistake is invisible.
 
 ```js
-// module-dep.js — the exporter
+// dep.js — the exporter
 export let count = 1;
 export const tag = "D";
 export default 7;
@@ -761,7 +761,7 @@ export function bump() { count = count + 1; }
 ```
 
 ```js
-// module-main.js — the compiled body, abridged
+// main.js — the compiled body, abridged
 import def, { count, tag, bump } from "./dep.js";
 import * as ns from "./dep.js";
 import * as ns2 from "./dep.js";
@@ -776,7 +776,7 @@ function loadTwo() {
 ```
 
 ```js
-// module-user.js — the only view of what bind_export decided
+// user.js — the only view of what bind_export decided
 import { mine, raise2 } from "./main.js";
 READ_MINE = function () { raise2(); return "" + mine; };
 ```
@@ -788,7 +788,7 @@ READ_MINE = function () { raise2(); return "" + mine; };
 | one record twice | `3/3/true` | whether the named import and the namespace came from the SAME record |
 | dynamic import | `main>./dep.js,main>./nowhere.js/object/object/false` | the REFERRER, which no operand carries; and a missing module answering an already-rejected promise rather than a failure |
 | own export | `12` | the adopted cell being writable from inside the module |
-| adopted cell | `12` | publishing the register's own cell against adopting the record's — read from `module-user.js` |
+| adopted cell | `12` | publishing the register's own cell against adopting the record's — read from `user.js` |
 | no module | `12` | the CONDITIONAL write, which is what `$current` is for |
 
 Every arm runs twice: once with only the top level patched, and once with every
@@ -874,7 +874,7 @@ all.** They cited SIX bare line numbers with no filename — `1405`, `1395`,
 868. They also cited `call.cpp:111-119` for `instantiate_module` (154),
 `call.cpp:133-135` for the namespace identity cache (175-178), `call.cpp:704`
 for `context::resume` (947) and `Shell/browser.cpp:1216-1240` for the loader
-(1405-1429). The bare-number form is invisible to `check-def-citations.cmake` by
+(1405-1429). The bare-number form is invisible to `test/Core/source-citations.cmake` by
 construction, since its regex begins with a basename. **That is a gap the
 checker could close** — a bare `:NNN` inside a `DELEGATES TO` paragraph is
 findable — and this work did not close it.

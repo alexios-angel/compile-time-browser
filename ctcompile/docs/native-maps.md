@@ -217,7 +217,7 @@ parameters remain excluded. Every stored alternative still participates in schem
 inference. All input annotations are cleared and rederived. See the nested-Map
 document for its additional presence and containment proofs.
 
-`native-map-mixed.mlir` checks saved Bool/Number/String chains across associative
+`ctcompile/test/CTNative/Lowering/Maps/map-mixed.mlir` checks saved Bool/Number/String chains across associative
 and insertion-ordered modules with Node/interpreter, GCC/Clang, explicit/deduced
 output and ASan/UBSan. Negative programs cover branch tags, possible alias
 writes, direct callee writes, `has`, deletion and unproved nonliteral payloads,
@@ -263,7 +263,7 @@ Map snapshots reuse the dense-array helpers. Review exposed the existing
 ND-8 defect: `vec_at` rejected fractional numeric indices, while the reference
 truncates toward zero before checking bounds. It now truncates first, retaining
 the NaN, infinity and bounds guards before integer conversion. The original
-`native-index-truncation-fixture.js` is a passing regression with an off-by-one
+`ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js` is a passing regression with an off-by-one
 negative control. The Map fixture independently exercises fractional reads
 through both snapshots, including `-0.5` and a computed parameter.
 See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-produces-tagged-undefined).

@@ -393,7 +393,7 @@ Opaque C++ calls retain their existing separate foreign-boundary contract;
 this structural check is not a transitive source effect proof and does not
 authorize arbitrary JavaScript callbacks, runtime adapters or reentry.
 
-[The target regression](../test/Target/Cpp/native-call-exceptions.mlir) uses
+[The target regression](../test/Target/Cpp/call-exceptions.mlir) uses
 real direct and transitive numeric, boolean and owning string helpers. Explicit
 mutable catch slots receive the pre-call state; the emitted call result is
 assigned only after normal return. Its numeric observation is caught 42 from
@@ -517,7 +517,7 @@ explicit adapter; callback/provider effects remain a separate obligation.
 
 ## Primitive payload checkpoint, 2026-09-07
 
-[The source regression](../test/CTNative/Lowering/native-exceptions.mlir) now
+[The source regression](../test/CTNative/Lowering/Exceptions/exceptions.mlir) now
 admits **13 complete programs, 27/27 functions**, with **25 observations**
 matching Node, the running interpreter and standalone explicit/deduced C++
 under GCC 13 and Clang 18. Twelve programs have two functions each; the owning
@@ -537,7 +537,7 @@ The six additions to the numeric checkpoint exercise:
 | Numeric payload bits | negative zero 42, NaN 43 |
 
 The owning-string source specimens and
-[the primitive target fixture](../test/Target/Cpp/native-primitive-exceptions.mlir)
+[the primitive target fixture](../test/Target/Cpp/primitive-exceptions.mlir)
 pass ASan/UBSan, stack-use-after-return, use-after-scope and leak checks in both
 explicit and deduced forms. The target fixture retains 32 KiB payloads after
 repeated heap churn, verifies independent catch copies and propagates foreign
@@ -572,7 +572,7 @@ coverage remains Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**.
 
 ## Initial numeric checkpoint, 2026-09-07
 
-At the numeric checkpoint, [the source regression](../test/CTNative/Lowering/native-exceptions.mlir)
+At the numeric checkpoint, [the source regression](../test/CTNative/Lowering/Exceptions/exceptions.mlir)
 admitted all seven positive programs at **2/2 native each**. Their fourteen observations
 match Node and the running interpreter in explicit/deduced C++ under GCC 13 and
 Clang 18, with no VM symbols in source or binaries. The original guarded case
@@ -603,7 +603,7 @@ native and is not used as an admitted-result equivalence claim.
 
 [The source IR test](../test/CTJS/IR/exceptions.mlir) checks region round-trips,
 numeric type flow and eight verifier refusals.
-[The C++ target test](../test/Target/Cpp/native-exceptions.mlir) executes explicit,
+[The C++ target test](../test/Target/Cpp/exceptions.mlir) executes explicit,
 deduced and hoisted output with both compilers. It covers nested target throws,
 negative zero, unused catch values, foreign exception propagation, writable
 opaque-ABI uses of a copied catch binding, name collisions and nine malformed

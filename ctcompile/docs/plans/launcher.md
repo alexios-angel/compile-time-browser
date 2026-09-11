@@ -21,14 +21,14 @@ the end.
 
 | file | what it is |
 |---|---|
-| `ctcompile/test/launcher.js` | a 2,963-byte JavaScript **application** — its top level does the work |
+| `ctcompile/test/Runtime/Launcher/application.js` | a 2,963-byte JavaScript **application** — its top level does the work |
 | `ctcompile/include/ctcompile/AOT/EntryTable.hpp` | the installer: symbol -> `function_proto`, and strict mode |
-| `ctcompile/test/aot-entry-table.cmake` | reads the emitted C++, writes the table translation unit |
-| `ctcompile/test/LauncherApp.cpp` | the fixed launcher, compiled twice from one source |
-| `ctcompile/test/check-launcher.cmake` | runs both arms, compares bytes, asserts the counters |
-| `ctcompile/test/extract-inline-script.cmake` | a page's inline script, as `run_scripts` assembles it |
-| `ctcompile/test/LauncherPage.cpp` | the same, for a real page through the whole engine |
-| `ctcompile/test/check-launcher-page.cmake` | runs both arms, compares the canvas, asserts the counters |
+| `ctcompile/test/Support/aot-entry-table.cmake` | reads the emitted C++, writes the table translation unit |
+| `ctcompile/test/Runtime/Launcher/Application.cpp` | the fixed launcher, compiled twice from one source |
+| `ctcompile/test/Runtime/Launcher/check-application.cmake` | runs both arms, compares bytes, asserts the counters |
+| `ctcompile/test/Support/extract-inline-script.cmake` | a page's inline script, as `run_scripts` assembles it |
+| `ctcompile/test/Runtime/Launcher/Page.cpp` | the same, for a real page through the whole engine |
+| `ctcompile/test/Runtime/Launcher/check-page.cmake` | runs both arms, compares the canvas, asserts the counters |
 | `browser::set_script_prepared_hook` | +27 lines in `browser.hpp`, +4 in `browser.cpp` |
 
 Measured on the devbox, `-DCTCOMPILE_ENABLE_MLIR=ON`, clang 24.0.0git:
@@ -130,7 +130,7 @@ Falsified (see below): breaking the sanitiser makes the application refuse with
 There is not one, and Phase 18 says there must not be: *"Do not generate C++
 source for the launcher and shell out to a host compiler."*
 
-`ctcompile/test/LauncherApp.cpp` is a fixed source compiled twice. Everything
+`ctcompile/test/Runtime/Launcher/Application.cpp` is a fixed source compiled twice. Everything
 application-specific arrives as **two generated objects and one preprocessor
 symbol**:
 
@@ -173,7 +173,7 @@ with its generator, and this test's value is that it exercises the *current*
 backend.
 
 ```text
-launcher.js
+application.js
   |-- embed-js.cmake ------------> launcher.js.inc     (the driver reads the same file)
   |-- compile-js-to-cpp.cmake ---> launcher.generated.cpp
   |                                   ctjs-translate --ctbrowser-js-to-ctjs
@@ -210,8 +210,8 @@ and a looser pattern collects those and then writes declarations for them.
 Two link edges, from one driver source:
 
 ```cmake
-add_executable(ctcompile-test-launcher-vm  LauncherApp.cpp launcher.js.inc)
-add_executable(ctcompile-test-launcher-aot LauncherApp.cpp launcher.js.inc
+add_executable(ctcompile-test-launcher-vm  Runtime/Launcher/Application.cpp launcher.js.inc)
+add_executable(ctcompile-test-launcher-aot Runtime/Launcher/Application.cpp launcher.js.inc
                                            launcher.generated.cpp launcher.entries.cpp)
 ```
 
@@ -274,7 +274,7 @@ vendored libraries of thousands of functions.
 
 `ctcompile` the tool still packages a `.ctapp` bundle of **bytecode images** and
 appends it to `ctrun`; `--mode aot-only` is refused by name with a message
-pointing at Phases 10A-10C, and `check-package.cmake` asserts the manifest says
+pointing at Phases 10A-10C, and `test/Packaging/roundtrip.cmake` asserts the manifest says
 `mode vm`. Nothing in that path is touched by this work. See `Next rungs`.
 
 ## Strict AOT-only, operationally
@@ -323,7 +323,7 @@ a page is driven from C++ rather than from its own top level:
 **`AOT -> AOT` is pinned rather than bounded on purpose.** `> 0` passes on an
 application whose top level compiled and whose every call fell back, which is
 the interesting half of the failure. 80 is the fixture's own call count; if
-`launcher.js` changes the number changes with it, and the test says so in its
+`application.js` changes the number changes with it, and the test says so in its
 failure message.
 
 **And there is a blinded arm.** The same driver with nothing generated linked
@@ -359,7 +359,7 @@ is a read past the end. It now counts the rows.
 
 ## Risks
 
-**The pinned `AOT -> AOT` count is a maintenance edge.** Editing `launcher.js`
+**The pinned `AOT -> AOT` count is a maintenance edge.** Editing `application.js`
 changes it and the test goes red with a message that says so. That is the
 intended trade: a bound that survives edits would also survive the failure.
 
@@ -440,7 +440,7 @@ and would measure scheduling noise. `ctcompile/docs/baseline/` is where a number
 belongs, and there is not one for AOT.
 
 **The generated application was not packaged, shipped or run anywhere but the
-build tree.** `check-package.cmake` starts its executable from a different
+build tree.** `test/Packaging/roundtrip.cmake` starts its executable from a different
 working directory precisely because that is a different question; neither
 launcher test does, because all four arms are ordinary test binaries reading
 their input off the disk.
@@ -458,7 +458,7 @@ starting to draw invaders differently, which is what
 `ctbrowser/test/golden/` is for.
 
 **`AOT -> C++` is zero in the bare-context arm and that is not evidence of
-anything.** `launcher.js` calls no native built-in — `+`, `%` and `typeof` are
+anything.** `application.js` calls no native built-in — `+`, `%` and `typeof` are
 ABI helpers rather than JavaScript calls — so it never had a reason to cross.
 The page arm crosses it 484 times, which is where the mixed stack is actually
 exercised.
@@ -466,7 +466,7 @@ exercised.
 **The claim that a function index means the same thing in both tiers rests on
 both sides calling `compiler::compile` on the same text.**
 `ctjs-translate::import_source` does `compiler::compile(std::string{text})` and
-`LauncherApp.cpp` does the same on the embedded copy of the same file. That is
+`Application.cpp` does the same on the embedded copy of the same file. That is
 the build graph, not a check. `EntryTable.hpp` says what the bijection cannot
 see: a table generated from a DIFFERENT program whose functions happen to have
 the same names at the same indices would install silently and wrongly. A

@@ -58,7 +58,7 @@ from Map IDs and primitive attributes; zero is the absent report value.
 
 ## Validation
 
-The source regression, `test/CTNative/host-provider-objects.{py,test}`, passes
+The source regression, `test/CTNative/HostContract/Provider/objects.{py,test}`, passes
 **38 source cases**. It checks equal-field identities, returned/global aliases,
 shared mutation, separate factories, nested Maps, scalar replacement,
 deletion/reinsertion and publication refusals. A combined Map/object/callback

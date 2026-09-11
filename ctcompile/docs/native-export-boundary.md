@@ -21,7 +21,7 @@ not establish the result type or a supported native carrier.
 
 The original baseline was `6760a8b`; the current getter proof below is the
 2026-09-07 increment. Native counts use `--ctnative-lower-to-emitc=optimize=false`.
-No source function is skipped or pruned. `CTNative/native-export-boundary.test` keeps these measurements
+No source function is skipped or pruned. `CTNative/Exports/boundary.test` keeps these measurements
 reproducible and checks reports, final admission and reruns.
 
 | Source | Complete host/prefix evidence | Native admission | Node/interpreter |
@@ -47,7 +47,7 @@ an object literal that escapes - it reaches `ctjs.store_global`
 ```
 
 The four-function published specimen is maintained in
-[`test/CTNative/native-export-boundary.js`](../test/CTNative/native-export-boundary.js):
+[`test/CTNative/Exports/boundary.js`](../test/CTNative/Exports/boundary.js):
 
 ```js
 var host = {};

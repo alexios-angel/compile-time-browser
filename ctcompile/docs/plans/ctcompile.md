@@ -763,7 +763,7 @@ it, and the handoff now distinguishes the two.
 
 **Worse, the runtime had never compiled its own contract.** `aot.hpp` expands
 the table into an enum and 68 prototypes, and the only file in the repository
-that included it was `ctcompile/test/Inventories.cpp`. The presets that most
+that included it was `ctcompile/test/Core/Inventories.cpp`. The presets that most
 need the check are precisely the ones that skip it: `browser`,
 `browser-no-llvm`, `asan`, `tsan` and `windows` all configure with
 `CTBROWSER_ENABLE_PROJECTS` empty, so ctcompile is not built and **neither the
@@ -1694,7 +1694,7 @@ operation structure and an attribute on the same operation, with no type
 conversion, no block surgery and no analysis. It is now
 `ctcompile/lib/CTNative/Lowering/PruneDeadStores.pdll`, compiled by `mlir-pdll`
 through `add_mlir_pdll_library` into the build tree.
-`test/CTNative/Lowering/unused-call.mlir` — which already pinned the marked
+`test/CTNative/Lowering/Emission/unused-call.mlir` — which already pinned the marked
 call, the unmarked one, the emitted C++ and the count — passes **unchanged**.
 
 The second rule stayed C++. Erasing a write-only `emitc.variable` needs every
@@ -1937,7 +1937,7 @@ target can opt out. It does two things:
    ODS the run actually loaded. No argument parsing: `-o`, `-d` and `-x` are
    ordinary `cl::opt` scalars, so the copies appended after `"$@"` win.
 
-`test/check-pdll-guard.cmake` (ctest: `ctcompile_pdll_guard`, ~70 ms) runs it
+`test/PDLL/guard.cmake` (ctest: `ctcompile_pdll_guard`, ~70 ms) runs it
 over three fixtures in `test/PDLL/` that nothing compiles, and asserts **both
 sides** of each: that the raw `mlir-pdll` accepts the two bad ones, and that the
 guard refuses them, naming *"unregistered dialect"* and *"ctjs.binry"*
@@ -1987,7 +1987,7 @@ captures nothing". **Constraints cannot return values at all** — the reference
 marks it a TODO — so a constraint can never compute a carrier, only accept or
 reject. And **every argument comes from the match**, which is the next section.
 
-`test/CTNative/Lowering/unary-plus.mlir` asserts that the pattern fires *and*
+`test/CTNative/Lowering/Scalars/unary-plus.mlir` asserts that the pattern fires *and*
 that `ctjs.unary neg` in the next function is untouched — which is exactly what
 a dropped kind constraint would break.
 

@@ -414,7 +414,7 @@ cover overwritten and initially undefined aliases, omission of either receiver
 or slot knowledge, unknown slot contents, a different publication slot, module
 and undefined receiver declarations, ordinary-call receiver opacity, descriptor
 and prototype mutation, and repeated typed-API validation.
-The additional `host-publication.test` checks current method/alias/table
+The additional `ctcompile/test/CTNative/HostContract/publication.test` checks current method/alias/table
 replacement, distinct invocation identities, unknown intervening effects,
 accessors, writable and forwarded captures, resource escape, source provider
 replacement, and post-capture cell overwrite. The normalized cell fixture
@@ -445,7 +445,7 @@ script/wrapper entries, interpreter method bodies and GC stress. Node v26.8.1
 independently matches the same 62 observations; the realm negative control
 rejects the exact executed `traceRealmDistinct` change from 1 to 0.
 
-`host-provider-reads.test` checks empty `has`/`get`/`size`, primitive result
+`ctcompile/test/CTNative/HostContract/Provider/reads.test` checks empty `has`/`get`/`size`, primitive result
 identity, preserved method/observer branches, an unselected mutation arm,
 current method replacement, two factory instances and a copied closure's
 original capture identity. Its negative cases cover selected mutations,
@@ -475,7 +475,7 @@ Vendor/program hashes, seven source functions, unchanged method bodies and
 observer branches, and native admission 0/7 are preserved. The three mutation
 differential CTests pass all 19/19/24 observations against the interpreter with
 compiled boxed script/wrapper entries and GC stress. Node v26.8.1 independently
-matches those 62 observations. `host-provider-mutations.test` passes 38 source
+matches those 62 observations. `ctcompile/test/CTNative/HostContract/Provider/mutations.test` passes 38 source
 cases plus contract/work-limit controls, and the standalone `ProviderState`
 test passes state/equality/provenance and transaction budget checks. These
 results establish prefix traversal and boxed semantics, without a native

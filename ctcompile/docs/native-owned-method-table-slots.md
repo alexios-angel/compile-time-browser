@@ -116,8 +116,8 @@ global storage, and preserves source allocation and initialization order.
 
 ## Validation and remaining boundaries
 
-`test/native-owned-method-table-slot-fixture.js` is the exact six-function gate.
-`test/CTNative/Lowering/native-owned-method-table-slots.mlir` and its Python
+`test/CTNative/Fixtures/Closures/owned-method-table-slot.js` is the exact six-function gate.
+`test/CTNative/Lowering/Closures/owned-method-table-slots.mlir` and its Python
 checker cover three standalone programs:
 
 - **6/6:** the specimen above, returning 4211.

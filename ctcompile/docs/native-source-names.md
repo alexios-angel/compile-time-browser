@@ -51,7 +51,7 @@ closures or existing names require suffixes. Source binding names are allocated
 first; this fallback never propagates into captured values.
 
 Native lowering enables this policy with `ctnative.readable_names`. Unmarked
-modules retain upstream spelling. `native-pipeline.cmake` preserves source
+modules retain upstream spelling. `ctcompile/test/CTNative/Checks/pipeline.cmake` preserves source
 locations through its intermediate MLIR; manual pipelines must also retain them
 with `--mlir-print-debuginfo`. Removing locations or compiling without bytecode
 debug names leaves generic temporaries, except for marked closure creations.

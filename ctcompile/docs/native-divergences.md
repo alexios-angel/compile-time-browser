@@ -79,7 +79,7 @@ part 24 §1.3 says the two "must agree exactly".
 
 ### The test
 
-`ctcompile/test/CTNativeLattice.cpp`, the ND-1 block. It compiles and runs
+`ctcompile/test/Analysis/Types/Lattice.cpp`, the ND-1 block. It compiles and runs
 
 ```js
 var S = "😀";
@@ -168,7 +168,7 @@ exactly once.
 
 ### The test
 
-`ctcompile/test/EscapeCycle.cpp` over `ctcompile/test/escape-cycle.js`,
+`ctcompile/test/Analysis/Escape/Cycle.cpp` over `ctcompile/test/Analysis/Escape/cycle.js`,
 registered as `ctcompile_escape_cycle`. It asks the VM, in a fresh context:
 
 ```js
@@ -250,7 +250,7 @@ table for accessors, the row is re-examined rather than silently wrong.
 
 ### The test
 
-`ctcompile/test/EscapeCycle.cpp`, the ND-3 block, in a fresh context each:
+`ctcompile/test/Analysis/Escape/Cycle.cpp`, the ND-3 block, in a fresh context each:
 
 * the literal read after the getter is installed is `typeof … === "undefined"`
   (V8: 42);
@@ -301,7 +301,7 @@ tier has no collector to fall back to (ND-2 above), so an object graph with a
 proved cycle that the analysis cannot show confined to one frame is reported
 at compile time with its allocation sites named — the shape `ctjs.not_lowered`
 already has — and is not lowered. A confined cycle lowers to a frame-owned
-region (55C option 2); `EscapeCycle.cpp`'s (c3) block is the model of that
+region (55C option 2); `Cycle.cpp`'s (c3) block is the model of that
 region, and its (c1)/(c2) blocks are the two answers the tier must never give
 silently.
 
@@ -341,20 +341,20 @@ The distinction is the whole design, so it is the first column:
 
 | # | emitted witnesses | refusal text |
 |---|---|---|
-| ND-4 | `native-divergence-fixture.js` (`pow_*`), `native-pipeline-fixture.js` | — |
-| ND-5 | `native-divergence-fixture.js` (`mod_*`) | — |
-| ND-6 | `native-divergence-fixture.js` (`negzero*`, `poszero*`) | — |
-| ND-7 | `native-divergence-fixture.js` (`u_*`, `b_*`); `native-struct-fixture.js` | `CTNative/Lowering/divergence-refusals.mlir` (EQUALITY, TYPEOF); `global-undefined.mlir` (HOISTED, PICK, OUTERSTORE, READBEFORE, ONEPATH — the printing row, and DOMINATES / FIELD for the narrowing that pays for it) |
-| ND-8 | `native-divergence-fixture.js` (`idx_*`) | — |
-| ND-8 truncation | `native-index-truncation-fixture.js`, `native-map-fixture.js` | — |
+| ND-4 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`pow_*`), `ctcompile/test/CTNative/Fixtures/ControlFlow/globals.js` | — |
+| ND-5 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`mod_*`) | — |
+| ND-6 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`negzero*`, `poszero*`) | — |
+| ND-7 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`u_*`, `b_*`); `ctcompile/test/CTNative/Fixtures/Objects/struct.js` | `CTNative/Lowering/Admission/divergence-refusals.mlir` (EQUALITY, TYPEOF); `global-undefined.mlir` (HOISTED, PICK, OUTERSTORE, READBEFORE, ONEPATH — the printing row, and DOMINATES / FIELD for the narrowing that pays for it) |
+| ND-8 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`idx_*`) | — |
+| ND-8 truncation | `ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js`, `ctcompile/test/CTNative/Fixtures/Maps/map.js` | — |
 | ND-9 | — | `divergence-refusals.mlir` (BITWISE) |
-| ND-10 | `native-struct-fixture.js`, the shadowed case | `CTNative/Lowering/shape-field-names.mlir` (INHERITED) |
+| ND-10 | `ctcompile/test/CTNative/Fixtures/Objects/struct.js`, the shadowed case | `CTNative/Lowering/Objects/shape-field-names.mlir` (INHERITED) |
 | ND-11 | — | `shape-field-names.mlir` (KEYWORD, MACRO) |
-| ND-12 | `native-array-fixture.js` (`counted`) | `CTNative/Lowering/native-array.mlir` (LENGTH, INDEXED, DELETED) |
-| ND-13 | — | `native-array.mlir` (BOOLEANS) |
-| ND-14 | — | `ctcompile/test/StdLibMap.cpp`, registered `ctcompile_stdlib_map` |
+| ND-12 | `ctcompile/test/CTNative/Fixtures/Objects/array.js` (`counted`) | `CTNative/Lowering/Objects/array.mlir` (LENGTH, INDEXED, DELETED) |
+| ND-13 | — | `ctcompile/test/CTNative/Lowering/Objects/array.mlir` (BOOLEANS) |
+| ND-14 | — | `ctcompile/test/Runtime/StdLibMap.cpp`, registered `ctcompile_stdlib_map` |
 
-`native-divergence-fixture.js` goes through the Phase 62½-D gate as
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` goes through the Phase 62½-D gate as
 `ctcompile_native_unit_pipeline_divergence` (and its deduced twin), and
 through Phase 63 Step 7's two-toolchain compile as
 `ctcompile_compile_clean_pipeline_divergence`. The original fractional-index defect witness now passes as
@@ -411,12 +411,12 @@ cheaper correct answer.
 ### The test
 
 The five diverging cases and eight non-diverging ones are globals of
-`native-divergence-fixture.js`, compared against the interpreter by
-`check-native-unit.cmake`. The negative half matters as much as the positive:
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js`, compared against the interpreter by
+`ctcompile/test/CTNative/Checks/compilation-unit.cmake`. The negative half matters as much as the positive:
 a guard that answered NaN whenever the exponent was infinite would pass
 `pow_one_inf` and fail `pow_two_inf`; one that fired on any base of magnitude
 one would fail `pow_nan_zero`, which is `1` in both languages.
-`native-numeric.mlir` pins the *shape* — `call_opaque "std::fabs"` and
+`ctcompile/test/CTNative/Lowering/Scalars/numeric.mlir` pins the *shape* — `call_opaque "std::fabs"` and
 `call_opaque "std::isfinite"` must appear — so the bare call cannot come back.
 
 ---
@@ -444,7 +444,7 @@ because a future rewrite of this operator has to keep it true.
 
 ### The test
 
-`native-divergence-fixture.js`, the `mod_*` globals: all four sign quadrants
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js`, the `mod_*` globals: all four sign quadrants
 and all three edges, through the differential gate.
 
 ---
@@ -460,7 +460,7 @@ convention.
 **`-0` is a value and the convention preserves it.** The gate's output
 convention is `printf("%.17g")` of the double, which prints `-0` for negative
 zero and `0` for positive zero, so a sign flip on a zero is a *failing* line
-and not an invisible one. `check-native-unit.cmake`'s probe requires the
+and not an invisible one. `ctcompile/test/CTNative/Checks/compilation-unit.cmake`'s probe requires the
 reference to print `m=-0` before any comparison is believed. And the
 distinction is observable as arithmetic, not only as spelling: `1 / -0` is
 `-Infinity` where `1 / 0` is `+Infinity`.
@@ -468,7 +468,7 @@ distinction is observable as arithmetic, not only as spelling: `1 / -0` is
 **A NaN's sign does not exist in JavaScript.** No operation in the language
 distinguishes a NaN with the sign bit set from one without. The two sides
 genuinely produce different ones — x86 arithmetic produces negative NaNs,
-constant folding produces positive ones — so `check-native-unit.cmake` folds
+constant folding produces positive ones — so `ctcompile/test/CTNative/Checks/compilation-unit.cmake` folds
 `=-nan` into `=nan` on **both** texts before comparing. That is a declared
 property of the harness, not a defect being papered over, and it is recorded
 here because it is exactly the kind of comparison rule that would otherwise be
@@ -484,10 +484,10 @@ the "green on nothing" failure the 2026-09-02 audit found twice.
 
 ### The test
 
-`native-divergence-fixture.js`: `negzero`, `poszero`, `negzero_recip`,
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js`: `negzero`, `poszero`, `negzero_recip`,
 `poszero_recip`, `negzero_plus_zero` (IEEE says `-0 + 0` is `+0`, in both
 languages, and it is the one case where adding zero is not the identity) and
-`negzero_times_neg`. The NaN-sign half is `check-native-unit.cmake`'s own
+`negzero_times_neg`. The NaN-sign half is `ctcompile/test/CTNative/Checks/compilation-unit.cmake`'s own
 probe.
 
 ---
@@ -523,11 +523,11 @@ NaN. Dominance narrowing for fields and shared cells still proves definite
 numeric stores where the program permits it; general global narrowing needs
 closed-world mutation information.
 
-`native-optional-scalars-fixture.js` checks all these observations, including
+`ctcompile/test/CTNative/Fixtures/Scalars/optional-scalars.js` checks all these observations, including
 Map/array misses versus stored NaNs and a retained Data-like table whose
 `get` returns null on a miss. `global-undefined.mlir` retains the refused
 output cases. The older arithmetic, ordering and truthiness witnesses in
-`native-divergence-fixture.js` remain differential regressions.
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` remain differential regressions.
 
 ---
 
@@ -568,12 +568,12 @@ proof is what makes `size()` the right answer — see ND-12.
 
 ### The test
 
-`native-divergence-fixture.js`'s `idx_in_range`, `idx_past_end`,
+`ctcompile/test/CTNative/Fixtures/Scalars/divergence.js`'s `idx_in_range`, `idx_past_end`,
 `idx_at_length`, `idx_negative`, `idx_nan` and `idx_infinite`. Each
 out-of-range read has `+ 0` after it, which converts the `undefined` into a
 NaN the differential can compare: a global *holding* undefined is not a Number
 and the reference would skip it (ND-7's printing row).
-`native-array-fixture.js` says in its own header why it omits this case; this
+`ctcompile/test/CTNative/Fixtures/Objects/array.js` says in its own header why it omits this case; this
 fixture is where it is covered.
 
 ### Fractional indices: fixed 2026-09-05
@@ -598,7 +598,7 @@ indexing, mutation, publication, delayed consumption and reuse are refused;
 the eager internal vector is permitted only by this proof. Fractional indexing
 of the materialized array still follows the interpreter behavior above.
 
-`native-index-truncation-fixture.js` is retained as a passing differential
+`ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js` is retained as a passing differential
 regression, with GCC/Clang, deduced-type and off-by-one controls. The Map fixture
 also checks fractional reads through both numeric snapshots, including a
 negative fractional index and a computed parameter. This fixes the original
@@ -753,8 +753,8 @@ the symptom:
 
 ### The test
 
-`native-array.mlir`'s LENGTH, INDEXED and DELETED cases for the refusals;
-`native-array-fixture.js`'s `counted()` through the differential gate for the
+`ctcompile/test/CTNative/Lowering/Objects/array.mlir`'s LENGTH, INDEXED and DELETED cases for the refusals;
+`ctcompile/test/CTNative/Fixtures/Objects/array.js`'s `counted()` through the differential gate for the
 admission.
 
 ---
@@ -781,7 +781,7 @@ so the two messages stay distinguishable.
 
 ### The test
 
-`native-array.mlir`, the BOOLEANS case (and MIXED beside it).
+`ctcompile/test/CTNative/Lowering/Objects/array.mlir`, the BOOLEANS case (and MIXED beside it).
 
 ---
 
@@ -832,7 +832,7 @@ refuses, not so it can be emitted.
 
 ### The test
 
-`ctcompile/test/StdLibMap.cpp`, registered as `ctcompile_stdlib_map`, over the
+`ctcompile/test/Runtime/StdLibMap.cpp`, registered as `ctcompile_stdlib_map`, over the
 TableGen-generated table.
 
 ---

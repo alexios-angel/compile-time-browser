@@ -163,7 +163,7 @@ and violate that native proof.
 
 ## Validation
 
-`test/native-partial-evaluation-fixture.js` evaluates factory initialization and
+`test/CTNative/Fixtures/Optimization/partial-evaluation.js` evaluates factory initialization and
 keeps heap-consuming observers as runtime functions. It exercises a shared child
 Map, distinct object keys, fresh allocations on repeated calls, insertion order,
 overwrite/delete/clear, constant branches and loops, primitive coercion and
@@ -174,7 +174,7 @@ observations agree with ctbrowser, including under ASan/UBSan with leak detectio
 The opt-in pipeline requires at least one successful evaluation before accepting
 its native output.
 
-`test/native-partial-prefix-fixture.js` has ten native functions. Seven factories
+`test/CTNative/Fixtures/Optimization/partial-prefix.js` has ten native functions. Seven factories
 specialize their initialization prefixes into nine live heap nodes; the two
 heap-consuming helpers and script retain runtime execution. All explicit factory
 arguments remain dynamic across the different callers. Its 15 observations match
@@ -184,7 +184,7 @@ object keys, branches, loops, global publication and exactly-once dynamic calls.
 The otherwise unused Map in `effectPrefix` disappears while its saved scalar and
 runtime global write remain.
 
-`test/native-partial-closures-fixture.js` has 19 native functions. Five factories
+`test/CTNative/Fixtures/Optimization/partial-closures.js` has 19 native functions. Five factories
 evaluate into 21 live heap nodes, including immutable cells and closures. The
 factories have no incoming arguments or captures; the returned callables keep
 their runtime arguments. Seven numeric observations match ctbrowser under

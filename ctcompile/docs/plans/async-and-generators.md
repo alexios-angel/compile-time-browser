@@ -48,7 +48,7 @@ it is recorded here as a finding rather than quietly worked around.
   14, and adding it to the shared enum "makes every ctcompile status switch
   non-exhaustive at once."
 * **`ct_aot_suspend_unsupported` covers `yield_value` and nothing covers
-  `await_value`'s suspend half.** `ctcompile/test/Inventories.cpp` carries two
+  `await_value`'s suspend half.** `ctcompile/test/Core/Inventories.cpp` carries two
   named exemptions for exactly this and says whoever implements suspension is
   the one who deletes them.
 * **The `default:` refusal is not enough on its own, and was never the only
@@ -514,7 +514,7 @@ left open and contradicts one thing it concluded.
   bare global `ctnative`; the emitter is expected to put `namespace ctnative =
   ctbrowser::ctnative;` in the generated TU's preamble so generated code reads
   the way the specification writes it.
-* **`ctcompile/test/NativeGenerator.cpp`** (`ctcompile_native_generator`, added
+* **`ctcompile/test/Runtime/NativeGenerator.cpp`** (`ctcompile_native_generator`, added
   as one appended block at the end of `ctcompile/test/CMakeLists.txt`) - four JS
   generator shapes run in the interpreter and compared against hand-written
   coroutines. Two must agree, and **two are declared divergences whose exact
@@ -810,7 +810,7 @@ one without the other has happened four times and now reaches
 
 **7 — the tests, in the same commit.**
 
-* `ctcompile/test/ImporterCoverage.cpp` — the `wrap_promise` row deleted from
+* `ctcompile/test/CTJS/Import/Coverage.cpp` — the `wrap_promise` row deleted from
   `not_yet`, which the ratchet demands.
 * `ctcompile/test/CTJS/Import/async.mlir` — a new lit test asserting BOTH
   halves: `async function settles(a)` produces a `ctjs.func` containing
@@ -819,9 +819,9 @@ one without the other has happened four times and now reaches
   rather than one, because `ctjs.skipped` is a MODULE attribute and prints
   above every function — a single ordered CHECK sequence would be asserting the
   printer's layout.
-* `ctcompile/test/linkable.js` — `async function settles(a)`, so the new symbol
+* `ctcompile/test/Runtime/Linking/linkable.js` — `async function settles(a)`, so the new symbol
   is link-checked.
-* `ctcompile/test/differential.js`, `Differential.cpp` and the `-DENTRIES=`
+* `ctcompile/test/Runtime/Differential/differential.js`, `Differential.cpp` and the `-DENTRIES=`
   list in `ctcompile/test/CMakeLists.txt` — all three, or the entry is compiled
   and never declared, or declared and never compiled.
 
@@ -836,7 +836,7 @@ three things the master plan does not list: `CT_AOT_SUSPENDED` in
 parameter or a second entry point in `ct_aot_entry_fn`, and a variant payload
 on `coroutine_object` with a GC mark path. Delete
 `ct_aot_suspend_unsupported`'s row when it lands, as its own row instructs, and
-delete both named exemptions in `ctcompile/test/Inventories.cpp`.
+delete both named exemptions in `ctcompile/test/Core/Inventories.cpp`.
 
 **10 — copy `is_async` onto `function_proto` and into
 `engine_contract::proto_header`.** `ct_aot_suspend_unsupported`'s row is right
@@ -912,7 +912,7 @@ the wrong thing.
   test and `is_pending_promise`'s `__settled` test genuinely disagree, and it is
   untested.
 * **Rooting across a collection.** `ct_aot_wrap_promise` is `is_safepoint 1` and
-  allocates, so a `gc-roots.js` case looks called-for. It would prove nothing:
+  allocates, so a `roots.js` case looks called-for. It would prove nothing:
   the compiler emits `wrap_promise` **immediately before `ret` on every path**,
   and nothing between them is a safepoint — `ct_aot_return_value` is `(0,0,0)`
   and `ct_aot_leave` is not a safepoint either. There is no live value to lose.

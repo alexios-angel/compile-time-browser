@@ -19,7 +19,7 @@ when no code reads it. This keeps shape selection independent of SSA
 use-list order. A numeric standalone global still requires a definite number:
 the wider carrier must not allow a boolean/number union to pass that guard.
 
-`native-scalar-unions-fixture.js` retains Bootstrap's getter expression
+`ctcompile/test/CTNative/Fixtures/Scalars/scalar-unions.js` retains Bootstrap's getter expression
 verbatim:
 
 ```js

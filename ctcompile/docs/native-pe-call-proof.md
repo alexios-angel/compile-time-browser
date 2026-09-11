@@ -80,13 +80,13 @@ specialization or a prior PE pass; comparison uses their current operations.
 
 ## Regression coverage
 
-`test/CTNative/partial-call-proof.mlir` covers equal returns with unequal effects,
+`test/CTNative/PartialEvaluation/call-proof.mlir` covers equal returns with unequal effects,
 equivalent mutations in different bodies, fixed pre-call identities, fresh graph
 renaming, shared versus distinct children in both directions, Map insertion order,
 signed zero, repeated evaluation and heap-node exhaustion. The negative effect
 case includes forged provenance and checks the retained pre-call value.
 
-`test/CTNative/partial-call-targets.mlir` covers closed global declarations and
+`test/CTNative/PartialEvaluation/call-targets.mlir` covers closed global declarations and
 missing, reassigned and late bindings; unknown returns; shared execution and
 comparison limits; call-depth exhaustion; the cheaper exact-target path; and a
 real source-specialized variant evaluated through its original boxed global

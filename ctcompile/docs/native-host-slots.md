@@ -117,7 +117,7 @@ callable slot and per-invocation identities. Full Bootstrap initialization
 remains outside this increment.
 
 Focused coverage is registered as `ctcompile_host_contract`, the
-`CTNative/host-contract.test` lit test, and
+`CTNative/HostContract/contract.test` lit test, and
 `ctcompile_bootstrap_host_slots_{commonjs,browser,amd}`. It covers live proof
 queries, ordered aliases/direct helper publication, missing initialization,
 source mutation/accessors/throws, absent-binding misuse, missing roots,

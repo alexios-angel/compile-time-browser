@@ -21,7 +21,7 @@ stores. Its `global_number` check rejects an unwritten global instead of
 mistaking it for a computed NaN. The differential harness's numeric mutation
 preserves this storage contract.
 
-`native-optional-scalars-fixture.js` has 29 functions and 52 numeric
+`ctcompile/test/CTNative/Fixtures/Scalars/optional-scalars.js` has 29 functions and 52 numeric
 observations. All 52 agree with the interpreter in a standalone native binary
 with zero ctbrowser symbols. The census claims 29/29 functions, with 25 resolved
 bindings, 119 direct calls before closure lifting and 11 additional lifted

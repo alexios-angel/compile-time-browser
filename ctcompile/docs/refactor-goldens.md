@@ -44,11 +44,11 @@ without meaning to has altered the compiler.
 
 ```bash
 # before the change, against a built tree
-bash ctcompile/test/native-snapshot.sh save /tmp/before build
+bash ctcompile/test/CTNative/Checks/snapshot.sh save /tmp/before build
 
 #   ...make the change, then rebuild (on the devbox, as always)...
 
-bash ctcompile/test/native-snapshot.sh compare /tmp/before build
+bash ctcompile/test/CTNative/Checks/snapshot.sh compare /tmp/before build
 ```
 
 `build` is optional; it defaults to `$CTCOMPILE_BUILD_DIR`, then to
@@ -66,11 +66,11 @@ files, or the change was not a refactor. Each of these moves bytes here and
 nothing else in the tree:
 
 * a reworded diagnostic — 18 of the 49 reachable refusal strings are still not
-  pinned by any lit test (it was 38 before `test/CTNative/Lowering/refusal-*.mlir`
+  pinned by any lit test (it was 38 before `test/CTNative/Lowering/Admission/refusal-*.mlir`
   landed), so a good many rewordings are still invisible to `check-ctcompile`;
 * a **reordered** check, where two refusals are reachable for one program and
   the order the checks run decides which one you get (see
-  `test/CTNative/Lowering/refusal-equality-order.mlir` for a worked pair);
+  `test/CTNative/Lowering/Admission/refusal-equality-order.mlir` for a worked pair);
 * a function that quietly stopped being claimed, which no differential can see;
 * a fixpoint step that replaced a precise reason with `calls \`X\`, which is not
   native`.
@@ -107,7 +107,7 @@ part that *is* in `ctest` is the instrument's own gate.
 
 ## The instrument's own gate
 
-`ctcompile_native_snapshot_selftest` runs `native-snapshot.sh selftest` and
+`ctcompile_native_snapshot_selftest` runs `ctcompile/test/CTNative/Checks/snapshot.sh selftest` and
 proves both teeth, because a comparison nobody has watched fail is not a
 comparison:
 
@@ -121,6 +121,6 @@ comparison:
 
 * `tools/check/native-claims.py` — what writes the census, and the two negative
   proofs (`floor_bites`, `silent_drop_caught`) that keep its own teeth.
-* `test/CTNative/Lowering/refusal-*.mlir` — the lit tests that pin individual
+* `test/CTNative/Lowering/Admission/refusal-*.mlir` — the lit tests that pin individual
   diagnostic strings. They are the fine-grained instrument; this page is the
   coarse one that needs no one to have predicted the string in advance.

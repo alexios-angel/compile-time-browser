@@ -63,16 +63,16 @@ The integrated full generated-program gate now passes **474/474 CTests**,
 including **163/163 lit cases**; see [HANDOFF.md](HANDOFF.md) for its measured
 baseline and corpus counts.
 
-`native-nested-map-fixture.js` compares nine numeric observations with the
+`ctcompile/test/CTNative/Fixtures/Maps/nested-map.js` compares nine numeric observations with the
 independent interpreter: shared aliases, replacement, child lifetime after
 parent return, independent factory allocations, three nesting levels,
 primitive key carriers, numeric key snapshots, retained closure captures,
 and deletion/clearing when no child lookup requires a presence proof.
 
-`native-nested-maps.mlir` pins source-derived refusals for ownership cycles,
+`ctcompile/test/CTNative/Lowering/Maps/nested-maps.mlir` pins source-derived refusals for ownership cycles,
 mixed scalar/Map payloads, absent keys, branch-only stores, deletion, mutation
 through a callee, distinct allocations with one schema, cross-function
-ordering and nonnumeric snapshots. `native-nested-map-proof.mlir` checks that
+ordering and nonnumeric snapshots. `ctcompile/test/CTNative/Lowering/Maps/nested-map-proof.mlir` checks that
 forged presence annotations cannot bypass proof on the first or repeated
 lowering pass. The standard native pipeline supplies interpreter comparison,
 standalone/no-VM checks, GCC/Clang warning checks, deduced-type comparison and

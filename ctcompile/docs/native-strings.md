@@ -53,7 +53,7 @@ a variant and remains refused.
   while-loop backedge uses the before-region argument type, which can differ
   from the result at the same index.
 
-`native-string-control-flow.mlir` separately checks mixed poison uses,
+`ctcompile/test/CTNative/Lowering/Scalars/string-control-flow.mlir` separately checks mixed poison uses,
 for/while initializers and backedges, one SSA string used as both a field key
 and data, and discarded truthiness. It verifies the raw native IR before
 canonicalization and compiles the generated C++ under warning-as-error flags.

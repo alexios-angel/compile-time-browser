@@ -59,7 +59,7 @@ other name; its spelling is no confinement exemption or realm-identity proof.
 
 ## Measured gate
 
-[The source regression](../test/CTNative/native-owned-globals.test) covers eight
+[The source regression](../test/CTNative/Ownership/globals.test) covers eight
 complete programs at **1/1 native each**, including initialization before and
 after publication, fractional numbers, repeated loads, the ordinary `window`
 binding, an unobserved numeric global and stale store/field markers. Eight
