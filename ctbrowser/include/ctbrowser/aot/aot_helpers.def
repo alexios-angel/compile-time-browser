@@ -667,12 +667,12 @@ CT_AOT_HELPER(/* name */ ct_aot_upvalue_cell, /* ret */ uint64_t,
  * into proto->names, NOT constants (bytecode.hpp:52 gets this wrong);
  * passing text sidesteps the disagreement. THE ABI MUST FORBID NOW: no
  * `uint64_t hash` parameter so ctcompile can bake the hash in. string_hash
- * is boost::hash over a string_view and containers.hpp:130-133 says of
+ * is boost::hash over a string_view and containers.hpp:81-85 says of
  * exactly this, 'Using anything else here is a lookup that silently never
  * matches' - a hash baked by a different Boost version is not a wrong
  * answer, it is a global that is permanently undefined.
  * DELEGATES TO: context::globals_ (string_flat_map<value>, vm.hpp:1043;
- *   containers.hpp:126) - run_loop.cpp:225-231.
+ *   containers.hpp:79) - run_loop.cpp:225-231.
  * FAILURE: None, and the absence is load-bearing: an undeclared global does
  *   NOT throw ReferenceError, it silently yields undefined. `foo` and
  *   `typeof foo` are the same instruction, and feature detection written

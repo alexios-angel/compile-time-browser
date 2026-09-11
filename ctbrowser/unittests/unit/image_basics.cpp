@@ -400,9 +400,10 @@ void test_export_writes_a_file() {
         const auto & saved = page.downloads().front();
         CHECK(saved.name == "sketch.png");
         CHECK(saved.written);
-        // A real PNG of a real 8x8 canvas: the header alone is 8 + 25 bytes, and
-        // 64 RGBA pixels plus filter bytes cannot be smaller than 264.
-        CHECK(saved.bytes > 300);
+        // A real PNG of a real 8x8 canvas: signature, IHDR, IDAT and IEND
+        // alone are 8 + 25 + 12 + 12 bytes before any pixel - and it is a
+        // real deflate stream now (libpng), so a flat canvas compresses.
+        CHECK(saved.bytes > 57);
         // And it is on the disk where it said it was, at the size it said.
         std::ifstream from_disk{saved.path, std::ios::binary | std::ios::ate};
         CHECK(from_disk.good());
