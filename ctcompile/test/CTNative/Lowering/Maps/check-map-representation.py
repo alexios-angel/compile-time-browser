@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).resolve().parents[1] / "Exports/native-export-boundary.py")
+    "boundary", Path(__file__).resolve().parents[2] / "Exports/native-export-boundary.py")
 boundary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boundary)
 
@@ -41,7 +41,7 @@ def main():
     parser.add_argument("--node")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[2]
+    tests = Path(__file__).resolve().parents[3]
     node = boundary.node_executable(args)
     reference = boundary.reference_tool(args.opt)
     nm = shutil.which("nm")

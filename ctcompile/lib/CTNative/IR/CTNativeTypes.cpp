@@ -40,7 +40,7 @@ void CTNativeDialect::registerTypes() {
 // is not tidiness; it is the invariant the meet's termination rests on.
 //
 // It fires on hand-written IR, which is where a wrong variant can come from:
-// `meet` constructs only canonical ones. ctcompile/test/CTNative/variant-form.mlir
+// `meet` constructs only canonical ones. ctcompile/test/CTNative/IR/variant-form.mlir
 // is one `expected-error` per clause.
 ::mlir::LogicalResult VariantType::verify(
     ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,

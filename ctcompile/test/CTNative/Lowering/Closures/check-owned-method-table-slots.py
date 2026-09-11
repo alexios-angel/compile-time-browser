@@ -134,7 +134,7 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[2]
+    tests = Path(__file__).resolve().parents[3]
     reference = args.reference or sibling_test_tool(args.opt, "ctcompile-test-native-reference")
     compilers = []
     for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:

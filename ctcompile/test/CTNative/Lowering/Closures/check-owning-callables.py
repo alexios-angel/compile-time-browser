@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--opt", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[2]
+    tests = Path(__file__).resolve().parents[3]
     compilers = []
     for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
         compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)

@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[2]
+    tests = Path(__file__).resolve().parents[3]
     module = args.work / "native.mlir"
     run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
          f"-DSOURCE={tests / 'CTNative/Fixtures/Optimization/native-source-names-fixture.js'}", f"-DOUTPUT={module}",

@@ -3,7 +3,7 @@
 # ctcompile/docs/native-divergences.md is one row per place the native tier's
 # answer differs, or must not differ, from the interpreter's. Half of those
 # rows are refusals and are pinned by their text
-# (CTNative/Lowering/divergence-refusals.mlir); the other half are EMITTED -
+# (CTNative/Lowering/Admission/divergence-refusals.mlir); the other half are EMITTED -
 # `**` and its guard, `%` as fmod, -0 through the printing convention,
 # undefined carried as NaN where that is exact, and an out-of-range index as
 # NaN rather than as undefined behaviour. An emitted divergence is a CLAIM
@@ -40,12 +40,12 @@ endif()
 # passes the right ones in the wrong order, produces a module that verifies,
 # compiles clean under -Werror and prints a wrong number; only the interpreter
 # can say so. The parameter ORDER in particular is pinned twice - once as a
-# signature in CTNative/Lowering/closure-lift.mlir, once as an answer here.
+# signature in CTNative/Lowering/Closures/closure-lift.mlir, once as an answer here.
 #
 # THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
 # write a module while any function carries `ctnative.not_native`, and a
 # refusal is contagious in both directions anyway. They are one program apiece
-# in CTNative/Lowering/closure-refusals.mlir, under split-file.
+# in CTNative/Lowering/Closures/closure-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -85,7 +85,7 @@ endif()
 # THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
 # write a module while any function carries `ctnative.not_native`, and a
 # refusal is contagious in both directions anyway. They are one program apiece
-# in CTNative/Lowering/receiver-refusals.mlir, under split-file.
+# in CTNative/Lowering/Objects/receiver-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -143,7 +143,7 @@ endif()
 # THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
 # write a module while any function carries `ctnative.not_native`, and a refusal
 # is contagious in both directions anyway. They are one program apiece in
-# CTNative/Lowering/object-argument-refusals.mlir, under split-file, with the
+# CTNative/Lowering/Objects/object-argument-refusals.mlir, under split-file, with the
 # census remark asserted alongside them.
 #
 # One appended block, per part 23 Appendix A.3.
@@ -194,7 +194,7 @@ endif()
 # THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
 # write a module while any function carries `ctnative.not_native`, and a
 # refusal is contagious in both directions anyway. They are one program apiece
-# in CTNative/Lowering/constructor-refusals.mlir, under split-file.
+# in CTNative/Lowering/Objects/constructor-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -254,7 +254,7 @@ endif()
 # to write a module while any function carries `ctnative.not_native`. The
 # outer frame that reassigns its binding - refused, with the enclosing
 # closure's own reason chained into the sentence - is one program apiece in
-# CTNative/Lowering/closure-refusals.mlir, under split-file.
+# CTNative/Lowering/Closures/closure-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -338,7 +338,7 @@ endif()
 # to write a module while any function carries `ctnative.not_native`. A binding
 # written twice, a read the write does not dominate, a write inside a loop whose
 # call is after it, and a method whose call site is in another function are one
-# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+# program apiece in CTNative/Lowering/Closures/closure-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -389,7 +389,7 @@ endif()
 # to write a module while any function carries `ctnative.not_native`. A box
 # that escapes into an object literal, a closure over a shared binding that is
 # returned, and a target that writes a capture this tier does not carry are one
-# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+# program apiece in CTNative/Lowering/Closures/closure-refusals.mlir, under split-file.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -445,7 +445,7 @@ endif()
 # assigned twice, a name called before it is assigned, a name that is returned
 # rather than called, a name a closure ASSIGNS, a name whose function closes
 # over a data binding, and mutual recursion are one program apiece in
-# CTNative/Lowering/closure-refusals.mlir, under split-file. A name read two
+# CTNative/Lowering/Closures/closure-refusals.mlir, under split-file. A name read two
 # frames in was among them until slice 2 step 5, which COMPILES it - see the
 # deep_bindings block at the end of this file - and what is refused there now is
 # an inner level that fails one of the same questions.
@@ -489,7 +489,7 @@ endif()
 # THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
 # to write a module while any function carries `ctnative.not_native`. An inner
 # level that ASSIGNS the binding and an inner level that holds the name as a
-# VALUE are one program apiece in CTNative/Lowering/closure-refusals.mlir, under
+# VALUE are one program apiece in CTNative/Lowering/Closures/closure-refusals.mlir, under
 # split-file, and each pins the chained sentence - the outer level's refusal
 # with the inner level's reason after it.
 #
