@@ -3284,3 +3284,31 @@ Evidence: `/tmp/ctcompile-before-mod.{log,rec,claims}`,
 `/tmp/ctcompile-mod-and-next-pow-audit.json`,
 `/tmp/ctcompile-mixed-mod-{preservation,node-audit,frozen}.json` and
 `/tmp/ctcompile-retained-{focused,probe}.log`.
+
+
+The folder reorganization is committed: escape tests and fixture chunks now live
+under `test/Analysis/Escape/` (**d75b4a51**), with the unchanged source assembly
+and registered test names. The folder full gate passes **522/523**; its sole
+native-suite timeout is recovered by the full **168/168** lit rerun in
+**1509.23 seconds** at a 2,400-second limit. The final lowering-only moves
+then pass all **67** affected lit cases. See [HANDOFF.md](HANDOFF.md) for the
+complete folder map and separate run evidence. No escape semantics change.
+
+The filename cleanup is committed: **89fc5763**, **5a0f3cec** and **1c72b01d**
+rename 193 tests and fixtures while preserving their source programs. The final
+347-step rebuild passes; the user stopped the remaining full test run after
+169 tests passed. See the handoff for the earlier affected gates and exact
+source-preservation audit. This cleanup changes no escape proof.
+
+Before extending the next primitive boundary, repair the incoming implicit
+Object.prototype receiver-retention assumption. A 220-byte getter witness
+(**441a8930**, program **a99e2d04fc92995e**, function 1 / PC 1 / obj) is claimed
+Confined by both compiler builds. The current runtime observes confinement;
+incoming **637e4a40** observes one object escaping through globals and the
+checker reports one soundness violation. Property receiver sinks alone are
+insufficient: preserve Iterable's Carry alongside exposure, retain both
+provenance edges, and refuse ordinary-object contents writes without a valid
+own-data/prototype proof. The setter/iteration follow-ups remain unexecuted.
+Evidence: `/tmp/ctcompile-nd3-probe-results/summary.json`; repair scope:
+`/tmp/ctcompile-nd3-repair-scope.md`. Current main retains the old runtime and
+its existing ND-3 expectation; the incoming integration remains pending.

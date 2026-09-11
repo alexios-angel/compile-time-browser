@@ -77,14 +77,111 @@ files are split; the maximum remaining compiler test file is **987 lines**.
 The browser corpus's `p5-api-probe.js` is still **1,416 lines** under Claude's
 active claim; its eventual split is recorded in the synchronization journal.
 
-The user's later folder-organization request is also in progress. A complete
-**182-file move map** is prepared at `/tmp/ctcompile-test-organization-moves.json`:
-Analysis/Escape, Types and Ownership; CTNative/HostContract, ExceptionRecovery,
-Fixtures, Checks and Specialization; Runtime, Packaging, Comparison, Core and
-Support. Only CMake/lit configuration files remain at the test root in that plan.
-Fixture bytes, generated names and test registrations stay fixed. Apply and gate
-the moves in coherent groups next; the historical-case repair is committed as
-**0995a758**, and no folder move has been applied at this checkpoint.
+The requested folder organization is complete: **321 tracked test files** moved
+using locked `git mv` in six commits. **d75b4a51** groups 49 escape/type files;
+**db2ecc05** groups 39 ownership/host/exception files; **00ef1597** groups 37
+runtime, packaging, core and support files; **b3475276** groups 57 native fixtures,
+checks, specialization and importer files. **a085fb54** groups 66 native pass,
+provider, export and ownership files; **72cd44b3** groups 73 lowering files.
+The test root retains CMake/lit configuration and its new directory guide;
+CTNative's root retains only its recursive `.gitignore`. Native lowering uses
+`Maps/`, `Objects/`, `Closures/`, `Scalars/`, `Exceptions/`, `Admission/` and
+`Emission/`. See `ctcompile/test/README.md` for the full hierarchy.
+
+Fixture and test bodies remain intact; only include/import/RUN/build paths and
+reference comments change. The final inventory retains **523 CTest names in the
+same order, 168 lit cases and 1,215 RUN lines**. Python helper CLI/import checks
+and all 134 Map source/data entries are preserved. The first three folder gates
+pass **59/59, 32/32 and 33/33** affected CTests. The next full monorepo run passes
+**522/523 in 2325.55 seconds**, with all **151 browser tests** passing; its only
+failure is `ctcompile_lit` timing out at **1500.12 seconds** after **167/168**
+lit cases pass. The unchanged Map ownership matrix exceeds that tight deadline.
+The complete native-suite rerun after the 66 moves passes **168/168 in 1509.23
+seconds** using `ctest --timeout 2400`. That 2,400-second suite limit is now
+registered in CMake so the standard CTest gate uses it. The final lowering/importer gate passes
+**67/67 in 54.84 seconds**. All **1,214 frozen local/devbox inputs** agree
+before and after the full and affected rerun workflows. All 523 CTests are thus covered across the full run
+and affected reruns; this is not a single green full run. Stable format22 passes
+all **800 files**; bundled23 retains the same nine pre-existing differences.
+Claude's **45ff3d01** browser refactor branch remains outside these measurements.
+Its journal records the deleted GPU/compositor APIs and other public-header
+changes. Re-read that journal and the actual subsystem headers after integration;
+the compiler still uses the existing plain C++ platform boundary.
+Folder evidence: `/tmp/ctcompile-organized-full-ctest.log`,
+`/tmp/ctcompile-native-root66-ctest.log`,
+`/tmp/ctcompile-native-lowering73-ctest.log` and
+`/tmp/ctcompile-test-folder-final-audit.json`.
+
+The requested **filename cleanup is complete**: **193 files renamed** across
+all **414 reviewed test files**, with standard, upstream and already-clear names
+retained. **89fc5763** renames 45 analysis/runtime files; **5a0f3cec** renames 19
+importer, target, comparison, guard and packaging files; **1c72b01d** renames
+129 native tests, helpers and fixtures. All moves used locked `git mv`.
+**04de66be** updates eight production comments that reference the moved tests;
+production behavior is unchanged. Current documentation links and command
+examples now use the final folders and filenames.
+
+The source check preserves **61 fixture programs / 370,700 bytes**, all **134
+catalog entries**, **49 Python files / 61 import edges**, **168 lit cases /
+1,215 RUN lines**, and the **987-line** maximum. All 523 CTest names/order and
+1,214 frozen local/devbox inputs agree. Names pass Windows collision and
+reserved-name checks. The standard README documents the layout and conventions;
+27 existing Git-ignored Python caches are recorded and untouched.
+Evidence: `/tmp/ctcompile-final193-verification.json`.
+
+The analysis/runtime filename wave passes **44/44 CTests in 222.40 seconds**;
+the importer/target wave passes **10/10 in 10.03 seconds**, including **45/45
+lit cases**. The final **347-step devbox rebuild passes**. Its full CTest run
+completes **169 passing tests**, then the user explicitly waives further tests
+for this filename-only round. The ongoing native lit process and its children
+were stopped under the existing devbox lock; the full 523-test run is therefore
+**incomplete by request, not a reported full pass**. No further test run is
+required for this cleanup. Stable format22 passes **800 files**; bundled23
+retains the same nine pre-existing differences. Logs, hashes and the waiver
+record are under `/tmp/ctcompile-names-final193-*`.
+
+The **read-only ponytail audit** recommends three remaining cuts: unused
+`tools/mingw/build-shaderc-mingw.sh` (**121 lines**), obsolete phase/configure
+comments in `MLIRContextSetup.cpp` and `test/cmake/Lit.cmake` (**33 lines**), and
+the two unread `CTCOMPILE_STANDALONE` assignments (**2 lines**). Total:
+**156 lines, zero dependencies**. None was applied. The requested test cleanup
+is separate; Claude's browser cuts are on his incoming branch. Full evidence:
+`/tmp/ctcompile-ponytail-audit-final.json`.
+
+**Incoming runtime dependency:** Claude's 637e4a40 branch includes 552a4ba0,
+which invokes getters and setters on the implicit Object.prototype chain.
+The current generic escape classifier still marks property receivers NEITHER
+using the old data-only fallback assumption (`CTJS/IR/Ops/Properties.td`).
+A **220-byte retained-this witness** now measures the gap on both matching
+devbox binary sets: source SHA-256 **441a8930**, program **a99e2d04fc92995e**,
+function **1 / readInherited**, PC **1 / obj**. Both compilers claim Confined.
+Current main records one confined object and zero escaped; incoming 637e4a40
+records zero confined and one escaped through globals. The incoming checker
+exits **1 with one soundness violation**; main exits **0**. Both collections
+have zero unresolved or unchecked target observations. Raw commands, binary
+hashes and observations are in `/tmp/ctcompile-nd3-probe-results/summary.json`
+and its `main/` and `incoming/` directories. This diagnostic probe is separate
+from the green filename gate. An intercepted assignment also cannot prove an
+own slot; that setter follow-up remains a static witness.
+Repair the receiver effect/proof and add getter/setter/iteration retention
+regressions before treating the runtime integration as gated. Property sinks
+alone are insufficient: Iterable must keep Carry while sinking, load provenance
+must record both edges, and contents analysis must refuse ordinary-object writes
+without an own-data/prototype proof. `/tmp/ctcompile-nd3-repair-scope.md` records
+the exact production and test paths. Native field admission has separate guards;
+no end-to-end native miscompile has been measured here.
+Current main still has the old runtime and passes its ND-3 pin. Once the proof
+repair and runtime are integrated, change the existing `typeof` probe in
+`test/Analysis/Escape/Cycle.cpp` from `undefined` to `number`, retain the explicit
+chain's numeric 42 check, update divergence status and rerun the affected
+escape/oracle and integration gates. The source-preserving pin patch under
+`/tmp/ctcompile-nd3-after-runtime-integration/` is only one part of that work;
+`proof-safety-audit.md` records the missing proof. Do not apply the pin alone.
+Keep the runtime's corrected semantics; native getter admission is unchanged.
+The automatic integration watcher was stopped using Claude's documented stop
+option after the false Confined claim was measured. A clean compiler checkout
+allows Claude to commit; integrate the runtime after the compiler proof repair
+and its measured gate.
 
 Measured gates so far: the initial merged-tree build passes **751 steps**; the
 feature rebuild passes **302 steps** without warnings. After the C++ splits,
@@ -135,10 +232,14 @@ integration; do not treat that bug as a permanent native limitation. Ordinary
 smallest next slice. Prove one empty allocation, one unconditional initialization
 dominating every load, and key-only arguments across the complete captured-Map
 family. Keep each actual `LoadGlobal` separate from its allocation identity.
-The generic `object(actual)` lookup follows a sole store but does not establish
-initialization dominance; using that lookup alone is insufficient. Carry explicit
-live/fingerprint evidence through HostContract, OwnedGlobalMethods/Roots,
-NativeMap/ObjectIdentity/TypeInference and ordinary typed global emission.
+The existing `environmentProblem()` checks initialization order, so the
+sole-store lookup alone is not evidence of a current unsound admission. The
+missing piece is a checked allocation/store/load edge that downstream ownership
+and type consumers can revalidate. Follow `scalarGlobalRead()`'s live-edge pattern
+without primitive categories, preserving the actual `LoadGlobal` in
+`HostMethodArgument`. Publish only after the complete environment, fingerprint
+and budget proof succeeds; revalidate in `OwnedGlobalMethods`, then consume that
+edge in NativeMap, ObjectIdentity, TypeInference and typed global emission.
 Reject second stores (including after the last call), early reads, field mutation,
 unknown consumers, payload/return escapes and incompatible later arguments.
 The true `var` sibling companion **600b8fb6** additionally needs immutable aliases
