@@ -4,6 +4,9 @@ The large compiler implementation files are split by responsibility. Pass
 entry points coordinate the work; private headers share the state required
 by their implementation files. Public APIs remain under `include/ctcompile/`.
 
+The [test directory guide](../test/README.md) describes the test folders and
+where fixtures and shared build helpers belong.
+
 | Area | Location | Contents |
 |---|---|---|
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, call-target and heap-equivalence proofs, primitive adapter and residualisation |
@@ -39,7 +42,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |
 | Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, structured exceptions, suspension and frames |
 | Test registration | `test/cmake/` | Core/boxed, lit, runtime, analysis, native, native guards and native fixtures |
-| Oracle fixtures | `test/TypeOracle/` | JavaScript programs with hand-computed observations |
+| Oracle fixtures | `test/Analysis/Types/TypeOracle/` | JavaScript programs with hand-computed observations |
 
 `CTJSOps.td` remains the TableGen entry point and includes its operation groups
 in their original order. `test/CMakeLists.txt` includes registration groups in
