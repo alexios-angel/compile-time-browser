@@ -3,10 +3,6 @@
 # not ctest gates, because the numbers move with the machine and a perf
 # regression should be READ rather than silently failed. Build and run by hand;
 # docs/performance.md is the method.
-#
-# The paths lost their `bench/` prefix in the monorepo split - the files are in
-# this directory now rather than in a bucket under tests/ - and the target and
-# binary names are unchanged, because they are derived from the basename.
 ctbrowser_bench(bench_script)
 ctbrowser_bench(bench_reads)
 ctbrowser_bench(bench_style)
