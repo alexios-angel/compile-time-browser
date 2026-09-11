@@ -1,18 +1,9 @@
 # The engine: ten subsystems, one per directory, one CMake target each.
 #
-# This file was 897 lines until 2026-08-09 - dependency discovery and ten target
-# definitions in one place, with 78 header paths hardcoded among them. It now
-# does only what is genuinely shared or genuinely global:
-#
 #   cmake/dependencies.cmake   everything the engine LOOKS FOR
-#   lib/<Subsystem>/           that subsystem's target, sources and headers
+#   lib/<Subsystem>/           that subsystem's target and its dependencies
 #   here                       the compile/link policy, the umbrella target,
 #                              the merged archive, and the install/export
-#
-# The point is that adding a file to `layout` is now one edit to
-# lib/Layout/CMakeLists.txt. It used to be an edit to a 900-line file where the
-# `.cpp` list and the installed-header list were four hundred lines apart, and
-# forgetting the first one silently stopped compiling the file.
 include(GNUInstallDirs)
 
 include("${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake")
@@ -56,6 +47,19 @@ endfunction()
 # the header because there is nothing to move out of them.
 set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
 
+# A subsystem's sources are every .cpp under its lib/ directory and its
+# installed headers every .hpp under its include/ directory - globbed, so a new
+# file is a new file and not a new file plus a registration that, forgotten,
+# left the build tree fine and the INSTALLED package unusable. Platform choice
+# is #if inside a file, never a file left off the list.
+function(ctbrowser_subsystem_sources target sub)
+  file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+  file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${CTBROWSER_INCLUDE_DIR}/ctbrowser/${sub}/*.hpp")
+  target_sources(${target}
+    PRIVATE ${sources}
+    PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}" FILES ${headers})
+endfunction()
+
 # --- the subsystems ------------------------------------------------------
 # In dependency order, which is also the order of the pipeline: HTML -> dom ->
 # style -> layout -> paint -> raster -> pixels, with script and shell across
@@ -72,12 +76,6 @@ add_subdirectory(Shell)
 add_subdirectory(App)
 
 
-# NOTHING OF ctcss'S IS INSTALLED any more. This shipped a copy of its include
-# tree because `style/engine.hpp` - a public header - included <ctcss.hpp>, so any
-# consumer of the umbrella header parsed it. The CSS front end is ours now, no
-# public header names it, and the copy (and the skew of a consumer ending up with
-# two ctcss trees) goes with it. tools/check/check-package.sh proves an install
-# still compiles.
 # --- ctbrowser (umbrella) ------------------------------------------------
 # What an application imports and links. One of each.
 add_library(ctbrowser INTERFACE)
@@ -94,10 +92,7 @@ target_link_libraries(ctbrowser INTERFACE
 add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
 
 # --- installing the engine -------------------------------------------------------
-# Headers install to include/, archives to lib/. This was a great deal more
-# involved when the engine was modules: a CXX_MODULES file set, a
-# CXX_MODULES_DIRECTORY on the export, and a consumer that had to be able to
-# rebuild BMIs from the installed sources.
+# Headers install to include/, archives to lib/.
 set(CTBROWSER_TARGETS
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app ctbrowser)
@@ -126,18 +121,15 @@ install(EXPORT ctbrowser-targets
 # only when it was found - a headless install must not demand it back.
 # COMPONENTS url, and CURL beside it. Both are linked PRIVATE, which for a
 # STATIC library still puts them on a consumer's link line - so a consumer that
-# cannot find them fails to link with no idea why. The Boost line said no
-# component at all until 2026-07-31, which was a gap from the day Boost.URL
-# landed; tools/check/check-package.sh is what exists to catch exactly this.
+# cannot find them fails to link with no idea why. tools/check/check-package.sh
+# is what exists to catch exactly this.
 set(CTBROWSER_CONFIG_DEPS
     "find_dependency(Boost 1.80 CONFIG COMPONENTS url)\nfind_dependency(CURL)\nfind_dependency(Threads)")
-# PNG, and it is NOT optional - `find_package(PNG REQUIRED)` above. It was
-# missing from this list until 2026-08-09 and the symptom was exactly what the
-# comment above predicts: `find_package(ctbrowser)` failed at GENERATE time,
-# before a single line compiled, with "the link interface of target
-# ctbrowser::ctbrowser-shell contains PNG::PNG but the target was not found".
-# PRIVATE does not save you here - a STATIC archive carries the dependency into
-# the consumer's link interface regardless.
+# PNG, and it is NOT optional - `find_package(PNG REQUIRED)` above. Missing
+# from this list, `find_package(ctbrowser)` fails at GENERATE time with "the
+# link interface of target ctbrowser::ctbrowser-shell contains PNG::PNG but the
+# target was not found". PRIVATE does not save you here - a STATIC archive
+# carries the dependency into the consumer's link interface regardless.
 string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(PNG)")
 if(SDL3_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3 CONFIG)")

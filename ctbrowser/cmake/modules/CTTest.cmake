@@ -32,8 +32,8 @@ endif()
 # `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
 # derived from it is the BASENAME - the target, and more importantly the ctest
 # name. `ctest -R vm_` has to keep working: it is in docs/build.md's
-# command blocks and in what the ratchet tools pass through. So the suite gained
-# directories on 2026-08-09 and the test names did not change at all.
+# command blocks and in what the ratchet tools pass through.
+#
 # Where check.hpp, dom_probe.hpp, js_expect.hpp and the sanitizer suppression
 # files live. Test DATA and test SUPPORT are system-level, so they stay in
 # test/ and everything else points at them.
@@ -77,10 +77,8 @@ function(ctbrowser_test path)
   # -g, so a test that dies without reporting a failure says WHERE: cpptrace
   # names nothing without debug info. Tests are not shipped, so the size is free.
   target_compile_options(ctbrowser-test-${name} PRIVATE -g)
-  # ONE support directory for all three trees, named absolutely. It used to be
-  # "${CMAKE_CURRENT_SOURCE_DIR}/support", which was the same word for every
-  # test because they were all in one directory; they are not any more, and a
-  # unittest still says #include "check.hpp".
+  # ONE support directory for all three trees, named absolutely: a unittest
+  # says #include "check.hpp" from a different directory than a corpus test.
   target_include_directories(ctbrowser-test-${name} PRIVATE "${CTBROWSER_TEST_SUPPORT_DIR}")
   add_dependencies(ctbrowser-tests ctbrowser-test-${name})
   # The source root, so goldens and other project-relative paths resolve.
