@@ -128,7 +128,7 @@ ctbrowser/                 the engine - and the CMake CONFIGURE ROOT
   include/ctbrowser.hpp    the one-include public API
   include/ctbrowser/<sub>/ the engine's headers, one dir per subsystem
   lib/<Sub>/               its implementations: Core DOM Style Layout Paint
-                           Raster GPU Script Shell App (CamelCase, LLVM-style)
+                           Raster Script Shell App (CamelCase, LLVM-style)
   unittests/               unit/ and js/ - the focused suite
   test/                    corpus/ stress/ lint/ package/ support/, plus
                            golden/ and baseline/ which are test DATA
@@ -146,8 +146,8 @@ third-party/               ctjs + ctcss submodules, and the fetched ANGLE
 tools/                     mingw/ gen/ corpus/ check/ - see ctbrowser/docs/tools.md
 ```
 
-Ten subsystems: core, dom, style, layout, paint, raster, gpu, script, shell,
-app. Every one is one directory, one aggregate header, one CMake target and one
+Nine subsystems: core, dom, style, layout, paint, raster, script, shell, app
+(gpu was deleted on 2026-09-11: no frame ever went through it). Every one is one directory, one aggregate header, one CMake target and one
 `ctbrowser/lib/<Sub>/CMakeLists.txt`. **`ctbrowser/docs/architecture.md` is the full map** - what
 each owns, where to start reading in it, and which three have subdirectories.
 
