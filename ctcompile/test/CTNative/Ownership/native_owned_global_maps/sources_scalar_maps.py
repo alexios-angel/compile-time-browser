@@ -21,7 +21,7 @@ spec = importlib.util.spec_from_file_location(
 methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
-SOURCE = DRIVERS.with_name("native-export-boundary.js").read_text()
+SOURCE = (DRIVERS.parent.parent / "Exports/native-export-boundary.js").read_text()
 SHARED = SOURCE.replace("get() { return state.size; }",
     "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
 SHARED = SHARED.replace("var trace = host.slot.get();",

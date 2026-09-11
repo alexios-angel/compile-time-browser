@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 
-spec = importlib.util.spec_from_file_location("prefix", Path(__file__).with_name("host-prefix.py"))
+spec = importlib.util.spec_from_file_location("prefix", Path(__file__).resolve().parent.parent / "host-prefix.py")
 prefix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prefix)
 host = prefix.host

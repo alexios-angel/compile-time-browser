@@ -275,7 +275,7 @@ def refusal_sources():
         "dynamic": prefix + "var key = 'slot'; host[key] = make();" + suffix,
         "unknown": prefix + "host.slot = make(); inspect(host);" + suffix,
         "prototype": prefix + "host.slot = make(); host.__proto__ = {};" + suffix,
-        "captured_map": Path(__file__).with_name("native-export-boundary.js").read_text(),
+        "captured_map": (Path(__file__).resolve().parent.parent / "Exports/native-export-boundary.js").read_text(),
     }
 
 

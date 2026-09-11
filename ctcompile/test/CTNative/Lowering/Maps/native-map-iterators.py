@@ -8,7 +8,7 @@ import re
 
 
 spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).with_name("native-export-boundary.py"))
+    "boundary", Path(__file__).resolve().parents[2] / "Exports/native-export-boundary.py")
 boundary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boundary)
 run = boundary.host.run

@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).resolve().parents[1] / "native-export-boundary.py")
+    "boundary", Path(__file__).resolve().parents[1] / "Exports/native-export-boundary.py")
 boundary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boundary)
 

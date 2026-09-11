@@ -1,5 +1,5 @@
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-partial-prefix-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=PREFIX
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-partial-prefix-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=REPEAT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-partial-prefix-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=PREFIX
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-partial-prefix-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=REPEAT
 // RUN: split-file %s %t
 // RUN: ctjs-opt %t/rollback.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ROLLBACK
 // RUN: ctjs-opt %t/cycle.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CYCLE

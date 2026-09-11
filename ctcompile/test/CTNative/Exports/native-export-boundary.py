@@ -14,7 +14,7 @@ import re
 import shutil
 
 
-spec = importlib.util.spec_from_file_location("host", Path(__file__).with_name("host-contract.py"))
+spec = importlib.util.spec_from_file_location("host", Path(__file__).resolve().parent.parent / "HostContract/host-contract.py")
 host = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(host)
 

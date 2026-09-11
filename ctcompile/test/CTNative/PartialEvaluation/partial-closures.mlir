@@ -1,6 +1,6 @@
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis | FileCheck %s --check-prefix=BTA
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate --ctnative-partial-evaluate | FileCheck %s --check-prefix=HEAP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/native-partial-closures-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis | FileCheck %s --check-prefix=BTA
 // RUN: split-file %s %t
 // RUN: ctjs-opt %t/mutable.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=MUTABLE
 // RUN: ctjs-opt %t/write.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=WRITE
