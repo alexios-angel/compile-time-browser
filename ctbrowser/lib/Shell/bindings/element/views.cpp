@@ -1,12 +1,5 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
 // values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -440,9 +433,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // all along and there was no way to read what was in one: `.data` was
     // undefined, `.nodeValue` was undefined, and the only spelling that worked
     // was textContent, which is the same answer by accident and a different
-    // question. Both are accessors, both write through, and on an element they
-    // are null - which is what the DOM says and is not the same as absent.
+    // question. Both are accessors, both write through, and `nodeValue` on an
+    // element is null - which is what the DOM says and is not the same as
+    // absent. `data` is a CharacterData member and an ELEMENT does not get
+    // one: as an own accessor it shadowed the reflected `object.data`.
+    const bool character_data = [&] {
+        const auto kind = doc_->read().kind(id).value_or(node_kind::element);
+        return kind == node_kind::text || kind == node_kind::comment;
+    }();
     for (const char * spelling : {"data", "nodeValue"}) {
+        if (!character_data && spelling[0] == 'd') { continue; }
         tree_property(
             spelling,
             [this, id](context & c, std::span<value>) {
@@ -474,28 +474,26 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
         [this, id](context & c, std::span<value> a) {
             // Text, never markup: that is the whole point of the property, and
-            // the reason a page reaches for it instead of innerHTML.
-            set_text(id, arg_string(c, a, 0));
+            // the reason a page reaches for it instead of innerHTML. A nullish
+            // value is the empty string (DOM 4.4: `[LegacyNullToEmptyString]`
+            // on textContent's null), not the four letters.
+            const value given = arg(a, 0);
+            set_text(id, given.is_nullish() ? std::string{} : c.to_string(given));
             return value::undefined();
         });
 
-    // `value` and `checked` ARE ACCESSORS, on a control.
-    //
-    // They were data properties written by refresh_control on whatever tick it
-    // next ran. A page that creates a control and reads it back in the same
-    // statement - `createInput('hello').value()`, which is p5's own DOM library
-    // - therefore read the property as it was before the value existed. The
-    // header's note that "the VM has no property accessors" was true when it
-    // was written and is not any more.
-    //
-    // refresh_control still runs: it writes BACK a property assignment into the
-    // control, which is how `input.value = ''` clears a field. These make the
-    // READ live, which is the half that could not be done before.
+    // `value` and `checked` ARE ACCESSORS, on a control, so a page that creates
+    // a control and reads it back in the same statement -
+    // `createInput('hello').value()`, which is p5's own DOM library - reads the
+    // value that exists now. A data property would shadow the accessor.
     {
         const auto txn = doc_->read();
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
         const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
-        if (control_kind_of(tag, type) != control_kind::none) {
+        // NOT A <button>: its `value` is a plain reflection of the attribute
+        // (HTMLButtonElement, a row in the table), not a control's state, and
+        // an own accessor here would shadow the row on the prototype.
+        if (control_kind_of(tag, type) != control_kind::none && tag != "button") {
             obj.define_accessor("value",
                                 value::object(cx.allocate<script::native_object>(
                                     "value",

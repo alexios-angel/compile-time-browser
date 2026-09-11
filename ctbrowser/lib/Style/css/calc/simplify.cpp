@@ -1,11 +1,6 @@
 // calc() - the SPECIFIED value: simplify_math, CSS Values 4 §10.12, and the
 // syntax check every declaration goes through before the property's own
 // grammar.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -167,9 +162,31 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 // cannot answer for and closes what EOF closed. That recursion terminates
 // because `inner` is always shorter than the function it came out of.
 [[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
+    std::vector<std::string_view> arguments = top_level_arguments(inner);
     std::string out{name};
+    // A clamp() WITH AN ABSENT BOUND IS THE COMPARISON THAT IS LEFT. `clamp(none,
+    // 2px, 3em)` bounds nothing below and is `min(2px, 3em)`; `clamp(1em, 2px,
+    // none)` is `max(1em, 2px)`; with neither bound it is its middle argument.
+    // The specification has not said how a clamp() serialises
+    // (w3c/csswg-drafts#13535) and `clamp-partial-serialize.tentative` is the
+    // corpus's reading of it, sixteen assertions, all nested.
+    if (ascii_iequals(name, "clamp(") && arguments.size() == 3) {
+        const auto absent = [&](std::size_t i) {
+            return ascii_iequals(trim(arguments[i], html_whitespace), "none");
+        };
+        const bool no_low = absent(0);
+        const bool no_high = absent(2);
+        if (no_low && no_high) { return simplify_math(trim(arguments[1], html_whitespace)); }
+        if (no_low) {
+            out = "min(";
+            arguments.erase(arguments.begin());
+        } else if (no_high) {
+            out = "max(";
+            arguments.pop_back();
+        }
+    }
     bool first = true;
-    for (const std::string_view argument : top_level_arguments(inner)) {
+    for (const std::string_view argument : arguments) {
         if (!first) { out += ", "; }
         first = false;
         const std::string_view one = trim(argument, html_whitespace);

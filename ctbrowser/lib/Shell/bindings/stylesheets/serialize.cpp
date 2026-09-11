@@ -1,11 +1,5 @@
 // dom_bindings' CSSOM - serialising: the canonical text of a compiled selector
 // list (Selectors 4) and of a media query list (Media Queries 4).
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -55,17 +49,20 @@ namespace {
     return out;
 }
 
-void append_compound(std::string & out, const style::compound & part, const atom_table & atoms);
+using namespaces = std::span<const style::css::namespace_declaration>;
+
+void append_compound(std::string & out, const style::compound & part, const atom_table & atoms,
+                     namespaces scope);
 
 [[nodiscard]] std::string serialize_selector(const style::compiled_selector & sel,
-                                             const atom_table & atoms) {
+                                             const atom_table & atoms, namespaces scope) {
     std::string out;
     if (sel.parts.empty()) { return out; }
     // Parts are stored RIGHTMOST FIRST and `links[i]` joins parts[i] to
     // parts[i+1], so the text runs from the last part backwards and the link
     // between parts[i] and parts[i-1] is links[i-1].
     for (std::size_t i = sel.parts.size(); i-- > 0;) {
-        append_compound(out, sel.parts[i], atoms);
+        append_compound(out, sel.parts[i], atoms, scope);
         if (i == 0) { break; }
         const style::combinator link =
             i - 1 < sel.links.size() ? sel.links[i - 1] : style::combinator::descendant;
@@ -84,29 +81,41 @@ void append_compound(std::string & out, const style::compound & part, const atom
 
 namespace detail {
 
-[[nodiscard]] std::string serialize_selector_list(std::span<const style::compiled_selector> list,
-                                                  const atom_table & atoms) {
+// `namespaces` is the sheet's `@namespace` rules, which CSSOM §6.7 needs to
+// serialise a type selector: a prefix that maps to the DEFAULT namespace is
+// omitted, `*|` is omitted when there is no default for it to differ from, and
+// any other prefix is written. With no rules to consult - `querySelector`'s
+// case - only the null namespace's `|` and a named prefix survive.
+[[nodiscard]] std::string serialize_selector_list(
+    std::span<const style::compiled_selector> list, const atom_table & atoms,
+    std::span<const style::css::namespace_declaration> namespaces) {
     std::string out;
     for (const style::compiled_selector & sel : list) {
         if (!out.empty()) { out += ", "; }
-        out += serialize_selector(sel, atoms);
+        out += serialize_selector(sel, atoms, namespaces);
     }
     return out;
 }
 
+[[nodiscard]] std::string serialize_selector_list(std::span<const style::compiled_selector> list,
+                                                  const atom_table & atoms) {
+    return serialize_selector_list(list, atoms, {});
+}
+
 // IS THE COMPILED FORM THE WHOLE OF WHAT THE AUTHOR WROTE?
 //
-// `never_matches` is how the selector compiler records a construct it can PARSE
-// and cannot MATCH: a pseudo-element, a namespace prefix, a pseudo-class it does
-// not model. Nothing of that compound survives into the compiled form, so
-// `append_compound` finds an empty compound and emits `*` for it - and that does
-// not merely look wrong. `author_style_text` hands these selectors back to the
-// cascade, so an inserted `::before { color: red }` serialised as `*` would
-// paint every element on the page red. Wherever the author's bytes are still to
-// hand they are the honest answer, and this is the question that decides.
+// `dropped` is how the selector compiler records a construct it can PARSE and
+// has no field for: `:has()`, `::part(x)`, a namespaced attribute. Nothing of
+// that survives into the compiled form, so `append_compound` would emit the
+// compound without it - and that does not merely look wrong. `author_style_text`
+// hands these selectors back to the cascade, so an inserted `div:has(a) { color:
+// red }` serialised as `div` would colour every div on the page. Wherever the
+// author's bytes are still to hand they are the honest answer, and this is the
+// question that decides. A compound that is merely UNMATCHABLE - `::before`,
+// `ns|e` - is still whole, and serialises canonically.
 [[nodiscard]] bool representable(std::span<const style::compiled_selector> list) {
     const auto compound_ok = [](auto && self, const style::compound & part) -> bool {
-        if (part.never_matches) { return false; }
+        if (part.dropped) { return false; }
         for (const style::pseudo_ref & pseudo : part.pseudos) {
             for (const style::compiled_selector & inner : pseudo.args) {
                 for (const style::compound & nested : inner.parts) {
@@ -128,7 +137,8 @@ namespace detail {
 
 namespace {
 
-void append_compound(std::string & out, const style::compound & part, const atom_table & atoms) {
+void append_compound(std::string & out, const style::compound & part, const atom_table & atoms,
+                     namespaces scope) {
     const std::size_t was = out.size();
     // EVERY NAME IS AN IDENTIFIER, and CSSOM §6.7 says each is serialised by
     // §2.1's "serialize an identifier" - the same algorithm `CSS.escape` is.
@@ -136,7 +146,42 @@ void append_compound(std::string & out, const style::compound & part, const atom
     // as the name `0zonk`; printing that back unescaped produces a selector that
     // is not a selector, because an identifier may not begin with a digit.
     const auto ident = &dom_bindings::serialize_css_identifier;
-    if (part.tag) { out += ident(atoms.text(part.tag)); }
+    // THE NAMESPACE PREFIX, CSSOM §6.7 "serialize a simple selector": written
+    // when it maps to a namespace that is neither the default nor the null one,
+    // `|` alone for the null one. `*|` means any namespace, which is what an
+    // unprefixed name means too until a default namespace is declared.
+    const style::css::namespace_declaration * default_ns = nullptr;
+    for (const style::css::namespace_declaration & each : scope) {
+        if (each.prefix.empty()) { default_ns = &each; }
+    }
+    switch (part.ns) {
+    case style::ns_prefix::unset: break;
+    case style::ns_prefix::any:
+        if (default_ns != nullptr) { out += "*|"; }
+        break;
+    case style::ns_prefix::none: out += '|'; break;
+    case style::ns_prefix::named: {
+        const std::string_view prefix = atoms.text(part.ns_name);
+        const style::css::namespace_declaration * bound = nullptr;
+        for (const style::css::namespace_declaration & each : scope) {
+            if (each.prefix == prefix) { bound = &each; }
+        }
+        const bool is_default =
+            bound != nullptr && default_ns != nullptr && bound->uri == default_ns->uri;
+        if (!is_default) {
+            out += ident(prefix);
+            out += '|';
+        }
+        break;
+    }
+    }
+    // A universal selector is written only when a prefix stands before it, or
+    // when it is the whole compound - which the fall-through at the end handles.
+    if (part.tag) {
+        out += ident(atoms.text(part.tag));
+    } else if (out.size() != was) {
+        out += '*';
+    }
     if (part.id) {
         out += '#';
         out += ident(atoms.text(part.id));
@@ -218,19 +263,21 @@ void append_compound(std::string & out, const style::compound & part, const atom
             out += ":nth-last-of-type(" + an_plus_b(pseudo.a, pseudo.b) + ")";
             break;
         case style::pseudo_kind::not_:
-            out += ":not(" + serialize_selector_list(pseudo.args, atoms) + ")";
+            out += ":not(" + serialize_selector_list(pseudo.args, atoms, scope) + ")";
             break;
         case style::pseudo_kind::is_:
-            out += ":is(" + serialize_selector_list(pseudo.args, atoms) + ")";
+            out += ":is(" + serialize_selector_list(pseudo.args, atoms, scope) + ")";
             break;
         case style::pseudo_kind::where_:
-            out += ":where(" + serialize_selector_list(pseudo.args, atoms) + ")";
+            out += ":where(" + serialize_selector_list(pseudo.args, atoms, scope) + ")";
             break;
-        // `:lang()` AND `:dir()` KEEP THEIR ARGUMENT AS WRITTEN, because a
-        // language RANGE is not an identifier: `*-Latn` is a legal one, and
-        // `:lang(de, fr)` is a comma-separated list of them. They used to
-        // compile to nothing at all, so a rule carrying one serialised as `*` -
-        // eight of `css/cssom/selectorSerialize.html`'s twenty-three.
+        // `:lang()` AND `:dir()` KEEP THEIR ARGUMENT, because a language RANGE
+        // is not an identifier: `*-Latn` is a legal one, and `:lang(de, fr)` is
+        // a comma-separated list of them. They used to compile to nothing at
+        // all, so a rule carrying one serialised as `*` - eight of
+        // `css/cssom/selectorSerialize.html`'s twenty-three. A range that IS an
+        // identifier is written as one, escapes and all - `:lang(j\ a)` - and
+        // one with a wildcard in it as the string it can only be.
         case style::pseudo_kind::lang:
         case style::pseudo_kind::dir: {
             out += pseudo.kind == style::pseudo_kind::lang ? ":lang(" : ":dir(";
@@ -238,7 +285,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
             for (const std::string & range : pseudo.ranges) {
                 if (!first) { out += ", "; }
                 first = false;
-                out += range;
+                out += range.find('*') == std::string::npos ? ident(range) : quoted_string(range);
             }
             out += ')';
             break;
@@ -247,9 +294,15 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     // "If there is only one simple selector in the compound selector which is a
     // universal selector, append '*'." A compound that produced nothing is that
-    // selector - and it is also what a compound this engine could not represent
-    // (`never_matches`, which is how a pseudo-ELEMENT compiles) degrades to.
-    if (out.size() == was) { out += '*'; }
+    // selector - and a pseudo-element is a simple selector, so `*::before` is
+    // `::before`.
+    if (out.size() == was && !part.pseudo_element) { out += '*'; }
+    // THE PSEUDO-ELEMENT LAST, with two colons whichever the author wrote: CSSOM
+    // §6.7 serialises `:before` as `::before`.
+    if (part.pseudo_element) {
+        out += "::";
+        out += ident(atoms.text(part.pseudo_element));
+    }
 }
 
 } // namespace

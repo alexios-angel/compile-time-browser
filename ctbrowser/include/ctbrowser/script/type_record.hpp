@@ -201,9 +201,6 @@ inline constexpr std::string_view root_label_names[] = {
 #undef CT_ROOT_LABEL
 };
 inline constexpr std::size_t root_label_count = std::size(root_label_names);
-[[nodiscard]] constexpr std::string_view root_label_name(root_label l) noexcept {
-    return root_label_names[static_cast<std::size_t>(l)];
-}
 
 // THE TRACKED KINDS: the four heap kinds a native lowering could give an RAII
 // lifetime to. Strings, symbols, bigints, natives, proxies and coroutines are
@@ -375,7 +372,6 @@ public:
     // thousand times would cost a hundred thousand marks. Over budget is never
     // confined. 0 means unlimited.
     void set_escape_budget(std::uint64_t per_function) noexcept { budget_ = per_function; }
-    [[nodiscard]] std::uint64_t escape_budget() const noexcept { return budget_; }
     // THE DEAD WINDOW INCLUDED, for the A/B the self-test runs: an unbounded
     // walk marks the popped frame's own registers too, so it must report a
     // SUPERSET of the bounded walk's escapes. If a future register-allocator

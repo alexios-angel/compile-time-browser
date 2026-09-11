@@ -1,13 +1,6 @@
 // dom_bindings - the dispatch algorithm: capture down the path and bubble back
 // up, the listener list and its options, the event object itself, and the
 // `on<type>` handler properties.
-//
-// One of three files carved out of a 1,647-line bindings/events.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -169,6 +162,80 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     const std::string type = cx.to_string(cx.lookup_property(event, "type"));
     const std::vector<path_step> path =
         propagation_path(at, context::truthy(cx.lookup_property(event, "composed")));
+    const bool bubbles = context::truthy(cx.lookup_property(event, "bubbles"));
+
+    // THE ACTIVATION TARGET - DOM 2.9 dispatch, steps 5.5 to 5.9.11 - and the
+    // legacy-pre-activation behaviour, which runs BEFORE any listener. A
+    // `click` that is a MouseEvent - not a plain `new Event("click")` - has one
+    // node with activation behaviour: the target itself if it has any, else,
+    // only when the event bubbles, the first ancestor on the path that does.
+    // A checkbox or radio there is toggled NOW, so a click listener reads the
+    // new checkedness; what it toggled from is kept so a preventDefault can
+    // put it back. The other half - the activation behaviour proper, or the
+    // legacy-canceled one - is at the end of this function.
+    node_id activation_target;
+    bool legacy_toggled = false;
+    bool legacy_was_checked = false;
+    node_id legacy_was_checked_radio;
+    if (type == "click" && doc_ != nullptr && at.on == listen_on::node && at.node &&
+        mouse_event_prototype_.is_object()) {
+        bool is_mouse_event = false;
+        for (value proto = object->prototype; proto.is_object();
+             proto = static_cast<script::object_object *>(proto.as_heap())->prototype) {
+            if (proto.bits() == mouse_event_prototype_.bits()) {
+                is_mouse_event = true;
+                break;
+            }
+        }
+        const auto txn = doc_->read();
+        for (std::size_t i = 0; is_mouse_event && i < path.size(); ++i) {
+            if (path[i].on != listen_on::node || (i > 0 && !bubbles)) { break; }
+            if (has_activation_behavior(txn, path[i].node)) {
+                activation_target = path[i].node;
+                break;
+            }
+        }
+        if (activation_target) {
+            const control_kind kind =
+                control_kind_of(atoms_->text(txn.tag(activation_target).value_or(atom{})),
+                                txn.attribute_value(activation_target, atoms_->intern("type")));
+            // HTML: a checkbox's legacy-pre-activation behaviour inverts its
+            // checkedness; a radio's sets it to true, and only if it was false.
+            // Disabled does not matter here - the mouse never gets this far at
+            // a disabled control and `click()` refuses before dispatching, but
+            // `dispatchEvent` reaches it and toggles it, which
+            // Event-dispatch-click.html asserts.
+            if (kind == control_kind::checkbox || kind == control_kind::radio) {
+                const bool checked = forms_->state_of(txn, *atoms_, activation_target).checked;
+                if (kind == control_kind::checkbox || !checked) {
+                    legacy_was_checked = checked;
+                    if (kind == control_kind::radio) {
+                        // The radio this one is about to uncheck, so a cancelled
+                        // click can check it again - the same group walk
+                        // form_store::toggle is about to make.
+                        const atom name_attr = atoms_->intern("name");
+                        const atom type_attr = atoms_->intern("type");
+                        const std::string_view group =
+                            txn.attribute_value(activation_target, name_attr);
+                        const auto walk = [&](auto && self, node_id node) -> void {
+                            if (legacy_was_checked_radio) { return; }
+                            if (node != activation_target &&
+                                txn.attribute_value(node, name_attr) == group &&
+                                txn.attribute_value(node, type_attr) == "radio" &&
+                                forms_->state_of(txn, *atoms_, node).checked) {
+                                legacy_was_checked_radio = node;
+                                return;
+                            }
+                            for (const node_id child : txn.children(node)) { self(self, child); }
+                        };
+                        if (!group.empty()) { walk(walk, txn.root()); }
+                    }
+                    forms_->toggle(txn, *atoms_, activation_target, kind);
+                    legacy_toggled = true;
+                }
+            }
+        }
+    }
 
     const value target_object = object_of_step(cx, at);
     object->set("target", target_object);
@@ -315,7 +382,6 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // BUBBLE: back up. A non-bubbling event gets this pass at the target only -
     // `continue` and not `break`, because a shadow host further up is a target
     // too and the steps between are merely skipped.
-    const bool bubbles = context::truthy(cx.lookup_property(event, "bubbles"));
     for (const path_step & step : path) {
         if (stopped()) { break; }
         if (!visit(step, 3) && !bubbles) { continue; }
@@ -360,6 +426,27 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // compaction would shift the list the outer loop is indexing.
     --dispatch_depth_;
     reap_spent_listeners();
+    // THE ACTIVATION BEHAVIOUR, DOM 2.9 dispatch step 11 - AFTER the event has
+    // stopped travelling: `eventPhase` is NONE, `currentTarget` null, the path
+    // empty and the dispatch flag down, all of which a `change` listener can
+    // read off the click that caused it, and one of which lets that listener
+    // dispatch the same event again. Before the microtask drain, because a
+    // microtask a click listener queued must find the checkedness a
+    // preventDefault put back, not the one it saw.
+    if (activation_target) {
+        if (!prevented(event)) {
+            run_activation_behavior(cx, activation_target);
+        } else if (legacy_toggled) {
+            // The legacy-canceled-activation behaviour: the checkedness the
+            // pre-activation changed goes back, and so does the radio it
+            // unchecked.
+            const auto txn = doc_->read();
+            forms_->state_of(txn, *atoms_, activation_target).checked = legacy_was_checked;
+            if (legacy_was_checked_radio) {
+                forms_->state_of(txn, *atoms_, legacy_was_checked_radio).checked = true;
+            }
+        }
+    }
     // A LISTENER THAT FAULTS IS REPORTED AND THE FAULT CLEARED, exactly as for
     // a timer or an animation frame. Without this the first listener to fault
     // left the VM's failure flag set for the life of the page: every later
@@ -371,6 +458,61 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     cx.drain_microtasks();
     note_callback_fault(type);
     return prevented(event);
+}
+
+// --- activation behaviour --------------------------------------------------
+//
+// WHICH ELEMENTS HAVE IT, per HTML: a link with an href, a button, an input, a
+// label, and a <summary> whose parent is a <details>. `element.click()`,
+// `dispatchEvent(new MouseEvent("click"))` and the engine's own mouse click all
+// reach the two functions here through dispatch_to, which is the point: the
+// browser's activate hook used to be called by two of the three from OUTSIDE
+// the dispatch, with the toggle after the listeners, so a click listener on a
+// checkbox read the old checkedness and a constructed click toggled nothing.
+bool dom_bindings::has_activation_behavior(const read_txn & txn, node_id node) const {
+    const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
+    if (tag == "a" || tag == "area") { return txn.has_attribute(node, atoms_->intern("href")); }
+    if (tag == "summary") {
+        const node_id parent = txn.parent(node);
+        return parent && atoms_->text(txn.tag(parent).value_or(atom{})) == "details";
+    }
+    // A <select> has none in HTML. It is here because the engine opens its
+    // popup from the same hook, and a click that reached no activation target
+    // would never open one.
+    return tag == "button" || tag == "input" || tag == "label" || tag == "select";
+}
+
+void dom_bindings::run_activation_behavior(context & cx, node_id target) {
+    control_kind kind = control_kind::none;
+    {
+        const auto txn = doc_->read();
+        kind = control_kind_of(atoms_->text(txn.tag(target).value_or(atom{})),
+                               txn.attribute_value(target, atoms_->intern("type")));
+    }
+    if (kind == control_kind::checkbox || kind == control_kind::radio) {
+        // HTML's input activation behaviour for the two: nothing unless the
+        // element is connected, else `input` - bubbles, composed - and then
+        // `change` - bubbles - neither cancelable. Being disabled does not
+        // matter: the specification excepts exactly these two from its
+        // mutability check, and Event-dispatch-click.html's "disabling checkbox
+        // in onclick listener shouldn't suppress input" is that sentence as a
+        // test. The toggle itself happened before the listeners ran.
+        if (is_connected(target)) {
+            const auto fire = [&](std::string_view name, bool composed) {
+                value event = make_event(cx, name, target);
+                auto * object = static_cast<script::object_object *>(event.as_heap());
+                object->set("cancelable", value::boolean(false));
+                object->set("composed", value::boolean(composed));
+                (void)dispatch_event(name, target, event);
+            };
+            fire("input", true);
+            fire("change", false);
+        }
+    }
+    // The rest is the browser's: following the link, toggling the <details>,
+    // clicking the control the <label> labels, submitting or resetting the
+    // form, opening the <select> - and, for the two above, repainting the box.
+    if (on_activate_) { on_activate_(target); }
 }
 
 bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
@@ -730,7 +872,6 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // kept there, exactly as note_callback_fault keeps it: a listener that
         // faults on every event has one bug, not a thousand.
         const bool handled = dispatch_error_value(fault, thrown);
-        ++callback_faults_;
         if (!handled && callback_error_.empty()) { callback_error_ = fault; }
     };
     // THE LIST IS COPIED BEFORE ANY OF IT RUNS, which is what the DOM says and

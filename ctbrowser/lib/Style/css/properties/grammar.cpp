@@ -1,12 +1,6 @@
 // The value grammar: the unit and function lists, the token scan, the
 // substitution and math-function rules, `<position>`, and one typed component
 // matched and serialised.
-//
-// One of three files carved out of a 1,155-line css/properties.cpp on
-// 2026-09-08. The public surface is include/ctbrowser/style/css/properties.hpp
-// and did not change; the helpers more than one of these files needs are
-// declared in internal.hpp beside this, with external linkage in
-// ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -39,10 +33,10 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 23> math_functions{
-    "calc", "min",  "max",   "clamp", "round", "mod",       "rem",     "abs",
-    "sign", "sin",  "cos",   "tan",   "asin",  "acos",      "atan",    "atan2",
-    "pow",  "sqrt", "hypot", "log",   "exp",   "calc-size", "progress"};
+constexpr std::array<std::string_view, 25> math_functions{
+    "calc",  "min", "max", "clamp",     "round",    "mod",           "rem",          "abs", "sign",
+    "sin",   "cos", "tan", "asin",      "acos",     "atan",          "atan2",        "pow", "sqrt",
+    "hypot", "log", "exp", "calc-size", "progress", "sibling-index", "sibling-count"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
@@ -69,10 +63,8 @@ constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
 // THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
 // substitutions. `CSS.supports` is "would this declaration be dropped", and a
 // value calling a function nothing here can evaluate WOULD be - so answering
-// true for `attr()`, `random-item()` or `type(*)` is a lie, and a measured one:
-// five `css/css-values` files guard their assertions on `CSS.supports` and went
-// from passing vacuously to running and failing when this function first
-// existed and said yes to everything (2026-09-07).
+// true for `attr()`, `random-item()` or `type(*)` is a lie: five `css/css-values`
+// files guard their assertions on `CSS.supports`.
 //
 // AN ALLOW-LIST rather than a list of what is missing, because the missing set
 // is the whole of CSS Values 5 and grows every month while this one grows only
@@ -123,15 +115,42 @@ constexpr std::array<std::string_view, 27> value_functions{"rgb",
 // `0.500000`, and `1` rather than `1.0` - which is what CSSOM §6.7.2 means by
 // "the smallest number of digits", and what every `assert_equals(readValue,
 // "1")` in the corpus compares against.
+//
+// `std::to_chars` in fixed format IS that definition: the shortest decimal that
+// reads back as the same double, with no exponent. `std::to_string` was six
+// fixed decimals, which printed `0.1234567` as `0.123457` - a value the author
+// wrote, altered on the way to `el.style` - and could not say `1e-7` at all.
 [[nodiscard]] std::string number_text(double value) {
     if (!std::isfinite(value)) { return value > 0 ? "infinity" : "-infinity"; }
     if (value == 0) { return "0"; } // catches -0, which serialises as 0
-    std::string out = std::to_string(value);
-    if (out.find('.') != std::string::npos) {
-        while (!out.empty() && out.back() == '0') { out.pop_back(); }
-        if (!out.empty() && out.back() == '.') { out.pop_back(); }
+    std::array<char, 400> buffer{};
+    const std::to_chars_result written = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                                                       value, std::chars_format::fixed);
+    if (written.ec != std::errc{}) { return "0"; }
+    return std::string{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
+}
+
+// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
+// with `"` and `\` escaped and a control character as a hex escape.
+[[nodiscard]] std::string string_text(std::string_view body) {
+    std::string out{"\""};
+    for (const char c : body) {
+        const auto code = static_cast<unsigned char>(c);
+        if (code == 0) {
+            out += "\xEF\xBF\xBD";
+        } else if (code <= 0x1F || code == 0x7F) {
+            static constexpr char digits[] = "0123456789abcdef";
+            out += '\\';
+            if (code >= 16) { out += digits[code >> 4]; }
+            out += digits[code & 0xF];
+            out += ' ';
+        } else {
+            if (c == '"' || c == '\\') { out += '\\'; }
+            out += c;
+        }
     }
-    return out.empty() ? "0" : out;
+    out += '"';
+    return out;
 }
 
 // AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
@@ -406,8 +425,17 @@ namespace detail {
     // It asks whether the SECOND token closes the first rather than counting to
     // three, because two tokens is also what an unterminated `calc(1px` has and
     // that one is a value: EOF closes it.
+    //
+    // ...EXCEPT FOR THE TREE-COUNTING FUNCTIONS, whose argument list is empty by
+    // definition: `z-index: sibling-index()` is the whole of CSS Values 5
+    // §tree-counting's example.
+    const std::string_view fn = function_name(ts, first);
+    const bool takes_nothing =
+        ascii_iequals(fn, "sibling-index") || ascii_iequals(fn, "sibling-count");
     if (found.significant.size() < 2) { return false; }
-    if (ts.tokens[found.significant[1]].type == token_type::close_paren) { return false; }
+    if (!takes_nothing && ts.tokens[found.significant[1]].type == token_type::close_paren) {
+        return false;
+    }
     // The matching `)` must be the last significant token; anything after it is
     // a second value. A function left OPEN at the end of the value is closed by
     // EOF and is therefore also the whole value.
@@ -559,6 +587,188 @@ namespace detail {
     }
 }
 
+// THE AUTHOR'S TOKENS, WITH THE NUMBERS, STRINGS AND URLS WRITTEN CANONICALLY.
+//
+// A value whose grammar this table does not model is stored as written - that
+// is deliberate, see check_declaration - but CSSOM §6.7.2 serialises a number,
+// a string and a URL the same way in every value, and `css/cssom/serialize-values`
+// asks for `0.5%` where `.5%` was written, `0px` for `-0px`, `"x"` for `'x'` and
+// `url("x")` for `url(x)`, through `background-position`, `content` and every
+// other shorthand this file leaves freeform. So the token stream is rebuilt
+// with only those three token kinds respelled; whitespace, idents, commas and
+// functions keep their bytes, which is what keeps `ident( myident)` its space
+// and `random-item(auto ,serif)` its odd comma.
+//
+// An ident or function name with an ESCAPE in it was decoded by the tokenizer
+// and has no source span left to copy - it would need serialize-an-identifier
+// to write back - so a value holding one is returned as written.
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::eof) { break; }
+        const std::string_view body = ts.text_of(t);
+        switch (t.type) {
+        case token_type::number: out += number_text(t.number); break;
+        case token_type::percentage: out += number_text(t.number) + "%"; break;
+        case token_type::dimension:
+            out += number_text(t.number) + ascii_lower_copy(ts.unit_of(t));
+            break;
+        case token_type::string:
+            if (body.size() < 2) { return std::string{text}; }
+            out += string_text(body.substr(1, body.size() - 2));
+            break;
+        case token_type::url: out += "url(" + string_text(body) + ")"; break;
+        default:
+            if (t.text >= ts.source_length) { return std::string{text}; }
+            out += body;
+            break;
+        }
+    }
+    return out;
+}
+
 } // namespace detail
+
+// --- the computed `<position>` -----------------------------------------------
+
+namespace {
+
+// One component of a position as the computed value reads it: a keyword, or an
+// offset with its text - a percentage keeping its number so `right 30%` can fold
+// to `70%` without re-parsing the string.
+struct position_component {
+    position_axis kind = position_axis::none;
+    std::string text;
+    bool is_percent = false;
+    double number = 0;
+};
+
+// The components, functions kept whole. `position_axis_of` reads one token;
+// a `calc()` is several, and its text is the slice of the source from the
+// function token to its matching close paren.
+[[nodiscard]] bool position_components(const token_stream & ts,
+                                       std::vector<position_component> & out) {
+    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+        const css_token & t = ts.tokens[i];
+        if (t.type == token_type::eof) { break; }
+        if (t.type == token_type::whitespace) { continue; }
+        position_component one;
+        if (t.type == token_type::function) {
+            int depth = 1;
+            std::size_t j = i + 1;
+            for (; j < ts.tokens.size() && depth > 0; ++j) {
+                const token_type type = ts.tokens[j].type;
+                if (type == token_type::eof) { return false; }
+                if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+                if (type == token_type::close_paren) { --depth; }
+            }
+            const css_token & last = ts.tokens[j - 1];
+            // A rebuilt (escaped) token is not a slice of the source, and a
+            // position with an escape in a calc() is not worth a second path.
+            if (t.text >= ts.source_length || last.text >= ts.source_length) { return false; }
+            one.kind = position_axis::offset;
+            one.text = std::string_view{ts.pool}.substr(t.text, last.text + last.length - t.text);
+            out.push_back(std::move(one));
+            i = j - 1;
+            continue;
+        }
+        one.kind = position_axis_of(ts, t, one.text);
+        if (one.kind == position_axis::none) { return false; }
+        one.is_percent = t.type == token_type::percentage;
+        one.number = t.number;
+        out.push_back(std::move(one));
+    }
+    return !out.empty();
+}
+
+enum class box_side : std::uint8_t {
+    start,
+    center,
+    end
+};
+
+// The physical side a keyword names, the flow-relative ones folded through
+// `flipped` - which is what the writing mode and direction reduce to for one
+// axis.
+[[nodiscard]] box_side physical_side(std::string_view word, bool flipped) {
+    if (word == "center") { return box_side::center; }
+    const bool is_end = word == "right" || word == "bottom" || word == "x-end" || word == "y-end";
+    const bool flow = word.starts_with("x-") || word.starts_with("y-");
+    return (is_end != (flow && flipped)) ? box_side::end : box_side::start;
+}
+
+// `<side> <offset>?` as a percentage or a length from the START edge. A
+// percentage offset from the end folds; a length from the end is a calc(),
+// which is how every browser writes `right 20px`.
+[[nodiscard]] std::string computed_half(box_side side, const position_component * offset) {
+    if (offset == nullptr) {
+        return side == box_side::start ? "0%" : (side == box_side::center ? "50%" : "100%");
+    }
+    if (side == box_side::start) { return offset->text; }
+    if (offset->is_percent) { return number_text(100.0 - offset->number) + "%"; }
+    return "calc(100% - " + offset->text + ")";
+}
+
+} // namespace
+
+std::string computed_position(std::string_view specified, std::string_view writing_mode,
+                              std::string_view direction) {
+    const token_stream ts = tokenize(specified);
+    std::vector<position_component> parts;
+    if (!position_components(ts, parts)) { return {}; }
+
+    const std::string mode = ascii_lower_copy(trim(writing_mode, html_whitespace));
+    const bool rtl = ascii_iequals(trim(direction, html_whitespace), "rtl");
+    const bool vertical_rl = mode == "vertical-rl" || mode == "sideways-rl";
+    const bool vertical_lr = mode == "vertical-lr";
+    const bool sideways_lr = mode == "sideways-lr";
+    const bool horizontal = !vertical_rl && !vertical_lr && !sideways_lr;
+    // Where `x-start` and `y-start` fall. In a horizontal box the inline axis
+    // follows `direction`; in a vertical one the block axis runs right-to-left
+    // for `vertical-rl`, and the inline axis follows `direction` except in
+    // `sideways-lr`, whose lines run bottom-to-top.
+    const bool flip_x = horizontal ? rtl : vertical_rl;
+    const bool flip_y = horizontal ? false : (sideways_lr ? !rtl : rtl);
+
+    const auto fits = [&](const position_component & c, position_axis want) {
+        return c.kind == want || c.kind == position_axis::center;
+    };
+    // One `<side> <offset>?` pair, resolved along one axis.
+    const auto half = [&](const position_component & keyword, const position_component * offset,
+                          bool flipped) -> std::string {
+        if (keyword.kind == position_axis::offset) { return keyword.text; }
+        return computed_half(physical_side(keyword.text, flipped), offset);
+    };
+    const position_component center{position_axis::center, "center", false, 0};
+
+    if (parts.size() == 1) {
+        if (parts[0].kind == position_axis::vertical) {
+            return half(center, nullptr, false) + " " + half(parts[0], nullptr, flip_y);
+        }
+        return half(parts[0], nullptr, flip_x) + " " + half(center, nullptr, false);
+    }
+    if (parts.size() == 2) {
+        if ((fits(parts[0], position_axis::horizontal) || parts[0].kind == position_axis::offset) &&
+            (fits(parts[1], position_axis::vertical) || parts[1].kind == position_axis::offset)) {
+            return half(parts[0], nullptr, flip_x) + " " + half(parts[1], nullptr, flip_y);
+        }
+        if (fits(parts[0], position_axis::vertical) && fits(parts[1], position_axis::horizontal)) {
+            return half(parts[1], nullptr, flip_x) + " " + half(parts[0], nullptr, flip_y);
+        }
+        return {};
+    }
+    if (parts.size() != 4 || parts[1].kind != position_axis::offset ||
+        parts[3].kind != position_axis::offset) {
+        return {};
+    }
+    if (parts[0].kind == position_axis::horizontal && parts[2].kind == position_axis::vertical) {
+        return half(parts[0], &parts[1], flip_x) + " " + half(parts[2], &parts[3], flip_y);
+    }
+    if (parts[0].kind == position_axis::vertical && parts[2].kind == position_axis::horizontal) {
+        return half(parts[2], &parts[3], flip_x) + " " + half(parts[0], &parts[1], flip_y);
+    }
+    return {};
+}
 
 } // namespace ctbrowser::style::css

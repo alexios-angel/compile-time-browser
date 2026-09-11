@@ -1,35 +1,7 @@
 # ctbrowser.core - the foundation: slab allocation, generation-tagged handles, epochs,
-# atoms, the thread pool, geometry, CPU time. Knows nothing about browsers.
-#
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
+# atoms, the thread pool, geometry. Knows nothing about browsers.
 add_library(ctbrowser-core)
-target_sources(ctbrowser-core
-  PRIVATE
-    algorithms.cpp
-    allocator.cpp
-    atom.cpp
-    epoch.cpp
-    scheduler.cpp
-    cpu_time.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/allocator.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/core.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/containers.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/handle.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/epoch.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/slab.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/algorithms.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/atom.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/scheduler.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/cpu_time.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/core/geometry.hpp")
+ctbrowser_subsystem_sources(ctbrowser-core core)
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)

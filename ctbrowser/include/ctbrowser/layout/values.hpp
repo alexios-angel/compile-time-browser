@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 
 // Turning style strings into layout numbers.
@@ -147,15 +148,6 @@ struct length {
     }
 };
 
-// Leading and trailing ASCII whitespace removed. box_builder has its own copy
-// for computed-style text; this one is for the value parsers here, which are
-// pure functions of a string and cannot reach it.
-[[nodiscard]] inline std::string_view trimmed_view(std::string_view v) noexcept {
-    const std::size_t b = v.find_first_not_of(" \t\n\r\f");
-    if (b == std::string_view::npos) { return {}; }
-    return v.substr(b, v.find_last_not_of(" \t\n\r\f") - b + 1);
-}
-
 [[nodiscard]] inline length parse_length(std::string_view text) {
     std::size_t i = 0;
     while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
@@ -272,7 +264,7 @@ enum class display_kind : std::uint8_t {
 // value the parser does not understand leaves the element visible rather than
 // erasing it.
 [[nodiscard]] inline float parse_opacity(std::string_view text) {
-    text = trimmed_view(text);
+    text = trim(text, html_whitespace);
     if (text.empty()) { return 1.0f; }
     float value = 1;
     if (std::from_chars(text.data(), text.data() + text.size(), value).ec != std::errc{}) {
@@ -299,7 +291,7 @@ enum class position_kind : std::uint8_t {
 // every descendant stack level inside it; `auto` lets those descendants
 // participate in the nearest ancestor context.
 [[nodiscard]] inline std::optional<int> parse_z_index(std::string_view text) {
-    text = trimmed_view(text);
+    text = trim(text, html_whitespace);
     if (text.empty() || ascii_iequals(text, "auto")) { return std::nullopt; }
     // `from_chars` does not accept a leading plus on every standard-library
     // implementation, while CSS integers do.
@@ -347,7 +339,7 @@ struct translation {
     translation out;
     const std::size_t open = text.find('(');
     if (open == std::string_view::npos || !text.ends_with(')')) { return out; }
-    const std::string_view name = trimmed_view(text.substr(0, open));
+    const std::string_view name = trim(text.substr(0, open), html_whitespace);
     // THE ONE-AXIS FORMS ARE SEPARATE FUNCTIONS, not `translate` with a default.
     // Bootstrap writes `translateX(-50%)` for `.translate-middle-x` and
     // `translate(-50%, -50%)` for `.translate-middle`, so reading only the
@@ -358,12 +350,12 @@ struct translation {
     if (!x_only && !y_only && name != "translate") { return out; }
     std::string_view args = text.substr(open + 1, text.size() - open - 2);
     const std::size_t comma = args.find(',');
-    const length first = parse_length(trimmed_view(args.substr(0, comma)));
+    const length first = parse_length(trim(args.substr(0, comma), html_whitespace));
     out.x = y_only ? length{0, unit::px} : first;
     if (y_only) {
         out.y = first;
     } else if (comma != std::string_view::npos) {
-        out.y = parse_length(trimmed_view(args.substr(comma + 1)));
+        out.y = parse_length(trim(args.substr(comma + 1), html_whitespace));
     }
     // A missing second argument is zero, not the first one repeated.
     if (out.x.is_auto()) { out.x = length{0, unit::px}; }

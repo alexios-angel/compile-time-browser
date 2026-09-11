@@ -1,9 +1,9 @@
 #pragma once
 // Private to lib/Script/builtins/. NOT installed and in no file set:
-// include/ctbrowser/script/builtins.hpp still declares exactly one function,
+// include/ctbrowser/script/builtins.hpp declares exactly one function,
 // install_builtins(), which is the entire public surface of the standard
 // library. This header exists only so the implementation can be more than one
-// file - it was 4,118 lines in one until 2026-08-09.
+// file.
 
 #include <algorithm>
 #include <charconv>
@@ -11,10 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <limits>
 #include <memory>
-#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,20 +26,8 @@
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/regex.hpp>
 
-#include <map>
-#include <memory>
-
-// The JavaScript standard library.
-//
-// the engine had NONE of this. The whole property surface was `.length`, numeric
-// indexing and named lookup on plain objects - no `arr.push`, no `str.split`,
-// no `Math.floor`, no `JSON.parse`. A VM can be complete and still useless if
-// nothing can be done with a value once you have one, and that is what this
-// closes.
-//
-// It is a SUBSET, chosen by what pages actually call rather than by what the
-// spec lists. The omissions that matter are named at the bottom of this file
-// rather than left to be discovered.
+// The JavaScript standard library: a SUBSET, chosen by what pages actually
+// call rather than by what the spec lists.
 
 namespace ctbrowser::script {
 
@@ -55,24 +41,6 @@ namespace ctbrowser::script {
 }
 [[nodiscard]] inline std::string str_at(context & cx, std::span<value> args, std::size_t i) {
     return i < args.size() ? cx.to_string(args[i]) : std::string{};
-}
-
-// ToIntegerOrInfinity, 7.1.5 - the coercion EVERY string and array index is
-// specified to go through, and the one this file did not have.
-//
-// NaN BECOMES ZERO, and that is the whole point. `"abc".at(NaN)` used to cast
-// NaN straight to `std::size_t`, which is undefined behaviour, and the engine
-// HUNG rather than answering - so a page calling `s.at(x)` with an undefined
-// `x` froze, with no error and nothing in the console. A missing argument is
-// `undefined` and ToNumber(undefined) is NaN, so this path is reached far more
-// often than a literal NaN would suggest: `.at()`, `.at(undefined)` and
-// `.at({})` all landed on it, as did `.substr(NaN)`.
-//
-// Truncation is TOWARD ZERO, not floor: `"abc".at(-0.5)` is `at(0)`, not
-// `at(-1)`.
-[[nodiscard]] inline double index_at(std::span<value> args, std::size_t i) {
-    const double n = i < args.size() ? context::to_number(args[i]) : 0.0;
-    return std::isnan(n) ? 0.0 : std::trunc(n);
 }
 
 // ToIntegerOrInfinity (7.1.5) over an argument that MAY BE AN OBJECT, and the
@@ -1339,64 +1307,6 @@ inline void link_constructor(context & cx, object_object * table, const char * n
         obj->define("length", value::number(arity), attr_configurable);
         obj->define("name", cx.string(name), attr_configurable);
     }
-}
-
-// Object
-// One `Object.defineProperty`, used by both it and defineProperties.
-//
-// It is now a READER: it turns a JavaScript descriptor object into a
-// context::property_descriptor and hands it to context::define_own_property,
-// which is where 10.1.6.3's validation and the four property tables live. What
-// this function still has to get right is the difference between a field that
-// is ABSENT and one that is present-and-undefined, because the whole of
-// ValidateAndApplyPropertyDescriptor is written in those terms:
-//
-// A descriptor with NO `value`, `get` or `set` describes ATTRIBUTES ONLY, and
-// must leave the existing value alone. Writing undefined instead is how
-// `Object.defineProperty(C, "prototype", {writable: false})` - which is what
-// every Babel-transpiled class emits - wiped the prototype it had just filled
-// in, and the class's methods vanished with it.
-//
-// And a FUNCTION IS AN OBJECT. Babel defines onto the constructor as well as
-// onto its prototype, and `is_object()` is false for a closure, so half of
-// every transpiled class was silently dropped.
-// HasProperty AND Get, NOT a lookup in the descriptor's own table.
-//
-// 6.2.6.5 reads each field with HasProperty followed by Get, both of which walk
-// the PROTOTYPE CHAIN and both of which run an accessor. Reading `from->find()`
-// instead sees only own data properties - so a descriptor built by
-// `new Con()` over a prototype carrying a `writable` getter described nothing
-// at all. test262 devotes ~250 files in built-ins/Object/defineProperties to
-// exactly that shape (15.2.3.7-5-b-*), and each one names the property it
-// inherits.
-[[nodiscard]] inline context::property_descriptor read_descriptor(context & cx, value from) {
-    context::property_descriptor out;
-    const auto field = [&](const char * name, bool & has, value & into) {
-        if (cx.has_property(from, cx.string(name))) {
-            has = true;
-            into = cx.lookup_property(from, name);
-        }
-    };
-    const auto flag = [&](const char * name, bool & has, bool & into) {
-        value held = value::undefined();
-        bool present = false;
-        field(name, present, held);
-        if (present) {
-            has = true;
-            into = cx.truthy(held);
-        }
-    };
-    field("value", out.has_value, out.held);
-    field("get", out.has_get, out.getter);
-    field("set", out.has_set, out.setter);
-    flag("writable", out.has_writable, out.writable);
-    flag("enumerable", out.has_enumerable, out.enumerable);
-    flag("configurable", out.has_configurable, out.configurable);
-    return out;
-}
-
-inline bool define_one(context & cx, value target, const std::string & key, value descriptor) {
-    return cx.define_own_property(target, key, read_descriptor(cx, descriptor));
 }
 
 } // namespace builtins_detail

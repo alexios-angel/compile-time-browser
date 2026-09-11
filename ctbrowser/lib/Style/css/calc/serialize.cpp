@@ -1,10 +1,5 @@
 // calc() - how an answer is printed: a computed value through serialize_calc,
 // and the inside of a symbolic calc() in §10.13's order.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -63,12 +58,18 @@ namespace detail {
     std::string out;
     // The sign is folded into the operator the way every engine prints it:
     // `calc(100% - 12px)`, never `calc(100% + -12px)`.
+    //
+    // A NEGATIVE ZERO KEEPS ITS SIGN. `sign(-0em)` is -0 and `sign(0em)` is 0,
+    // and `signs-abs-computed` reads the difference back through `1 / sign(...)`
+    // - so a specified `-0em` that came back as `0em` changed the answer.
     const auto append = [&out](double n, std::string_view unit) {
+        const bool negative = std::signbit(n);
         if (out.empty()) {
-            out += format_number(n);
+            if (negative) { out += '-'; }
+            out += format_number(std::fabs(n));
         } else {
-            out += n < 0.0 ? " - " : " + ";
-            out += format_number(n < 0.0 ? -n : n);
+            out += negative ? " - " : " + ";
+            out += format_number(std::fabs(n));
         }
         out += unit;
     };

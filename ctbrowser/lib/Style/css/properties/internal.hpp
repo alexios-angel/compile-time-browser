@@ -9,8 +9,7 @@
 // Private to lib/Style/css/properties/. NOT installed and in no file set:
 // include/ctbrowser/style/css/properties.hpp declares the whole public
 // surface, and this exists only so the implementation can be more than one
-// file: it was 1,155 lines in one until 2026-09-08. The includes are
-// properties.cpp's, so every file here sees exactly what that one saw.
+// file.
 
 #include <ctbrowser/style/css/properties.hpp>
 
@@ -21,10 +20,12 @@
 #include <algorithm>
 #include <array>
 #include <boost/container/small_vector.hpp>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace ctbrowser::style::css::detail {
@@ -83,6 +84,7 @@ struct scan {
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found);
 [[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
 

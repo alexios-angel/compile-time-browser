@@ -1,11 +1,5 @@
 // check_declaration - the answer `el.style[p] = v` and `CSS.supports(p, v)`
 // both need - and the `<supports-condition>` grammar over it.
-//
-// One of three files carved out of a 1,155-line css/properties.cpp on
-// 2026-09-08. The public surface is include/ctbrowser/style/css/properties.hpp
-// and did not change; the helpers more than one of these files needs are
-// declared in internal.hpp beside this, with external linkage in
-// ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -130,10 +124,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // re-serialised token stream is not the same string - `random-item(auto
     // ,serif)` comes back as `random-item(auto, serif)` - and `test_valid_value`
     // asserts the round-trip exactly, so normalising a value whose grammar is
-    // unknown converts a passing test into a failing one for no gain. Two
-    // `css/css-values` files measured that on 2026-09-07. Canonicalisation is
-    // for the values the table DOES model, where it is the whole point.
+    // unknown converts a passing test into a failing one for no gain.
+    // Canonicalisation is for the values the table DOES model, where it is the
+    // whole point.
+    //
+    // ...EXCEPT THE NUMBERS, STRINGS AND URLS IN THEM, which CSSOM §6.7.2 spells
+    // one way wherever they stand: `.5%` is `0.5%` in a `background-position`
+    // this table leaves freeform exactly as it is in a `width` it types. Only
+    // those three token kinds are respelled; every other byte is the author's.
     const std::string verbatim{text};
+    const std::string normalized = normalize_value_tokens(ts, text);
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.
@@ -171,7 +171,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // of which this table models. `calc/` owns the rule and keeps the author's
     // bytes for everything it cannot answer, so a value with no math in it and a
     // value whose math needs a font size both come back untouched.
-    const std::string simplified = may_have_math(text) ? simplify_math(text) : verbatim;
+    const std::string simplified =
+        may_have_math(normalized) ? simplify_math(normalized) : normalized;
 
     const property_syntax * p = find_property(property);
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one

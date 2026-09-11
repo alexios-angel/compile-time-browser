@@ -1,11 +1,6 @@
 // calc() - the unit table: every unit the specification names, which of them
 // convert by a constant, one dimension in its family's canonical unit, and the
 // pixel bases every relative length goes through.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -102,7 +97,7 @@ namespace detail {
     };
     for (const fixed & one : table) {
         if (ascii_iequals(one.unit, unit)) {
-            out.type = one.type;
+            out.set_type(one.type);
             out.value = value * one.factor;
             return out;
         }
@@ -116,7 +111,7 @@ namespace detail {
     // double the day `folded()` in `style/engine.hpp` folds through
     // `canonical_dimension_text`.
     if (const std::optional<float> px = unit_to_px(static_cast<float>(value), unit, ctx)) {
-        out.type = numeric_type::length;
+        out.set_type(numeric_type::length);
         out.value = *px;
         return out;
     }
@@ -138,18 +133,16 @@ namespace detail {
         const std::optional<term> fixed = canonical_term(value, unit, length_context{});
         if (!fixed) { return std::nullopt; }
         term out;
-        out.type = fixed->type;
-        add_symbol(out, canonical_unit(out.type), fixed->value);
+        out.dims = fixed->dims;
+        add_symbol(out, canonical_unit(out.type()), fixed->value);
         return out;
     }
     if (!is_known_unit(unit)) { return std::nullopt; }
     term out;
-    out.type = ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length;
+    out.set_type(ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length);
     add_symbol(out, ascii_lower_copy(unit), value);
     return out;
 }
-
-} // namespace detail
 
 std::string_view canonical_unit(numeric_type type) noexcept {
     switch (type) {
@@ -193,12 +186,7 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     return std::nullopt;
 }
 
-std::optional<float> dimension_text_to_px(std::string_view text, const length_context & ctx) {
-    const token_stream tokens = tokenize(text);
-    const css_token * tok = lone_value(tokens);
-    if (tok == nullptr || tok->type != token_type::dimension) { return std::nullopt; }
-    return unit_to_px(static_cast<float>(tok->number), tokens.unit_of(*tok), ctx);
-}
+} // namespace detail
 
 std::optional<float> length_text_to_px(std::string_view text, const length_context & ctx) {
     // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave the

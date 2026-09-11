@@ -9,33 +9,6 @@
 
 add_custom_target(ctbrowser-tests ALL)
 
-# std::stacktrace, PROBED rather than assumed - three toolchains, three answers.
-# libstdc++ puts the implementation in a separate libstdc++_libbacktrace archive
-# that lives in GCC's own library directory, which `find_library` does not search;
-# libc++ needs nothing; the mingw cross build has no <stacktrace> at all, and
-# check.hpp guards on __cpp_lib_stacktrace and says so at run time.
-#
-# So: try it plain, then try it with the archive, and take the first that links.
-include(CheckCXXSourceCompiles)
-set(CTBROWSER_STACKTRACE_PROBE "#include <stacktrace>
-int main() { return static_cast<int>(std::stacktrace::current().size()) * 0; }")
-set(CMAKE_REQUIRED_FLAGS "-std=gnu++23")
-check_cxx_source_compiles("${CTBROWSER_STACKTRACE_PROBE}" CTBROWSER_STACKTRACE_PLAIN)
-if(NOT CTBROWSER_STACKTRACE_PLAIN)
-  set(CMAKE_REQUIRED_LIBRARIES stdc++_libbacktrace)
-  check_cxx_source_compiles("${CTBROWSER_STACKTRACE_PROBE}" CTBROWSER_STACKTRACE_WITH_LIB)
-  unset(CMAKE_REQUIRED_LIBRARIES)
-  if(CTBROWSER_STACKTRACE_WITH_LIB)
-    set(CTBROWSER_TEST_BACKTRACE_LIBRARY stdc++_libbacktrace)
-  endif()
-endif()
-unset(CMAKE_REQUIRED_FLAGS)
-if(CTBROWSER_STACKTRACE_PLAIN OR CTBROWSER_TEST_BACKTRACE_LIBRARY)
-  message(STATUS "ctbrowser: tests print a stack trace when they die")
-else()
-  message(STATUS "ctbrowser: no std::stacktrace here; a dying test says less")
-endif()
-
 # CPPTRACE, for the tests only. Almost every expensive bug in this project has
 # been the Windows-only kind, and the llvm-mingw build has no <stacktrace> at
 # all - so half the platforms had no trace when a test died. cpptrace supports
@@ -59,8 +32,8 @@ endif()
 # `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
 # derived from it is the BASENAME - the target, and more importantly the ctest
 # name. `ctest -R vm_` has to keep working: it is in docs/build.md's
-# command blocks and in what the ratchet tools pass through. So the suite gained
-# directories on 2026-08-09 and the test names did not change at all.
+# command blocks and in what the ratchet tools pass through.
+#
 # Where check.hpp, dom_probe.hpp, js_expect.hpp and the sanitizer suppression
 # files live. Test DATA and test SUPPORT are system-level, so they stay in
 # test/ and everything else points at them.
@@ -101,19 +74,11 @@ function(ctbrowser_test path)
   endif()
   target_link_libraries(ctbrowser-test-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})
-  # -g AND the backtrace library, so a test that dies without reporting a
-  # failure says WHERE. std::stacktrace names nothing without debug info, and
-  # libstdc++ puts its implementation in a separate archive. Tests are not
-  # shipped, so the size is free; both are probed rather than assumed, because
-  # the llvm-mingw cross build has <format> but no <stacktrace> at all.
+  # -g, so a test that dies without reporting a failure says WHERE: cpptrace
+  # names nothing without debug info. Tests are not shipped, so the size is free.
   target_compile_options(ctbrowser-test-${name} PRIVATE -g)
-  if(CTBROWSER_TEST_BACKTRACE_LIBRARY)
-    target_link_libraries(ctbrowser-test-${name} PRIVATE ${CTBROWSER_TEST_BACKTRACE_LIBRARY})
-  endif()
-  # ONE support directory for all three trees, named absolutely. It used to be
-  # "${CMAKE_CURRENT_SOURCE_DIR}/support", which was the same word for every
-  # test because they were all in one directory; they are not any more, and a
-  # unittest still says #include "check.hpp".
+  # ONE support directory for all three trees, named absolutely: a unittest
+  # says #include "check.hpp" from a different directory than a corpus test.
   target_include_directories(ctbrowser-test-${name} PRIVATE "${CTBROWSER_TEST_SUPPORT_DIR}")
   add_dependencies(ctbrowser-tests ctbrowser-test-${name})
   # The source root, so goldens and other project-relative paths resolve.
@@ -142,7 +107,7 @@ endfunction()
 # perf regression should be read, not silently failed. Build and run by hand.
 function(ctbrowser_bench path)
   get_filename_component(name "${path}" NAME_WE)
-  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${path}.cpp ${ARGN})
+  add_executable(ctbrowser-test-${name} EXCLUDE_FROM_ALL ${path}.cpp)
   target_link_libraries(ctbrowser-test-${name}
     PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})

@@ -14,7 +14,156 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-10
+## The baseline — 2026-09-10, late
+
+**491 of the 1,090 tests that ran, which is 45.0%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `62945aeb` on
+`ctbrowser-wpt` — browser gate 160/160 at that commit. The day started at
+369/1,090 = 33.9%.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 137 | 149 | 12 | 0 | 11 | 53 | 362 |
+| `dom/events` | 68 | 17 | 4 | 0 | 2 | 85 | 176 |
+| `html/dom` | 109 | 99 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 86 | 90 | 3 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 91 | 164 | 4 | 0 | 12 | 237 | 508 |
+| **total** | **491** | **519** | **33** | **0** | **47** | **542** | **1,632** |
+
+Subtests: **17,591 PASS, 8,455 FAIL, 72 NOTRUN, 34 TIMEOUT.**
+
+Against `d99ddf7b` (the night row below): +46 files, +1,078 passing
+subtests, two files PASS -> FAIL. Named from the PASS-set diff:
+
+- `dom/nodes` +5: `ChildNode-after`, `ChildNode-replaceWith`,
+  `Document-createTreeWalker`, `Node-cloneNode-svg`, `Node-lookupPrefix` —
+  the Node method surface following DOM 4.2 (`51aac4de`), the Document
+  binding's constructor/traversal/clone work (`d049b7d4`).
+- `dom/events` +2: `Event-dispatch-detached-input-and-change`,
+  `Event-dispatch-single-activation-behavior` — activation behaviour moved
+  into dispatch (`690e0036`).
+- `html/dom` +17: the nine `translate` files, `dataset-delete` and
+  `dataset-binding` (proxy `deleteProperty`/`getOwnPropertyDescriptor`,
+  `3e096c88`), `dynamic-getter`, `innertext-whitespace-pre-line`,
+  `multiple-text-nodes`, `getter-first-letter-marker-multicol` (innerText,
+  `fce07d5d`), `document.title-06`, `sanitize-regular`.
+- `css/cssom` +11: `CSS-namespace-object-class-string`, `CSSContainerRule`,
+  `CSSKeyframesRule`, `CSSStyleDeclaration-iterator`,
+  `cssom-fontfacerule-constructors`, `cssom-pagerule`,
+  `cssstyledeclaration-cssfontrule`, `escape`, `insertRule-charset-no-index`,
+  `invalid-pseudo-elements`, `rule-restrictions` — the CSSOM interface work
+  (`25d8a284`) and the selector parser refusing undefined pseudos
+  (`e161aa19`).
+- `css/css-values` +13: `position-computed`, `round-function`,
+  `clamp-partial-serialize`, `calc-numbers`, `clamp-length-computed`,
+  `exp-log-compute`, `sin-cos-tan-computed`, `acos-asin-atan-atan2-computed`,
+  `getComputedStyle-calc-mixed-units-001`, `calc-complex-unresolved-serialize`,
+  `attr-invalidation`, `attr-length-specified`, `attr-serialization` — the
+  math and `attr()` work (`2214ce24`) and number serialisation (`d611d333`).
+- **`css/css-values` −2, both one subtest and both from the calc() type
+  algebra in `2214ce24`**: `progress-invalid.html` — `progress(10px * 10px,
+  …)` on `opacity` must be refused and now computes to `calc(0)` (a
+  `<length>²` result is being accepted where the whole must be a number);
+  `typed_arithmetic_cycle.html` — a custom-property cycle through typed
+  arithmetic reads `20px` where `228px` is expected. Both are the next
+  agent's first two items in `lib/Style/css/calc/`.
+
+### What is standing in front of the most tests now
+
+From the agents' own reports over this run, with the file each names.
+
+| what | where | counted |
+|---|---|---:|
+| Node methods live on each WRAPPER, not on `Node.prototype` (`Node.prototype.insertBefore` is undefined), and the natives carry no `length` | `element/node_methods.cpp` `install_node_methods` / `method` lambda | 16 + 3 subtests in `dom/nodes`, and every `X.prototype.method.call` idiom |
+| no `DocumentType` / `ProcessingInstruction` / `CDATASection` node kinds | `include/ctbrowser/dom/node.hpp`, the tree builder | ~60 subtests + 3 whole-file HARNESS_ERRORs (`Node-contains`, `Node-compareDocumentPosition`, `Node-properties` die in `dom/common.js`) |
+| collection inside a turn — the seven `reflection-*.html` files die at the 4 GB cap because `collect_if_due` runs once per tick | `include/ctbrowser/script/vm.hpp` `safepoint()` — landed as `d0345272` and REVERTED: it turns `unit/p5_api` red (`loadBlob`'s result stops being `instanceof Blob`), i.e. the fetch -> `Response.blob()` path holds a heap value the root inventory cannot see | 7 TIMEOUTs, thousands of subtests |
+| `createElement("f:oo")` splits at the colon | `element/wrapper.cpp:171` | 15 subtests of `Document-createElement` |
+| a native cannot see that a throw crossed its `cx.call` — the TreeWalker filter re-entry case, and any binding that loops over callbacks | the VM; the events fence in `events/dispatch.cpp` is the pattern | `TreeWalker-acceptNode-filter` and its kin |
+| `@import` is consumed and dropped; a `<style>` appended to a shadow root has no `sheet` | `style/css/parser.cpp:187`, `stylesheets/` `sync_style_sheets` | 2 HARNESS_ERRORs + 3 files in `css/cssom` |
+| `font-family` unquoted serialisation, `counter()` canonicalisation, shorthand reconstruction in `cssText` | `lib/Style/css/properties` | the rest of `serialize-values` and the shorthand-* files |
+| transforms computing to `matrix()`; `lh`/`cap`/`cqw` units; `composite: add/accumulate` for animations | `lib/Style`, `bindings/animations.cpp` | 14 + ~20 + 2 files in `css/css-values` |
+| `javascript:` hrefs; `hashchange`; `<input type=image>` as a submit | `browser/actions.cpp` | the `<a>` rows of the activation tests |
+| Web Animations render nothing (the overlay is for the object model only); no `finish`/`cancel` events | `bindings/animations.cpp` | — |
+
+### And the two that were NOT measured
+
+`test262` was not re-run this session, although the VM changed in ways it
+scores: top-level block `let`/`const` scoping (`d99ddf7b`),
+`Object.prototype.__proto__` and the proxy traps (`552a4ba0`, `3e096c88`),
+`for-in` over a proxy (`e32599bf`), label chains (`65bb22ed`). The numbers in
+`docs/test262.md` are therefore older than the engine; the next session should
+run `ct262` before touching the VM again.
+
+## The baseline — 2026-09-10, night
+
+**445 of the 1,090 tests that ran, which is 40.8%**, and still not one crash.
+Same instrument, engine at commit `d99ddf7b` on `ctbrowser-wpt` — browser gate
+152/152 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 132 | 153 | 13 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 92 | 116 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 101 | 3 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **445** | **561** | **33** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,513 PASS, 9,113 FAIL, 72 NOTRUN, 40 TIMEOUT.**
+
+Against `8ca744a1` (the evening row): +13 files, +182 passing subtests, and
+TIMEOUT 43 -> 33. Named from the PASS-set diff: `html/dom` +10 is the whole
+of `render-blocking/` bar the IDL file that already passed —
+`parser-blocking-script`, `parser-inserted-{async,defer,module}-script`,
+`parser-inserted-{style-element,stylesheet-link}`,
+`script-inserted-{script,module-script,style-element,stylesheet-link}` —
+which is Paint Timing plus `load`/`error` at a sheet or script element
+(`1abf9798`), the `?pipe=` query dropped before the filesystem probe
+(`4e3f124c`), and the `blocking` token list (`cb6fa020`). `dom/nodes` +3 is
+`ChildNode-before`, `Text-wholeText` and `insert-adjacent` — the fragment
+serialisation and `textContent` on a text node (`74d61725`). Nothing went
+PASS -> FAIL. **FAIL subtests rose 8,218 -> 9,113 and NOTRUN fell 727 -> 72
+in the same run**: eight `dom/nodes` files that used to time out — the two
+`Document-characterSet-normalization` files among them — now run to the end
+under the top-level block-scoping fix (`d99ddf7b`) and report their
+failures instead of NOTRUN, which is the honest number.
+
+## The baseline — 2026-09-10, evening
+
+**432 of the 1,090 tests that ran, which is 39.6%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `8ca744a1` on
+`ctbrowser-wpt` — browser gate 151/151 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 129 | 148 | 21 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 82 | 126 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **432** | **564** | **43** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,331 PASS, 8,218 FAIL, 727 NOTRUN, 48 TIMEOUT.**
+
+Against `f830fbd3` (the morning row below): +10 files, +206 subtests. Named,
+because a PASS-set diff of the two JSON files says exactly which:
+`dom/events` +10 — `Event-dispatch-listener-order`, `Event-dispatch-throwing`,
+`EventTarget-add-listener-platform-object`, `EventTarget-dispatchEvent`,
+`synthetic-events-cancelable`, the four `webkit-*-event` files and
+`window-event-restored-after-throwing-onerror` — which is the events port
+(`4f3fdc50`), the listener fence actually compiling (`c282145e`), the
+shadow-aware dispatch path (`8ca744a1`) and `customElements` (`1e9a8275`,
+the platform-object test defines one). `dom/nodes` +1 `slotchange-events`
+(customElements), `html/dom` +1 `blocking-idl-attr` (`cb6fa020`).
+**`css/css-values` −2**: `interpolate-size-{max,min}-height-composition`
+went PASS → FAIL because `element.animate` now exists (`8606ed50`), so their
+Web Animations leg runs instead of being skipped as unsupported — they were
+passing by not testing, and composition (`add`/`accumulate`) is not
+implemented. The subtest count went up 95 in that suite all the same.
+
+## The baseline — 2026-09-10, morning
 
 **422 of the 1,090 tests that ran, which is 38.7%**, and still not one crash.
 Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`

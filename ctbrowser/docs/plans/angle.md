@@ -19,7 +19,7 @@ Published: `github.com/alexios-angel/angle`, release `ctbrowser-angle-25c80ccab4
 ## Stage 0, measured 2026-08-04
 
 Built from the fork at `alexios-angel/angle`, Vulkan back end only, on the
-devbox. The spike is `tools/angle/spike.cpp` and its recipe is beside it:
+devbox. The spike (`tools/angle/spike.cpp`, deleted 2026-09-10; history has it and its recipe):
 surfaceless EGL, one full-screen triangle with a fragment shader that does real
 per-pixel work, read back into memory the way a canvas would need.
 

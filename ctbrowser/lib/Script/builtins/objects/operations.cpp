@@ -27,17 +27,10 @@ namespace {
 // property whether or not it was one.
 [[nodiscard]] object_object * descriptor_object(context & cx,
                                                 const context::property_descriptor & from) {
-    object_object * out = detail::new_table(cx);
-    if (from.is_accessor()) {
-        out->set("get", from.getter);
-        out->set("set", from.setter);
-    } else {
-        out->set("value", from.held);
-        out->set("writable", value::boolean(from.writable));
-    }
-    out->set("enumerable", value::boolean(from.enumerable));
-    out->set("configurable", value::boolean(from.configurable));
-    return out;
+    // A descriptor own_property produced is COMPLETE - every `has_` bit of its
+    // kind is set - so the context's FromPropertyDescriptor writes exactly the
+    // four fields this function used to.
+    return static_cast<object_object *>(cx.from_property_descriptor(from).as_heap());
 }
 
 // EVERY OWN KEY OF ANY VALUE, including the synthesised ones. An array

@@ -25,17 +25,13 @@
 // so "a var() inside an argument list" and "a var() that expands to a comma list"
 // need no special cases.
 //
-// A RULE IS A DECLARATION BLOCK, not a (selector x declaration) pair. That is the
-// fix for the old front end, which compiled a selector once per DECLARATION:
-// Bootstrap produced ~6,289 compiled selectors instead of ~2,965, and retained
-// ~650 dead ones for rules it then rejected, because the reject happened after the
-// push.
+// A RULE IS A DECLARATION BLOCK, not a (selector x declaration) pair, so a
+// selector is compiled once per selector and never once per declaration.
 //
 // EVERYTHING IS OFFSETS INTO ONE POOL. `stylesheet` owns the pool for its whole
 // life and is never reallocated after parsing, so every string_view into it is
 // stable - which is the licence for a resolved declaration's value to be a view
-// rather than a std::string. Bootstrap used to cost ~6,289 string constructions
-// in add_sheet alone.
+// rather than a std::string.
 
 namespace ctbrowser::style::css {
 
@@ -101,10 +97,24 @@ struct font_face {
     std::uint32_t declaration_count = 0;
 };
 
+// One `@namespace` rule. An empty prefix is the DEFAULT namespace, which is not
+// the same as a namespace whose prefix is the empty string - CSS has no such thing.
+struct namespace_declaration {
+    std::string prefix;
+    std::string uri;
+};
+
 struct stylesheet {
     // §3.3-preprocessed input plus decoded escapes. Owns every byte every view
     // below points into.
     std::string pool;
+    // The `@namespace` rules seen so far, which is what decides whether `ns|e`
+    // is a selector: Selectors 4 §3.2 makes an undeclared prefix a syntax error.
+    // `prefixes_checked` is false only for a caller of `parse_selector_text` that
+    // offered no declarations at all - a prefix is then taken on trust, because
+    // refusing it would drop a rule the sheet may well have declared.
+    std::vector<namespace_declaration> namespaces;
+    bool prefixes_checked = true;
     // How much of the pool is the INPUT. Beyond it is decoded escape text, which
     // appears nowhere in the source - so a run of tokens is a contiguous source
     // substring only when every one of them starts below this. That is the test

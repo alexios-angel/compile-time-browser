@@ -1,13 +1,6 @@
 // dom_bindings - what the engine pushes in: focus and viewport observations,
 // the key, wheel and mouse events it synthesises, uncaught-exception reports,
 // and the propagation path an event travels.
-//
-// One of three files carved out of a 1,647-line bindings/events.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -146,6 +139,49 @@ bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
     return dispatch_event("wheel", target, event);
 }
 
+value dom_bindings::make_mouse_event(context & cx, std::string_view type, node_id target,
+                                     const input_event & input, bool pointer) {
+    value event = make_event(cx, type, target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    // A MouseEvent, not a plain Event: `instanceof MouseEvent` is how a page
+    // tells the two apart, and it is how dispatch decides whether a `click` has
+    // activation behaviour at all - dom/events/Event-dispatch-click.html's
+    // "basic with wrong event class" sends a `new Event("click")` at a checkbox
+    // and expects it NOT to toggle.
+    const value prototype = pointer ? pointer_event_prototype_ : mouse_event_prototype_;
+    if (prototype.is_object()) { object->prototype = prototype; }
+    // UI Events 3.1: the mouse events a user agent dispatches are composed.
+    object->set("composed", value::boolean(true));
+    object->set("clientX", value::number(input.x));
+    object->set("clientY", value::number(input.y));
+    object->set("pageX", value::number(input.x));
+    object->set("pageY", value::number(input.y));
+    object->set("offsetX", value::number(input.x));
+    object->set("offsetY", value::number(input.y));
+    // SDL numbers buttons from 1; the DOM numbers them from 0, with 2 for
+    // the right button rather than 3.
+    const int dom_button = input.button == 3 ? 2 : (input.button > 0 ? input.button - 1 : 0);
+    object->set("button", value::number(dom_button));
+    // `buttons` is a MASK of what is held, and it is not the same question
+    // as `button`, which names the one that changed. p5 reads it to notice
+    // a release it missed - `mouseIsPressed && e.buttons === 0` - so a
+    // missing one leaves the flag stuck on forever.
+    const bool down = type == "mousedown" || type == "pointerdown";
+    object->set("buttons", value::number(down ? 1 << dom_button : 0));
+    object->set("shiftKey", value::boolean(input.shift));
+    object->set("ctrlKey", value::boolean(input.ctrl));
+    if (pointer) {
+        // One pointer, because there is one mouse. A page keyed on
+        // pointerId - p5 keeps a map of active ones - needs it to be
+        // stable, and needs the same id on down and up or the entry leaks.
+        object->set("pointerId", value::number(1));
+        object->set("pointerType", cx.string("mouse"));
+        object->set("isPrimary", value::boolean(true));
+        object->set("pressure", value::number(down ? 0.5 : 0));
+    }
+    return event;
+}
+
 bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
                                   const input_event & input) {
     if (cx_ == nullptr) { return false; }
@@ -161,38 +197,6 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
     // Both are fired, pointer first, which is the order a browser uses - a page
     // written against either one works, and one written against both sees them
     // in the right sequence.
-    const auto build = [&](std::string_view kind, bool pointer) {
-        value event = make_event(*cx_, kind, target);
-        auto * object = static_cast<script::object_object *>(event.as_heap());
-        object->set("clientX", value::number(input.x));
-        object->set("clientY", value::number(input.y));
-        object->set("pageX", value::number(input.x));
-        object->set("pageY", value::number(input.y));
-        object->set("offsetX", value::number(input.x));
-        object->set("offsetY", value::number(input.y));
-        // SDL numbers buttons from 1; the DOM numbers them from 0, with 2 for
-        // the right button rather than 3.
-        const int dom_button = input.button == 3 ? 2 : (input.button > 0 ? input.button - 1 : 0);
-        object->set("button", value::number(dom_button));
-        // `buttons` is a MASK of what is held, and it is not the same question
-        // as `button`, which names the one that changed. p5 reads it to notice
-        // a release it missed - `mouseIsPressed && e.buttons === 0` - so a
-        // missing one leaves the flag stuck on forever.
-        const bool down = kind == "mousedown" || kind == "pointerdown";
-        object->set("buttons", value::number(down ? 1 << dom_button : 0));
-        object->set("shiftKey", value::boolean(input.shift));
-        object->set("ctrlKey", value::boolean(input.ctrl));
-        if (pointer) {
-            // One pointer, because there is one mouse. A page keyed on
-            // pointerId - p5 keeps a map of active ones - needs it to be
-            // stable, and needs the same id on down and up or the entry leaks.
-            object->set("pointerId", value::number(1));
-            object->set("pointerType", cx_->string("mouse"));
-            object->set("isPrimary", value::boolean(true));
-            object->set("pressure", value::number(down ? 0.5 : 0));
-        }
-        return event;
-    };
     std::string_view pointer_type;
     if (type == "mousedown") {
         pointer_type = "pointerdown";
@@ -203,9 +207,62 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
     }
     bool stopped = false;
     if (!pointer_type.empty()) {
-        stopped = dispatch_event(pointer_type, target, build(pointer_type, true));
+        stopped = dispatch_event(pointer_type, target,
+                                 make_mouse_event(*cx_, pointer_type, target, input, true));
     }
-    return dispatch_event(type, target, build(type, false)) || stopped;
+    return dispatch_event(type, target, make_mouse_event(*cx_, type, target, input, false)) ||
+           stopped;
+}
+
+// `element.click()` - CLICKING WITHOUT A MOUSE, HTML 3.2.6.
+//
+// It was absent, and that is how p5's save() reaches the outside world:
+// downloadFile makes an <a href download>, calls click() on it, and revokes the
+// URL on the next line. So the whole export path was one missing method wide,
+// and the failure was that nothing happened - no error, no file.
+//
+// It used to dispatch a plain Event and then call the browser's activate hook
+// itself - so a checkbox's listeners saw the OLD checkedness, a detached
+// checkbox fired `change`, and `dispatchEvent(new MouseEvent("click"))` toggled
+// nothing at all. Now it is one synthetic MouseEvent down the path an engine
+// click takes, and dispatch_to owns the activation behaviour for both.
+//
+// A DISABLED FORM CONTROL GETS NOTHING - not even the event. That is step 1 of
+// the method and it is the difference between `click()` and `dispatchEvent`:
+// the latter reaches a disabled checkbox and toggles it, which
+// Event-dispatch-click.html asserts for both. `disabled` here is the control's
+// own attribute or an enclosing <fieldset>'s, as the browser's is_disabled says.
+bool dom_bindings::click(node_id target) {
+    if (cx_ == nullptr || !target || doc_ == nullptr) { return false; }
+    {
+        const auto txn = doc_->read();
+        const std::string_view tag = atoms_->text(txn.tag(target).value_or(atom{}));
+        if (control_kind_of(tag, txn.attribute_value(target, atoms_->intern("type"))) !=
+            control_kind::none) {
+            const atom disabled = atoms_->intern("disabled");
+            const atom fieldset = atoms_->intern_lower("fieldset");
+            for (node_id at = target; at; at = txn.parent(at)) {
+                if ((at == target || txn.tag(at).value_or(atom{}) == fieldset) &&
+                    txn.has_attribute(at, disabled)) {
+                    return false;
+                }
+            }
+        }
+    }
+    value event = make_mouse_event(*cx_, "click", target, input_event{}, false);
+    // "with the not trusted flag set" - it came from script, whoever asked.
+    static_cast<script::object_object *>(event.as_heap())
+        ->set(std::string{trusted_property}, value::boolean(false));
+    return dispatch_to(event, path_step{target, listen_on::node});
+}
+
+bool dom_bindings::is_connected(node_id target) const {
+    if (!target || doc_ == nullptr) { return false; }
+    const auto txn = doc_->read();
+    const node_id top = root_of_tree(txn, target, true);
+    // The same test propagation_path makes: a parsed page's root is the <html>
+    // element, and a created document still has its Document node.
+    return top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
 }
 
 // WHERE AN EVENT GOES, and it is not the node chain alone.

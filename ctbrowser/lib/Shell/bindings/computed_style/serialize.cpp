@@ -1,13 +1,6 @@
 // dom_bindings - how a computed value is written down: numbers as CSSOM's
 // shortest round-tripping decimal, colours in the one form both engines
 // normalise to, font-family lists with CSSOM's quoting, and keywords folded.
-//
-// One of three files carved out of a 1,326-line bindings/computed_style.cpp
-// on 2026-09-08. The member functions belong to the one class declared in
-// include/ctbrowser/shell/bindings.hpp; the serialisation helpers more than
-// one file needs are declared in internal.hpp beside this, with external
-// linkage in ctbrowser::shell::detail, and internal.hpp carries the note on
-// where a computed value comes from. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -35,16 +28,7 @@ namespace {
 // out of layout arithmetic go through it. tools/check/css-parity.py quantises
 // BOTH sides to 1/64 itself before comparing (EPSILON_PX), so nothing in the
 // parity report depends on this rounding here.
-[[nodiscard]] std::string number_text(float value) {
-    if (!std::isfinite(value)) { return "0"; }
-    std::array<char, 64> buffer{};
-    const std::to_chars_result written = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
-                                                       value, std::chars_format::fixed);
-    if (written.ec != std::errc{}) { return "0"; }
-    std::string out{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
-    if (out.empty() || out == "-0") { return "0"; }
-    return out;
-}
+// (Defined in `detail` below, beside the helpers that build on it.)
 
 // --- A FONT FAMILY IS NOT A KEYWORD --------------------------------------
 //
@@ -124,6 +108,17 @@ namespace {
 } // namespace
 
 namespace detail {
+
+[[nodiscard]] std::string number_text(float value) {
+    if (!std::isfinite(value)) { return "0"; }
+    std::array<char, 64> buffer{};
+    const std::to_chars_result written = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                                                       value, std::chars_format::fixed);
+    if (written.ec != std::errc{}) { return "0"; }
+    std::string out{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
+    if (out.empty() || out == "-0") { return "0"; }
+    return out;
+}
 
 // `thin` / `medium` / `thick` are 1, 3 and 5 CSS pixels - the figures every
 // engine uses, and the reason the keyword has to become a number at all is that

@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
@@ -178,6 +179,15 @@ public:
                                                        std::string_view local);
     std::expected<void, dom_error> set_text(node_id, std::string_view value);
 
+    // A <template>'s CONTENTS, HTML 4.12.3: the DocumentFragment its children
+    // are parsed into, which is NOT a child of the element - a document query
+    // must not see them, a script inside one must not run, and nothing lays
+    // them out. The pairing lives here rather than on `node` because a fourth
+    // field on the most replicated object in the engine is not free and there
+    // are a handful of templates in a page. Empty when the element has none.
+    [[nodiscard]] node_id template_content(node_id element) const;
+    void set_template_content(node_id element, node_id fragment);
+
     // Destroy the storage of nodes removed and no longer observable. Callers
     // drive this (typically once per frame) rather than it happening inside a
     // write, so the cost never lands on an interactive mutation.
@@ -197,6 +207,7 @@ public:
         }
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
+        [[nodiscard]] node_id create_fragment() { return doc_->create_fragment(); }
         void append(node_id parent, node_id child);
         // Appends, without looking for a duplicate: a start tag's attribute list
         // has already been deduplicated by the tokenizer and this runs once per
@@ -301,14 +312,15 @@ private:
     mutable slab<node, node_tag> nodes_{domain_};
     mutable std::array<std::mutex, stripe_count> stripes_;
     std::mutex structure_; // serializes tree-SHAPE changes; see the policy note
+    // (element, contents fragment) pairs - see template_content. A vector
+    // because a page holds a few and a lookup happens once per `.content`
+    // read. ONE mutex for the whole vector rather than the element's stripe:
+    // two templates are on two stripes, and an emplace_back under either of
+    // them would race the other's walk.
+    mutable std::mutex templates_;
+    std::vector<std::pair<node_id, node_id>> template_contents_;
     node_id root_{};
     std::atomic<std::uint64_t> version_{1};
 };
-
-// ===================== read_txn ==========================================
-
-// ===================== document ==========================================
-
-// --- builder: in-place, pre-publication ---------------------------------
 
 } // namespace ctbrowser

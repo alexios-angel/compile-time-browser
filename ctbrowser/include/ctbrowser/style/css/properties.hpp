@@ -4,22 +4,16 @@
 #include <string>
 #include <string_view>
 
-// WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES.
-//
-// This is the piece the CSSOM has never had. `el.style` is a string store: it
-// records whatever it is given and hands it back unchanged, so a value is never
-// validated and never re-serialised, and `getComputedStyle` publishes a handful
-// of names picked by what happened to be declared. Measured in
-// `docs/css-conformance.md`, that is the whole of `test_invalid_value`
-// (`expected "" but got "round()"`) and the canonical-serialisation half of
-// `test_valid_value` - and it is why `CSS.supports` cannot exist at all.
+// WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES - what
+// `el.style` validates and re-serialises against, what `getComputedStyle` lists,
+// and what `CSS.supports` answers from.
 //
 // THE TABLE IS DELIBERATELY CONSERVATIVE, and that is the design rather than an
 // apology. Three of the vendored corpora and every render golden write through
 // `el.style`, so a syntax that is WRONG about a value they use turns a render
 // into a blank box. So:
 //
-//   * a property NOT in the table is accepted verbatim, exactly as today;
+//   * a property NOT in the table is accepted verbatim;
 //   * a property in the table as `freeform` is known to exist - which is what
 //     `CSS.supports(name)` and `name in getComputedStyle(e)` ask - but its
 //     grammar is not modelled and its values are accepted verbatim;
@@ -32,8 +26,7 @@
 // IT LIVES IN style/ RATHER THAN IN THE SHELL because it is a fact about CSS
 // and there are three consumers: `el.style` (the CSSOM's specified values),
 // `getComputedStyle` (which needs the name list and the initial values), and
-// `CSS.supports`. Two of the three are in `lib/Shell/`, which is what made the
-// spelling conversion below get written twice before this existed.
+// `CSS.supports`. Two of the three are in `lib/Shell/`.
 
 namespace ctbrowser::style::css {
 
@@ -73,8 +66,7 @@ struct property_syntax {
     value_kind kind = value_kind::freeform;
     std::string_view keywords;
     // The CSS initial value, ALREADY SERIALISED. `getComputedStyle` answers it
-    // for a property nothing declared, which is most of what `undefined` meant
-    // before this table existed.
+    // for a property nothing declared.
     std::string_view initial;
     bool inherited = false;
     // A `<length>` or `<number>` this property may not take negative. `width:
@@ -131,6 +123,22 @@ struct value_check {
 // declaration parsed out of a `style` attribute or a stylesheet.
 [[nodiscard]] value_check check_declaration(std::string_view property, std::string_view value,
                                             bool allow_important = false);
+
+// THE COMPUTED VALUE OF A `<position>`. CSS Values 5 §position: the keywords
+// compute to percentages - `center` is `50%`, `right 30%` is `70%`, `right 20px`
+// is `calc(100% - 20px)` - and a single component gets `50%` for the half it
+// left unsaid, so `10% center` and `10%` both compute to `10% 50%`. The four
+// flow-relative keywords resolve against the WRITING MODE and DIRECTION the
+// caller supplies, which is why they are parameters: `x-start` is `left` in a
+// horizontal left-to-right box and `right` in a right-to-left one.
+//
+// A math function is a component like any other and is kept as written -
+// `calc(0% + 320px)` is `calc(0% + 320px) 50%` - and text that is not a
+// position this reader can resolve comes back EMPTY, so a caller keeps what it
+// had rather than guessing.
+[[nodiscard]] std::string computed_position(std::string_view specified,
+                                            std::string_view writing_mode,
+                                            std::string_view direction);
 
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.

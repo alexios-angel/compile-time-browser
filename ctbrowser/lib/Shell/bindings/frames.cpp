@@ -46,6 +46,8 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include "events/internal.hpp"
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -277,12 +279,18 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
 // `load` at the frame, or `error` when the src resolved to no bytes. It does
 // not bubble - an iframe's load event is fired at the element and stops there -
 // which is why this is `fire_at` with `capturing` false and not `dispatch`.
+// A REAL Event rather than a bare object, since a `<link>`, `<style>` and
+// `<script>` announce through here too (announce_load): `timeStamp` is what a
+// page compares a paint entry against.
 void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
-    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
-    event->set("type", cx.string(waiting.ok ? "load" : "error"));
-    event->set("target", wrap(cx, waiting.id));
-    fire_at(path_step{waiting.id, listen_on::node}, waiting.ok ? "load" : "error",
-            value::object(event), false);
+    const std::string_view type = waiting.ok ? "load" : "error";
+    const value event = make_event_object(cx, type, false, false);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("target", wrap(cx, waiting.id));
+    // The engine dispatched it, so `isTrusted` is true - as make_event says.
+    object->set(std::string{detail::trusted_property}, value::boolean(true));
+    object->set(std::string{detail::initialised_property}, value::boolean(true));
+    fire_at(path_step{waiting.id, listen_on::node}, type, event, false);
 }
 
 } // namespace ctbrowser::shell

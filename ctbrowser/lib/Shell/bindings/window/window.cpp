@@ -1,14 +1,7 @@
 // dom_bindings - install_window: the window object, the globals it carries,
 // and the proxy that makes it the global object.
-//
-// One of two files carved out of a 1,106-line bindings/window.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. Both are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; nothing is shared between them but
-// the includes, which internal.hpp carries. Nothing about the public header
-// changed.
 
-#include "internal.hpp"
+#include <ctbrowser/shell/bindings.hpp>
 
 namespace ctbrowser::shell {
 
@@ -702,10 +695,7 @@ void dom_bindings::install_window(context & cx) {
         cx.define_global("screen", value::object(screen));
     }
 
-    auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
-    performance->set(
-        "now", value::object(cx.allocate<script::native_object>(
-                   "now", [this](context &, std::span<value>) { return value::number(now_ms_); })));
+    script::object_object * performance = install_performance(cx);
     window->set("performance", value::object(performance));
     window_ = value::object(window);
 

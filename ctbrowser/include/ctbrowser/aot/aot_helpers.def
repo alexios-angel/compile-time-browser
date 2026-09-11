@@ -667,12 +667,12 @@ CT_AOT_HELPER(/* name */ ct_aot_upvalue_cell, /* ret */ uint64_t,
  * into proto->names, NOT constants (bytecode.hpp:52 gets this wrong);
  * passing text sidesteps the disagreement. THE ABI MUST FORBID NOW: no
  * `uint64_t hash` parameter so ctcompile can bake the hash in. string_hash
- * is boost::hash over a string_view and containers.hpp:130-133 says of
+ * is boost::hash over a string_view and containers.hpp:81-85 says of
  * exactly this, 'Using anything else here is a lookup that silently never
  * matches' - a hash baked by a different Boost version is not a wrong
  * answer, it is a global that is permanently undefined.
  * DELEGATES TO: context::globals_ (string_flat_map<value>, vm.hpp:1043;
- *   containers.hpp:126) - run_loop.cpp:225-231.
+ *   containers.hpp:79) - run_loop.cpp:225-231.
  * FAILURE: None, and the absence is load-bearing: an undeclared global does
  *   NOT throw ReferenceError, it silently yields undefined. `foo` and
  *   `typeof foo` are the same instruction, and feature detection written
@@ -1427,7 +1427,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_delete_index, /* opcode */ delete_index)
  * and by-value-in/result-out removes the ordering constraint entirely. TWO
  * ADDITIONS. (1) THE ARRAY ARM: an array source yields "0".."n-1" as heap
  * strings and NOT "length", which is why `for (k in arr)` does not see it.
- * (2) SYMBOL FILTERING: each_own_string_key is not each_own_key - it drops
+ * (2) SYMBOL FILTERING: each_own_enumerable_key is not each_own_key - it drops
  * every key beginning with the engine's `@@sym:` spelling, and the two
  * walks exist precisely because Object.assign and Reflect.ownKeys keep the
  * unfiltered one, so the extracted member must take the FILTERED walk or
@@ -1437,7 +1437,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_delete_index, /* opcode */ delete_index)
  * reorder. The unrooted accumulator hazard is this helper's own to fix, not
  * Phase 4's - see the GC note.
  * DELEGATES TO: run_loop.cpp op::own_keys inline +
- *   object_object::each_own_string_key + context::make_array +
+ *   object_object::each_own_enumerable_key + context::make_array +
  *   context::string - extract as context::own_string_keys.
  * FAILURE: RAISE TIER ONLY - returns a well-formed array even after the
  *   ceiling fires; poll ct_aot_failed at back-edges. */

@@ -106,7 +106,16 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // local path below exactly as a function body's would. A classic
         // script's become globals, which is what lets two <script> tags see
         // each other.
-        if (frames_.size() == 1 && !module_scope_) {
+        // ONLY AT THE SCRIPT'S OWN SCOPE, unless it is a `var`. A `let` or
+        // `const` inside a block at the top level is BLOCK-scoped, and
+        // sending it to set_global too gave a loop body ONE binding: every
+        // closure `for (const id of ids) { const el = f(id); fns.push(() =>
+        // el); }` made read the last iteration's `el` through get_global.
+        // The local path below boxes it and makes a fresh cell per
+        // iteration, exactly as it already did inside a function. `var` is
+        // function-scoped, so at any depth it is still the script's.
+        if (frames_.size() == 1 && !module_scope_ &&
+            (n.text == "var" || fn().scope_marks.size() <= 1)) {
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
                 const std::uint32_t mark = reg_mark();

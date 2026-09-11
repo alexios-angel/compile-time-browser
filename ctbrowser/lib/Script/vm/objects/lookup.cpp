@@ -101,10 +101,7 @@ value context::lookup_property(value target, const std::string & name) {
                       ? static_cast<object_object *>(obj->prototype.as_heap())
                       : nullptr;
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(key)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -149,10 +146,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::array)) {
             if (value * found = table->find(name)) { return *found; }
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_string()) {
         auto * str = static_cast<string_object *>(target.as_heap());
@@ -160,10 +154,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::string)) {
             if (value * found = table->find(name)) { return *found; }
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     // A BigInt is a primitive with methods, exactly as a number is - and it
     // reaches its prototype the same way, because it has no own properties for
@@ -173,10 +164,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::bigint)) {
             if (value * found = table->find(name)) { return *found; }
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
@@ -194,10 +182,7 @@ value context::lookup_property(value target, const std::string & name) {
         // JavaScript actually has" - which was true of arrays and of nothing
         // else. The regression test asserted the string case on the assumption
         // it already worked, and it did not.
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     // A boolean is a value with methods too. `flag.toString()` is what a
     // template literal and a string concatenation both do underneath, and code
@@ -206,10 +191,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::boolean)) {
             if (value * found = table->find(name)) { return *found; }
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
@@ -257,10 +239,7 @@ value context::lookup_property(value target, const std::string & name) {
         // `f.propertyIsEnumerable` were undefined on every function, which is
         // the same gap numbers, booleans and strings had until they were fixed
         // and functions were left out of.
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::symbol)) {
         auto * sym = static_cast<symbol_object *>(target.as_heap());
@@ -321,9 +300,24 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
         }
-        if (object_object * table = prototype(proto_kind::object)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
+        return from_object_prototype(target, name);
+    }
+    return value::undefined();
+}
+
+// THE IMPLICIT Object.prototype, for a value whose own chain does not link to
+// it explicitly - which is every plain object, array, primitive and function.
+// A data member was found here before; an ACCESSOR was not, so
+// `Object.prototype.__proto__` (B.2.2.1) was invisible to `({}).__proto__` and
+// visible to an object whose chain happened to reach the table by hand. The
+// getter runs with the ORIGINAL receiver, as a getter anywhere on a chain does.
+value context::from_object_prototype(value receiver, const std::string & name) {
+    object_object * table = prototype(proto_kind::object);
+    if (table == nullptr) { return value::undefined(); }
+    if (value * found = table->find(name)) { return *found; }
+    if (accessor_entry * entry = table->find_accessor(name)) {
+        return entry->getter.is_callable() ? call(entry->getter, std::span<const value>{}, receiver)
+                                           : value::undefined();
     }
     return value::undefined();
 }

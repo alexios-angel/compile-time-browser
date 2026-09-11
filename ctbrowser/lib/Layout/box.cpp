@@ -170,12 +170,6 @@ side_lengths box_builder::parse_sides(std::string_view shorthand) {
     return out;
 }
 
-std::string_view box_builder::trimmed(std::string_view v) {
-    const std::size_t b = v.find_first_not_of(" \t\n\r");
-    if (b == std::string_view::npos) { return {}; }
-    return v.substr(b, v.find_last_not_of(" \t\n\r") - b + 1);
-}
-
 std::string box_builder::collapse_whitespace(std::string_view text) {
     const auto is_space = [](char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';

@@ -2,7 +2,7 @@
 
 `include/ctbrowser/raster/` — `draw.hpp`, `surface.hpp` and `tile.hpp` at the
 top; `backend/` holds `backend.hpp`, `software.hpp`, `renderer.hpp`,
-`compositor.hpp` and `pipeline.hpp`; `text/` holds `ttf.hpp` (SDL3_ttf) and
+`compositor.hpp`; `text/` holds `ttf.hpp` (SDL3_ttf) and
 `font8x8.hpp`, the built-in bitmap fallback the goldens are rendered with.
 
 ## FONTS: real ones (stage 6, 2026-07-25)

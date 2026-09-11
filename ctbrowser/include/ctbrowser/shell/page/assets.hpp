@@ -49,11 +49,10 @@ public:
     [[nodiscard]] bool contains(std::string_view name) const { return !find(name).empty(); }
 
     // Where a relative path is resolved from when the registry misses. The
-    // probe order is the previous engine's: the working directory, then here, then two levels
-    // up - which is what makes `assets/sprites.bmp` resolve both from a source
+    // probe order: the working directory, then here, then two levels up -
+    // which is what makes `assets/sprites.bmp` resolve both from a source
     // checkout and from a build directory beside it.
     void set_base_path(std::filesystem::path base) { base_ = std::move(base); }
-    [[nodiscard]] const std::filesystem::path & base_path() const { return base_; }
 
     // WHAT A LEADING `/` MEANS. Empty by default, and then it means what it has
     // always meant here: a path from the root of this filesystem.
@@ -68,7 +67,7 @@ public:
     // is exactly the document root a server would have been serving.
     //
     // NOT a general URL feature and deliberately not in the URL parser: it is a
-    // property of where the bytes come from, the same question base_path
+    // property of where the bytes come from, the same question the base path
     // answers for a relative name. tools/wpt/run-wpt.py sets it through
     // CTBROWSER_DOC_ROOT; nothing else in the tree sets it at all.
     void set_document_root(std::filesystem::path root) { document_root_ = std::move(root); }
@@ -134,6 +133,12 @@ public:
             return {};
         }
         if (sealed_) { return {}; }
+        // A FILE HAS NO QUERY AND NO FRAGMENT. `support/x.js?pipe=trickle(d1)`
+        // names x.js in every browser once the URL is a file: one - the query
+        // is the server's business and there is no server here - so the
+        // filesystem probe drops both. The registry lookup above keeps the
+        // literal reference, which is what a packager recorded.
+        name = name.substr(0, std::min(name.find('?'), name.find('#')));
         const std::filesystem::path relative{name};
         if (relative.is_absolute()) {
             // The document root FIRST when there is one, and the filesystem

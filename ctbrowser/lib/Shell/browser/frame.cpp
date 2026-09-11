@@ -1,11 +1,5 @@
 // browser - the frame: the page clock and tick(), the four stages a frame
 // re-runs according to what changed, resize, the viewport and scrolling.
-//
-// One of ten files carved out of a 2,871-line Shell/browser.cpp on 2026-09-08.
-// All are member functions of one class declared in
-// include/ctbrowser/shell/browser.hpp; internal.hpp beside this carries the
-// includes browser.cpp had, so every file sees exactly what it saw. Nothing
-// about the public header changed.
 
 #include "internal.hpp"
 
@@ -60,7 +54,7 @@ std::size_t browser::tick(double elapsed_ms) {
         at = autoscroll_now();
     }
     // Only the CARET changed, so only the paint is stale - a blink must not
-    // re-run layout, which is what made the previous engine lay the page out every frame.
+    // re-run layout.
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
     // `DOMContentLoaded` AND THEN `load`, in that order, once per document.
     // Both go to the window - dispatch() with an empty node is the window and
@@ -161,7 +155,8 @@ rect browser::viewport() const noexcept {
 std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * pool) {
     // A value the page assigned OUTSIDE an event handler - at the top of the
     // script, say - reaches the control here. Dispatch covers the rest.
-    if (bindings_ && sync_controls()) { mark(dirty::paint); }
+    // Anything a script wrote into `value`/`checked` reaches the controls here.
+    if (bindings_ && bindings_->refresh_wrappers()) { mark(dirty::paint); }
     // Anything drawn into a canvas since the last frame makes its tiles
     // stale. Asking here rather than being told keeps the bindings from
     // having to know what a tile is.
@@ -202,8 +197,12 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     }
     dirty_ = dirty::nothing;
     ++frames_;
-    auto drawn =
-        ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
+    // Paint Timing's first-paint: the first rendering update this document
+    // has had. Idempotent, and the bindings are rebuilt per document, so a
+    // navigation gets its own.
+    if (bindings_) { bindings_->record_first_paint(); }
+    auto drawn = ctbrowser::raster::draw(renderer_, layers_, pool,
+                                         ctbrowser::raster::default_tile_extent, viewport());
     timing_.raster_ms = ms_since(at);
     return drawn;
 }

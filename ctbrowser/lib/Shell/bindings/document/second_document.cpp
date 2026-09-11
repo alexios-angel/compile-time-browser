@@ -1,11 +1,4 @@
 // dom_bindings - a second Document: createHTMLDocument and createDocument.
-//
-// One of eight files carved out of a 3,071-line bindings/document.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the name productions every one of
-// them needs are in internal.hpp beside this. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 
@@ -26,7 +19,7 @@ using namespace detail;
 //
 // THIS IS A DIFFERENT ONE: a second Document is a second `dom_bindings` over
 // its own tree, in the same realm. Every key the note listed - `wrappers_`,
-// `namespaces_`, `mirrors_`, `webgl_objects_` - is already a member, so a
+// `namespaces_`, `webgl_objects_` - is already a member, so a
 // second instance simply has a second set of them and two nodes with the same
 // slot cannot collide. `doc_` stays a member because it is now true: it IS the
 // document these bindings are about.
@@ -70,6 +63,7 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
+    made.primary_ = this;
     made.cx_ = &cx;
     // BEFORE the adoption, and this is not belt and braces. The primary builds
     // its interface table lazily, on the first `wrap()` - so a page whose very
@@ -101,8 +95,14 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 // node - `document.doctype` is null and `compatMode` is read off a flag - so
 // storing one would mean inventing a node kind for it. What that costs is one
 // subtest per file rather than the file.
+//
+// ALSO `new Document()`, DOM 4.5: a document with no browsing context, no
+// children, content type application/xml and URL about:blank - which is
+// `createDocument(null, "")` under the Document interface rather than
+// XMLDocument. `Document-constructor.html` asserts the difference, and
+// dom/common.js opens with one.
 value dom_bindings::make_xml_document(context & cx, std::string_view ns,
-                                      std::string_view qualified_name) {
+                                      std::string_view qualified_name, bool as_xml_document) {
     document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     // IT IS AN XML DOCUMENT, and saying so is what makes `nodeName` keep its
     // case and `compatMode` answer CSS1Compat. `createDocument` never parses
@@ -113,6 +113,7 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
+    made.primary_ = this;
     made.cx_ = &cx;
     ensure_dom_interfaces(cx); // see make_html_document
     made.adopt_interfaces_of(*this);
@@ -138,7 +139,33 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
         }
     }
     made.install_document(cx);
+    // AFTER install_document, which linked it to Document.prototype.
+    if (as_xml_document) {
+        if (const value proto = interface_prototype("XMLDocument"); proto.is_object()) {
+            made.document_object()->prototype = proto;
+        }
+    }
     return made.document_;
+}
+
+dom_bindings * dom_bindings::owner_of(value v) {
+    if (handle_of(v)) { return this; }
+    dom_bindings * top = primary_ == nullptr ? this : primary_;
+    if (top != this && top->handle_of(v)) { return top; }
+    for (const auto & made : top->secondary_documents_) {
+        if (made.get() != this && made->handle_of(v)) { return made.get(); }
+    }
+    return nullptr;
+}
+
+bool dom_bindings::is_a_document(value v) const {
+    if (is_the_document(v)) { return true; }
+    const dom_bindings * top = primary_ == nullptr ? this : primary_;
+    if (top->is_the_document(v)) { return true; }
+    for (const auto & made : top->secondary_documents_) {
+        if (made->is_the_document(v)) { return true; }
+    }
+    return false;
 }
 
 } // namespace ctbrowser::shell

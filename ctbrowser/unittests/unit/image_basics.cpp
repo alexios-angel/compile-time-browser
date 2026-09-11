@@ -353,8 +353,7 @@ void test_encode_png() {
     // reject and which would look like a corrupt file rather than no file.
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
 
-    // Written for tools/check/check-png.py, which is what proves the deflate stream
-    // and both checksums are right rather than merely well-shaped.
+    // Written for tools/check/check-png.py, which decodes it with Python's zlib.
     std::ofstream out{"../build/render-encode.png", std::ios::binary};
     out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
 }
@@ -401,9 +400,10 @@ void test_export_writes_a_file() {
         const auto & saved = page.downloads().front();
         CHECK(saved.name == "sketch.png");
         CHECK(saved.written);
-        // A real PNG of a real 8x8 canvas: the header alone is 8 + 25 bytes, and
-        // 64 RGBA pixels plus filter bytes cannot be smaller than 264.
-        CHECK(saved.bytes > 300);
+        // A real PNG of a real 8x8 canvas: signature, IHDR, IDAT and IEND
+        // alone are 8 + 25 + 12 + 12 bytes before any pixel - and it is a
+        // real deflate stream now (libpng), so a flat canvas compresses.
+        CHECK(saved.bytes > 57);
         // And it is on the disk where it said it was, at the size it said.
         std::ifstream from_disk{saved.path, std::ios::binary | std::ios::ate};
         CHECK(from_disk.good());

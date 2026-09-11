@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -40,9 +41,7 @@ public:
     }
     [[nodiscard]] std::span<const std::uint32_t> pixels() const noexcept { return pixels_; }
 
-    void fill(color c) noexcept {
-        for (std::uint32_t & p : pixels_) { p = c.argb; }
-    }
+    void fill(color c) noexcept { std::ranges::fill(pixels_, c.argb); }
 
     [[nodiscard]] friend bool operator==(const surface & a, const surface & b) noexcept {
         return a.width_ == b.width_ && a.height_ == b.height_ && a.pixels_ == b.pixels_;

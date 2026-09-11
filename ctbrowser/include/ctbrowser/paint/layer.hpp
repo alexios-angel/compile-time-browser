@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
@@ -58,13 +59,10 @@ struct layer_tree {
     // asking the list. This is the same transform raster/composite uses and is
     // what keeps a scroll from requiring a second geometry traversal.
     [[nodiscard]] node_id hit_test(point viewport_point) const noexcept {
-        for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
-            if (!it->contents || (!it->clip.empty() && !it->clip.contains(viewport_point))) {
-                continue;
-            }
-            const point content_point{viewport_point.x - it->offset.x,
-                                      viewport_point.y - it->offset.y};
-            if (const node_id hit = it->contents->hit_test(content_point)) { return hit; }
+        for (const layer & l : std::views::reverse(layers)) {
+            if (!l.contents || (!l.clip.empty() && !l.clip.contains(viewport_point))) { continue; }
+            const point content_point{viewport_point.x - l.offset.x, viewport_point.y - l.offset.y};
+            if (const node_id hit = l.contents->hit_test(content_point)) { return hit; }
         }
         return node_id{};
     }

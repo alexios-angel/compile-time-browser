@@ -1,0 +1,203 @@
+// WHAT `html/dom` MEASURED AND WHAT WAS CHANGED FOR IT.
+//
+// One case per behaviour, each written the way the corpus writes it: a page
+// script does the thing and reads back in the same statement, and the console
+// carries the answer out. A case here is a WPT subtest family in miniature -
+// the file name beside each says which - so a regression fails a unit test on
+// the devbox rather than a suite on the shared box a day later.
+
+#include <ctbrowser.hpp>
+
+#include "check.hpp"
+
+#include <string>
+#include <vector>
+
+using ctbrowser::shell::browser;
+using ctbrowser::shell::browser_options;
+
+namespace {
+
+constexpr const char * page_html = R"(<!DOCTYPE html>
+<html><head><title>t</title></head><body>
+<div id=host></div>
+</body></html>)";
+
+[[nodiscard]] std::string answer(const std::string & expression) {
+    browser page{browser_options{400, 300}};
+    std::string html{page_html};
+    const std::string tail = "<script>try { console.log(String(" + expression +
+                             ")); } catch (e) { console.log('threw:' + e.name); }</script>";
+    html.insert(html.find("</body>"), tail);
+    page.load_html(html);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
+    return logged.back();
+}
+
+void is(const std::string & expression, const std::string & expected) {
+    const std::string got = answer(expression);
+    CHECK_EQ(got, expected);
+    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+}
+
+// --- reflection-*.html ------------------------------------------------------
+
+void test_legacy_null_to_empty_string_rows_write_nothing_for_null() {
+    // "IDL set to null": [LegacyNullToEmptyString] on `bgColor` writes "",
+    // and a plain DOMString row beside it still writes the four letters.
+    is("(function () { var b = document.body; b.bgColor = null;"
+       " return b.getAttribute('bgcolor'); })()",
+       "");
+    is("(function () { var f = document.createElement('font'); f.color = null;"
+       " return f.getAttribute('color'); })()",
+       "");
+    is("(function () { var t = document.createElement('td'); t.abbr = null;"
+       " return t.getAttribute('abbr'); })()",
+       "null");
+    // And `undefined` is not null: the same row writes nine letters for it.
+    is("(function () { var b = document.body; b.bgColor = undefined;"
+       " return b.getAttribute('bgcolor'); })()",
+       "undefined");
+}
+
+void test_nonce_is_a_slot_in_front_of_the_attribute() {
+    // reflection-metadata.html, `link.nonce: IDL set to ...`: setting the IDL
+    // attribute changes what it reads back and NOT the content attribute.
+    is("(function () { var l = document.createElement('link');"
+       " l.setAttribute('nonce', 'a'); l.nonce = 'b';"
+       " return l.nonce + '/' + l.getAttribute('nonce'); })()",
+       "b/a");
+    // A content attribute change reloads the slot.
+    is("(function () { var l = document.createElement('link');"
+       " l.nonce = 'b'; l.setAttribute('nonce', 'c'); return l.nonce; })()",
+       "c");
+}
+
+void test_the_rows_the_element_tables_name_are_all_there() {
+    // elements-grouping.js, -embedded.js and -forms.js name four rows the
+    // table lacked; `button.value` is the one with a trap, because a button is
+    // a control here and a control's own `value` accessor shadowed the row.
+    is("(function () { var b = document.createElement('button');"
+       " b.setAttribute('value', 'v'); var was = b.value; b.value = 'w';"
+       " return was + ',' + b.getAttribute('value'); })()",
+       "v,w");
+    is("(function () { var h = document.createElement('hr'); h.width = 7;"
+       " return typeof h.width + ':' + h.getAttribute('width'); })()",
+       "string:7");
+    is("(function () { var p = document.createElement('pre'); p.setAttribute('width', ' 12x');"
+       " return typeof p.width + ':' + p.width; })()",
+       "number:12");
+    is("(function () { var o = document.createElement('object');"
+       " o.data = 'http://site.example/x'; return o.data; })()",
+       "http://site.example/x");
+}
+
+// --- HTMLHyperlinkElementUtils ----------------------------------------------
+
+void test_an_anchor_reports_the_parts_of_its_url() {
+    // reflection.js's resolveUrl: `protocol + "//" + host + pathname + search
+    // + hash` read off an <a>, which every URL-typed reflection subtest
+    // compares against `el.href`. The two have to agree.
+    is("(function () { var a = document.createElement('a');"
+       " a.href = 'HTTP://Site.Example:8080/p/q?x=1#frag';"
+       " return [a.protocol, a.host, a.hostname, a.port, a.pathname, a.search, a.hash,"
+       " a.origin].join('|'); })()",
+       "http:|site.example:8080|site.example|8080|/p/q|?x=1|#frag|http://site.example:8080");
+    is("(function () { var a = document.createElement('a');"
+       " a.href = 'http://site.example/'; "
+       " return a.protocol + '//' + a.host + a.pathname + a.search + a.hash === a.href; })()",
+       "true");
+    // No href: protocol is ":" and everything else is "".
+    is("(function () { var a = document.createElement('a');"
+       " return a.protocol + '|' + a.host + '|' + a.pathname + '|' + a.hash; })()",
+       ":|||");
+    // A part written rewrites the href, and an <area> has the same surface.
+    is("(function () { var a = document.createElement('area');"
+       " a.href = 'http://site.example/a?q'; a.hash = 'h'; a.pathname = 'b'; a.search = '';"
+       " return a.href; })()",
+       "http://site.example/b#h");
+}
+
+// --- the translate attribute --------------------------------------------------
+
+void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
+    // the-translate-attribute-0xx.html and translate-enumerated-ascii-case-
+    // insensitive.html: `yes`/"" enable, `no` disables, ASCII-insensitively,
+    // and anything else inherits from the parent element.
+    is("(function () { var h = document.getElementById('host');"
+       " h.innerHTML = '<div translate=no><span translate=YeS></span>"
+       "<span translate=x></span><span translate></span></div>';"
+       " var s = h.querySelectorAll('span');"
+       " return [h.translate, s[0].translate, s[1].translate, s[2].translate].join(); })()",
+       "true,true,false,true");
+    // translate-inherit-no-parent-element.html: a fragment or shadow root is
+    // not an element, so a child of one is translate-enabled whatever the
+    // host says.
+    is("(function () { var host = document.createElement('my-element');"
+       " host.setAttribute('translate', 'no'); var d = document.createElement('div');"
+       " host.attachShadow({mode: 'open'}).appendChild(d); return d.translate; })()",
+       "true");
+    // The setter writes the keyword, and reads back through the same walk.
+    is("(function () { var d = document.createElement('div'); d.translate = false;"
+       " return d.getAttribute('translate') + ',' + d.translate; })()",
+       "no,false");
+}
+
+// --- innerText / outerText getters -------------------------------------------
+
+// getter.html's shape: markup into a connected container, then the first
+// child's innerText, JSON-encoded so a newline or a tab is visible.
+[[nodiscard]] std::string inner_text_of(const std::string & markup) {
+    return answer("(function () { var h = document.getElementById('host');"
+                  " h.innerHTML = " +
+                  markup +
+                  "; var e = h.querySelector('#target') || h.firstChild;"
+                  " return JSON.stringify(e.innerText); })()");
+}
+
+void test_inner_text_collapses_whitespace_and_breaks_at_blocks() {
+    CHECK_EQ(inner_text_of("'<div> abc  def\\n ghi '"), "\"abc def ghi\"");
+    CHECK_EQ(inner_text_of("'<div>abc <br> def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<div>abc</div>def'"), "\"123\\nabc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div><p>abc<p>def'"), "\"abc\\n\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>abc<div></div><div></div>def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<span>abc</span>def'"), "\"123abcdef\"");
+    CHECK_EQ(inner_text_of("'<div>abc <input> def'"), "\"abc  def\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=display:inline-block> abc </span>def'"),
+             "\"123abcdef\"");
+}
+
+void test_inner_text_reads_the_inline_style_it_can_see() {
+    CHECK_EQ(inner_text_of("'<pre> abc\\n  def '"), "\" abc\\n  def \"");
+    CHECK_EQ(inner_text_of("'<div style=white-space:pre-line>abc  \\n  def'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=display:none>abc'"), "\"123\"");
+    CHECK_EQ(inner_text_of("'<div>123<span style=visibility:hidden>abc'"), "\"123\"");
+    CHECK_EQ(inner_text_of("'<div style=text-transform:uppercase>abc'"), "\"ABC\"");
+    // Not rendered - a `display: none` container - is textContent, verbatim.
+    CHECK_EQ(inner_text_of("'<div style=display:none>abc  def'"), "\"abc  def\"");
+    CHECK_EQ(inner_text_of("'<div><table><tr><td>abc<td>def<tr><td>ghi</table>'"),
+             "\"abc\\tdef\\nghi\"");
+    // A replaced element has no text, and outerText reads the same as innerText.
+    CHECK_EQ(inner_text_of("'<textarea>abc'"), "\"\"");
+    is("(function () { var h = document.getElementById('host'); h.innerHTML = '<p>a<br>b';"
+       " return JSON.stringify(h.firstChild.outerText); })()",
+       "\"a\\nb\"");
+    // Detached: textContent, since nothing renders it.
+    is("(function () { var d = document.createElement('div'); d.innerHTML = 'a  b';"
+       " return JSON.stringify(d.innerText); })()",
+       "\"a  b\"");
+}
+
+} // namespace
+
+int main() {
+    test_legacy_null_to_empty_string_rows_write_nothing_for_null();
+    test_nonce_is_a_slot_in_front_of_the_attribute();
+    test_the_rows_the_element_tables_name_are_all_there();
+    test_an_anchor_reports_the_parts_of_its_url();
+    test_translate_inherits_through_elements_and_stops_at_a_fragment();
+    test_inner_text_collapses_whitespace_and_breaks_at_blocks();
+    test_inner_text_reads_the_inline_style_it_can_see();
+    REPORT("html_dom_wpt");
+}

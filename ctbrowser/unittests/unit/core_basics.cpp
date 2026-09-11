@@ -14,7 +14,44 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/resource.h>
+#endif
+
 using namespace ctbrowser;
+
+namespace {
+
+// Seconds of CPU - user plus kernel, summed across threads - this process has
+// consumed. Not std::clock(): on some Windows runtimes that is WALL time since
+// the process started, which made the idle-pool test below pass there for the
+// wrong reason and then fail for the wrong reason too.
+double process_cpu_seconds() {
+#if defined(_WIN32)
+    FILETIME created{};
+    FILETIME exited{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) == 0) { return 0; }
+    const auto to_seconds = [](const FILETIME & t) {
+        return static_cast<double>((static_cast<std::uint64_t>(t.dwHighDateTime) << 32) |
+                                   t.dwLowDateTime) *
+               1e-7; // 100ns units
+    };
+    return to_seconds(kernel) + to_seconds(user);
+#else
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) { return 0; }
+    const auto to_seconds = [](const timeval & t) {
+        return static_cast<double>(t.tv_sec) + 1e-6 * static_cast<double>(t.tv_usec);
+    };
+    return to_seconds(usage.ru_utime) + to_seconds(usage.ru_stime);
+#endif
+}
+
+} // namespace
 
 struct thing_tag {};
 using thing_id = handle<thing_tag>;
@@ -92,11 +129,12 @@ void test_pin_defers_recycling() {
 
 void test_slab_grows_past_a_chunk() {
     epoch_domain domain;
-    slab<int, thing_tag, 4> s{domain}; // 16 slots per chunk, so this spans several
+    slab<int, thing_tag> s{domain};
+    constexpr int n = 2 * static_cast<int>(decltype(s)::chunk_size) + 1; // spans three chunks
     std::vector<thing_id> ids;
-    for (int i = 0; i < 100; ++i) { ids.push_back(s.insert(i)); }
-    CHECK_EQ(s.size(), 100u);
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < n; ++i) { ids.push_back(s.insert(i)); }
+    CHECK_EQ(s.size(), static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
         const int * v = s.get(ids[static_cast<std::size_t>(i)]);
         CHECK(v != nullptr && *v == i); // every handle still resolves after growth
     }
@@ -179,9 +217,6 @@ void test_geometry() {
 // Measured as CPU time against wall time, which is the thing that was wrong;
 // counting wakeups would test the implementation instead of the symptom.
 void test_an_idle_pool_sleeps() {
-    // process_cpu_seconds(), not std::clock(): the latter is WALL time on some
-    // Windows runtimes, so this test passed there for the wrong reason and then
-    // failed for the wrong reason too.
     const auto cpu_ms = [] { return static_cast<long long>(process_cpu_seconds() * 1000.0); };
     scheduler pool{4};
     // Let the workers reach their wait.

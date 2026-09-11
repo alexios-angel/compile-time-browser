@@ -238,6 +238,18 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
     const node_id element = insert_element(tag, t.attributes, ns);
 
     if (is_void_element(tag) || t.self_closing) { return; } // no children, nothing to push
+    // A <template>'s CHILDREN GO INTO ITS CONTENTS FRAGMENT, not into the
+    // element - "in template" insertion mode, reduced to the one thing it
+    // changes here: what `current()` is while the element is open. The
+    // fragment is what `template.content` hands a page, and keeping the
+    // children out of the element is what stops a document query, a
+    // <script> or a <style> inside one from being seen by the page.
+    if (tag == "template") {
+        const node_id contents = builder_->create_fragment();
+        doc_->set_template_content(element, contents);
+        open_.push_back(entry{contents, tag, ns});
+        return;
+    }
     open_.push_back(entry{element, tag, ns});
     if (ns == node_ns::svg) {
         open_foreign(t);

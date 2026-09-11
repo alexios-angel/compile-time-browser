@@ -1,11 +1,5 @@
 # ctbrowser.style - selector matching, the cascade, computed values, the UA sheet.
 #
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
-# --- ctbrowser.style -----------------------------------------------------
 # Owns the CSS front end (css/) as well as the cascade. It used to borrow a
 # submodule's parser, which had no tokenizer: a `;` inside a string ended a
 # declaration and a `}` inside one desynchronised the rest of the file.
@@ -13,69 +7,13 @@
 # descendant selectors with an ancestor filter.
 # Depends on dom for read_txn - matching consumes a stable read view, never
 # the live tree, which is what makes it parallelisable.
+#
+# css/ is a SUBDIRECTORY, not an eleventh subsystem: one target, one aggregate
+# header, and the parser lives beside the cascade that is its only consumer.
 add_library(ctbrowser-style)
-target_sources(ctbrowser-style
-  PRIVATE
-    engine.cpp
-    # css/ - the CSS front end. A SUBDIRECTORY, not an eleventh subsystem:
-    # one target, one aggregate header, and the parser lives beside the
-    # cascade that is its only consumer. Same shape as shell/net/ and
-    # raster/backend/ - a subdirectory gets no target and no CMakeLists.
-    css/token.cpp
-    css/parser.cpp
-    css/selector.cpp
-    css/substitute.cpp
-    css/media.cpp
-    # calc/ - the math functions. One 1,810-line calc.cpp until 2026-09-08;
-    # the pieces share calc/internal.hpp and nothing about calc.hpp changed.
-    css/calc/evaluator.cpp
-    css/calc/units.cpp
-    css/calc/serialize.cpp
-    css/calc/fold.cpp
-    css/calc/simplify.cpp
-    # properties/ - the property table, the value grammar and the canonical
-    # serialisation: what el.style, getComputedStyle and CSS.supports all three
-    # ask. One 1,155-line properties.cpp until 2026-09-08; the pieces share
-    # properties/internal.hpp and nothing about properties.hpp changed.
-    css/properties/table.cpp
-    css/properties/grammar.cpp
-    css/properties/declaration.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/style.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/token.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/calc.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/value.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/properties.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/selector.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/parser.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/substitute.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/media_fwd.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/media.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/computed.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/selector.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/engine.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/ua.hpp")
+ctbrowser_subsystem_sources(ctbrowser-style style)
 target_compile_features(ctbrowser-style PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-style)
-# NO ctcss INTERFACE, AND NOTHING OF ITS TO INSTALL, since the CSS front end
-# landed. `style/engine.hpp` used to include <ctcss.hpp> for one private member's
-# parameter type, and because that is a PUBLIC header the path and the headers
-# themselves both had to travel - so an installed prefix carried a COPY of
-# ctcss's include tree, and a consumer that had its own ended up with two.
-#
-# It took an install to notice the second interface was missing in the first
-# place: an exported target may not name a source-tree path, so the build tree got
-# BUILD_INTERFACE and until 2026-08-09 that was the only one. `find_package`
-# succeeded and the first `#include <ctbrowser.hpp>` died on "ctcss.hpp: No such
-# file or directory". Nothing said so, because everything in this tree consumes
-# the engine through add_subdirectory.
-#
-# Deleting the whole arrangement is the real fix, and the parser being ours is
-# what allows it. tools/check/check-package.sh is what proves an install still
-# compiles; it is the only thing that can.
 target_link_libraries(ctbrowser-style PUBLIC ctbrowser-core ctbrowser-dom Boost::headers)
 
 add_library(ctbrowser::style ALIAS ctbrowser-style)

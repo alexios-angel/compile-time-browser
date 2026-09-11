@@ -1,11 +1,5 @@
 // dom_bindings' CSSOM - the objects: a sheet, a rule, a rule list, a media list
 // and a declaration block, made once and refreshed in place.
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -179,12 +173,21 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSNamespaceRule.prototype";
         } else if (record.type == counter_style_rule) {
             interface = "CSSCounterStyleRule.prototype";
+        } else if (record.at_name == "container") {
+            interface = "CSSContainerRule.prototype";
         }
         if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
     obj->define(rule_key, value::number(static_cast<double>(rule)), script::attr_none);
     obj->define(sheet_key, value::number(static_cast<double>(css_rule_store_[rule]->sheet)),
                 script::attr_none);
+    if (css_rule_store_[rule]->type == keyframes_rule) {
+        // Indexed from the start - `keyframes[0]` is read without `cssRules`
+        // ever having been - and the list is the cached one so the two agree.
+        obj->define(rules_key, make_rule_list(cx, css_rule_store_[rule]->children),
+                    script::attr_none);
+        mirror_rule_list(*obj);
+    }
     return object;
 }
 
@@ -193,9 +196,21 @@ value dom_bindings::declaration_object(context & cx, std::size_t rule) {
     script::object_object * obj = as_object(object);
     if (obj == nullptr) { return object; }
     if (script::object_object * internals = cssom_internals(cx)) {
-        if (const value * proto = internals->find("CSSStyleDeclaration.prototype")) {
-            obj->prototype = *proto;
+        // WHICH CSSStyleDeclaration. CSSOM splits the property accessors off
+        // onto CSSStyleProperties, and a descriptor block carries its
+        // descriptors instead: `@font-face`'s `src`, `@page`'s `size`. So a
+        // page rule's block has no `cssFloat` and a style rule's has no
+        // `unicodeRange`, which page-descriptors.html and
+        // cssstyledeclaration-cssfontrule.html assert from the two sides.
+        std::string_view interface = "CSSStyleProperties.prototype";
+        if (rule < css_rule_store_.size()) {
+            if (css_rule_store_[rule]->type == font_face_rule) {
+                interface = "CSSFontFaceDescriptors.prototype";
+            } else if (css_rule_store_[rule]->type == page_rule) {
+                interface = "CSSPageDescriptors.prototype";
+            }
         }
+        if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
     obj->define(rule_key, value::number(static_cast<double>(rule)), script::attr_none);
     refresh_declaration_object(cx, object);
@@ -238,6 +253,27 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // `<style>` a script has just created and appended has no sheet until the
     // document is walked again, and `dom/events`' four animation tests do
     // exactly that - `document.head.appendChild(style); style.sheet.insertRule(...)`.
+    //
+    // ON THE PROTOTYPE, once, and not on each wrapper: it is an IDL attribute
+    // of HTMLStyleElement and HTMLLinkElement, and `assert_idl_attribute`
+    // asks for it in the prototype chain and not as an own property. The
+    // receiver names the node; a wrapper is only made after the interfaces
+    // are, so the fallback below is for an embedder that built none.
+    bool installed = false;
+    for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
+        script::object_object * proto = as_object(interface_prototype(name));
+        if (proto == nullptr) { continue; }
+        installed = true;
+        if (proto->find_accessor("sheet") != nullptr) { continue; }
+        proto->define_accessor("sheet",
+                               value::object(cx.allocate<script::native_object>(
+                                   "get sheet",
+                                   [this](context & c, std::span<value>) {
+                                       return sheet_object_of(c, handle_of(c.current_this()));
+                                   })),
+                               value::undefined(), script::attr_configurable);
+    }
+    if (installed) { return; }
     obj.define_accessor(
         "sheet",
         value::object(cx.allocate<script::native_object>(

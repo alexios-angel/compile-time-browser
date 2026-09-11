@@ -43,14 +43,12 @@
 //   resize                     box tree -> layout -> record   (styles survive)
 //   scroll                                          composite (nothing else)
 //
-// the previous engine had one path. engine::frame() re-ran layout every frame, so a caret blink
-// cost a full layout of the document. Here the pipeline is split at the points
-// where work can be reused, and `dirty_` is the record of how far back the
-// current frame has to start.
+// The pipeline is split at the points where work can be reused, and `dirty_`
+// is the record of how far back the current frame has to start.
 //
 // Deliberately SDL-FREE. The window and the event loop live in :app, gated on
 // SDL3, and this is what they drive - which is what makes the whole engine
-// testable headlessly, exactly as the previous engine kept engine.hpp separate from app.hpp.
+// testable headlessly.
 
 namespace ctbrowser::shell {
 
@@ -80,17 +78,9 @@ enum class dirty : std::uint8_t {
 struct browser_options {
     int width = 1024;
     int height = 768;
-    int tile_extent = ctbrowser::raster::default_tile_extent;
     // The page canvas, behind everything the document draws. White by default,
     // because that is what a browser with no page background shows.
     color background = color{ctbrowser::style::ua_canvas};
-    // A page taller than the window scrolls; this is how far one wheel notch
-    // moves it. the previous engine used the same figure.
-    float wheel_step = 53.0f;
-    // How many VISUAL LINES one notch moves a textarea. Lines rather than
-    // pixels, because a field scrolls by whole lines - a half-line offset would
-    // need the painter to carry a sub-line origin for no gain.
-    int wheel_lines = 3;
     // The overlay scrollbar's width, and the width a tall page gives up to it.
     // 0 hides it - which is what a fixed-size game wants.
     float scrollbar_width = 15.0f;
@@ -98,25 +88,14 @@ struct browser_options {
     // it blinking, which is what a screenshot test wants: a caret that is
     // sometimes there is not byte-comparable.
     double caret_blink_ms = 500;
-    // AUTO-SCROLL WHILE DRAG-SELECTING, when the pointer is held outside the
-    // field. The rate rises with how far outside it is, so a small overshoot
-    // creeps and a big one races:
-    //
-    //   interval = autoscroll_ms / (1 + distance / autoscroll_ramp_px)
-    //
-    // clamped to autoscroll_min_ms. At the defaults: 1px out is ~95ms a step,
-    // 20px is 50ms, 60px is 25ms, and past ~110px it is the floor. 0 for
-    // autoscroll_ms turns the whole thing off.
-    double autoscroll_ms = 100;
-    double autoscroll_min_ms = 16;
-    float autoscroll_ramp_px = 20;
 };
 
 class browser {
 public:
     explicit browser(browser_options options = {})
         : options_(options), recorder_(atoms_),
-          renderer_(renderer::software(options.width, options.height, options.tile_extent)) {
+          renderer_(renderer::software(options.width, options.height,
+                                       ctbrowser::raster::default_tile_extent)) {
         reset_document();
     }
 
@@ -170,9 +149,7 @@ public:
     //
     // The GLYPH GEOMETRY is not stored on the fragment. It is derived on demand
     // from the same measure layout used, which costs a few measurements per
-    // click and keeps the fragment tree exactly the shape it was - the plan
-    // called publishing per-line glyph geometry the one item most likely to
-    // spill, and this is why it did not have to.
+    // click and keeps the fragment tree exactly the shape it was.
     struct text_position {
         node_id node;
         std::size_t code_point = 0;
@@ -207,14 +184,9 @@ public:
     // saving available to a packaged application: measured on the devbox,
     // loading babylon from an image is 77 ms against 300 ms to compile it.
     //
-    // ONE IMAGE PER <script>, NOT ONE PER PAGE, and that is the whole point of
-    // the shape. A page's classic scripts used to be glued into one string and
-    // compiled as one program, so the cache was keyed on the concatenation -
-    // and editing a two-line sketch beside a 4.5 MB library invalidated the
-    // library. Each script is now its own program keyed on its own bytes, so
-    // p5.js is baked once and answers on every page that loads it. Measured on
-    // p5-basic.html: editing the sketch cost 51.44 ms to recompile the page and
-    // now costs 4.89 ms, which is 10.5x.
+    // ONE IMAGE PER <script>, NOT ONE PER PAGE: each script is its own program
+    // keyed on its own bytes, so editing a two-line sketch beside a 4.5 MB
+    // library does not invalidate the library.
     //
     // AN IMAGE IS USED ONLY IF IT MATCHES, and this is where a mistake becomes
     // wrong code rather than a slow page: an image whose source hash is not
@@ -243,9 +215,7 @@ public:
     // How many module programs this browser is holding alive. One per
     // <script type="module"> on the CURRENT page and none from any earlier one
     // - a module's functions close over its top-level frame, so its program has
-    // to outlive the load, and for a while nothing emptied the vector on the
-    // way in. A count is the only way to see that from outside, because a leak
-    // and a working cache look identical from the page.
+    // to outlive the load. A count is the only way to see a leak from outside.
     [[nodiscard]] std::size_t module_programs_held() const noexcept {
         return module_programs_.size();
     }
@@ -267,18 +237,10 @@ public:
         return script_sources_;
     }
 
-    // AND THE MODULE SCRIPTS, WHICH CANNOT BE PACKAGED YET.
-    //
-    // `script_sources()` above lists the CLASSIC scripts and nothing else,
-    // because those are the ones an image can stand in for: `load_module`
-    // compiles from source every time and there is no image path into it. That
-    // made a module page invisible to a packager and, worse, invisible to the
-    // check that asks whether packaging worked - zero classic scripts compiled
-    // from source is trivially true when there are no classic scripts.
-    //
-    // So the modules are published too, and both the packager and the launcher
-    // refuse rather than shipping an application that parses all of its
-    // JavaScript at every start and says nothing.
+    // AND THE MODULE SCRIPTS, WHICH CANNOT BE PACKAGED YET: `load_module`
+    // compiles from source every time and there is no image path into it.
+    // Published so the packager and the launcher can refuse rather than ship
+    // an application that parses all of its JavaScript at every start.
     [[nodiscard]] const std::vector<std::string> & module_sources() const noexcept {
         return module_sources_;
     }
@@ -346,7 +308,6 @@ public:
     // which is a detail of when scripts run. Stage 2 of docs/plans/angle.md
     // keeps both back ends alive, and this is how a caller chooses.
     void prefer_angle_webgl(bool on) noexcept { prefer_angle_webgl_ = on; }
-    [[nodiscard]] bool angle_webgl_preferred() const noexcept { return prefer_angle_webgl_; }
     [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
     // A <link rel=stylesheet> that did not resolve. Separate from
@@ -367,13 +328,7 @@ public:
     // not increment it.
     [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
 
-    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds.
-    //
-    // The runtime profiler (`CTBROWSER_PROFILE`) recorded one `frame_ms` for
-    // style, layout, record and raster together, so it could say a frame was
-    // slow and never which part of it was - and those four are exactly the
-    // stages the dirty level decides between. A scroll that re-rasters when it
-    // should only re-composite looked identical to one that did not.
+    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds, per stage.
     //
     // Zero for a stage the frame SKIPPED, which is the interesting half: the
     // dirty-level design is about not running these, so a zero is the design
@@ -388,8 +343,7 @@ public:
 
     // Collect the script heap now, and how many objects it has. Exposed
     // because "does a collection free what the page is still using" is only
-    // answerable from outside, and it is the question that kept the collector
-    // switched off.
+    // answerable from outside.
     std::size_t collect_garbage() { return script_ ? script_->collect() : 0; }
     [[nodiscard]] std::size_t live_script_objects() const;
 
@@ -435,8 +389,7 @@ public:
     void set_alert_hook(std::function<void(const std::string &)> hook);
     // Kept HERE rather than on the bindings, because a reload replaces the
     // bindings - and the alert that caused the reload is exactly the one you
-    // want to still be able to read afterwards. MDN's breakout alerts and then
-    // reloads in the same breath.
+    // want to still be able to read afterwards.
     [[nodiscard]] const std::vector<std::string> & alerts() const noexcept { return alerts_; }
 
     // WHAT A PAGE EXPORTED, and the one behaviour this engine invents rather than
@@ -456,10 +409,6 @@ public:
     }
     [[nodiscard]] const std::vector<download_record> & downloads() const noexcept {
         return downloads_;
-    }
-    // Told as it happens, for an embedder that wants to report or redirect one.
-    void set_download_hook(std::function<void(const download_record &)> hook) {
-        download_hook_ = std::move(hook);
     }
 
     // REAL TIME, if the embedder wants it. Without one, `Date.now()` is a fixed
@@ -500,8 +449,8 @@ public:
     void set_script_prepared_hook(std::function<void(script::program &, std::string_view)> hook) {
         script_prepared_hook_ = std::move(hook);
     }
-    // What the last activated link recorded. A fragment lands in the hash, like
-    // the previous engine, because scrolling to an anchor IS navigation within a document.
+    // What the last activated link recorded. A fragment lands in the hash,
+    // because scrolling to an anchor IS navigation within a document.
     [[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }
     [[nodiscard]] const std::string & location_hash() const noexcept { return location_hash_; }
 
@@ -518,13 +467,11 @@ public:
     // --- scrolling -------------------------------------------------------
     //
     // The payoff of the whole architecture: this touches no stage but the
-    // compositor. the previous engine's equivalent re-ran layout.
+    // compositor.
     void scroll_by(float dy) { scroll_to(scroll_y_ + dy); }
     void scroll_to(float y);
     [[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }
     [[nodiscard]] float content_height() const noexcept { return content_height_; }
-    // Whether a viewport x lands on the scrollbar. Public because the app layer
-    // asks it to choose a cursor.
     // What the pointer should look like at a viewport point: the CSS `cursor`
     // of the element under it, with the UA's defaults - a link is a pointer, an
     // editable is a text beam. A name rather than a handle, so the engine needs
@@ -532,6 +479,8 @@ public:
     // has.
     [[nodiscard]] std::string_view cursor_at(float x, float y);
 
+    // Whether a viewport x lands on the scrollbar. Public because the app layer
+    // asks it to choose a cursor.
     [[nodiscard]] bool on_scrollbar(float x) const noexcept;
     [[nodiscard]] float max_scroll() const noexcept;
 
@@ -552,10 +501,6 @@ public:
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
     // which is the common case and the point.
     std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr);
-
-    // Push anything a script wrote into `value`/`checked` through to the
-    // controls, and report whether that changed one.
-    [[nodiscard]] bool sync_controls() { return bindings_->refresh_wrappers(); }
 
     [[nodiscard]] rect viewport() const noexcept;
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
@@ -596,6 +541,13 @@ private:
     // ...and rebuild the author origin from it if it has changed. See the
     // definition for why it does not go through the CSSOM.
     void refresh_author_styles();
+    // A `<link rel=stylesheet>`, `<style>` or `<script>` this browser has
+    // applied, or failed to find the bytes of: its `load`/`error` event is owed.
+    // Recorded once per element - the styles walk repeats on every restyle -
+    // and handed to the bindings by announce_resource_loads, because at page
+    // load the walk runs BEFORE run_scripts has built them.
+    void note_resource_load(node_id id, bool ok);
+    void announce_resource_loads();
 
     // Push the window size and the user's preferences into the style engine, and say
     // whether any media query's truth moved. A resize calls it and only re-resolves the
@@ -606,18 +558,15 @@ private:
 
     void resolve_styles();
 
+    // The body of one load. load_html wraps it so that a navigation asked for
+    // by a script is queued rather than performed under that script's feet.
+    void load_one_page(std::string_view html, source_kind kind);
     // Run every <script> in the document, in order. Errors are recorded rather
     // than thrown: a page whose script fails still has to render, which is what
     // every browser does and what makes a broken script a broken feature rather
     // than a blank window.
-    // The body of one load. load_html wraps it so that a navigation asked for
-    // by a script is queued rather than performed under that script's feet.
-    void load_one_page(std::string_view html, source_kind kind);
     void run_scripts();
 
-    // Every <img src> in the document, decoded once. A missing or undecodable
-    // image is remembered as a null so the element lays out at zero size rather
-    // than being retried every frame.
     // The measure layout uses, and the fonts the rasterizer draws with, are the
     // SAME object - text lands where layout thought it would only if one thing
     // answers both questions.
@@ -629,6 +578,9 @@ private:
     // every navigation, because the rules belong to the document.
     void load_page_fonts();
 
+    // Every <img src> in the document, decoded once. A missing or undecodable
+    // image is remembered as a null so the element lays out at zero size rather
+    // than being retried every frame.
     void load_images();
 
     // Re-resolve every <img>'s bitmap, without clearing the SVG sources. Runs
@@ -650,12 +602,8 @@ private:
     // also why it survives a scroll without re-recording anything - a scroll
     // moves the page layer and leaves this one where it is.
     // Rebuilt on every frame whose scroll moved, NOT only when the page
-    // re-records. A scroll marks dirty::composite, which deliberately skips
-    // recording - so the thumb was drawn once and then stayed where it was
-    // until something else forced a re-record. That is the delay: the bar was
-    // always one edit behind.
-    //
-    // Cheap enough to do unconditionally: it is two rectangles.
+    // re-records: a scroll deliberately skips recording. Cheap enough to do
+    // unconditionally: it is two rectangles.
     void refresh_chrome();
 
     // Everything the BROWSER draws rather than the page: the scrollbar, and an
@@ -678,12 +626,9 @@ private:
     // and a click ON it runs the verb - neither reaches the page.
     bool handle_menu_press(const input_event & event);
 
-    // The option list of an open <select>. THE reason a select was unusable:
-    // the box drew, the popup did not exist, so there was no way to choose
-    // anything with a pointer.
+    // The option list of an open <select>.
     void record_select_popup();
 
-    // Every <option>'s text, in document order.
     // The value of the nth <option>, for the popup's pick.
     [[nodiscard]] std::string option_value_at(const read_txn & txn, node_id select,
                                               std::size_t index) {
@@ -696,6 +641,7 @@ private:
         return {};
     }
 
+    // Every <option>'s text, in document order.
     [[nodiscard]] std::vector<std::string> option_labels(const read_txn & txn, node_id select);
 
     // Where an element is ON SCREEN - the fragment tree is in content space, so
@@ -707,21 +653,6 @@ private:
     // Where the thumb sits. Proportional to how much of the document is
     // visible, with a floor so a very long page still has something to grab.
     [[nodiscard]] rect scrollbar_thumb() const;
-
-    // What a <canvas> or a form control draws. Everything here is chrome the
-    // UA supplies rather than anything the document asked for, which is why the
-    // palette comes from :ua and not from the cascade.
-    // The inset a control's text sits at. Firefox uses 1px 2px on a text input
-    // and 1px 6px on a button; this is one number because the vertical inset is
-    // handled by centring instead.
-    // THE SAME NUMBER layout reserves - see the note on the constant. Two
-    // copies is how the painter came to draw text 6 in on a box that had set
-    // aside 4.
-    // GONE, and deliberately not replaced by another constant: a control's text
-    // starts at its CONTENT box, which paint_replaced is now handed. The two
-    // copies of this number - here and in layout - are exactly why a field's text
-    // once started inside its own reserved room, and why Bootstrap's padding did
-    // nothing.
 
     // A vector graphic, rasterised for THIS box rather than scaled into it.
     //
@@ -741,11 +672,14 @@ private:
         return true;
     }
 
+    // What a <canvas> or a form control draws. Everything here is chrome the
+    // UA supplies rather than anything the document asked for, which is why the
+    // palette comes from :ua and not from the cascade.
+    //
     // `box` is the BORDER box and `content` the content box - the recorder
     // resolved the padding and the border to draw them, so it hands over where
-    // they left off rather than the shell keeping a constant of its own. That
-    // constant was `control_padding`, layout had a second copy, and a sheet could
-    // change neither.
+    // they left off rather than the shell keeping a constant of its own that a
+    // sheet could not change.
     void paint_replaced(node_id id, const rect & box, const rect & content,
                         const ctbrowser::style::computed_style_ptr & style,
                         ctbrowser::paint::display_list & into) {
@@ -799,9 +733,8 @@ private:
         }
         case control_kind::radio: {
             // A RADIO IS ROUND, and that is the whole visual difference between
-            // it and a checkbox - drawn as a square, the two controls are
-            // indistinguishable and the shape is what tells you one of them is
-            // exclusive. The display list had no ellipse until now.
+            // it and a checkbox - the shape is what tells you one of them is
+            // exclusive.
             into.fill_ellipse(box, frame, id);
             into.fill_ellipse(rect{box.x + 1, box.y + 1, box.width - 2, box.height - 2},
                               control.checked ? accent : field, id);
@@ -814,26 +747,17 @@ private:
             break;
         }
         case control_kind::button: {
-            // A BUTTON IS NOT A SELECT. Sharing this arm gave every button the
-            // drop-down arrow and asked selected_option() for its label - which
-            // looks for <option> children a button does not have, so every
-            // button on the page was an empty box with an arrow in it.
-            //
-            // `<button>` no longer reaches here at all - it is not a replaced
-            // element - so this is `<input type=button|submit|reset>`, whose
-            // border comes from the UA sheet like every other control's.
+            // `<button>` does not reach here - it is not a replaced element -
+            // so this is `<input type=button|submit|reset>`, whose border comes
+            // from the UA sheet like every other control's.
             const std::string label = button_label(txn, id, control, type);
             if (!label.empty()) { label_text(box, label, id, style, into); }
             break;
         }
         case control_kind::select: {
             // NO FRAME OF ITS OWN. The UA sheet gives every control a real
-            // border, so the recorder has already drawn one - and drawing a
-            // second here put two lines on every field and made a styled control
-            // impossible to restyle.
-            // The SELECTED OPTION'S TEXT. This drew an empty rectangle before -
-            // it passed an empty string as the label and never read <option> at
-            // all, so a select looked like a bug rather than like a control.
+            // border, so the recorder has already drawn one. Only the selected
+            // option's text and the arrow are drawn here.
             const std::string label = selected_option(txn, id);
             if (!label.empty()) {
                 const float size = font_size_of(id);
@@ -852,14 +776,9 @@ private:
         }
         case control_kind::text:
         case control_kind::textarea: {
-            // NO BACKGROUND OF ITS OWN. `input, textarea { background-color:
-            // #ffffff }` is in the UA sheet and the recorder has already painted
-            // it - underneath the border it also painted. Filling the border box
-            // again here covered that border, so every field lost its frame the
-            // moment the frame became a real CSS border.
-            // ONLY THE FOCUS RING. The resting border is the UA sheet's and the
-            // recorder drew it; this is the one line here that is not a CSS
-            // border but a state indicator, and it belongs to the widget.
+            // NO BACKGROUND OR BORDER OF ITS OWN: both are the UA sheet's and
+            // the recorder has already painted them. ONLY THE FOCUS RING, which
+            // is a state indicator rather than a CSS border.
             if (focused) { outline(box, accent, into, id); }
             (void)field;
             paint_field_text(box, id, control, kind, style, focused, into);
@@ -870,11 +789,6 @@ private:
     }
 
     // THE TICK IN A CHECKED CHECKBOX.
-    //
-    // What was here was a white square inset a quarter of the box - at 13x13, a
-    // 6px white square inside a blue one, which reads as an empty blue RING.
-    // Checked and unchecked differed by a thin border and nothing else, so a
-    // checked box looked unchecked.
     //
     // Drawn as a staircase of 1px rows, the same way the select's drop-down
     // triangle is: `paint_op` has fill_rect, fill_ellipse, text_run, image and
@@ -955,10 +869,8 @@ private:
     // THE CONTENT BOX OF A CONTROL, in ONE place.
     //
     // The caret, the hit test, the selection and the painter all have to agree
-    // about where a field's text starts, and they used to agree only because
-    // each repeated the same `control_padding` constant - which layout had a
-    // second copy of and which no stylesheet could change. They agree now
-    // because they all ask this, and it asks the cascade.
+    // about where a field's text starts: they all ask this, and it asks the
+    // cascade.
     [[nodiscard]] rect content_box_of(node_id id, const rect & box) const {
         const layout::box_node * found = nullptr;
         const auto walk = [&](auto && self, const layout::box_node & at) -> void {
@@ -981,7 +893,7 @@ private:
     [[nodiscard]] field_layout layout_of_field(const rect & border_box, node_id id,
                                                const control_state & control, control_kind kind) {
         // EVERY caller hands over the border box and this converts once, which is
-        // what stops the four of them drifting apart again.
+        // what stops the four of them drifting apart.
         const rect box = content_box_of(id, border_box);
         field_layout out;
         out.size = font_size_of(id);
@@ -1021,15 +933,15 @@ private:
         return out;
     }
 
-    // `<input type=password>` shows BULLETS. Masked per CODE POINT rather than
-    // per byte, so a value with anything non-ASCII in it does not come out with
-    // three bullets for one character - and the caret, which counts the same
-    // way, still lands between them.
     // A control is disabled by its own attribute or by an enclosing <fieldset>,
     // which is how a form greys out a whole section at once.
     [[nodiscard]] bool is_disabled(node_id id);
 
     [[nodiscard]] bool is_password(node_id id);
+    // `<input type=password>` shows BULLETS. Masked per CODE POINT rather than
+    // per byte, so a value with anything non-ASCII in it does not come out with
+    // three bullets for one character - and the caret, which counts the same
+    // way, still lands between them.
     [[nodiscard]] static std::string masked_text(std::string_view text);
     // What the user SEES for a stretch of the value.
     [[nodiscard]] static std::string shown(std::string_view text, bool masked);
@@ -1037,7 +949,7 @@ private:
 
     // Where in a control's value a point falls. The nearest character boundary
     // on the line the point is on - which is the ONLY way a click can put the
-    // caret where the user pointed, and a textarea had no such path at all.
+    // caret where the user pointed.
     [[nodiscard]] std::size_t offset_at_point(node_id id, const control_state & control,
                                               control_kind kind, float x, float y) {
         const rect box = viewport_box_of(id);
@@ -1339,14 +1251,9 @@ private:
         return out;
     }
 
-    // The line a caret is ON, as an index into `lines`. FIRST match wins.
-    //
-    // This has to be a real guard rather than a convention, now that lines soft
-    // wrap. With hard breaks alone a line's end was the '\n' and the next
-    // line's begin was one past it, so `caret >= begin && caret <= end` could
-    // only ever match once and a loop with no `break` got away with it. A soft
-    // break makes end == begin, so a caret sitting on a wrap boundary matches
-    // BOTH lines - and the painter, which draws per line, drew TWO carets.
+    // The line a caret is ON, as an index into `lines`. FIRST match wins: a
+    // soft break makes end == begin, so a caret sitting on a wrap boundary
+    // matches BOTH lines, and the painter would draw two carets.
     [[nodiscard]] static std::size_t caret_line(const field_layout & geometry, std::size_t caret) {
         for (std::size_t index = 0; index < geometry.lines.size(); ++index) {
             const auto [begin, end] = geometry.lines[index];
@@ -1420,19 +1327,12 @@ private:
     // link with any markup inside it.
     bool set_state(node_id at, std::uint32_t bit, bool on);
 
-    // A key event reaches SCRIPT FIRST, and the built-in behaviour - scrolling,
-    // caret movement - is the DEFAULT ACTION that runs only if no listener
-    // cancelled it. Handling the key first and never telling the page was why a
-    // game could not read the keyboard at all: Space scrolled the document
-    // instead of firing the gun.
-    // The text of a <select>'s selected option: the one marked `selected`, or
-    // the first, which is what a browser shows for a select nobody has touched.
-    // Reads the DOM directly rather than caching, because the option list is
-    // document content and a script may have just changed it.
     // The LABEL a <select> shows: the text of the option whose value is the
     // control's. Label and value are different things - `<option value=g>green
     // </option>` is worth "g" to a form and shows "green" to a reader - so the
-    // control stores the value and this maps it back for display.
+    // control stores the value and this maps it back for display. Reads the
+    // DOM directly rather than caching, because a script may have just changed
+    // the option list.
     [[nodiscard]] std::string selected_option(const read_txn & txn, node_id id);
 
     // A press while a <select> is open. Returns whether the popup consumed it -
@@ -1440,9 +1340,6 @@ private:
     // click must not also reach the page.
     bool handle_popup_press(const input_event & event);
 
-    // Copy / Cut / Paste / Select All, from the context menu or from Ctrl+key.
-    // The page gets a CANCELABLE event first for the three that correspond to
-    // one, which is how an editor takes them over.
     // One visual line of one text node, with where it starts inside that node.
     struct text_run {
         const ctbrowser::layout::fragment * fragment = nullptr;
@@ -1473,11 +1370,16 @@ private:
     // The highlighted part of one text fragment, in the fragment's own space.
     [[nodiscard]] rect highlight_for(const ctbrowser::layout::fragment & f);
 
-    // Copy / Cut / Paste / Select All. The wrapper reveals the caret afterwards
-    // whatever the verb did; `clipboard_verb` is the verb itself.
+    // Copy / Cut / Paste / Select All, from the context menu or from Ctrl+key.
+    // The page gets a CANCELABLE event first for the three that correspond to
+    // one, which is how an editor takes them over. The wrapper reveals the
+    // caret afterwards whatever the verb did; `clipboard_verb` is the verb.
     void run_clipboard_verb(std::string_view verb);
     void clipboard_verb(std::string_view verb);
 
+    // A key event reaches SCRIPT FIRST, and the built-in behaviour - scrolling,
+    // caret movement - is the DEFAULT ACTION that runs only if no listener
+    // cancelled it.
     bool handle_key(const input_event & event);
 
     // Returns whether a listener cancelled the default action - NOT whether
@@ -1491,19 +1393,17 @@ private:
     // copyable - a slab with live epochs is not something to assign over.
     void reset_document();
 
-    // The focused control's editable state, or null when focus is elsewhere.
     // Whether the focused element is one that shows a caret. Distinct from
     // editable_focus(), which SEEDS the control's state - asking when the next
     // blink is due must not create anything.
     [[nodiscard]] bool has_editable_focus();
 
+    // The focused control's editable state, or null when focus is elsewhere.
     [[nodiscard]] control_state * editable_focus();
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
 
-    // The element with this `id`, or nothing. One walk, because there were
-    // three: the bindings' getElementById, scroll_to_fragment's own copy, and a
-    // test helper.
+    // The element with this `id`, or nothing.
     [[nodiscard]] node_id node_by_id(const read_txn & txn, std::string_view want);
 
     // The control a <label> labels, per HTML: its `for` attribute resolved by
@@ -1620,7 +1520,6 @@ private:
     std::function<double()> clock_;
     std::filesystem::path download_directory_;
     std::vector<download_record> downloads_;
-    std::function<void(const download_record &)> download_hook_;
 
     // Put the element with that id at the top of the viewport, clamped the same
     // way a scroll is - an anchor near the end of a short page cannot scroll
@@ -1652,12 +1551,6 @@ private:
     layer_tree layers_;
     renderer renderer_;
 
-    // Declared BEFORE the context, so it is destroyed AFTER it. Closures hold
-    // `const function_proto *` into the program, and a timer or a listener runs
-    // long after run_scripts() returned - so the program has to outlive both the
-    // call that compiled it and the context that executes it.
-    // Null means font8x8, which is always available and always identical - so a
-    // build with no font files still renders and its goldens still compare.
     std::size_t page_layers_ = 0; // how many of layers_ are the page's
     node_id select_open_;         // the <select> whose popup is showing
     // The page's own clipboard, used when no system one is installed - which is
@@ -1698,6 +1591,8 @@ private:
     bool selecting_ = false;
     bool sb_dragging_ = false;
     float sb_grab_ = 0; // where in the thumb the drag started
+    // Null means font8x8, which is always available and always identical - so a
+    // build with no font files still renders and its goldens still compare.
     const ctbrowser::raster::font_backend * fonts_ = nullptr;
 #if CTBROWSER_WITH_TTF
     // Owned so its glyph cache outlives any one frame; the renderer only
@@ -1756,14 +1651,8 @@ private:
     // navigation is queued there: a listener runs script, and running script
     // inside the load is what the whole `loading_` dance exists to prevent.
     //
-    // WHY IT WAS MISSING, and why it is not merely a nicety. This engine sets
-    // `document.readyState` to "complete" from the start, so every library that
-    // asks before it listens - p5, Phaser, Babylon - takes its already-loaded
-    // branch and never needs the event. testharness.js does the opposite: it
-    // listens unconditionally and sets `all_loaded` in the handler, and
-    // `Tests.all_done()` requires that flag. Without this, EVERY
-    // web-platform-test ran its subtests, passed them, and then sat until the
-    // harness's own 10-second timeout, reporting TIMEOUT.
+    // testharness.js listens for `load` unconditionally and `Tests.all_done()`
+    // waits for it: without the event every web-platform-test times out.
     bool load_event_pending_ = false;
     std::size_t scripts_compiled_from_source_ = 0;
     // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
@@ -1791,6 +1680,10 @@ private:
     bool prefer_angle_webgl_ = false;
     std::string script_error_;
     std::string style_error_;
+    // Elements whose load/error is owed but not yet queued, and every element
+    // already announced this page. See note_resource_load.
+    std::vector<std::pair<node_id, bool>> resource_loads_;
+    std::vector<node_id> announced_loads_;
     std::string title_;
     float scroll_y_ = 0;
     float content_height_ = 0;

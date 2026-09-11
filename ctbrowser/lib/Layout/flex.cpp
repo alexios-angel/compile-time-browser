@@ -373,7 +373,7 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
 }
 
 fragment flex_flow::arrange(const box_node & b, const constraints & c,
-                            const measure_text_fn & measure_text, precomputed *) const {
+                            const measure_text_fn & measure_text) const {
     const bool horizontal = b.flex.horizontal();
     const resolved_edges edges = resolve_edges(b, c);
 

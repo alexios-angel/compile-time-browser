@@ -165,31 +165,12 @@ Boost.Context (and therefore Boost.Coroutine2 and Boost.Fiber) is per-ABI
 assembly and MUST STILL NOT be introduced. Lifting the rule for a library
 that is portable C++ says nothing about one that is not.
 
-NOT LINKED BY DEFAULT, AND THE ONLY DEPENDENCY HERE WHOSE LICENCE WOULD
-CHANGE THE BINARY'S: GNU GMP, which is LGPLv3-or-later OR GPLv2-or-later.
-`-DCTBROWSER_WITH_GMP=ON` makes it the Boost.Multiprecision backend for the
-BigInt type; the default build does not reference it and needs it nowhere.
+GNU GMP (LGPL) was an opt-in BigInt backend until 2026-09-10 and is no longer
+referenced: it measured slower than the header-only cpp_int at the widths a
+JavaScript BigInt has, and static LGPL linking carries relinking obligations
+the rest of this tree's dependencies do not. docs/script.md has the table.
 
-It is opt-in specifically BECAUSE of this paragraph rather than in spite of
-it. This project is Apache-2.0 with LLVM exceptions and ships SELF-CONTAINED,
-STATICALLY LINKED .exe files - no DLLs, deliberately (docs/platform.md).
-Static linking against an LGPL library is permitted, but it carries
-obligations the rest of this tree's dependencies do not: recipients must be
-able to relink the work against a modified GMP, which in a static binary
-means providing the objects or an equivalent mechanism, along with the LGPL
-text and notice. Turning that on for anyone who merely happened to have GMP
-installed - which is what "use it when available" would have meant - would
-attach those obligations silently, to a binary whose whole distribution model
-is a single file. Anyone enabling the option is taking on that duty
-knowingly.
-
-There is a second reason and it is not legal: GMP is SLOWER for this
-workload. A JavaScript BigInt is an id, a timestamp or a 64-bit hash, and at
-64 bits GMP measured 2.9x slower than the header-only cpp_int on Linux and
-5.5x slower on Windows - every mpz_t being a heap allocation where cpp_int
-keeps a small value inline. docs/script.md has the table and the method.
-
-The one other LGPL item in this repository is p5.js (LGPL-2.1), and it
+The one LGPL item in this repository is p5.js (LGPL-2.1), and it
 remains what it has always been: test data that nothing links.
 
 The compositor's shaders (include/ctbrowser/gpu/shaders/tile.vert.glsl and

@@ -1,12 +1,6 @@
 // dom_bindings' CSSOM - the source text and the object slots: the comment-,
 // string- and bracket-aware scanner over a rule's bytes, url() and @page
 // serialisation, and the private-slot helpers every CSSOM object shares.
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -354,11 +348,37 @@ void set_indexed(script::object_object & obj, std::span<const value> items) {
     return out;
 }
 
+bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string_view name) {
+    if (name.starts_with("--")) { return true; }
+    if (rule.type == keyframe_rule) { return !name.starts_with("animation"); }
+    if (rule.type != page_rule) { return true; }
+    // The descriptors, then Appendix A's "applicable CSS 2.1 properties" -
+    // bidi, background, border, counter, color, font, height, line-height,
+    // margin, outline, padding, quotes, text, visibility and width.
+    static constexpr std::string_view exact[] = {
+        "size",           "page-orientation", "marks",       "bleed",
+        "direction",      "unicode-bidi",     "color",       "height",
+        "min-height",     "max-height",       "width",       "min-width",
+        "max-width",      "line-height",      "quotes",      "visibility",
+        "letter-spacing", "text-align",       "text-indent", "text-transform",
+        "white-space",    "word-spacing"};
+    static constexpr std::string_view prefixes[] = {"margin",   "background",     "border",
+                                                    "counter-", "font",           "outline",
+                                                    "padding",  "text-decoration"};
+    for (const std::string_view each : exact) {
+        if (name == each) { return true; }
+    }
+    for (const std::string_view each : prefixes) {
+        if (name.starts_with(each)) { return true; }
+    }
+    return false;
+}
+
 // ONE WRITE THROUGH THE VALUE GRAMMAR, the same rule `el.style` follows: an
 // invalid value is a NO-OP and an empty one REMOVES the declaration.
-bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
-                       const std::string & css_name, std::string_view text, bool allow_important,
-                       bool force_important) {
+bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
+                       std::string_view text, bool allow_important, bool force_important) {
+    std::vector<dom_bindings::css_declaration> & block = rule.declarations;
     const style::css::value_check checked = check_declaration(css_name, text, allow_important);
     const auto found =
         std::find_if(block.begin(), block.end(), [&](const dom_bindings::css_declaration & each) {
@@ -371,6 +391,7 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
         }
         return false;
     }
+    if (!declaration_allowed(rule, css_name)) { return false; }
     const bool important = checked.important || force_important;
     if (found != block.end()) {
         found->value = checked.serialized;
@@ -379,6 +400,56 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
     }
     block.push_back(dom_bindings::css_declaration{css_name, checked.serialized, important});
     return true;
+}
+
+// THE DECLARATIONS OF A BLOCK, through the two entry points that exist for
+// exactly this - `parse_declaration_list`, which a `style` attribute uses, and
+// `check_declaration`, which `el.style` writes through. A value the grammar
+// refuses is one the cascade drops, so publishing it would advertise a
+// declaration that does not apply.
+void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body,
+                             atom_table & atoms) {
+    const style::css::stylesheet parsed = style::css::parse_declaration_list(body, atoms);
+    for (const style::css::raw_declaration & d : parsed.declarations) {
+        const std::string property{atoms.text(d.property)};
+        const style::css::value_check checked =
+            check_declaration(property, parsed.text_of(d), false);
+        if (!checked.valid || !declaration_allowed(rule, property)) { continue; }
+        // CSS Cascade 4 §6.1 within one block: the LAST declaration of a
+        // property wins, unless an earlier one was important and it is not.
+        auto found = std::find_if(
+            rule.declarations.begin(), rule.declarations.end(),
+            [&](const dom_bindings::css_declaration & each) { return each.name == property; });
+        if (found == rule.declarations.end()) {
+            rule.declarations.push_back(
+                dom_bindings::css_declaration{property, checked.serialized, d.important});
+        } else if (d.important || !found->important) {
+            found->value = checked.serialized;
+            found->important = d.important;
+        }
+    }
+}
+
+void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                 std::size_t rule) {
+    if (rule >= store.size()) { return; }
+    store[rule]->sheet = no_index;
+    store[rule]->parent = no_index;
+    for (const std::size_t child : store[rule]->children) { detach_rule(store, child); }
+}
+
+void mirror_rule_list(script::object_object & rule_obj) {
+    const value * list = rule_obj.find(rules_key);
+    script::object_object * held = list == nullptr ? nullptr : as_object(*list);
+    if (held == nullptr) { return; }
+    std::vector<value> items;
+    if (const value * length = held->find("length"); length != nullptr && length->is_number()) {
+        const double count = length->as_number();
+        for (std::size_t i = 0; i < (count > 0 ? static_cast<std::size_t>(count) : 0); ++i) {
+            if (const value * item = held->find(std::to_string(i))) { items.push_back(*item); }
+        }
+    }
+    set_indexed(rule_obj, items);
 }
 
 // A property name as the CSSOM's own methods take it: a custom property keeps

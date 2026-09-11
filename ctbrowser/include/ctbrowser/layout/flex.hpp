@@ -46,12 +46,8 @@ struct flex_flow {
     [[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
                                           const measure_text_fn & measure_text) const;
 
-    // `ready` is accepted and IGNORED, like table_flow's. The parallel driver
-    // never hands a flex container precomputed children and must not: they are
-    // not independent, which is the invariant engine::split_point enforces.
     [[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
-                                   const measure_text_fn & measure_text,
-                                   precomputed * ready = nullptr) const;
+                                   const measure_text_fn & measure_text) const;
 };
 
 static_assert(LayoutAlgorithm<flex_flow>);

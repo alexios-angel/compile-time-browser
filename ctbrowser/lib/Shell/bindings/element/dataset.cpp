@@ -1,11 +1,4 @@
 // dom_bindings - `element.dataset`, the DOMStringMap over `data-*` attributes.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -161,6 +154,39 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
                                      c.to_string(args[2]));
         mutated();
         return value::boolean(true);
+    });
+    // `delete el.dataset.fooBar` REMOVES `data-foo-bar` - a supported property
+    // name runs the named property deleter (HTML 3.2.6.3: uppercase becomes
+    // `-` and lowercase, `data-` in front, remove the attribute); anything
+    // else is an ordinary delete on the target, which is how `dataset['-foo']`
+    // leaves `data--foo` alone: that attribute answers to `Foo`, not `-foo`.
+    trap("deleteProperty", [this, id, value_of](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::boolean(false); }
+        const std::string key = c.to_string(args[1]);
+        if (!value_of(key)) { return value::boolean(c.delete_own_property(args[0], key)); }
+        std::string name;
+        (void)dataset_attribute_of(key, name);
+        (void)doc_->remove_attribute_ns(id, "", name);
+        mutated();
+        return value::boolean(true);
+    });
+    // A supported name is an own DATA property of the map - { value, writable,
+    // enumerable, configurable } all true (Web IDL 3.9.3 step 2.3) - read off
+    // the DOCUMENT, not the store: `dataset-binding.window.js` sets the
+    // attribute after taking `dataset` and asks at once.
+    trap("getOwnPropertyDescriptor", [value_of, refilled_key](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::undefined(); }
+        const std::string key = c.to_string(args[1]);
+        context::property_descriptor found;
+        if (const std::optional<std::string> held = value_of(key)) {
+            found = context::property_descriptor::data(
+                c.string(*held),
+                script::attr_writable | script::attr_enumerable | script::attr_configurable);
+            return c.from_property_descriptor(found);
+        }
+        if (refilled_key(key)) { return value::undefined(); }
+        return c.own_property(args[0], key, found) ? c.from_property_descriptor(found)
+                                                   : value::undefined();
     });
     const value proxy = value::object(
         cx.allocate<script::proxy_object>(value::object(store), value::object(handler)));

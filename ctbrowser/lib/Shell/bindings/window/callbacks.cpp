@@ -1,14 +1,7 @@
 // dom_bindings - the callback queue: what a tick runs and in what order, the
 // fault it reports, `console`, and the timers.
-//
-// One of two files carved out of a 1,106-line bindings/window.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. Both are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; nothing is shared between them but
-// the includes, which internal.hpp carries. Nothing about the public header
-// changed.
 
-#include "internal.hpp"
+#include <ctbrowser/shell/bindings.hpp>
 
 namespace ctbrowser::shell {
 
@@ -41,7 +34,7 @@ std::size_t dom_bindings::run_due_callbacks() {
         for (const pending_frame & waiting : due) {
             settle_frame(*cx_, waiting);
             note_callback_fault("frame load");
-            ++ran;
+            if (!waiting.resource) { ++ran; }
         }
     }
     // IMAGE LOADS with them, and for the same reason: p5's loadImage awaits a
@@ -131,7 +124,6 @@ void dom_bindings::note_callback_fault(std::string_view source) {
     // The FIRST one is kept: a loop that faults every frame would otherwise
     // replace the original diagnosis with the thousandth copy of it.
     if (callback_error_.empty()) { callback_error_ = message; }
-    ++callback_faults_;
 }
 
 double dom_bindings::next_callback_ms() const {

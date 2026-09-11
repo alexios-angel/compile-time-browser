@@ -1,11 +1,6 @@
 // calc() - finding the math functions in a value's text, and folding them: the
 // name scan that skips quoted runs, the function span, which properties take
 // which answer, and fold_math itself.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -24,9 +19,10 @@ namespace {
 // `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
 // function: this file cannot evaluate it, and a name here is a promise to try.
 constexpr std::string_view math_names[] = {
-    "progress(", "clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(", "acos(",
-    "atan(",     "sign(",  "calc(",  "min(",   "max(",   "mod(",  "rem(",  "abs(",
-    "pow(",      "log(",   "exp(",   "sin(",   "cos(",   "tan("};
+    "sibling-index(", "sibling-count(", "progress(", "clamp(", "atan2(", "hypot(",
+    "round(",         "sqrt(",          "asin(",     "acos(",  "atan(",  "sign(",
+    "calc(",          "min(",           "max(",      "mod(",   "rem(",   "abs(",
+    "pow(",           "log(",           "exp(",      "sin(",   "cos(",   "tan("};
 
 } // namespace
 
@@ -215,12 +211,31 @@ math_context math_context_of(std::string_view property) noexcept {
     }
     // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
     // `properties/table.cpp` marks `k::integer` - kept here rather than asked of that
-    // table because this file must not depend on it, and two names are cheaper to
-    // repeat than a dependency is to add. Adding a third belongs in both.
-    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order")) {
+    // table because this file must not depend on it, and four names are cheaper
+    // to repeat than a dependency is to add. Adding a fifth belongs in both.
+    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order") ||
+        ascii_iequals(property, "orphans") || ascii_iequals(property, "widows")) {
         return math_context::integer;
     }
     return math_context::any;
+}
+
+std::string non_negative(std::string_view folded) {
+    const token_stream ts = tokenize(folded);
+    const css_token * lone = nullptr;
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::whitespace) { continue; }
+        if (t.type == token_type::eof) { break; }
+        if (lone != nullptr) { return std::string{folded}; } // two values: not this file's
+        lone = &t;
+    }
+    if (lone == nullptr || lone->number >= 0) { return std::string{folded}; }
+    switch (lone->type) {
+    case token_type::number: return "0";
+    case token_type::percentage: return "0%";
+    case token_type::dimension: return "0" + ascii_lower_copy(ts.unit_of(*lone));
+    default: return std::string{folded};
+    }
 }
 
 bool math_uses_percentage(std::string_view value) {
@@ -270,6 +285,31 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
             calc_result computed = answer.value;
+            // AN INFINITY OR A NaN IS CLAMPED AT COMPUTED-VALUE TIME. CSS Values 4
+            // §10.10: a math function's result is clamped to the property's
+            // range when the computed value is made, and an infinite one lands
+            // on whichever bound it overflowed. A NaN has no bound to land on and
+            // computes to zero - `width: calc(NaN * 1px)` is `0px` in every
+            // browser, and `calc-infinity-nan-computed` asserts it over lengths,
+            // times, numbers and percentages.
+            //
+            // THE BOUND IS 2^25, which is Chrome's LayoutUnit maximum and,
+            // just as much to the point, small enough that a used value's
+            // `x * 64` is still a finite float. The specification leaves the
+            // magnitude to the implementation; every engine picks one and the
+            // corpus only asks that it be at least a million. The SPECIFIED value
+            // keeps `calc(infinity * 1px)` - that is simplify_math's, not this.
+            //
+            // ponytail: one bound for every family and every property; the
+            // per-property range (opacity's [0, 1], a non-negative width) is
+            // the cascade's to apply after this.
+            constexpr double bound = 33554432.0;
+            const auto clamped = [](double v) {
+                if (std::isnan(v)) { return 0.0; }
+                return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
+            };
+            computed.px = clamped(computed.px);
+            computed.percent = clamped(computed.percent);
             // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
             // says which way: to the nearest integer, with a value exactly halfway
             // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not

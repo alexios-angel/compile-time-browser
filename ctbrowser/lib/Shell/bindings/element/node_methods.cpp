@@ -1,12 +1,5 @@
 // dom_bindings - the Node, ParentNode and ChildNode method surface: insertion
 // validity, insertAdjacent*, tree mutation, selectors and geometry.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -22,11 +15,15 @@ using namespace detail;
 // precisely because nothing stopped one being made.
 bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
                                     value ref_arg) {
-    if (!child) {
+    // THE DOCUMENT OBJECT IS A NODE WITHOUT A HANDLE - `document` is one object
+    // built by install_document, not a wrapper - so `handle_of` answers nothing
+    // for it. It IS a Node, and inserting one is step 4's HierarchyRequestError,
+    // not a TypeError: `el.insertBefore(document, a)` is a subtest by name.
+    const bool node_is_document = !child && is_the_document(node_arg);
+    if (!child && !node_is_document) {
         // Not a Node at all. WebIDL reports a failed conversion as a TypeError
         // rather than a DOMException, which is the one case in these steps that
         // is not a DOMException.
-        (void)node_arg;
         cx.throw_error("TypeError", "the argument is not a Node");
         return false;
     }
@@ -68,11 +65,53 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     // 4. "If node is not a DocumentFragment, DocumentType, Element, or
     //    CharacterData node, throw a HierarchyRequestError." A Document is the
     //    one this engine can produce and must refuse.
-    if (txn.kind(child).value_or(node_kind::element) == node_kind::document) {
+    if (node_is_document || txn.kind(child).value_or(node_kind::element) == node_kind::document) {
         throw_dom_exception(cx, "HierarchyRequestError", "a Document cannot be inserted");
         return false;
     }
     return true;
+}
+
+// "CONVERT NODES INTO A NODE", DOM 4.2.5: one argument is the node it names,
+// several become a DocumentFragment holding them all - which MOVES each out of
+// wherever it was - and a string becomes a Text node. Every ParentNode and
+// ChildNode insertion method starts here, and the conversion running BEFORE
+// the position is computed is what makes `child.after(x, child)` land where the
+// specification says.
+node_id dom_bindings::convert_nodes(context & cx, std::span<value> args) {
+    if (args.size() == 1) { return node_from(cx, args[0]); }
+    const node_id fragment = doc_->create_fragment();
+    for (const value & one : args) { (void)insert_node(fragment, node_from(cx, one), node_id{}); }
+    return fragment;
+}
+
+// "VIABLE NEXT/PREVIOUS SIBLING", DOM 4.2.7: the first sibling in that direction
+// that is NOT one of the arguments. `child.after(x, y)` where x and y are the
+// very siblings that follow it must put them after child, not after
+// themselves - which is what the immediate sibling would have said.
+node_id dom_bindings::viable_sibling(node_id self, std::span<value> args, bool forward) {
+    std::vector<node_id> given;
+    for (const value & one : args) {
+        if (const node_id held = handle_of(one)) { given.push_back(held); }
+    }
+    const auto txn = doc_->read();
+    const node_id parent = txn.parent(self);
+    if (!parent) { return node_id{}; }
+    const std::span<const node_id> kids = txn.children(parent);
+    std::size_t at = 0;
+    while (at < kids.size() && kids[at] != self) { ++at; }
+    if (at >= kids.size()) { return node_id{}; }
+    const auto excluded = [&](node_id one) { return std::ranges::find(given, one) != given.end(); };
+    if (forward) {
+        for (std::size_t i = at + 1; i < kids.size(); ++i) {
+            if (!excluded(kids[i])) { return kids[i]; }
+        }
+        return node_id{};
+    }
+    for (std::size_t i = at; i > 0; --i) {
+        if (!excluded(kids[i - 1])) { return kids[i - 1]; }
+    }
+    return node_id{};
 }
 
 void dom_bindings::install_node_methods(context & cx, script::object_object & obj) {
@@ -214,12 +253,18 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
         return value::undefined();
     });
     method("insertBefore", [this](context & c, std::span<value> args) {
+        // TWO REQUIRED ARGUMENTS: `insertBefore(node)` is a TypeError, and
+        // `Node-insertBefore.html` asks for it by name. A null SECOND argument is
+        // a different thing - it means "at the end", which is what makes
+        // `insertBefore(node, null)` a documented spelling of appendChild;
+        // insert_node reads an empty handle the same way.
+        if (args.size() < 2) {
+            c.throw_error("TypeError", "insertBefore needs a node and a reference child");
+            return value::undefined();
+        }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
         const node_id before = handle_of(arg(args, 1));
-        // A null reference node means "at the end", which is what makes
-        // `insertBefore(node, null)` a documented spelling of appendChild -
-        // insert_node reads an empty handle the same way.
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
         }
@@ -238,6 +283,10 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     // a lie a page can test for, and because when state preservation does
     // arrive it arrives here.
     method("moveBefore", [this](context & c, std::span<value> args) {
+        if (args.size() < 2) {
+            c.throw_error("TypeError", "moveBefore needs a node and a reference child");
+            return value::undefined();
+        }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
@@ -245,6 +294,16 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
         }
         {
             const auto txn = doc_->read();
+            // "If parent's shadow-including root is not node's shadow-including
+            // root, throw a HierarchyRequestError" - a move stays within one
+            // tree, which is what lets it keep state a remove-and-insert would
+            // drop. A connected parent and a detached node have different
+            // roots, and so do two detached subtrees.
+            if (root_of_tree(txn, parent, true) != root_of_tree(txn, child, true)) {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "moveBefore: the node and the parent are in different trees");
+                return value::undefined();
+            }
             // "If node's parent is null, then throw a HierarchyRequestError" -
             // a move has to move something from somewhere.
             if (!txn.parent(child)) {
@@ -254,7 +313,8 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
             }
         }
         (void)insert_node(parent, child, handle_of(arg(args, 1)));
-        return arg(args, 0);
+        // `undefined`, unlike insertBefore: the IDL return type is void.
+        return value::undefined();
     });
     // WHERE THE ELEMENT IS ON SCREEN. A page turns a pointer event's viewport
     // coordinates into coordinates within an element by subtracting this - p5's
@@ -295,24 +355,36 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
     // did not, so a page that scoped its search to a subtree found the method
     // missing. p5's XML module walks a parsed document with exactly this.
+    //
+    // LIVE, as the document's is, and with the document's TWO-BRANCH rule -
+    // DOM 4.5 "list of elements with qualified name": in an HTML document an
+    // HTML-namespace element matches the name ASCII-lowercased and any other
+    // element matches it exactly, so `<linearGradient>` inside an <svg> is found
+    // by its own spelling and not by the folded one. In an XML document every
+    // element matches exactly. `Element-getElementsByTagName.html` runs the
+    // document's whole battery against an element.
     method("getElementsByTagName", [this](context & c, std::span<value> args) {
         const node_id from = receiver(c);
         const std::string want = arg_string(c, args, 0);
-        value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        if (!from) { return out; }
-        const auto txn = doc_->read();
-        // `*` is every descendant, which is what a page uses to count a subtree.
-        const atom tag = want == "*" ? atom{} : atoms_->intern_lower(want);
-        const auto walk = [&](auto && self, node_id at, bool include) -> void {
-            if (include && (want == "*" || txn.tag(at).value_or(atom{}) == tag)) {
-                items->items.push_back(wrap(c, at));
-            }
-            for (const node_id child : txn.children(at)) { self(self, child, true); }
-        };
-        // DESCENDANTS ONLY - the element itself is not one of its own results.
-        walk(walk, from, false);
-        return out;
+        return make_live_collection(c, [this, from, want] {
+            std::vector<node_id> found;
+            if (!from) { return found; }
+            const auto txn = doc_->read();
+            const bool every = want == "*";
+            const atom folded = every ? atom{} : atoms_->intern_lower(want);
+            const auto walk = [&](auto && self, node_id at, bool include) -> void {
+                if (const auto tagged = txn.tag(at); include && tagged.has_value()) {
+                    const bool folds = txn.element_ns(at) == node_ns::html && !doc_->xml();
+                    if (every || (folds ? *tagged == folded : atoms_->text(*tagged) == want)) {
+                        found.push_back(at);
+                    }
+                }
+                for (const node_id child : txn.children(at)) { self(self, child, true); }
+            };
+            // DESCENDANTS ONLY - the element itself is not one of its own results.
+            walk(walk, from, false);
+            return found;
+        });
     });
     // `element.getElementsByTagNameNS(namespace, localName)`, the same battery
     // the document has answered all along. `Document-Element-getElementsBy...
@@ -363,25 +435,38 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     // and a STRING argument becomes a Text node - so `el.append("x", node)` is
     // one call where the old spelling is three lines and a createTextNode. WPT
     // reaches for them constantly, and so does every library written since 2016.
+    //
+    // EVERY ONE OF THEM IS "convert nodes into a node" AND THEN ONE INSERTION,
+    // which is the specification's shape and not a nicety: converting first is
+    // what moves the arguments out of the tree BEFORE the position is chosen,
+    // and one insertion is what runs the pre-insertion checks once - so
+    // `body.append(body)` is the HierarchyRequestError it must be rather than a
+    // cycle, which `ParentNode-append.html` asks for by name.
     const auto parent_of = [this](node_id id) { return doc_->read().parent(id); };
     method("append", [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        for (const value & one : args) { (void)insert_node(self, node_from(c, one), node_id{}); }
+        const node_id node = convert_nodes(c, args);
+        if (!pre_insert_valid(c, self, node, value::null(), value::null())) {
+            return value::undefined();
+        }
+        (void)insert_node(self, node, node_id{});
         return value::undefined();
     });
     method("prepend", [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::undefined(); }
-        // BEFORE THE FIRST CHILD, and the arguments keep their order because
-        // each is inserted before the SAME reference node rather than before
-        // the one just added.
+        const node_id node = convert_nodes(c, args);
+        if (!pre_insert_valid(c, self, node, value::null(), value::null())) {
+            return value::undefined();
+        }
+        // BEFORE THE FIRST CHILD, read AFTER the conversion: an argument that was
+        // that first child has been moved into the fragment by now.
         node_id first;
         {
             const auto txn = doc_->read();
             const auto children = txn.children(self);
             if (!children.empty()) { first = children.front(); }
         }
-        for (const value & one : args) { (void)insert_node(self, node_from(c, one), first); }
+        (void)insert_node(self, node, first);
         return value::undefined();
     });
     // `replaceChildren` - the third of the ParentNode mixin, and the one an
@@ -391,7 +476,10 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     // rebuilding a list IS.
     method("replaceChildren", [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::undefined(); }
+        const node_id node = convert_nodes(c, args);
+        if (!pre_insert_valid(c, self, node, value::null(), value::null())) {
+            return value::undefined();
+        }
         // COPIED BEFORE REMOVING: children() is a view onto the live child list
         // and each removal republishes it.
         std::vector<node_id> existing;
@@ -400,7 +488,7 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
             for (const node_id child : txn.children(self)) { existing.push_back(child); }
         }
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
-        for (const value & one : args) { (void)insert_node(self, node_from(c, one), node_id{}); }
+        (void)insert_node(self, node, node_id{});
         mutated();
         return value::undefined();
     });
@@ -434,47 +522,86 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
         if (is_document_root(txn, top)) { return document_; }
         return wrap(c, top);
     });
+    // THE ChildNode THREE, DOM 4.2.7 - each is: the viable sibling, THEN the
+    // conversion, THEN one insertion. `ChildNode-after.html` puts the very
+    // siblings that follow a node into its `after()` call and asserts they end
+    // up after it in argument order; the immediate sibling was one of them.
     method("before", [this, parent_of](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id parent = parent_of(self);
-        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), self); }
+        if (!parent) { return value::undefined(); }
+        const node_id previous = viable_sibling(self, args, false);
+        const node_id node = convert_nodes(c, args);
+        // "If viablePreviousSibling is null, set it to parent's first child;
+        // otherwise to viablePreviousSibling's next sibling" - read AFTER the
+        // conversion, which may have moved the old first child away.
+        node_id reference;
+        {
+            const auto txn = doc_->read();
+            const std::span<const node_id> kids = txn.children(parent);
+            if (!previous) {
+                reference = kids.empty() ? node_id{} : kids.front();
+            } else {
+                for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
+                    if (kids[i] == previous) { reference = kids[i + 1]; }
+                }
+            }
+        }
+        (void)insert_node(parent, node, reference);
         return value::undefined();
     });
     method("after", [this, parent_of](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id parent = parent_of(self);
         if (!parent) { return value::undefined(); }
-        // The reference is the NEXT sibling, and an empty one means "at the
-        // end" - which is exactly what insert_node does with an empty handle.
-        node_id next;
-        {
-            const auto txn = doc_->read();
-            const auto children = txn.children(parent);
-            for (std::size_t i = 0; i + 1 < children.size(); ++i) {
-                if (children[i] == self) { next = children[i + 1]; }
-            }
-        }
-        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), next); }
+        const node_id next = viable_sibling(self, args, true);
+        const node_id node = convert_nodes(c, args);
+        (void)insert_node(parent, node, next);
         return value::undefined();
     });
     method("replaceWith", [this, parent_of](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id parent = parent_of(self);
         if (!parent) { return value::undefined(); }
-        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), self); }
-        (void)doc_->remove_child(self);
+        const node_id next = viable_sibling(self, args, true);
+        const node_id node = convert_nodes(c, args);
+        // "If this's parent is parent, replace this with node" - and it is NOT
+        // when this was among the arguments, because the conversion moved it
+        // into the fragment; then node goes before the viable sibling instead.
+        if (parent_of(self) == parent) {
+            // `this.replaceWith(this)` is a replacement with itself, which
+            // "replace" defines as leaving the node where it is.
+            if (node != self) {
+                (void)insert_node(parent, node, self);
+                (void)doc_->remove_child(self);
+            }
+        } else {
+            (void)insert_node(parent, node, next);
+        }
         mutated();
         return value::undefined();
     });
+    // `replaceChild(node, child)`, DOM 4.2.3 "replace": the pre-insertion
+    // checks with `child` as the reference - so a `child` that is not this
+    // node's is a NotFoundError - and then the swap. Replacing a node WITH
+    // ITSELF leaves it where it is, which `Node-replaceChild.html` asserts.
     method("replaceChild", [this](context & c, std::span<value> args) {
         const node_id parent = receiver(c);
-        const node_id fresh = handle_of(arg(args, 0));
-        const node_id stale = handle_of(arg(args, 1));
-        if (!parent || !fresh || !stale) { return arg(args, 1); }
+        const value node_arg = arg(args, 0);
+        const value child_arg = arg(args, 1);
+        const node_id fresh = handle_of(node_arg);
+        const node_id stale = handle_of(child_arg);
+        // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
+        if ((!fresh && !is_the_document(node_arg)) || (!stale && !is_the_document(child_arg))) {
+            c.throw_error("TypeError", "replaceChild: the argument is not a Node");
+            return value::undefined();
+        }
+        if (!pre_insert_valid(c, parent, fresh, node_arg, child_arg)) { return value::undefined(); }
+        if (fresh == stale) { return child_arg; }
         (void)insert_node(parent, fresh, stale);
         (void)doc_->remove_child(stale);
         mutated();
-        return arg(args, 1);
+        return child_arg;
     });
     // `cloneNode(deep)` - a DETACHED copy, and without it there is no way at all
     // to duplicate a template, which is how a page builds a list from one row.
@@ -487,6 +614,101 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     });
     // `contains` INCLUDES THE NODE ITSELF, which is the part that is easy to get
     // wrong: `el.contains(el)` is true in every browser.
+    // `lookupNamespaceURI`, `lookupPrefix` and `isDefaultNamespace`, DOM 4.4,
+    // on every node the wrapper is made for. The document had all three
+    // (bindings/document/as_node.cpp) and nothing else did, which left
+    // `Node-lookupPrefix.xhtml` nine TypeErrors out of eleven. Each is "run the
+    // element algorithm on THE element this node names": an element is its own,
+    // a Text or Comment names its parent element, a DocumentFragment names
+    // nothing - and the algorithms themselves are the document's, shared.
+    const auto namespace_element = [this](node_id self) {
+        const auto txn = doc_->read();
+        switch (txn.kind(self).value_or(node_kind::element)) {
+        case node_kind::element: return self;
+        case node_kind::text:
+        case node_kind::comment: {
+            const node_id parent = txn.parent(self);
+            return parent && txn.kind(parent).value_or(node_kind::text) == node_kind::element
+                       ? parent
+                       : node_id{};
+        }
+        case node_kind::document:
+            for (const node_id child : txn.children(self)) {
+                if (txn.kind(child).value_or(node_kind::text) == node_kind::element) {
+                    return child;
+                }
+            }
+            return node_id{};
+        case node_kind::document_fragment: return node_id{};
+        }
+        return node_id{};
+    };
+    method("lookupNamespaceURI", [this, namespace_element](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        // "If prefix is the empty string, then set it to null."
+        const std::string prefix = given.is_nullish() ? std::string{} : c.to_string(given);
+        const std::string found =
+            locate_namespace(namespace_element(receiver(c)), prefix.empty() ? nullptr : &prefix);
+        return found.empty() ? value::null() : c.string(found);
+    });
+    method("isDefaultNamespace", [this, namespace_element](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        const std::string want = given.is_nullish() ? std::string{} : c.to_string(given);
+        return value::boolean(locate_namespace(namespace_element(receiver(c)), nullptr) == want);
+    });
+    method("lookupPrefix", [this, namespace_element](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        if (given.is_nullish()) { return value::null(); }
+        const std::string found =
+            locate_namespace_prefix(namespace_element(receiver(c)), c.to_string(given));
+        return found.empty() ? value::null() : c.string(found);
+    });
+    // `normalize()`, DOM 4.4: every EMPTY Text descendant goes, and every run of
+    // contiguous Text siblings becomes its first member. The first member and
+    // not a new node - `Node-normalize.html` holds the node and reads its data
+    // afterwards - and an empty first member goes rather than absorbing the run,
+    // which is the order the specification walks in and the bug 19837 case.
+    method("normalize", [this](context & c, std::span<value>) {
+        const node_id self = receiver(c);
+        if (!self) { return value::undefined(); }
+        std::vector<std::pair<node_id, std::string>> merged;
+        std::vector<node_id> removed;
+        {
+            const auto txn = doc_->read();
+            const auto is_text = [&txn](node_id one) {
+                return txn.kind(one).value_or(node_kind::element) == node_kind::text;
+            };
+            const auto walk = [&](auto && again, node_id at) -> void {
+                const std::span<const node_id> kids = txn.children(at);
+                for (std::size_t i = 0; i < kids.size();) {
+                    if (!is_text(kids[i])) {
+                        again(again, kids[i]);
+                        ++i;
+                        continue;
+                    }
+                    if (txn.text(kids[i]).empty()) {
+                        removed.push_back(kids[i]);
+                        ++i;
+                        continue;
+                    }
+                    std::string data{txn.text(kids[i])};
+                    std::size_t j = i + 1;
+                    for (; j < kids.size() && is_text(kids[j]); ++j) {
+                        data += txn.text(kids[j]);
+                        removed.push_back(kids[j]);
+                    }
+                    if (j > i + 1) { merged.emplace_back(kids[i], std::move(data)); }
+                    i = j;
+                }
+            };
+            walk(walk, self);
+        }
+        if (merged.empty() && removed.empty()) { return value::undefined(); }
+        for (const auto & [node, data] : merged) { (void)doc_->set_text(node, data); }
+        for (const node_id node : removed) { (void)doc_->remove_child(node); }
+        mutated();
+        return value::undefined();
+    });
     method("contains", [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id other = handle_of(arg(args, 0));
@@ -530,6 +752,14 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
         const node_id child = handle_of(arg(args, 0));
         const node_id parent = receiver(c);
         if (!child) {
+            // The document object is a Node with no handle - see
+            // pre_insert_valid - and it is nobody's child, so `s.removeChild
+            // (document)` is the NotFoundError below rather than a TypeError.
+            if (is_the_document(arg(args, 0))) {
+                throw_dom_exception(c, "NotFoundError",
+                                    "removeChild: the node is not a child of this one");
+                return value::undefined();
+            }
             c.throw_error("TypeError", "removeChild: the argument is not a Node");
             return value::undefined();
         }

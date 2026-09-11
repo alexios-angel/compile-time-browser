@@ -1,13 +1,6 @@
 // dom_bindings - the event interfaces a page can name: Event.prototype and its
 // methods, the constructor hierarchy from Event down to PointerEvent, the
 // legacy init* methods, and EventTarget.
-//
-// One of three files carved out of a 1,647-line bindings/events.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -442,6 +435,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
             e.set("relatedTarget", dict_object(c, init, "relatedTarget"));
         };
     const value mouse_prototype = interface_of("MouseEvent", ui_prototype, mouse_members);
+    mouse_event_prototype_ = mouse_prototype;
     // `getModifierState('Shift')` - the general form of the four booleans, and
     // the only way to ask about the keys that have no shorthand.
     const auto modifier_state = [](context & c, std::span<value> a) {
@@ -473,25 +467,25 @@ void dom_bindings::install_event_interfaces(context & cx) {
         proto->set("DOM_DELTA_PAGE", value::number(2));
     }
 
-    interface_of("PointerEvent", mouse_prototype,
-                 [mouse_members](context & c, script::object_object & e, value init) {
-                     mouse_members(c, e, init);
-                     e.set("pointerId", value::number(dict_number(c, init, "pointerId")));
-                     e.set("width", value::number(dict_member(c, init, "width").is_undefined()
-                                                      ? 1.0
-                                                      : dict_number(c, init, "width")));
-                     e.set("height", value::number(dict_member(c, init, "height").is_undefined()
-                                                       ? 1.0
-                                                       : dict_number(c, init, "height")));
-                     e.set("pressure", value::number(dict_number(c, init, "pressure")));
-                     e.set("tangentialPressure",
-                           value::number(dict_number(c, init, "tangentialPressure")));
-                     e.set("tiltX", value::number(dict_number(c, init, "tiltX")));
-                     e.set("tiltY", value::number(dict_number(c, init, "tiltY")));
-                     e.set("twist", value::number(dict_number(c, init, "twist")));
-                     e.set("pointerType", c.string(dict_string(c, init, "pointerType")));
-                     e.set("isPrimary", value::boolean(dict_flag(c, init, "isPrimary")));
-                 });
+    pointer_event_prototype_ = interface_of(
+        "PointerEvent", mouse_prototype,
+        [mouse_members](context & c, script::object_object & e, value init) {
+            mouse_members(c, e, init);
+            e.set("pointerId", value::number(dict_number(c, init, "pointerId")));
+            e.set("width", value::number(dict_member(c, init, "width").is_undefined()
+                                             ? 1.0
+                                             : dict_number(c, init, "width")));
+            e.set("height", value::number(dict_member(c, init, "height").is_undefined()
+                                              ? 1.0
+                                              : dict_number(c, init, "height")));
+            e.set("pressure", value::number(dict_number(c, init, "pressure")));
+            e.set("tangentialPressure", value::number(dict_number(c, init, "tangentialPressure")));
+            e.set("tiltX", value::number(dict_number(c, init, "tiltX")));
+            e.set("tiltY", value::number(dict_number(c, init, "tiltY")));
+            e.set("twist", value::number(dict_number(c, init, "twist")));
+            e.set("pointerType", c.string(dict_string(c, init, "pointerType")));
+            e.set("isPrimary", value::boolean(dict_flag(c, init, "isPrimary")));
+        });
 
     // --- Touch, TouchList and TouchEvent ----------------------------------
     //

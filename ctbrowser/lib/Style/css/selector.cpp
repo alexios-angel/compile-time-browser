@@ -17,11 +17,8 @@ namespace {
 // Chrome restricts it to colour for privacy reasons, and "never matches" is the
 // honest subset rather than a gap.
 // The three pseudo-classes that are genuinely transient UI state, tracked per node
-// by the shell and cleared when the pointer moves.
-//
-// `:checked` and `:disabled` used to be here and are NOT any more: they are facts
-// about the element, and as state bits nothing ever set them - see the note beside
-// structural_disabled.
+// by the shell and cleared when the pointer moves. `:checked` and `:disabled` are
+// NOT among them: they are facts about the element - see structural_disabled.
 [[nodiscard]] std::uint32_t state_bit_of(std::string_view name) {
     if (ascii_iequals(name, "hover")) { return state_hover; }
     if (ascii_iequals(name, "active")) { return state_active; }
@@ -48,6 +45,147 @@ namespace {
     if (ascii_iequals(name, "link") || ascii_iequals(name, "any-link")) { return structural_link; }
     if (ascii_iequals(name, "visited")) { return structural_visited; }
     return 0;
+}
+
+// THE NAMES CSS HAS DEFINED, because Selectors 4 §3.1 says a pseudo-class or
+// pseudo-element it has not is a syntax error: `:gibberish` and `::part` with no
+// argument are not selectors in any browser, and `css/cssom/invalid-pseudo-elements`
+// asserts a rule carrying one is not in the sheet at all. What these lists decide
+// is only VALID or NOT - a name here that the matcher does not model still makes
+// the compound unmatchable, exactly as before.
+[[nodiscard]] bool in_names(std::string_view name, std::span<const std::string_view> names) {
+    for (const std::string_view each : names) {
+        if (ascii_iequals(name, each)) { return true; }
+    }
+    return false;
+}
+
+[[nodiscard]] bool known_pseudo_class(std::string_view name) {
+    static constexpr std::string_view names[] = {"active",
+                                                 "any-link",
+                                                 "autofill",
+                                                 "blank",
+                                                 "buffering",
+                                                 "checked",
+                                                 "current",
+                                                 "default",
+                                                 "defined",
+                                                 "disabled",
+                                                 "empty",
+                                                 "enabled",
+                                                 "first",
+                                                 "first-child",
+                                                 "first-of-type",
+                                                 "focus",
+                                                 "focus-visible",
+                                                 "focus-within",
+                                                 "fullscreen",
+                                                 "future",
+                                                 "host",
+                                                 "hover",
+                                                 "in-range",
+                                                 "indeterminate",
+                                                 "invalid",
+                                                 "last-child",
+                                                 "last-of-type",
+                                                 "left",
+                                                 "link",
+                                                 "local-link",
+                                                 "modal",
+                                                 "muted",
+                                                 "only-child",
+                                                 "only-of-type",
+                                                 "open",
+                                                 "optional",
+                                                 "out-of-range",
+                                                 "past",
+                                                 "paused",
+                                                 "picture-in-picture",
+                                                 "placeholder-shown",
+                                                 "playing",
+                                                 "popover-open",
+                                                 "read-only",
+                                                 "read-write",
+                                                 "required",
+                                                 "right",
+                                                 "root",
+                                                 "scope",
+                                                 "seeking",
+                                                 "stalled",
+                                                 "target",
+                                                 "target-within",
+                                                 "user-invalid",
+                                                 "user-valid",
+                                                 "valid",
+                                                 "visited",
+                                                 "volume-locked",
+                                                 "active-view-transition",
+                                                 "-webkit-any-link",
+                                                 "-webkit-autofill"};
+    return in_names(name, names);
+}
+
+[[nodiscard]] bool known_functional_pseudo_class(std::string_view name) {
+    static constexpr std::string_view names[] = {"not",         "is",
+                                                 "where",       "has",
+                                                 "nth-child",   "nth-last-child",
+                                                 "nth-of-type", "nth-last-of-type",
+                                                 "nth-col",     "nth-last-col",
+                                                 "lang",        "dir",
+                                                 "host",        "host-context",
+                                                 "state",       "active-view-transition-type",
+                                                 "current",     "heading",
+                                                 "-webkit-any"};
+    return in_names(name, names);
+}
+
+// The four CSS 2 pseudo-elements may be written with one colon, and serialise
+// with two either way.
+[[nodiscard]] bool legacy_pseudo_element(std::string_view name) {
+    static constexpr std::string_view names[] = {"before", "after", "first-line", "first-letter"};
+    return in_names(name, names);
+}
+
+[[nodiscard]] bool known_pseudo_element(std::string_view name) {
+    static constexpr std::string_view names[] = {"before",
+                                                 "after",
+                                                 "first-line",
+                                                 "first-letter",
+                                                 "marker",
+                                                 "placeholder",
+                                                 "selection",
+                                                 "backdrop",
+                                                 "file-selector-button",
+                                                 "spelling-error",
+                                                 "grammar-error",
+                                                 "target-text",
+                                                 "cue",
+                                                 "details-content",
+                                                 "view-transition",
+                                                 "scroll-marker",
+                                                 "scroll-marker-group",
+                                                 "checkmark",
+                                                 "picker-icon",
+                                                 "column"};
+    // A vendor-prefixed pseudo-element - `::-webkit-scrollbar`, `::-moz-selection` -
+    // is whatever that vendor says it is, and every browser parses the others'.
+    return in_names(name, names) || ascii_istarts_with(name, "-webkit-") ||
+           ascii_istarts_with(name, "-moz-");
+}
+
+[[nodiscard]] bool known_functional_pseudo_element(std::string_view name) {
+    static constexpr std::string_view names[] = {"part",
+                                                 "slotted",
+                                                 "highlight",
+                                                 "cue",
+                                                 "cue-region",
+                                                 "view-transition-group",
+                                                 "view-transition-image-pair",
+                                                 "view-transition-old",
+                                                 "view-transition-new",
+                                                 "picker",
+                                                 "scroll-button"};
+    return in_names(name, names);
 }
 
 // `An+B`, from the component values inside an `:nth-child()`. The grammar is
@@ -275,8 +413,7 @@ public:
             // Split on TOP-LEVEL commas only. A comma inside `:not(a, b)` is a
             // child of the function's component value and is never seen here,
             // which is the whole reason the prelude is parsed as component values
-            // rather than scanned as text - the old front end split on a bare
-            // comma and fragmented such a selector into two halves.
+            // rather than scanned as text.
             std::size_t end = at;
             while (end < prelude.size() && !is_comma(prelude[end])) { ++end; }
             emit(prelude.subspan(at, end - at));
@@ -402,9 +539,9 @@ private:
         const bool is_not = ascii_iequals(name, "not");
         const bool is_is = ascii_iequals(name, "is");
         const bool is_where = ascii_iequals(name, "where");
-        // An unrecognised functional pseudo-class is NOT reported as invalid. `:has()`
-        // is real CSS this engine cannot answer, and there is no way from here to tell
-        // one of those from a name nobody has ever defined.
+        // `:has()`, `:host()`, `:state()` are real CSS this engine cannot answer, and
+        // come back unmatchable; a name CSS has never defined is a syntax error, and
+        // the colon branch of `emit` refused it before the function was reached.
         if (!is_not && !is_is && !is_where) { return false; }
         ref.kind = is_not ? pseudo_kind::not_ : is_is ? pseudo_kind::is_ : pseudo_kind::where_;
 
@@ -457,6 +594,12 @@ private:
         boost::container::small_vector<building, 2> compounds;
         boost::container::small_vector<combinator, 2> links; // left-to-right, size = n-1
         bool dead = false;
+        // ...AND WHETHER SOMETHING WAS LOST ON THE WAY. A dead alternative keeps
+        // its compounds - `ns|e` and `::before` are unmatchable and still the
+        // author's selector, which is what `selectorText` has to give back - and
+        // `lossy` records that one of them holds a construct the compiled form
+        // has no field for, so the serialiser knows not to try.
+        bool lossy = false;
         // A COMBINATOR STILL WAITING FOR ITS RIGHT-HAND SIDE. `div >` and `div ~ ` are
         // syntax errors, and without this they parsed as plain `div`: `pending` is
         // simply overwritten by the next compound, so a combinator with nothing after
@@ -472,6 +615,47 @@ private:
             pending = combinator::descendant;
             want_new_compound = false;
             dangling_combinator = false;
+        };
+        // `|` IMMEDIATELY after run[at], which makes run[at] a namespace prefix.
+        // Whitespace is a token, so `a | b` does not qualify - and cannot, since
+        // a namespace separator is written with nothing on either side of it.
+        const auto bar_follows = [&](std::size_t at) {
+            return at + 1 < run.size() && run[at + 1].kind == cv_kind::token &&
+                   token(run[at + 1]).type == token_type::delim && text(run[at + 1]) == "|";
+        };
+        // The prefix, then the local name after the `|`. Selectors 4 §3.2: a
+        // named prefix that no `@namespace` declared is a syntax error, and the
+        // prefix must open its compound. `at` is left ON the local name.
+        const auto read_namespaced = [&](building & b, ns_prefix kind, std::string_view prefix,
+                                         std::size_t & at) {
+            if (b.part.ns != ns_prefix::unset || b.part.tag || b.tags != 0 || b.ids != 0 ||
+                b.classes != 0) {
+                return false;
+            }
+            if (kind == ns_prefix::named && sheet_->prefixes_checked) {
+                bool declared = false;
+                for (const namespace_declaration & each : sheet_->namespaces) {
+                    declared = declared || (!each.prefix.empty() && each.prefix == prefix);
+                }
+                if (!declared) { return false; }
+            }
+            if (at + 1 >= run.size() || run[at + 1].kind != cv_kind::token) { return false; }
+            const css_token & local = token(run[at + 1]);
+            ++at;
+            if (local.type == token_type::ident) {
+                b.part.tag = atoms_->intern_lower(text(run[at]));
+                b.part.tag_exact = atoms_->intern(text(run[at]));
+                b.tags = 1;
+            } else if (local.type != token_type::delim || text(run[at]) != "*") {
+                return false;
+            }
+            b.part.ns = kind;
+            if (kind == ns_prefix::named) { b.part.ns_name = atoms_->intern(prefix); }
+            // The null namespace and a named one are answered by nothing in the
+            // matcher, which knows an element's namespace only as html, svg or
+            // other; `*|` constrains nothing and matches as the bare name does.
+            if (kind != ns_prefix::any) { dead = true; }
+            return true;
         };
 
         for (std::size_t i = 0; i < run.size(); ++i) {
@@ -498,7 +682,7 @@ private:
                                      (inner.kind == cv_kind::token &&
                                       token(inner).type == token_type::delim && text(inner) == "|");
                     }
-                    dead = true;
+                    dead = lossy = true;
                     invalid_ = invalid_ || !namespaced;
                     continue;
                 }
@@ -518,7 +702,7 @@ private:
                 pending_pseudo = false;
                 std::string_view name = text(v);
                 if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
-                if (!parse_functional(name, v, compounds.back(), invalid_)) { dead = true; }
+                if (!parse_functional(name, v, compounds.back(), invalid_)) { dead = lossy = true; }
                 continue;
             }
             const css_token & t = token(v);
@@ -532,6 +716,14 @@ private:
             case token_type::ident: {
                 if (want_new_compound || compounds.empty()) { start_compound(); }
                 building & b = compounds.back();
+                if (bar_follows(i)) {
+                    const std::string_view prefix = text(v);
+                    ++i; // the `|`
+                    if (!read_namespaced(b, ns_prefix::named, prefix, i)) {
+                        dead = invalid_ = true;
+                    }
+                    continue;
+                }
                 if (b.part.tag || b.tags != 0) {
                     // Two type selectors in one compound - `divp` cannot happen
                     // from the tokenizer, so this means something upstream is
@@ -583,6 +775,13 @@ private:
                 }
                 if (d == "*") {
                     if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (bar_follows(i)) {
+                        ++i; // the `|`
+                        if (!read_namespaced(compounds.back(), ns_prefix::any, {}, i)) {
+                            dead = invalid_ = true;
+                        }
+                        continue;
+                    }
                     // The universal selector constrains nothing and contributes no
                     // specificity - an empty tag atom IS universal here.
                     continue;
@@ -602,16 +801,14 @@ private:
                     dangling_combinator = true;
                     continue;
                 }
-                // `|` IS A NAMESPACE SEPARATOR - valid CSS with an `@namespace` behind
-                // it, which this engine does not model. Unsupported rather than
-                // invalid, so `querySelector` returns null rather than throwing.
+                // A `|` with nothing before it is the NULL namespace - `|e` is an
+                // element in no namespace at all. The two prefixed forms were read
+                // from their prefix and never reach here.
                 if (d == "|") {
-                    dead = true;
-                    // AND THE LOCAL NAME AFTER IT STARTS A FRESH COMPOUND, so that
-                    // `svg|rect`'s `rect` is not read as a second type selector in
-                    // the compound `svg` already occupies - which would report a
-                    // syntax error for a selector that merely names a namespace.
-                    want_new_compound = true;
+                    if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (!read_namespaced(compounds.back(), ns_prefix::none, {}, i)) {
+                        dead = invalid_ = true;
+                    }
                     continue;
                 }
                 dead = invalid_ = true;
@@ -619,31 +816,60 @@ private:
             }
             case token_type::colon: {
                 if (want_new_compound || compounds.empty()) { start_compound(); }
-                // `::` is a pseudo-ELEMENT. Never matches an element, and the
-                // engine generates no boxes for one yet.
-                if (i + 1 < run.size() && run[i + 1].kind == cv_kind::token &&
-                    token(run[i + 1]).type == token_type::colon) {
-                    dead = true;
-                    ++i;
-                    if (i + 1 < run.size()) { ++i; } // and its name
+                building & b = compounds.back();
+                // `::` is a pseudo-ELEMENT. The name after it is kept - the engine
+                // generates no boxes for one, so the compound never matches, but
+                // `selectorText` gives it back - and a name CSS has not defined,
+                // or one with no argument that needs one, is a syntax error.
+                const bool doubled = i + 1 < run.size() && run[i + 1].kind == cv_kind::token &&
+                                     token(run[i + 1]).type == token_type::colon;
+                const std::size_t name_at = i + (doubled ? 2 : 1);
+                if (name_at >= run.size()) {
+                    dead = invalid_ = true; // a bare `:` or `::`
                     continue;
                 }
-                // A FUNCTION next means `:not(`, `:nth-child(` and friends: the
-                // tokenizer folded the name and the `(` into one token, so the colon
-                // and the function are two component values. Flag it and let the
-                // function branch handle it on the next iteration.
-                if (i + 1 < run.size() && run[i + 1].kind == cv_kind::function) {
+                const component_value & next = run[name_at];
+                if (next.kind == cv_kind::function) {
+                    std::string_view name = text(next);
+                    if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
+                    if (doubled) {
+                        // `::part(x)`, `::slotted(y)`: real, and nothing here holds
+                        // the argument, so the author's bytes are the only record.
+                        if (!known_functional_pseudo_element(name)) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
+                        i = name_at;
+                        dead = lossy = true;
+                        continue;
+                    }
+                    if (!known_functional_pseudo_class(name)) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
+                    // `:not(`, `:nth-child(` and friends: the tokenizer folded the
+                    // name and the `(` into one token, so the colon and the function
+                    // are two component values. Flag it and let the function branch
+                    // handle it on the next iteration.
                     pending_pseudo = true;
                     continue;
                 }
-                if (i + 1 >= run.size() || run[i + 1].kind != cv_kind::token ||
-                    token(run[i + 1]).type != token_type::ident) {
-                    dead = invalid_ = true; // a bare `:`
+                if (next.kind != cv_kind::token || token(next).type != token_type::ident) {
+                    dead = invalid_ = true; // `:::`, `:1`, `: hover`
                     continue;
                 }
-                const std::string_view name = text(run[i + 1]);
-                ++i;
-                building & b = compounds.back();
+                const std::string_view name = text(next);
+                i = name_at;
+                if (doubled || legacy_pseudo_element(name)) {
+                    if (!known_pseudo_element(name)) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
+                    b.part.pseudo_element = atoms_->intern_lower(name);
+                    ++b.tags; // a pseudo-element is type-level for specificity
+                    dead = true;
+                    continue;
+                }
                 if (const std::uint32_t bit = state_bit_of(name); bit != 0) {
                     b.part.states |= bit;
                     ++b.classes; // a pseudo-class is class-level for specificity
@@ -654,10 +880,13 @@ private:
                     ++b.classes;
                     continue;
                 }
-                // An unrecognised pseudo-class NAME, for the same reason the functional
-                // form above is not reported as invalid: `:focus-visible` and `:defined`
-                // are real and this engine cannot observe either.
-                dead = true;
+                // `:focus-visible` and `:defined` are real and this engine cannot
+                // observe either; `:gibberish` is not a selector.
+                if (!known_pseudo_class(name)) {
+                    dead = invalid_ = true;
+                    continue;
+                }
+                dead = lossy = true;
                 continue;
             }
             default:
@@ -671,10 +900,18 @@ private:
         // AN EMPTY ALTERNATIVE IS A SYNTAX ERROR, and it is how `querySelector("")`,
         // `a,,b` and a trailing comma all arrive here: `run` holds nothing but
         // whitespace, so no compound was ever started.
-        if (compounds.empty() || dangling_combinator) { invalid_ = true; }
-        if (dead || compounds.empty() || dangling_combinator) {
+        if (compounds.empty() || dangling_combinator) {
+            invalid_ = true;
             push_dead();
             return;
+        }
+        // A DEAD ALTERNATIVE KEEPS ITS COMPOUNDS. The rightmost is what the
+        // matcher and the rule index consult first, so the flag goes there; the
+        // CSSOM reads `dropped` to decide between the canonical serialisation
+        // and the author's bytes.
+        if (dead) {
+            compounds.back().part.never_matches = true;
+            compounds.back().part.dropped = lossy;
         }
 
         compiled_selector out;

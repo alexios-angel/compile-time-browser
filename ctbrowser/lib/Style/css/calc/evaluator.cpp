@@ -1,12 +1,7 @@
 // calc() - the term algebra, the non-linear functions of CSS Values 4
 // §10.4-§10.8, the recursive-descent evaluator over the token stream, and its
-// entry points: evaluate_math, evaluate_calc and the symbolic evaluation a
-// specified value uses.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
+// entry points: evaluate_math and the symbolic evaluation a specified value
+// uses.
 
 #include "internal.hpp"
 
@@ -15,6 +10,20 @@ namespace ctbrowser::style::css {
 using namespace detail;
 
 namespace {
+
+// ORDERING WITH A SIGNED ZERO. `min(0, -0)` is -0 and `max(-0, 0)` is 0: CSS
+// Values 4 §10.9 keeps the two zeros distinct and `signed-zero` reads them back
+// through `1 / sign(...)`. std::min and std::max cannot tell them apart -
+// `-0 < 0` is false - so the comparison functions order through this instead.
+[[nodiscard]] bool less(double a, double b) noexcept {
+    return a < b || (a == 0.0 && b == 0.0 && std::signbit(a) && !std::signbit(b));
+}
+[[nodiscard]] double smaller(double a, double b) noexcept {
+    return less(b, a) ? b : a;
+}
+[[nodiscard]] double larger(double a, double b) noexcept {
+    return less(a, b) ? b : a;
+}
 
 // A term whose whole magnitude is in ONE slot, so a non-linear function can be
 // applied to it. `10px` and `10%` both qualify; `calc(10px + 10%)` does not,
@@ -40,9 +49,9 @@ namespace {
     // Two different families cannot be added. This is the check that makes
     // `calc(100% - 12)` invalid, which is what Chrome does with it, and it now
     // also catches `calc(1s + 1px)`.
-    if (a.type != b.type) { return std::nullopt; }
+    if (a.dims != b.dims) { return std::nullopt; }
     term out;
-    out.type = a.type;
+    out.dims = a.dims;
     out.value = a.value + sign * b.value;
     out.percent = a.percent + sign * b.percent;
     out.has_percent = a.has_percent || b.has_percent;
@@ -53,47 +62,86 @@ namespace {
     return out;
 }
 
-[[nodiscard]] std::optional<term> multiply(const term & a, const term & b) {
-    // At most one operand may be dimensioned: `2px * 3px` is an area, and calc
-    // has no property that takes one.
-    if (!a.is_number() && !b.is_number()) { return std::nullopt; }
-    const term & dim = a.is_number() ? b : a;
-    const double scale = a.is_number() ? a.value : b.value;
+// What a product or a quotient came to. THREE ANSWERS, like the evaluator's
+// own: a term, a type error, or an operation that is well formed and has no
+// magnitude here - `1em * 1em` before a font size exists, `10% * 10%` before
+// a containing block does.
+struct arithmetic {
+    std::optional<term> value;
+    bool unresolved = false;
+};
+
+// Whether a term's plain magnitude is ABSENT rather than nought. `10%` carries
+// its magnitude in `percent` and `1em` in `symbols`, and the zero left in
+// `value` means "there is no length in this term" - which matters because
+// IEEE makes `0 * infinity` a NaN, and `calc(1% * infinity)` is
+// `calc(infinity * 1%)`, not a NaN length beside the right answer. A `0px`
+// the author wrote is a length, and `calc(0px * infinity)` IS a NaN.
+[[nodiscard]] bool no_plain_part(const term & t) noexcept {
+    return (t.has_percent || !t.symbols.empty()) && t.value == 0.0;
+}
+
+[[nodiscard]] term scaled(const term & dim, double scale) {
     term out = dim;
-    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` carries its magnitude in
-    // `percent` and a zero `value`, and that zero means "there is no length in
-    // this term" rather than "the length is nought". IEEE makes `0 * infinity` a
-    // NaN, so scaling a bare percentage by an infinity invented a NaN LENGTH
-    // beside the right answer and `calc(1% * infinity)` printed as `calc(NaN *
-    // 1px)` where it is `calc(infinity * 1%)`. `calc(0px * infinity)` IS a NaN
-    // and still is: there the zero is a length the author wrote.
-    //
-    // A SYMBOLIC TERM IS THE SAME CASE: `1em` carries its magnitude in `symbols`
-    // and leaves `value` at nought, and there is no length there either.
-    const bool no_plain_part = (dim.has_percent || !dim.symbols.empty()) && dim.value == 0.0;
-    out.value = no_plain_part ? 0.0 : dim.value * scale;
+    out.value = no_plain_part(dim) ? 0.0 : dim.value * scale;
     out.percent = dim.has_percent ? dim.percent * scale : 0.0;
     for (auto & [unit, coefficient] : out.symbols) { coefficient *= scale; }
     return out;
 }
 
-[[nodiscard]] std::optional<term> divide(const term & a, const term & b) {
-    // The divisor must be a NUMBER - `calc(20 / 0.75rem)` is invalid and
-    // `css/css-values/calc-unit-analysis` says so by name. It may be ZERO,
-    // though, and that was a defect: CSS Values 4 §10.9 says the result is an
-    // infinity or a NaN, not a syntax error, so `calc(100px / 0)` is
-    // `calc(infinity * 1px)` and `calc(0 / 0)` is `calc(NaN)`. IEEE division
-    // produces both, with the right sign for a negative zero, so there is
-    // nothing here to special-case.
-    if (!b.is_number()) { return std::nullopt; }
+[[nodiscard]] arithmetic multiply(const term & a, const term & b) {
+    // A NUMBER SCALES THE OTHER OPERAND, which is the product every stylesheet
+    // writes.
+    if (a.is_number() && !a.has_percent) { return {scaled(b, a.value)}; }
+    if (b.is_number() && !b.has_percent) { return {scaled(a, b.value)}; }
+    // TWO DIMENSIONS MULTIPLY INTO A TYPE OF THEIR OWN - the exponents add, CSS
+    // Values 4 §10.2 - and `2px * 3px` is an area on its way to being divided
+    // back down, or a syntax error if it never is (`settle()` decides). A
+    // symbolic term has no magnitude to multiply, and a percentage times a
+    // percentage needs the basis twice over; both wait for the cascade.
+    if (!a.symbols.empty() || !b.symbols.empty() || (a.has_percent && b.has_percent)) {
+        return {std::nullopt, true};
+    }
+    term out;
+    for (std::size_t i = 0; i < out.dims.size(); ++i) {
+        out.dims[i] = static_cast<std::int8_t>(a.dims[i] + b.dims[i]);
+    }
+    out.value = (no_plain_part(a) || no_plain_part(b)) ? 0.0 : a.value * b.value;
+    out.has_percent = a.has_percent || b.has_percent;
+    out.percent = a.has_percent ? a.percent * b.value : (b.has_percent ? b.percent * a.value : 0.0);
+    return {out};
+}
+
+[[nodiscard]] arithmetic divide(const term & a, const term & b) {
+    // DIVIDING BY A DIMENSION, §10.2 again: the exponents subtract, so `110px /
+    // 10px` is the number 11 and `10em / 1px` the number of pixels in ten ems.
+    // A divisor carrying a percentage has no magnitude until layout, and a
+    // symbolic one has none at all.
+    if (!b.is_number() || b.has_percent) {
+        if (b.has_percent || !b.symbols.empty() || !a.symbols.empty()) {
+            return {std::nullopt, true};
+        }
+        term out;
+        for (std::size_t i = 0; i < out.dims.size(); ++i) {
+            out.dims[i] = static_cast<std::int8_t>(a.dims[i] - b.dims[i]);
+        }
+        out.value = no_plain_part(a) ? 0.0 : a.value / b.value;
+        out.has_percent = a.has_percent;
+        out.percent = a.has_percent ? a.percent / b.value : 0.0;
+        return {out};
+    }
+    // The divisor is a NUMBER. It may be ZERO, and that was a defect: CSS
+    // Values 4 §10.9 says the result is an infinity or a NaN, not a syntax
+    // error, so `calc(100px / 0)` is `calc(infinity * 1px)` and `calc(0 / 0)`
+    // is `calc(NaN)`. IEEE division produces both, with the right sign for a
+    // negative zero, so there is nothing here to special-case.
     term out = a;
-    // The same absent-component rule multiply() carries, and for the same
+    // The same absent-component rule `scaled()` carries, and for the same
     // reason: `calc(1% / 0)` is `calc(infinity * 1%)` and not a NaN length.
-    const bool no_plain_part = (a.has_percent || !a.symbols.empty()) && a.value == 0.0;
-    out.value = no_plain_part ? 0.0 : a.value / b.value;
+    out.value = no_plain_part(a) ? 0.0 : a.value / b.value;
     out.percent = a.has_percent ? a.percent / b.value : 0.0;
     for (auto & [unit, coefficient] : out.symbols) { coefficient /= b.value; }
-    return out;
+    return {out};
 }
 
 // --- the non-linear functions, CSS Values 4 §10.4-§10.8 ------------------
@@ -125,7 +173,12 @@ enum class round_to : std::uint8_t {
         default: return negative ? -0.0 : 0.0;
         }
     }
-    const double n = a / b;
+    // THE STEP'S SIGN IS IGNORED: the integer multiples of -10 are the integer
+    // multiples of 10, so `round(15px, -10px)` is 20px like `round(15px, 10px)`
+    // - and dividing by the signed step turned the half-way rule upside down,
+    // answering 10px. `round-function` asks both spellings.
+    const double step = std::fabs(b);
+    const double n = a / step;
     double stepped = 0.0;
     switch (how) {
     case round_to::up: stepped = std::ceil(n); break;
@@ -136,7 +189,7 @@ enum class round_to : std::uint8_t {
     // std::round takes -2.5 to -3 and CSS takes it to -2.
     case round_to::nearest: stepped = std::floor(n + 0.5); break;
     }
-    return stepped * b;
+    return stepped * step;
 }
 
 // §10.6. `mod` takes the sign of the DIVISOR and `rem` the sign of the dividend,
@@ -149,7 +202,10 @@ enum class round_to : std::uint8_t {
         // opposite, so `mod(-0, infinity)` is NaN.
         return std::signbit(a) == std::signbit(b) ? a : std::nan("");
     }
-    return a - b * std::floor(a / b);
+    const double result = a - b * std::floor(a / b);
+    // A ZERO RESULT STILL TAKES THE DIVISOR'S SIGN. `mod(1, -1)` is -0 and not
+    // 0, which `1 / sign(mod(1, -1))` can tell apart and `signed-zero` does.
+    return result == 0.0 ? std::copysign(0.0, b) : result;
 }
 
 [[nodiscard]] double rem_one(double a, double b) {
@@ -203,13 +259,10 @@ public:
         const std::optional<term> value = settle();
         if (!value) { return math_answer{outcome_, {}}; }
         calc_result out;
-        // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
-        // no answer at all, which the cascade read as an invalid declaration and
-        // threw away - so `opacity: calc(2 / 4)` and `rgb(calc(0), calc(255),
-        // calc(0))` produced nothing. CSS Values 3 §8.1 says a math function may
+        // A NUMBER IS AN ANSWER. CSS Values 3 §8.1 says a math function may
         // resolve to a <number>; whether the PROPERTY accepts one is a separate
         // question, and math_context is where it is asked.
-        out.type = value->type;
+        out.type = value->type();
         out.is_number = value->is_number();
         out.px = value->value;
         out.percent = value->percent;
@@ -261,8 +314,23 @@ private:
         // 10%), 100%)` is `calc(0.01)` and `calc(1px * pow(tan(atan2(50%, 1px)),
         // 1))` is a valid width, because there the percentages sit in a length
         // context that the property does supply.
-        if (saw_percent_ && value->type != numeric_type::number &&
-            value->type != numeric_type::length) {
+        // A TYPE NO PROPERTY TAKES IS A SYNTAX ERROR. Typed arithmetic lets
+        // `2px * 1px` and `20 / 0.75rem` exist mid-expression; as the WHOLE
+        // answer an area and an inverse length are what
+        // `calc-unit-analysis` lists as invalid, and still are.
+        if (!value->simple()) {
+            outcome_ = math_outcome::invalid;
+            return std::nullopt;
+        }
+        // A NUMBER THAT STILL CARRIES A PERCENTAGE - `10% / 1px` - is a ratio
+        // of the basis to a length, and there is no basis here. Well formed,
+        // and not answerable until layout.
+        if (value->is_number() && value->has_percent) {
+            outcome_ = math_outcome::unresolved;
+            return std::nullopt;
+        }
+        if (saw_percent_ && value->type() != numeric_type::number &&
+            value->type() != numeric_type::length) {
             outcome_ = math_outcome::invalid;
             return std::nullopt;
         }
@@ -324,8 +392,10 @@ private:
             ++at_;
             const std::optional<term> right = single();
             if (!right) { return fail(); }
-            left = times ? multiply(*left, *right) : divide(*left, *right);
-            if (!left) { return fail(); }
+            arithmetic result = times ? multiply(*left, *right) : divide(*left, *right);
+            if (result.unresolved) { return unresolvable(); }
+            if (!result.value) { return fail(); }
+            left = std::move(result.value);
         }
     }
 
@@ -349,7 +419,7 @@ private:
             // is a percentage OF, and every property this engine resolves one
             // for takes a length. So it travels as a length carrying an
             // unresolved part, which is exactly what `calc(100% - 12px)` needs.
-            out.type = numeric_type::length;
+            out.set_type(numeric_type::length);
             out.percent = tok.number;
             out.has_percent = true;
             return out;
@@ -448,7 +518,7 @@ private:
     // its computed value.
     [[nodiscard]] bool uniform(const std::vector<term> & args) {
         for (const term & one : args) {
-            if (one.type != args.front().type) {
+            if (one.dims != args.front().dims) {
                 ok_ = false;
                 return false;
             }
@@ -526,10 +596,26 @@ private:
         if (named("atan2(")) {
             return inverse_trig(2, [](double a, double b) { return std::atan2(a, b); });
         }
+        // THE TREE-COUNTING FUNCTIONS, CSS Values 5 §tree-counting: a <number>
+        // that is a fact about the element rather than about the expression, so
+        // the cascade supplies it through the context and a SPECIFIED value -
+        // which has no element - keeps the function as written. Either takes no
+        // argument at all; `sibling-index(1)` is a syntax error.
+        if (named("sibling-index(") || named("sibling-count(")) {
+            const bool index = named("sibling-index(");
+            ++at_;
+            skip_whitespace();
+            if (!at_close()) { return fail(); }
+            take_close();
+            const std::uint32_t known = index ? ctx_.sibling_index : ctx_.sibling_count;
+            if (basis_ == basis::symbolic || known == 0) { return unresolvable(); }
+            term out;
+            out.value = known;
+            return out;
+        }
         // ANY OTHER FUNCTION IS UNRESOLVED, NOT INVALID, and the difference is
-        // measured: `calc(1px * sibling-index())`, `calc(0.5s * sibling-count())`
-        // and `calc(inherit(--x) + 1px)` are 34 `test_valid_value` assertions
-        // across `css/css-values/tree-counting/` and they are valid CSS this file
+        // measured: `calc(inherit(--x) + 1px)` and `calc(attr(data-n px) * 2)`
+        // are `test_valid_value` assertions and they are valid CSS this file
         // simply cannot evaluate. Calling them errors would delete every one of
         // those declarations - the exact failure mode the third outcome exists to
         // avoid. `attr()` and `calc-size()` land here for the same reason.
@@ -567,7 +653,7 @@ private:
                 best = std::nan("");
                 break;
             }
-            best = kind == compare::smallest ? std::min(best, v) : std::max(best, v);
+            best = kind == compare::smallest ? smaller(best, v) : larger(best, v);
         }
         return with_scalar(args->front(), best);
     }
@@ -577,8 +663,7 @@ private:
     // §10.3, and it has its own function rather than a third case of the one
     // above because of `none`: EITHER BOUND MAY BE ABSENT, and an absent one is
     // not a missing argument but an unbounded side. `clamp(none, 33px, 30px)` is
-    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks
-    // for six times; before this it was a syntax error and the declaration went.
+    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks.
     //
     // An absent bound is spelled as the infinity it means, which keeps the NaN
     // rule and the low-beats-high rule below in one place each.
@@ -616,7 +701,7 @@ private:
         if (std::isnan(bound[0]) || std::isnan(bound[1]) || std::isnan(bound[2])) {
             return with_scalar(*middle, std::nan(""));
         }
-        return with_scalar(*middle, std::max(bound[0], std::min(bound[1], bound[2])));
+        return with_scalar(*middle, larger(bound[0], smaller(bound[1], bound[2])));
     }
 
     // round( <rounding-strategy>?, A, B )
@@ -645,8 +730,15 @@ private:
                 ++at_;
             }
         }
-        const std::optional<std::vector<term>> args = arguments(2, 2);
+        std::optional<std::vector<term>> args = arguments(1, 2);
         if (!args) { return std::nullopt; }
+        // THE STEP DEFAULTS TO THE NUMBER 1, CSS Values 4 §10.5 - so `round(1.5)`
+        // is 2 and `round(1.5px)` is a type error, a length rounded to a number.
+        if (args->size() == 1) {
+            term one;
+            one.value = 1.0;
+            args->push_back(one);
+        }
         if (!uniform(*args)) { return std::nullopt; }
         return with_scalar(args->front(),
                            round_one(how, scalar_of((*args)[0]), scalar_of((*args)[1])));
@@ -700,7 +792,7 @@ private:
         // have three arguments that agree on what they measure, and that is a
         // type error rather than a comparison awaiting layout.
         for (const term & one : *args) {
-            if (one.type != args->front().type || one.has_percent != args->front().has_percent) {
+            if (one.dims != args->front().dims || one.has_percent != args->front().has_percent) {
                 return fail();
             }
         }
@@ -736,6 +828,9 @@ private:
         if (!args) { return std::nullopt; }
         for (const term & one : *args) {
             if (!one.is_number()) { return fail(); }
+            // A number still carrying a percentage - `pow(50% / 1px, 1)` - has
+            // no magnitude until layout.
+            if (one.has_percent) { return unresolvable(); }
         }
         const double b = args->size() > 1 ? (*args)[1].value : fallback;
         term out;
@@ -755,7 +850,7 @@ private:
         double radians = 0.0;
         if (one.is_number()) {
             radians = one.value;
-        } else if (one.type == numeric_type::angle) {
+        } else if (one.simple() && one.type() == numeric_type::angle) {
             radians = one.value * std::numbers::pi / 180.0;
         } else {
             return fail();
@@ -782,7 +877,7 @@ private:
         const double a = arity == 2 ? scalar_of((*args)[0]) : args->front().value;
         const double b = arity == 2 ? scalar_of((*args)[1]) : 0.0;
         term out;
-        out.type = numeric_type::angle;
+        out.set_type(numeric_type::angle);
         out.value = fn(a, b) * 180.0 / std::numbers::pi;
         return out;
     }
@@ -840,12 +935,6 @@ math_answer evaluate_math(std::string_view expression, const length_context & ct
     const token_stream tokens = tokenize(expression);
     evaluator run{tokens, ctx};
     return run.run();
-}
-
-std::optional<calc_result> evaluate_calc(std::string_view expression, const length_context & ctx) {
-    const math_answer answer = evaluate_math(expression, ctx);
-    if (answer.outcome != math_outcome::resolved || answer.value.is_number) { return std::nullopt; }
-    return answer.value;
 }
 
 } // namespace ctbrowser::style::css

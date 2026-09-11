@@ -12,7 +12,7 @@
 #
 # Target-specific configuration did NOT move here. ANGLE, plutosvg and SDL3_ttf
 # are link lines and compile definitions on ctbrowser-raster, so they live with
-# it; the same goes for GMP on ctbrowser-script.
+# it.
 
 # CONFIG mode: FindBoost was removed in CMake 4 (policy CMP0167), and Boost has
 # shipped its own package config for years.
@@ -178,17 +178,3 @@ if(SDL3_FOUND)
   find_package(SDL3_image QUIET)
 endif()
 
-# GMP, for the OPTIONAL BigInt backend. The root CMakeLists says why this is
-# opt-in rather than on-when-found: GMP is LGPL and this engine links
-# statically, and it measured SLOWER at the width a JavaScript BigInt has.
-if(CTBROWSER_WITH_GMP)
-  find_path(CTBROWSER_GMP_INCLUDE_DIR gmp.h)
-  find_library(CTBROWSER_GMP_LIBRARY NAMES gmp libgmp)
-  if(NOT CTBROWSER_GMP_INCLUDE_DIR OR NOT CTBROWSER_GMP_LIBRARY)
-    message(FATAL_ERROR
-      "ctbrowser: CTBROWSER_WITH_GMP=ON but no GMP for this target. Install it "
-      "(brew install gmp) or, for the Windows presets, run tools/mingw/build-gmp-mingw.sh "
-      "to put it in the mingw sysroot. Or leave the option OFF and use cpp_int, "
-      "which is the faster default for BigInt-sized numbers anyway.")
-  endif()
-endif()

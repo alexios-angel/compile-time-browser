@@ -1,23 +1,13 @@
 #pragma once
-// The compiler proper, declared so its 3,700 lines of bodies can live in more
-// than one file. Private to lib/Script/compile/ - NOT installed, in no file
-// set, and deliberately not under include/: it includes <ctjs/vparse.hpp> and
-// Boost, and CLAUDE.md's "no third-party header in a public header" invariant
-// is policed by test/lint/api_surface. The precedent is
-// lib/Script/builtins/internal.hpp.
+// The compiler proper, declared so its bodies can live in more than one file.
+// Private to lib/Script/compile/ and deliberately not under include/: it
+// includes <ctjs/vparse.hpp> and Boost, and "no third-party header in a public
+// header" is policed by test/lint/api_surface.
 //
-// `include/ctbrowser/script/compile.hpp` still declares exactly one function.
-// That is the property docs/architecture.md praises and nothing here changes it.
-//
-// NAMED namespace, not anonymous. compiler_impl was in `namespace { }` while it
-// had one translation unit; an anonymous namespace CANNOT be shared through a
-// header - each .cpp would get its own distinct class, and
-// `compiler_impl::compile_stmt` defined in one file would be a member of a
-// different type from the one another file calls. `detail` rather than plain
-// `script` because giving 114 functions and six nested types external linkage
-// in the subsystem's own namespace is an ODR accident waiting to happen: `frame`
-// reads like a VM call frame, which vm.hpp really has, and `local`, `interval`
-// and `reference` are generic enough to collide with anything. They stay NESTED.
+// NAMED namespace, not anonymous: an anonymous namespace cannot be shared
+// through a header. `detail` rather than plain `script` because `frame`,
+// `local`, `interval` and `reference` are generic enough to collide with
+// anything - vm.hpp really has a call frame. They stay NESTED.
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
@@ -25,9 +15,6 @@
 #include <ctbrowser/script/number_format.hpp>
 
 #include <boost/container/small_vector.hpp>
-// unordered_flat_MAP, for mentions_. The include said _set, for a `name_set`
-// alias nothing used; the map it actually needs was arriving transitively
-// through core/containers.hpp and would have broken the day that stopped.
 #include <boost/unordered/unordered_flat_map.hpp>
 
 #include <algorithm>
@@ -49,23 +36,15 @@
 
 namespace ctbrowser::script {
 
-// The alias stays at `script` scope, where it was: `compiler::compile()` in
-// compile.cpp names `vp::ast` and `vp::parse` too, and `detail` finds it by
-// enclosing-namespace lookup.
-// THE DEBUG SIDE TABLES ARE A BUILD OPTION, and the default is ON.
-//
-// Phase 44 of the lexical-backend plan asks for the measurement before the
-// decision: a table that doubles an image is a different bargain from one that
-// adds three percent. The measurement is in the commit that added this, and it
-// is why the default is ON - see docs/plans/ or `git log` for the numbers.
-//
-// OFF is not a stub: nothing is populated, `emit_offset` never leaves
-// `no_offset`, and both vectors on every proto stay empty. Every reader must
-// already cope with empty, because an image loader produces exactly that.
+// THE DEBUG SIDE TABLES ARE A BUILD OPTION, and the default is ON. OFF is not
+// a stub: nothing is populated, `emit_offset` never leaves `no_offset`, and
+// both vectors on every proto stay empty. Every reader must already cope with
+// empty, because an image loader produces exactly that.
 #ifndef CTBROWSER_SCRIPT_DEBUG_NAMES
 #define CTBROWSER_SCRIPT_DEBUG_NAMES 1
 #endif
 
+// At `script` scope: compile.cpp names `vp::ast` and `vp::parse` too.
 namespace vp = ctjs::vp;
 
 namespace detail {
@@ -105,14 +84,9 @@ public:
     struct frame {
         std::uint32_t proto = 0;
         std::vector<local> locals;
-        // NAME -> THE POSITIONS IN `locals` THAT CARRY IT, innermost last.
-        //
-        // `locals` is a stack and `find_local_entry` wanted the LAST entry with
-        // a given name, which it found by scanning the whole vector backwards
-        // and comparing strings. On Babylon's bundle that was 35.2 million
-        // memcmp calls from `compile_ident` alone - the scan is O(locals) and it
-        // runs once per identifier MENTION, so a big function is quadratic in
-        // its own size. See docs/performance.md.
+        // NAME -> THE POSITIONS IN `locals` THAT CARRY IT, innermost last. A
+        // backward scan of `locals` runs once per identifier MENTION, so a big
+        // function was quadratic in its own size (docs/performance.md).
         //
         // A vector per name rather than one index because names SHADOW: two
         // `let x` in sibling scopes are two entries, and popping the inner one
@@ -132,27 +106,17 @@ public:
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
         std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
-        // WIDER THAN THE OPERAND THEY FEED, on purpose. A register index is a
-        // uint8 in an instruction, and these used to be uint8 too - so a
-        // function wanting more than 256 registers wrapped to r0 in silence and
-        // its locals aliased each other. Counting in a wider type does not make
-        // the bytecode hold more; it makes the compiler able to SAY how many
-        // were wanted, which is the difference between a diagnostic and a bug.
+        // WIDER THAN THE OPERAND THEY FEED, on purpose: counting in a wider
+        // type lets the compiler SAY how many registers were wanted instead
+        // of wrapping in silence.
         std::uint32_t next_reg = 0;
         std::uint32_t high_water = 0;
         bool is_async = false;     // `return v` hands back a settled promise of v
         bool is_generator = false; // `function*` - calling it does not run it
-        // WHERE A NAME OR STRING ALREADY WENT.
-        //
-        // `function_proto::add_name` and `add_string` deduplicate by LINEAR
-        // SCAN, which is quadratic in the distinct names a function mentions
-        // and does a std::string compare at every step. On the p5.js bundle
-        // that was 4.4% of the load in add_name alone, plus most of an 8.3%
-        // memcmp.
-        //
-        // The index lives HERE rather than on the proto because it is wanted
-        // only while compiling: a shipped program carries the vectors and
-        // should not also carry a hash map per function.
+        // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
+        // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
+        // names a function mentions. The index lives HERE rather than on the
+        // proto because it is wanted only while compiling.
         flat_map<std::string, std::uint32_t> name_index;
         flat_map<std::string, std::uint32_t> string_index;
     };
@@ -179,14 +143,11 @@ public:
     // WHERE A NODE WAS WRITTEN, as a byte offset into `source_view_`, or
     // `function_proto::no_offset` when this node cannot answer.
     //
-    // `node::begin` is set for FUNCTIONS ONLY - the parser's comment says so
-    // outright, and it is zero on every other kind - so the offset of an
-    // ordinary statement has to come from somewhere else. It comes from the
-    // lexeme: `node::text` is a std::string_view INTO the source rather than a
-    // copy, so the address of its first character minus the address of the
-    // source IS the offset. That is the same subtraction `vp::parser::offset_at`
-    // makes, and it is the only reason per-instruction positions are available
-    // at all without changing the parser.
+    // `node::begin` is set for FUNCTIONS ONLY, so the offset of an ordinary
+    // statement comes from the lexeme: `node::text` is a std::string_view INTO
+    // the source, so the address of its first character minus the address of
+    // the source IS the offset - the same subtraction `vp::parser::offset_at`
+    // makes.
     [[nodiscard]] std::uint32_t offset_of(std::int32_t idx) const;
 
     // SETS THE EMIT CURSOR FOR ONE SUBTREE AND PUTS IT BACK.
@@ -218,23 +179,15 @@ public:
     };
 
     // --- AST access -------------------------------------------------------
-    // A NEGATIVE INDEX IS "NOTHING", not an address.
+    // A NEGATIVE INDEX IS "NOTHING", not an address: every fixed child slot is
+    // -1 when absent, and an array literal's element list holds -1 for a hole.
+    // Returning an empty node makes a missed check compile to nothing instead
+    // of reading past the pool.
     //
-    // Every fixed child slot is -1 when absent, and an array literal's element
-    // list holds -1 for a hole - so `at(x).kind` on an unchecked index read
-    // past the end of the pool and segfaulted. Returning an empty node makes a
-    // missed check compile to nothing instead of crashing, which is the right
-    // failure for a compiler to have.
-    // DEFINED HERE, and measured rather than assumed. Splitting compile.cpp
-    // cost +4.08% instructions on a whole page render, and callgrind attributed
-    // essentially all of it to this one function: out of line it appeared at
-    // 4.18% / 32.4 M instructions, having been absent from the profile entirely
-    // while it was inlined into every caller. Every other member moved for free.
-    //
-    // It is five lines and the whole compiler reads the node pool through it.
-    // `static const vp::node nothing` is still one object across all the files
-    // that include this - a function-local static in an inline function is
-    // guaranteed to be.
+    // DEFINED HERE, and measured: out of line this one function was 4.18% of a
+    // whole page render, having been absent from the profile while inlined.
+    // `static const vp::node nothing` is one object across every including
+    // file - a function-local static in an inline function is guaranteed to be.
     [[nodiscard]] const vp::node & at(std::int32_t i) const {
         static const vp::node nothing{vp::nk::empty, ""};
         if (i < 0 || static_cast<std::size_t>(i) >= current_ast_->nodes.size()) { return nothing; }
@@ -242,20 +195,16 @@ public:
     }
 
     // Compile an expression parsed from a DIFFERENT source than the program's.
-    //
     // Template literals need it: the parser hands back `${...}` as raw text
-    // inside one token, so the interpolations have to be parsed separately.
-    // Node indices are per-AST, so the active one is swapped for the duration
-    // and every `at()` follows it.
+    // inside one token. Node indices are per-AST, so the active one is swapped
+    // for the duration and every `at()` follows it.
+    void compile_foreign_expr(std::string_view source, std::uint16_t dst);
     // The same, for source the compiler BUILT rather than one pointing into the
     // program. The text is kept because the AST borrows it.
     void compile_owned_expr(std::string source, std::uint16_t dst);
 
-    void compile_foreign_expr(std::string_view source, std::uint16_t dst);
-    // A VIEW, NOT A COPY. This built and returned a std::vector on every call,
-    // so every walk of the AST - and there are several, over every node - paid a
-    // malloc and a free per node visit. Callgrind put it at 3.9% of rendering a
-    // page with malloc/free above it, for children that were already contiguous.
+    // A VIEW, NOT A COPY: the children are already contiguous, and a vector
+    // per node visit was 3.9% of rendering a page.
     //
     // The ACTIVE ast, not the outer one: a node reached inside a template
     // literal's sub-AST indexes that AST's pool, and reading the program's would
@@ -305,9 +254,7 @@ public:
     //
     // It exists so that arming the debug tables happens in exactly one place.
     // `function_proto::code_offsets` may only be empty or exactly parallel to
-    // `code`, and which of the two it is is a decision per FUNCTION - a
-    // per-instruction decision is what produced three offsets for six
-    // instructions before this existed.
+    // `code`, and which of the two it is is a decision per FUNCTION.
     //
     // `at_offset` is where the cursor STARTS: the function's own first byte.
     // The prologue, the parameter defaults and the implicit `return undefined`
@@ -316,40 +263,25 @@ public:
     // a breakpoint on entry belongs.
     [[nodiscard]] std::uint32_t new_proto(std::uint32_t at_offset);
     [[nodiscard]] std::uint16_t declare_local(std::string name);
-    // A NAME THAT IS ALREADY A CELL. An imported binding is the EXPORTER's
-    // cell - that is what makes it live - so unlike declare_local this must not
-    // emit `new_cell`, which would box the cell and leave the importer reading
-    // a box containing a box. It is always boxed, whether or not anything in
-    // this module captures it, because every read has to go through the cell to
-    // see the exporter's later writes.
     // BIND a local to its export cell, AT MODULE ENTRY - not at the
     // declaration. The cell belongs to the module RECORD and the loader creates
     // it before anything in the graph runs, so what this emits is an adoption:
     // the local's register becomes the record's cell, and every later write in
     // this module is a write the importer reads.
     //
-    // AT ENTRY IS THE WHOLE POINT. Publishing at the declaration site instead
-    // worked for a straight line and could not work for a CYCLE: A imports B
-    // imports A, so B runs first and asks A for a binding A has not reached the
-    // declaration of. Creating the binding early and leaving it undefined is
-    // what the specification does, and it is why a cycle sees an uninitialised
-    // binding rather than a missing one.
+    // AT ENTRY IS THE WHOLE POINT: in a CYCLE - A imports B imports A - B runs
+    // first and asks A for a binding A has not reached the declaration of.
+    // Creating the binding early and leaving it undefined is what the
+    // specification does.
     //
     // ALWAYS BOXED, captured or not: every read has to go through the cell.
     void bind_export(const std::string & name, std::uint16_t reg);
 
     // BIND EVERY NAME AN `import` STATEMENT INTRODUCES, AT MODULE ENTRY - for
-    // the same reason bind_export runs there, and found the same way.
-    //
-    // Binding at the statement instead put the `load_import` AFTER the
-    // function-declaration pass, which is where a module's closures are made.
-    // So a function that used an imported name captured the register's
-    // PLACEHOLDER cell, and `load_import` then replaced the register with the
-    // exporter's - leaving the closure holding a box nobody would ever write
-    // to. It read `undefined`, and it did so whether or not there was a cycle:
-    // `a.js` imports `b.js` and calls it from a function, and the call returned
-    // undefined with no error at all. The cycle was not the fault; it was just
-    // the first shape that showed it.
+    // the same reason bind_export runs there. Binding at the statement would
+    // put the `load_import` AFTER the function-declaration pass, where a
+    // module's closures are made, so a function using an imported name would
+    // capture the register's PLACEHOLDER cell rather than the exporter's.
     void bind_imports(std::int32_t idx);
 
     // THE NAME THE SPECIFICATION GIVES `export default`, which is not a legal
@@ -385,16 +317,9 @@ public:
     // name with an outer binding must SHADOW it; treating the outer one as
     // "already declared" makes the inner declaration write THROUGH to it.
     //
-    // p5.js has a top-level `function boolean(...)` and, inside a block, a
-    // `const { boolean } = ...`. Both wrote to one cell, so zod's builder was
-    // replaced by a boolean `true` - and the failure surfaced 25,000
-    // instructions later as "a captured variable is boolean (true), not a
-    // function".
-    // The index's back() is the INNERMOST entry for the name, which is what the
-    // backward scan this replaced returned. Everything before it is shadowed, so
-    // "is it in the current scope" is one comparison against the scope mark
-    // rather than a walk: if the innermost one is outside, every other one is
-    // further out still.
+    // The index's back() is the INNERMOST entry for the name, so "is it in the
+    // current scope" is one comparison against the scope mark: if the
+    // innermost one is outside, every other one is further out still.
     [[nodiscard]] local * find_local_in_current_scope(std::string_view name);
 
     [[nodiscard]] local * find_local_entry(frame & f, std::string_view name);
@@ -411,8 +336,6 @@ public:
 
     [[nodiscard]] int add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc);
 
-    // Names that any nested function inside `body` mentions. Over-approximate
-    // on purpose - see the note at the top of this file.
     // WHICH OF A NODE'S FOUR FIXED SLOTS ARE ACTUALLY CHILDREN.
     //
     // The parser reuses `c` and `d` as BITFIELDS on the kinds that need flags:
@@ -421,24 +344,16 @@ public:
     // node says which reading applies, so a generic walk over {a, b, c, d}
     // treats those flags as node indices - and index 1 is a real node, so the
     // walk goes back round the tree and never terminates.
-    //
-    // `function f(...rest) {}` overflowed the stack on the first one of these
-    // the tests ever contained. The flags were always there; nothing had asked
-    // a walker to look at a parameter node before.
     [[nodiscard]] static std::array<std::int32_t, 4> child_slots(const vp::node & n);
 
     // The `${...}` HOLES of a template literal, as raw text.
     //
     // A template is ONE node carrying its whole source, holes included - the
     // parser does not break the substitutions out into child nodes. So every
-    // walk over the tree is blind to them, and the two walks that matter are
-    // the ones that decide whether a local is BOXED and whether `arguments` is
-    // materialised. A name used only inside a hole was invisible to both: the
-    // enclosing frame never boxed it, the nested function resolved it as a
-    // global, and it read undefined.
-    //
-    // Nesting is counted so an object literal or a nested template inside a
-    // hole does not end it early.
+    // walk over the tree is blind to them, and the two walks that decide
+    // whether a local is BOXED and whether `arguments` is materialised must
+    // look inside. Nesting is counted so an object literal or a nested
+    // template inside a hole does not end it early.
     template <typename Fn> static void for_each_template_hole(std::string_view raw, Fn && fn) {
         for (std::size_t i = 0; i + 1 < raw.size(); ++i) {
             if (raw[i] != '$' || raw[i + 1] != '{') { continue; }
@@ -485,14 +400,9 @@ public:
 
     // WHICH NAMES A NESTED FUNCTION MENTIONS, WITHOUT A SET PER FUNCTION.
     //
-    // This used to walk each function's whole subtree once per ENCLOSING
-    // function - 18,906 calls and 16.5 million node visits on the p5.js bundle,
-    // about eighty visits per node. Two obvious repairs were measured and both
-    // failed (docs/script.md): memoising the walk moved the quadratic from the
-    // traversal into the set copying and won 0.3%, and inserting into a set
-    // during the walk was 3% WORSE than building a vector and deduplicating
-    // once. The cost was never the walking - it was materialising a set of
-    // names for every function.
+    // Materialising a set of names per function is the cost, not the walking:
+    // memoising the walk and inserting into a set during it were both measured
+    // and both lost (docs/script.md).
     //
     // So no set is materialised. One pass numbers every function in an Euler
     // tour and records, for each name, the tick of the INNERMOST function that
@@ -524,10 +434,6 @@ public:
     [[nodiscard]] bool mentions_arguments(std::int32_t idx) const;
     [[nodiscard]] bool is_captured(std::string_view name) const;
 
-    // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
-    // three characters. Without this, every string literal in the program is
-    // wrong by two characters, which shows up as 'a' + 'b' === "'a''b'" and
-    // as o['a'] failing to find the property named a.
     // Read up to `count` hex digits after position `at`, leaving `at` on the
     // last one consumed so the caller's ++i lands past it. Lenient: a truncated
     // escape yields what digits there were, matching the parser's leniency
@@ -537,6 +443,8 @@ public:
 
     [[nodiscard]] static std::string encode_code_point(std::uint32_t code);
 
+    // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
+    // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
 
     // Names a nested function might close over. Collected BEFORE the body is
@@ -549,22 +457,8 @@ public:
     // anything is compiled. Nested function declarations hoist too and are
     // compiled first, so the locals they capture have to exist by then.
     void predeclare_locals(std::int32_t body);
-    // `var` IS FUNCTION-SCOPED. `let` and `const` are not, and until now the
-    // compiler could not tell them apart - the parser has always put the
-    // keyword on the node and nothing read it.
-    //
-    // So `if (c) { var x = 1; }` declared `x` in the BLOCK, the block's scope
-    // popped it, and every later read - including one from a nested function -
-    // found undefined. Phaser 4 is built by webpack, which emits exactly that
-    // shape for its feature flags:
-    //
-    //     if (true) { var SoundManagerCreator = __webpack_require__(14747); }
-    //     var Game = new Class({ initialize: function Game () {
-    //         this.sound = SoundManagerCreator.create(this);   // undefined
-    //     }});
-    //
-    // p5 never reached it because p5 is modern code that uses let and const.
-    // Two libraries, and the second found it in an afternoon.
+    // `var` IS FUNCTION-SCOPED: `if (c) { var x = 1; }` declares `x` in the
+    // function, not the block, and webpack emits exactly that shape.
     //
     // Hoisting stops at a nested function, because that function's vars are
     // ITS scope's, and does not descend into a declarator's initialiser, which
@@ -593,15 +487,8 @@ public:
 
     void fail(std::string message);
 
-    // `function f(a, b = 1, ...rest)` - the two parts of that signature the
-    // compiler used to DROP.
-    //
-    // The parser has carried both all along: a default is the param node's `a`
-    // child and a rest is `d == 1`. Nothing read either, so an omitted argument
-    // stayed undefined instead of taking its default, and `rest` bound the
-    // single positional argument in that slot rather than an array of the
-    // remainder. Neither was an error; both were wrong answers. p5.js has 47
-    // signatures with a rest parameter alone.
+    // `function f(a, b = 1, ...rest)`: a default is the param node's `a`
+    // child and a rest is `d == 1`.
     //
     // ORDER IS LOAD-BEARING here, and all three of these are the same hazard -
     // the arguments are in registers this frame is about to reuse:
@@ -617,15 +504,9 @@ public:
     //      every default permanently widens the frame.
     void compile_parameter_prologue(std::span<const std::int32_t> params);
 
-    // A numeric literal's value.
-    //
-    // This was one call to std::from_chars in `general` format, which stops at
-    // the `x` - so every `0xFF` in the program was the number ZERO, silently.
-    // p5.js has 734 of them, spread through colour maths, bit masks and font
-    // tables, and not one would have produced an error.
-    //
-    // The radix prefixes take the integer overload and then widen; a double is
-    // exact up to 2^53, which is further than any of these literals reach.
+    // A numeric literal's value. The radix prefixes take the integer overload
+    // and then widen; a double is exact up to 2^53, which is further than any
+    // of these literals reach.
     [[nodiscard]] static double number_literal(std::string_view text);
 
     // What a node kind is CALLED. Only the kinds the compiler can refuse need
@@ -635,40 +516,22 @@ public:
 
     // --- the operand limits, said out loud ----------------------------------
     //
-    // Every one of these used to be a silent truncation. An instruction is four
-    // bytes - `op` and three uint8s - so a register index, a property-name
-    // index and a jump displacement all have to fit fields far smaller than a
-    // real script needs, and the casts that made them fit were unchecked. The
-    // 257th distinct property name in a function read a DIFFERENT property,
-    // with no diagnostic anywhere; a function wanting more registers than a
-    // byte holds aliased its own locals.
-    //
     // These do not raise any limit. They make the compiler say which one it hit
     // and what it wanted, so a program that does not fit is a message rather
-    // than a wrong answer. Widening the instruction is the next commit; this is
-    // what makes it possible to tell whether the widening worked.
+    // than a silent truncation.
     static constexpr std::size_t operand_limit = 65535;    // a uint16 field
     static constexpr std::int32_t jump_limit = 2147483647; // the signed bx half
 
     [[nodiscard]] std::string frame_name(std::size_t index) const;
 
-    // The seam every property-name operand goes through. It was the place the
-    // 256-name cap was reported; now it is the place the widening paid off, and
-    // the check that remains is for a limit no real program reaches.
-    // The same answers add_name and add_string give, without the scan. The
-    // NUMBERING IS IDENTICAL: an unseen entry is appended and takes the next
-    // index, which is exactly what the linear versions did - the bytecode is
-    // byte-for-byte the same.
     // SCAN WHILE SMALL, INDEX ONCE IT IS NOT.
     //
     // Indexing everything unconditionally made the p5 bundle 6.4% cheaper to
     // load and the Phaser one 0.5% DEARER: p5 has functions mentioning many
     // distinct names, where the quadratic scan hurt, and Phaser has a great
     // many small ones, where building two hash maps per function costs more
-    // than the scan it replaces. Most functions mention a handful of names.
-    //
-    // So the scan stays for the small case and the index is built on crossing.
-    // Sixteen is where a linear scan of short strings stops beating a hash.
+    // than the scan it replaces. Sixteen is where a linear scan of short
+    // strings stops beating a hash.
     static constexpr std::size_t small_pool = 16;
 
     [[nodiscard]] static std::uint32_t intern_into(std::vector<std::string> & pool,
@@ -681,6 +544,7 @@ public:
     [[nodiscard]] std::uint32_t intern_name(std::string text);
     [[nodiscard]] std::uint32_t intern_string(std::string text);
 
+    // The seam every property-name operand goes through.
     [[nodiscard]] std::uint16_t name_operand(std::string text);
 
     // Called where a frame's size is finally written, because that is the only
@@ -692,45 +556,26 @@ public:
 
     // --- destructuring -------------------------------------------------------
     //
-    // A binding position may hold a SHAPE. `const {a, b} = o` and
-    // `function f([x, y])` are not one binding with a funny name; they are a
-    // read out of the value for each name inside. The parser now produces
-    // array_pattern / object_pattern / assign_pattern / rest_element, and this
-    // lowers them into the opcodes that already exist - get_prop, get_index and
-    // the ordinary binding paths - so nothing new is needed in the VM.
-    //
-    // `declaring` distinguishes `const {a} = o`, which introduces a binding,
-    // from `({a} = o)`, which writes to one that already exists.
+    // array_pattern / object_pattern / assign_pattern / rest_element lower into
+    // the opcodes that already exist - get_prop, get_index and the ordinary
+    // binding paths - so nothing new is needed in the VM. `declaring`
+    // distinguishes `const {a} = o`, which introduces a binding, from
+    // `({a} = o)`, which writes to one that already exists.
 
     // Every name a pattern binds, so declarations can be hoisted before the
     // pattern is compiled - which is what makes a nested function able to
     // capture one.
     void pattern_names(std::int32_t pat, std::vector<std::string> & out) const;
 
-    // DECLARE FIRST, THEN WRITE - and the order is not a style choice.
-    //
-    // Binding each name as the walk reached it meant declare_local allocated a
-    // register INSIDE the scope of the release_to() that frees the element
-    // temporary, so the next element's temporary reused the local's register
-    // and every name in the pattern ended up sharing one slot: `f({x, y})`
-    // returned x+x. Declaring the whole shape's names up front leaves the walk
-    // with nothing to allocate, so its temporaries are free to be released.
+    // DECLARE FIRST, THEN WRITE, and OUTSIDE the caller's reg_mark()/
+    // release_to(mark). declare_local allocates; a caller that wraps the
+    // binding in a mark to free the temporary holding the source hands the
+    // locals' registers straight back, and the next temporary in the same
+    // scope lands on top of a live local. In a function's top scope the names
+    // are hoisted and nothing is allocated, so this only bites in a block.
     //
     // At the top level there is nothing to declare: a declaration there is a
     // global, and emit_write reaches one by falling through to set_global.
-    // Give every name a pattern binds a register, before anything is written.
-    //
-    // SEPARATE FROM compile_pattern_binding BECAUSE OF WHERE IT HAS TO HAPPEN.
-    // declare_local allocates, and a caller that wraps the whole thing in
-    // reg_mark()/release_to(mark) - which every `const {a} = expr` site does, to
-    // free the temporary holding expr - hands those registers straight back. The
-    // next temporary in the same scope then lands on top of a live local: inside
-    // a try block, `const { data } = f(); return 'len=' + data.length` read
-    // `data` as the string "len=". Declaring OUTSIDE the mark is the fix.
-    //
-    // It only bit inside a block. In a function's top scope the names are
-    // hoisted, so find_local_in_current_scope finds them and nothing is
-    // allocated - which is why every test of this until now passed.
     void declare_pattern_names(std::int32_t pat);
 
     void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring);
@@ -779,12 +624,9 @@ public:
     // AN OPEN `finally`, AND WHY THE COMPILER HAS TO KNOW ABOUT ONE.
     //
     // `finally` runs on EVERY way out of a try block, and a `return`, a `break`
-    // and a `continue` are three of those ways. Each of them used to emit its
-    // own instruction straight away and leave the block without ever reaching
-    // the finally - so `function g() { try { return 'T' } finally { ran() } }`
-    // never called ran(). The fix is the one every engine uses: an exit stores
-    // WHAT it was trying to do into two registers and jumps to the finally,
-    // which runs once and then does that thing.
+    // and a `continue` are three of those ways: an exit stores WHAT it was
+    // trying to do into two registers and jumps to the finally, which runs
+    // once and then does that thing.
     //
     // `kind` is 0 for a normal fall-through, 1 for a throw with the thrown value
     // in `value`, 2 for a return with the returned value in `value`, and 3 + i
@@ -851,18 +693,11 @@ public:
     // for..of and for..in.
     //
     // Compiled as an index loop over a length rather than through an iterator
-    // protocol: a real iterator needs Symbol.iterator dispatch, and an index loop
-    // is what every case a page actually writes reduces to. `for..in` goes through
-    // the same loop over an array of keys, so there is one iteration mechanism
-    // here and not two.
-    //
-    // What makes that safe is op::iterable, which turns the source into an array
-    // of values first - arrays, strings, Maps, Sets and the views they hand out.
-    // Without it a Map had no `length` and the loop ran ZERO times in silence.
-    //
-    // The limit that remains, and it is written down in docs/script.md: an object
-    // with a `next()` of its own is not iterated, because nothing dispatches
-    // through Symbol.iterator.
+    // protocol: op::iterable turns the source into an array of values first,
+    // and `for..in` goes through the same loop over an array of keys, so there
+    // is one iteration mechanism here and not two. The limit (docs/script.md):
+    // an object with a `next()` of its own is not iterated, because nothing
+    // dispatches through Symbol.iterator.
     void compile_for_of(const vp::node & n);
 
     // switch.
@@ -872,14 +707,9 @@ public:
     // does run the next one, and code relies on that.
     void compile_switch(const vp::node & n);
 
-    // try / catch / finally.
-    //
-    // `finally` is compiled by DUPLICATING its body on both exits - the normal
-    // one and the caught one. The alternative is a subroutine-return opcode,
-    // and duplication is the honest trade at this size: two copies of a small
-    // block against a control-flow mechanism nothing else needs. A `return`
-    // inside a try does NOT run the finally block, which is a real gap and is
-    // noted rather than hidden.
+    // try / catch / finally. `finally` is compiled by DUPLICATING its body on
+    // both exits - the normal one and the caught one - rather than through a
+    // subroutine-return opcode nothing else needs.
     void compile_try(const vp::node & n);
 
     void compile_throw(const vp::node & n);
@@ -903,11 +733,6 @@ public:
     // Writing a name has to know whether it lives in a register, a cell, an
     // upvalue or the global table. ++/-- goes through here too, so it cannot
     // drift out of agreement with the read side - which is `compile_ident`.
-    //
-    // There was an `emit_read` here saying exactly that about itself, with a
-    // body identical to compile_ident's but for taking a string_view instead of
-    // a node. Nothing called it. Deleted 2026-08-09; the drift it was written to
-    // prevent had already happened to it.
     void emit_write(std::string_view name_text, std::uint16_t src);
 
     void compile_ident(const vp::node & n, std::uint16_t dst);
@@ -962,8 +787,6 @@ public:
 
     void compile_ternary(const vp::node & n, std::uint16_t dst);
 
-    // Calls need their arguments in CONSECUTIVE registers starting just above
-    // the callee, so the VM can hand the callee a contiguous frame.
     // A template literal. The parser hands the WHOLE thing back as one token,
     // backticks and all, so the splitting happens here: literal chunks are
     // strings, `${...}` chunks are parsed and compiled, and the whole thing is
@@ -987,12 +810,10 @@ public:
     // the spread is evaluated. So the arguments become an array and the callee
     // and receiver are resolved into registers first - which collapses all four
     // call forms into one, since by then the receiver is just a register.
-    //
-    // `nk::spread` was not a case in compile_expr at all, so this used to reach
-    // the default arm and refuse the whole call. It stops thirteen of p5.js's
-    // seventy-one modules, more than any other single construct.
     void compile_spread_call(const vp::node & n, std::uint16_t dst);
 
+    // Calls need their arguments in CONSECUTIVE registers starting just above
+    // the callee, so the VM can hand the callee a contiguous frame.
     void compile_call(const vp::node & n, std::uint16_t dst);
     void compile_call_target(const vp::node & n, std::uint16_t target, std::uint16_t self);
     void emit_optional_guard(std::uint16_t value);
@@ -1002,24 +823,14 @@ public:
     // returned one of its own.
     void compile_new(const vp::node & n, std::uint16_t dst);
 
-    // Optional chaining. The whole point is the SHORT CIRCUIT: `a?.b.c` yields
-    // undefined without evaluating `.c` when a is null-ish, so writing it as an
-    // ordinary member access with a test afterwards would still crash.
     // Does this member/call chain contain an optional link ANYWHERE below it?
     // Only the spine is walked - `a?.b(c.d)` is optional, `a.b(c?.d)` is not,
     // because the argument is its own chain.
     [[nodiscard]] bool chain_has_optional(std::int32_t idx) const;
 
-    // `a?.b.c` AND `a?.m()` SHORT-CIRCUIT THE WHOLE CHAIN, not one link.
-    //
-    // Each optional link used to jump only past itself, leaving undefined in
-    // the register - and then the rest of the chain ran on it. `o?.m()` with a
-    // null `o` therefore CALLED undefined, which is exactly how p5.js stopped:
-    // "the result of opcode 2 is undefined, not a function", four thousand
-    // instructions into the bundle with nothing to say which line.
-    //
-    // The fix is that a chain has one exit. Whichever link short-circuits jumps
-    // to the same place, past everything built on it.
+    // `a?.b.c` AND `a?.m()` SHORT-CIRCUIT THE WHOLE CHAIN, not one link: a
+    // chain has one exit, and whichever link short-circuits jumps to it, past
+    // everything built on it.
     void compile_chain(std::int32_t idx, std::uint16_t dst);
 
     void compile_optional(const vp::node & n, std::uint16_t dst);
@@ -1027,17 +838,6 @@ public:
     // The comma operator: evaluate everything, yield the last.
     void compile_sequence(const vp::node & n, std::uint16_t dst);
 
-    // A class.
-    //
-    // Compiled to what it desugars to: a constructor function plus a prototype
-    // object holding the methods, with `new` wiring an instance to that
-    // prototype. `extends` chains the prototype objects, which is what makes an
-    // inherited method reachable.
-    //
-    // NOT here: `super(...)` and `super.m()`. A subclass's constructor does not
-    // call its parent's, so a class with `extends` inherits METHODS but not
-    // construction. That is a real gap, and calling it out beats a `super` that
-    // silently does nothing.
     // A function whose whole body is `this.x = <init>` for each instance field,
     // in declaration order. `new` runs it against the fresh object before the
     // constructor body, so every instance gets its OWN value - which is the
@@ -1050,32 +850,22 @@ public:
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the
-    // same value again a moment later.
-    // `force` is for a class EXPRESSION, whose name must be a binding of its own
-    // and never a write to something outer. At the top level a declaration's name
-    // is a global, so the frame-depth test is right for that case - but for an
-    // expression it meant the name had no binding at all and emit_write fell
-    // through to set_global, CLOBBERING any global of the same name. `var Shared =
-    // {...}; var alias = class Shared {}` replaced the object with the class.
+    // same value again a moment later. `force` is for a class EXPRESSION,
+    // whose name must be a binding of its own and never a write to something
+    // outer: at the top level a declaration's name is a global, but for an
+    // expression that would fall through to set_global and CLOBBER any global
+    // of the same name.
     void declare_class_name(std::string name, bool force = false);
 
+    // A class, compiled to what it desugars to: a constructor function plus a
+    // prototype object holding the methods, with `new` wiring an instance to
+    // that prototype and `extends` chaining the prototype objects.
+    //
     // `as_declaration` is the difference between `class C {}` and `let x = class C
     // {}`, and there is ONE node kind for both - only the call site knows which.
-    //
     // A named class EXPRESSION binds its name inside its own body and NOWHERE
-    // ELSE, exactly like a named function expression. Binding it in the enclosing
-    // scope broke p5.js in a way that took an afternoon to find: the bundle has
-    // `let p5$2 = class p5 { ... }`, so the module scope acquired a local named
-    // `p5` holding undefined, and every function compiled AFTER that point
-    // captured it instead of the global. `new p5.TableRow()` inside p5.Table's
-    // addRow read undefined.TableRow - which this engine answers with undefined
-    // rather than a TypeError - and reported "`new` on `TableRow` is undefined",
-    // naming the wrong thing entirely.
-    //
-    // Compile ORDER decided whether it bit, which is why it looked so arbitrary:
-    // a hoisted function declaration is compiled before the leak exists and reads
-    // the global correctly, and a class method three thousand lines later does
-    // not.
+    // ELSE, exactly like a named function expression: `let p5$2 = class p5 {}`
+    // must not give the module scope a local named `p5`.
     void compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration = false);
 
     // `/ab+c/gi`. The lexer hands the literal over whole, delimiters and all,

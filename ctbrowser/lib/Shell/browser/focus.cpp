@@ -1,11 +1,5 @@
 // browser - focus: the editable field, what is focusable, labels, Tab order,
 // and the drag auto-scroll that runs off tick().
-//
-// One of ten files carved out of a 2,871-line Shell/browser.cpp on 2026-09-08.
-// All are member functions of one class declared in
-// include/ctbrowser/shell/browser.hpp; internal.hpp beside this carries the
-// includes browser.cpp had, so every file sees exactly what it saw. Nothing
-// about the public header changed.
 
 #include "internal.hpp"
 
@@ -183,7 +177,7 @@ bool browser::focus_next(bool backwards) {
 
 browser::autoscroll_state browser::autoscroll_now() {
     autoscroll_state out;
-    if (!field_selecting_ || !have_pointer_ || options_.autoscroll_ms <= 0) { return out; }
+    if (!field_selecting_ || !have_pointer_) { return out; }
     const rect box = viewport_box_of(field_selecting_);
     if (box.empty()) { return out; }
     const auto txn = doc_->read();
@@ -219,11 +213,11 @@ browser::autoscroll_state browser::autoscroll_now() {
 }
 
 double browser::autoscroll_interval_ms(float distance) const {
-    const float d = std::fabs(distance);
-    const double ramp = options_.autoscroll_ramp_px > 0
-                            ? 1.0 + static_cast<double>(d) / options_.autoscroll_ramp_px
-                            : 1.0;
-    return std::max(options_.autoscroll_min_ms, options_.autoscroll_ms / ramp);
+    // The rate rises with how far outside the field the pointer is, so a small
+    // overshoot creeps and a big one races: 100 ms / (1 + distance / 20 px),
+    // floored at a frame.
+    const double ramp = 1.0 + static_cast<double>(std::fabs(distance)) / 20.0;
+    return std::max(16.0, 100.0 / ramp);
 }
 
 void browser::autoscroll_step(const autoscroll_state & at) {

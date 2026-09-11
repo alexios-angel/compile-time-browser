@@ -1,12 +1,5 @@
 // dom_bindings - the entry points: install(), the GC roots, location and
 // navigation, and the small mutators the rest of the bindings share.
-//
-// One of eight files carved out of a 3,071-line bindings/document.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the name productions every one of
-// them needs are in internal.hpp beside this. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 
@@ -213,7 +206,14 @@ void dom_bindings::set_text(node_id id, std::string text) {
         for (const node_id child : txn.children(id)) { existing.push_back(child); }
     }
     for (const node_id child : existing) { (void)doc_->remove_child(child); }
-    if (const node_id created = doc_->create_text(text)) { (void)doc_->append_child(id, created); }
+    // "String replace all", DOM 4.4: the Text node is made ONLY IF the string
+    // is not empty. `el.textContent = ""` leaves no child, and
+    // `Node-textContent.html` asserts `firstChild` is null afterwards.
+    if (!text.empty()) {
+        if (const node_id created = doc_->create_text(text)) {
+            (void)doc_->append_child(id, created);
+        }
+    }
     mutated();
 }
 

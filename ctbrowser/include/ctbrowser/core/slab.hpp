@@ -42,13 +42,14 @@
 
 namespace ctbrowser {
 
-template <typename T, typename Tag, std::uint32_t ChunkBits = 12> class slab {
+template <typename T, typename Tag> class slab {
 public:
     using handle_type = handle<Tag>;
 
-    static constexpr std::uint32_t chunk_size = 1u << ChunkBits;
+    static constexpr std::uint32_t chunk_bits = 12;
+    static constexpr std::uint32_t chunk_size = 1u << chunk_bits;
     static constexpr std::uint32_t chunk_mask = chunk_size - 1;
-    static constexpr std::size_t max_chunks = 1024; // 4M slots at the default chunk size
+    static constexpr std::size_t max_chunks = 1024; // 4M slots
 
     explicit slab(epoch_domain & domain) noexcept : domain_(&domain) {}
 
@@ -86,8 +87,6 @@ public:
         if (e->generation.load(std::memory_order_acquire) != h.generation) { return nullptr; }
         return value_of(e);
     }
-
-    [[nodiscard]] bool contains(handle_type h) const noexcept { return get(h) != nullptr; }
 
     // --- writer side: caller-serialized ------------------------------------
 
@@ -140,9 +139,6 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return live_; }
     [[nodiscard]] std::size_t pending() const noexcept { return pending_.size(); }
-    [[nodiscard]] std::uint32_t capacity() const noexcept {
-        return capacity_.load(std::memory_order_relaxed);
-    }
 
 private:
     struct entry {
@@ -163,7 +159,7 @@ private:
     }
 
     [[nodiscard]] entry * locate(std::uint32_t slot) const noexcept {
-        const std::size_t chunk = slot >> ChunkBits;
+        const std::size_t chunk = slot >> chunk_bits;
         if (chunk >= max_chunks) { return nullptr; }
         entry * c = directory_[chunk].load(std::memory_order_acquire);
         if (c == nullptr) { return nullptr; }
@@ -177,7 +173,7 @@ private:
             return slot;
         }
         const std::uint32_t slot = capacity_.load(std::memory_order_relaxed);
-        const std::size_t chunk = slot >> ChunkBits;
+        const std::size_t chunk = slot >> chunk_bits;
         if (directory_[chunk].load(std::memory_order_relaxed) == nullptr) {
             // Published with release so a reader that sees the pointer also
             // sees zero-initialized generations behind it.

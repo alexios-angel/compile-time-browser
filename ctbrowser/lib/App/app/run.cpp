@@ -1,5 +1,5 @@
-// run_app itself: the audio device, the SDL3_image decoder and the profiler
-// it assembles, the event loop, and the file and bundle entry points.
+// run_app itself: the audio device, the SDL3_image decoder, the event loop, and
+// the file and bundle entry points.
 //
 // One of two files carved out of a 1,034-line App/app.cpp on 2026-09-08. The
 // `host` interface they share is in internal.hpp beside this, with the
@@ -148,101 +148,6 @@ inline void install_image_decoder(shell::image_store & images) {
 #endif
 }
 
-// --- the profiler ---------------------------------------------------------
-//
-// One record per loop iteration. Kept in memory and written at the end rather
-// than streamed, because writing to a file inside the loop is itself a cost
-// and would show up in its own measurements.
-struct frame_record {
-    double at_ms = 0;    // since the run started
-    double poll_ms = 0;  // events in
-    double tick_ms = 0;  // timers, rAF, the caret clock
-    double frame_ms = 0; // style, layout, record, raster - and the four below
-    // THE SAME FRAME, BROKEN UP. frame_ms is their sum plus whatever the frame
-    // did around them; these say WHICH stage, which is the question a slow page
-    // actually raises. A skipped stage is 0, and on a scroll or a caret blink
-    // three of them SHOULD be - see browser::frame_timing.
-    double styles_ms = 0;
-    double layout_ms = 0;
-    double record_ms = 0;
-    double raster_ms = 0;
-    double present_ms = 0;
-    double wait_ms = 0; // deliberately asleep
-    std::uint32_t layouts = 0;
-    bool rendered = false;
-};
-
-inline void report_profile(const std::vector<frame_record> & history, double wall_seconds,
-                           double cpu_seconds, const std::string & path) {
-    if (history.empty()) { return; }
-    const auto total = [&history](double frame_record::* field) {
-        double sum = 0;
-        for (const frame_record & r : history) { sum += r.*field; }
-        return sum;
-    };
-    const auto percentile = [](std::vector<double> values, double fraction) {
-        if (values.empty()) { return 0.0; }
-        const auto at = static_cast<std::size_t>(fraction * static_cast<double>(values.size() - 1));
-        std::ranges::nth_element(values, values.begin() + static_cast<std::ptrdiff_t>(at));
-        return values[at];
-    };
-
-    std::size_t rendered = 0;
-    std::vector<double> frame_times;
-    for (const frame_record & r : history) {
-        if (!r.rendered) { continue; }
-        ++rendered;
-        frame_times.push_back(r.frame_ms + r.present_ms);
-    }
-    const std::uint32_t layouts = history.back().layouts - history.front().layouts;
-
-    std::printf("\n--- ctbrowser profile ------------------------------------\n");
-    std::printf("  wall            %8.2f s\n", wall_seconds);
-    std::printf("  CPU             %8.2f s   (%.1f%% of one core)\n", cpu_seconds,
-                wall_seconds > 0 ? 100.0 * cpu_seconds / wall_seconds : 0.0);
-    std::printf("  iterations      %8zu     (%.0f/s)\n", history.size(),
-                wall_seconds > 0 ? static_cast<double>(history.size()) / wall_seconds : 0.0);
-    std::printf("  frames drawn    %8zu     (%.0f/s, %.0f%% of iterations)\n", rendered,
-                wall_seconds > 0 ? static_cast<double>(rendered) / wall_seconds : 0.0,
-                100.0 * static_cast<double>(rendered) / static_cast<double>(history.size()));
-    std::printf("  layouts run     %8u\n", layouts);
-    std::printf("  ---- where the wall time went (ms, total) ----\n");
-    std::printf("    poll events   %8.1f\n", total(&frame_record::poll_ms));
-    std::printf("    tick clock    %8.1f\n", total(&frame_record::tick_ms));
-    std::printf("    frame         %8.1f\n", total(&frame_record::frame_ms));
-    // Indented under `frame` because that is what they add up to. Printed even
-    // when zero: a stage the frame never ran is the dirty-level design working,
-    // and seeing `layout 0.0` on a scroll is the confirmation.
-    std::printf("      styles      %8.1f\n", total(&frame_record::styles_ms));
-    std::printf("      layout      %8.1f\n", total(&frame_record::layout_ms));
-    std::printf("      record      %8.1f\n", total(&frame_record::record_ms));
-    std::printf("      raster      %8.1f\n", total(&frame_record::raster_ms));
-    std::printf("    present       %8.1f\n", total(&frame_record::present_ms));
-    std::printf("    asleep        %8.1f\n", total(&frame_record::wait_ms));
-    if (!frame_times.empty()) {
-        std::printf("  ---- per drawn frame (ms) ----\n");
-        std::printf("    median %6.2f   p95 %6.2f   max %6.2f\n", percentile(frame_times, 0.5),
-                    percentile(frame_times, 0.95), *std::ranges::max_element(frame_times));
-    }
-    std::printf("-----------------------------------------------------------\n");
-
-    if (path.empty() || path == "-") { return; }
-    std::ofstream out{path};
-    if (!out) {
-        std::printf("ctbrowser: cannot write %s\n", path.c_str());
-        return;
-    }
-    out << "at_ms,poll_ms,tick_ms,frame_ms,styles_ms,layout_ms,record_ms,raster_ms,"
-           "present_ms,wait_ms,layouts,rendered\n";
-    for (const frame_record & r : history) {
-        out << r.at_ms << ',' << r.poll_ms << ',' << r.tick_ms << ',' << r.frame_ms << ','
-            << r.styles_ms << ',' << r.layout_ms << ',' << r.record_ms << ',' << r.raster_ms << ','
-            << r.present_ms << ',' << r.wait_ms << ',' << r.layouts << ',' << (r.rendered ? 1 : 0)
-            << '\n';
-    }
-    std::printf("ctbrowser: profile history written to %s\n", path.c_str());
-}
-
 } // namespace ctbrowser::detail
 namespace ctbrowser {
 
@@ -254,10 +159,6 @@ namespace ctbrowser {
 // forever: a wait that never times out would need every source of change to be
 // an SDL event, and the browser has its own clock.
 constexpr std::int32_t idle_wait_ms = 250;
-
-// How many iterations a profile keeps. Past this it counts and drops: see the
-// note where it is used.
-constexpr std::size_t profile_history_limit = 200'000;
 
 int run_app(std::string_view html, app_options options) {
     apply_environment(options);
@@ -427,19 +328,8 @@ int run_app(std::string_view html, app_options options) {
     // latest, so this settles rather than churning.
     std::string last_script_error;
 
-    const bool profiling = !options.profile_path.empty() || options.profile_seconds > 0;
-    std::vector<detail::frame_record> history;
-    std::size_t dropped_records = 0;
-    const auto started = clock::now();
-    const double cpu_started = process_cpu_seconds();
-    const auto since = [&started](clock::time_point at) {
-        return std::chrono::duration<double, std::milli>(at - started).count();
-    };
-
     while (running) {
-        const auto iteration_began = clock::now();
-        detail::frame_record record;
-        record.at_ms = since(iteration_began);
+        bool rendered = false;
 
         if (!host->pump(page, needs_frame)) { break; }
         // THE EMBEDDER'S TURN, right after the window's. An application that
@@ -457,11 +347,7 @@ int run_app(std::string_view html, app_options options) {
             // the same way one from the window would be.
             if (page.needs_frame()) { needs_frame = true; }
         }
-        const auto after_poll = clock::now();
-        record.poll_ms =
-            std::chrono::duration<double, std::milli>(after_poll - iteration_began).count();
-
-        const auto now = after_poll;
+        const auto now = clock::now();
         const double elapsed_ms =
             options.fixed_dt > 0
                 ? options.fixed_dt * 1000.0
@@ -499,33 +385,16 @@ int run_app(std::string_view html, app_options options) {
         // only when IT did something shows neither until the user happens to
         // move the mouse - which is exactly how both of those looked.
         if (page.needs_frame()) { needs_frame = true; }
-        const auto after_tick = clock::now();
-        record.tick_ms = std::chrono::duration<double, std::milli>(after_tick - after_poll).count();
 
         if (needs_frame) {
             if (!page.frame(&pool)) { break; }
-            const auto after_frame = clock::now();
-            record.frame_ms =
-                std::chrono::duration<double, std::milli>(after_frame - after_tick).count();
-            // The stage split the engine just measured for itself.
-            const auto & stages = page.last_frame_timing();
-            record.styles_ms = stages.styles_ms;
-            record.layout_ms = stages.layout_ms;
-            record.record_ms = stages.record_ms;
-            record.raster_ms = stages.raster_ms;
             host->present(page);
-            record.present_ms =
-                std::chrono::duration<double, std::milli>(clock::now() - after_frame).count();
-            record.rendered = true;
+            rendered = true;
             needs_frame = false;
         }
-        record.layouts = static_cast<std::uint32_t>(page.layout_count());
 
         ++frame;
-        const bool last = (options.max_frames > 0 && frame >= options.max_frames) ||
-                          (options.profile_seconds > 0 &&
-                           std::chrono::duration<double>(clock::now() - started).count() >=
-                               options.profile_seconds);
+        const bool last = options.max_frames > 0 && frame >= options.max_frames;
         if (!options.screenshot_path.empty() &&
             (frame - 1 == options.screenshot_frame || (options.screenshot_frame < 0 && last))) {
             if (const auto image = page.read_pixels()) {
@@ -554,7 +423,6 @@ int run_app(std::string_view html, app_options options) {
         //
         // A bounded run sprints: nobody is watching it, and a 30-frame test
         // should not take half a second of wall clock to say so.
-        const auto before_wait = clock::now();
         if (options.max_fps > 0 && options.max_frames == 0 && running) {
             const auto budget = std::chrono::nanoseconds{1'000'000'000 / options.max_fps};
             const auto spent = clock::now() - now;
@@ -565,7 +433,7 @@ int run_app(std::string_view html, app_options options) {
             // the wait branch after every single frame and max_fps threw its
             // cap away. An animating page ran at whatever rate vsync allowed
             // however low the cap was set.
-            if (record.rendered) {
+            if (rendered) {
                 if (left.count() > 0) { std::this_thread::sleep_for(left); }
             } else if (!page.needs_frame()) {
                 // Nothing to draw: WAIT FOR AN EVENT rather than sleeping out
@@ -584,27 +452,6 @@ int run_app(std::string_view html, app_options options) {
                 host->wait_for_event(timeout);
             }
         }
-        record.wait_ms =
-            std::chrono::duration<double, std::milli>(clock::now() - before_wait).count();
-        // BOUNDED. A profile of a loop that has gone wrong is exactly when the
-        // history explodes - the first run of this wrote 306 MB in ten seconds
-        // - and a profiler that fills the disk cannot be used on the bug it is
-        // there to find.
-        if (profiling && history.size() < profile_history_limit) {
-            history.push_back(record);
-        } else if (profiling) {
-            ++dropped_records;
-        }
-    }
-
-    if (profiling) {
-        if (dropped_records > 0) {
-            std::printf("ctbrowser: profile kept the first %zu iterations and dropped %zu more\n",
-                        history.size(), dropped_records);
-        }
-        detail::report_profile(history,
-                               std::chrono::duration<double>(clock::now() - started).count(),
-                               process_cpu_seconds() - cpu_started, options.profile_path);
     }
 
 #if CTBROWSER_WITH_SDL3

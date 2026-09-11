@@ -22,25 +22,11 @@
 
 // The application shell: a window, an event loop, and one function to call.
 //
-// NO SDL TYPE APPEARS IN THIS INTERFACE. That is the point of the file. SDL sits
-// behind `#if CTBROWSER_WITH_SDL3` in the global module fragment, so the module
-// BUILDS EITHER WAY - with a window when SDL3 was found, headless when it was
-// not. An application that wants to talk to SDL still can, through
-// `app_options::on_native_window`, but nothing forces it to and nothing about
-// the build requires it.
-//
-// The previous version of this file was a translator, not a shell: it exported
-// SDL_Window*, SDL_Event and SDL_Renderer*, and left SDL_Init, the poll loop,
-// the renderer object, frame pacing and quit handling to the caller. The
-// reference consumer wrote a dozen SDL calls by hand to open one page. the previous engine's
-// `run_app<page>(opts)` was better than that, and this is the previous engine's shape without
-// the compile-time machinery.
-
-// SDL IS NOT INCLUDED ABOVE, and that is the point. A module's global module
-// fragment is serialized into its BMI, so <SDL3/SDL.h> here cost every
-// translation unit that imported the application API 26 MB of AST to
-// deserialize - for a header whose types this module deliberately never
-// exposes. It is included by lib/App/app/internal.hpp, and by nothing else.
+// NO SDL TYPE APPEARS IN THIS INTERFACE, and <SDL3/SDL.h> is not included here:
+// it is included by lib/App/app/internal.hpp and by nothing else, behind
+// `#if CTBROWSER_WITH_SDL3`, so the library BUILDS EITHER WAY - with a window
+// when SDL3 was found, headless when it was not. An application that wants to
+// talk to SDL still can, through `app_options::on_native_window`.
 
 namespace ctbrowser {
 
@@ -49,12 +35,6 @@ namespace ctbrowser {
 struct asset {
     std::string name;
     std::vector<std::byte> bytes;
-};
-
-enum class renderer_preference : std::uint8_t {
-    automatic,
-    prefer_gpu,
-    force_software
 };
 
 struct app_options {
@@ -96,7 +76,6 @@ struct app_options {
     // Chrome's 500 by default, which is what a person wants and what a
     // SCREENSHOT does not: a caret that is present in one run and absent in
     // the next is the difference between two otherwise identical images.
-    // browser_options has always had this; run_app had no way to pass it.
     double caret_blink_ms = 500;
 
     std::string screenshot_path; // "" = never
@@ -151,16 +130,13 @@ struct app_options {
     // EMPTY MEANS "wherever this build keeps them" - $CTBROWSER_FONT_PATH if it
     // is set, and `fonts` beside the executable otherwise, which is what
     // browser::use_real_fonts() resolves an empty directory to. Set this to
-    // override both; it used to default to `fonts` and duplicate that decision
-    // here, which is one place too many for it now that the source tree and a
-    // shipped application spell the directory differently.
+    // override both.
     std::filesystem::path font_path;
 
     // Whether fetch() may open a socket for a url the registry does not have.
     // On by default - it is a browser - and CTBROWSER_NETWORK=0 turns it off,
     // which is what makes an example's ctest hermetic.
     bool network = true;
-    renderer_preference renderer = renderer_preference::automatic;
 
     // THE ESCAPE HATCH. Called once with the native window handle - an
     // SDL_Window* - for callers who want to drive SDL themselves. Null on the
@@ -193,14 +169,9 @@ struct app_options {
     // browser does and what `note_callback_fault` already implements one level
     // down.
     //
-    // WITH NO HOOK THE MESSAGE GOES TO stderr, and that default is the whole
-    // reason this exists. `run_app` looked at `script_error()` nowhere at all,
-    // so a page whose callbacks died looked FROZEN and said nothing: the
-    // Phaser invaders page rendered its create() output forever because
-    // `this.fire` was undefined and update() threw on every frame, and finding
-    // that took a throwaway driver written by hand to read the one string the
-    // application had never been shown. An engine that knows why a page stopped
-    // and does not say so is worse than one that does not know.
+    // WITH NO HOOK THE MESSAGE GOES TO stderr: a page whose callbacks throw
+    // looks frozen, and an engine that knows why a page stopped and does not
+    // say so is worse than one that does not know.
     //
     // Set it to an empty function to silence the default without replacing it.
     std::function<void(const std::string & message)> on_script_error;
@@ -215,29 +186,12 @@ struct app_options {
     // the system-browser fallback, which is how ctbrowse silently swallowed
     // every external link it was given.
     std::function<bool(const std::string & url)> on_navigate;
-
-    // --- profiling ---------------------------------------------------------
-    //
-    // WHERE THE TIME GOES, per loop iteration, written as CSV and summarised
-    // on stdout. Guessing at this is how you end up optimising the wrong
-    // thing: an application that feels busy might be re-rasterising every
-    // frame, or re-laying-out on every mouse move, or simply never sleeping,
-    // and those have nothing to do with each other.
-    //
-    // Reports CPU time against wall time, because "it uses 65% of my CPU" is
-    // the complaint and frames-per-second is not the same question.
-    //
-    // `CTBROWSER_PROFILE=out.csv` and `CTBROWSER_PROFILE_SECONDS=n` set these
-    // from the environment, so any example can be profiled without a rebuild.
-    std::string profile_path;   // "" = off; "-" = summary only, no file
-    double profile_seconds = 0; // >0: stop after this long, like max_frames
 };
 
 // Environment overrides, applied by run_app before anything else:
 //
 //   CTBROWSER_TEST_FRAMES  -> max_frames (and therefore a fixed timestep)
 //   CTBROWSER_SCREENSHOT   -> screenshot_path
-//   CTBROWSER_RENDERER     -> software | gpu
 //   CTBROWSER_NETWORK      -> 0 disables fetch()'s network access
 //   CTBROWSER_FONTS        -> font8x8 forces the built-in bitmap font
 //   CTBROWSER_FONT_PATH    -> where the OFL faces are, when it is not `fonts`
@@ -251,24 +205,14 @@ struct app_options {
 //   CTBROWSER_DOC_ROOT     -> document_root, what a leading `/` in a
 //                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
-//   CTBROWSER_PROFILE      -> profile_path ("-" = summary only)
-//   CTBROWSER_PROFILE_SECONDS -> profile_seconds
 //
-// Carried over from the previous engine because it is what lets an example BE a ctest without
-// the example containing any test scaffolding.
+// This is what lets an example BE a ctest without the example containing any
+// test scaffolding.
 inline void apply_environment(app_options & options) {
     if (const char * frames = std::getenv("CTBROWSER_TEST_FRAMES")) {
         options.max_frames = std::atoi(frames);
     }
     if (const char * shot = std::getenv("CTBROWSER_SCREENSHOT")) { options.screenshot_path = shot; }
-    if (const char * want = std::getenv("CTBROWSER_RENDERER")) {
-        const std::string_view text{want};
-        if (text == "software" || text == "cpu") {
-            options.renderer = renderer_preference::force_software;
-        } else if (text == "gpu" || text == "hardware") {
-            options.renderer = renderer_preference::prefer_gpu;
-        }
-    }
     if (const char * fonts = std::getenv("CTBROWSER_FONTS")) {
         const std::string_view text{fonts};
         options.real_fonts = !(text == "font8x8" || text == "bitmap" || text == "0");
@@ -283,10 +227,6 @@ inline void apply_environment(app_options & options) {
     // and this is a property of the corpus rather than of the driver.
     if (const char * root = std::getenv("CTBROWSER_DOC_ROOT")) { options.document_root = root; }
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
-    if (const char * profile = std::getenv("CTBROWSER_PROFILE")) { options.profile_path = profile; }
-    if (const char * seconds = std::getenv("CTBROWSER_PROFILE_SECONDS")) {
-        options.profile_seconds = std::atof(seconds);
-    }
     // A bounded run has to be reproducible, or comparing its screenshot is a
     // coin flip.
     if (options.max_frames > 0 && options.fixed_dt <= 0) { options.fixed_dt = 1.0 / 60.0; }

@@ -10,19 +10,15 @@
 //               interchangeable, and "did I implement all of it" is an error
 //   software    the FIRST backend, so everything downstream is testable
 //               headlessly and byte-for-byte before any GPU code exists
-//   renderer    the RUNTIME seam - a type-erased backend, so the engine can
-//               fall back to software when there is no GPU and still use one
-//               interface everywhere
-//   compositor  draw() for a full frame, recomposite() for a scroll
-//   pipeline    the compositor THREAD - one thread owns the device, raster
-//               workers reach it over per-worker lock-free channels
+//   renderer    the movable handle to the software backend that the browser
+//               owns
+//   compositor  draw() for a frame
 //   svg         vector graphics -> a bitmap AT THE SIZE ASKED FOR, through
 //               plutosvg; optional, and the only third-party rasteriser the
 //               engine calls that is not SDL
 
 #include <ctbrowser/raster/backend/backend.hpp>
 #include <ctbrowser/raster/backend/compositor.hpp>
-#include <ctbrowser/raster/backend/pipeline.hpp>
 #include <ctbrowser/raster/backend/renderer.hpp>
 #include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/draw.hpp>

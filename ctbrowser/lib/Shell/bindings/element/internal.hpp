@@ -1,9 +1,5 @@
 #pragma once
-// Private to lib/Shell/bindings/element/. NOT installed and in no file set:
-// include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and this
-// exists only so its element half can be more than one file - it was 5,442
-// lines in one until 2026-09-08. The includes are element.cpp's, so every
-// file here sees exactly what that one saw.
+// Private to lib/Shell/bindings/element/ - not installed.
 
 #include <algorithm>
 #include <cmath>
@@ -49,7 +45,14 @@ enum class reflect_type : std::uint8_t {
     // INVALID value is still a keyword - `crossorigin=x` is "anonymous" - so
     // the two defaults genuinely differ in type and neither `enumerated` nor
     // `nullable_dom_string` can spell it.
-    nullable_enumerated
+    nullable_enumerated,
+    // `nonce`, HTML 2.6.1 with a [[CryptographicNonce]] slot in front of the
+    // attribute: getting reads the slot, setting writes the slot AND NOT the
+    // content attribute, and a content attribute change reloads the slot. The
+    // one reflected attribute where `el.nonce = x; el.getAttribute("nonce")`
+    // does not answer x, which is the whole of /content-security-policy/
+    // nonce-hiding/ and eighteen subtests per element in reflection-metadata.
+    cryptographic_nonce
 };
 
 // ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
@@ -84,6 +87,11 @@ struct reflected_attribute {
     std::string_view keywords;
     std::string_view missing; // the missing value default
     std::string_view invalid; // the invalid value default
+    // [LegacyNullToEmptyString]: `body.bgColor = null` writes "" rather than
+    // the four letters. Fourteen rows carry it and the corpus tests every one
+    // with "IDL set to null"; a `dom_string` row without it writes "null",
+    // which is what `td.abbr = null` genuinely does.
+    bool null_to_empty = false;
 };
 
 // Is `want` one of the space-separated tokens of `list`? The table's keyword
@@ -134,10 +142,8 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 // `set_root` called on it and still has its Document node.
 //
 // So "connected" is "the walk ended at the node the document calls its root",
-// and it has to be asked that way. Asking only `kind == document` made
-// `document.body.isConnected` FALSE and `document.body.getRootNode() ===
-// document` false on every parsed page there has ever been - eight assertions
-// in unit/shadow_dom and the whole of `dom/nodes/Node-isConnected.html`.
+// and it has to be asked that way: `kind == document` alone is false for every
+// parsed page.
 [[nodiscard]] inline bool is_document_root(const read_txn & txn, node_id top) {
     if (!top) { return false; }
     if (txn.kind(top).value_or(node_kind::element) == node_kind::document) { return true; }
@@ -145,10 +151,6 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 }
 
 // --- helpers shared by more than one file of bindings/element/ ---------------
-//
-// Everything here was in an anonymous namespace of element.cpp. It gained
-// external linkage when that file was split, and nothing else: the bodies are
-// where they were, in the file that owns the concern, and this declares them.
 
 // What counts as a declaration on the `element.style` store, and the store's
 // two serialisations. Defined in declarations.cpp.

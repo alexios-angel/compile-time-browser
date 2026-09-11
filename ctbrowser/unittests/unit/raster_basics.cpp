@@ -184,6 +184,18 @@ void test_frame_bracketing_is_enforced() {
 
 // --- tiling is invisible --------------------------------------------------
 
+// The grid is anchored at the content origin, so a negative coordinate has to
+// floor toward -infinity: the hand-rolled division this replaced answered -2
+// for -64 / 64 and dropped the tile that content in [-64, 0) lives in.
+void test_tiles_floor_at_negative_coordinates() {
+    const auto first_tile_x = [](float x) {
+        return tiles_for(rect{x, 0, 1, 1}, 0, 64).at(0).area.x;
+    };
+    check(first_tile_x(-64) == -64 && first_tile_x(-65) == -128 && first_tile_x(63) == 0 &&
+              first_tile_x(64) == 64,
+          "tile columns floor toward -infinity at exact negative multiples");
+}
+
 void test_tiling_does_not_change_the_image() {
     page p;
     p.load("<html><body><div class=a>alpha beta gamma delta</div>"
@@ -253,7 +265,7 @@ void test_scrolling_recomposites_without_rastering() {
     for (int y = 0; y < 200; ++y) { before.push_back(pixel_at(backend.target(), 10, y)); }
 
     p.layers.scroll_to(0, 20);
-    check(recomposite(backend, p.layers).has_value(), "the scrolled frame composites");
+    check(draw(backend, p.layers, nullptr, 64).has_value(), "the scrolled frame composites");
 
     // THE CLAIM. A scroll is a composite. Tiles were rastered in content space
     // and are still valid; the previous engine re-ran layout and re-emitted every command.
@@ -286,7 +298,7 @@ void test_a_fixed_layer_does_not_move() {
     software_backend backend{128, 128, 128};
     check(draw(backend, tree, nullptr, 128).has_value(), "two layers draw");
     tree.scroll_to(0, 20);
-    check(recomposite(backend, tree).has_value(), "and re-composite after a scroll");
+    check(draw(backend, tree, nullptr, 128).has_value(), "and re-composite after a scroll");
 
     // position:fixed needs no per-command flag here - it is simply a layer the
     // scroll does not move. the previous engine carried a `fixed` bool on every paint command.
@@ -481,6 +493,7 @@ int main() {
     test_a_ring_is_hollow();
     test_frame_bracketing_is_enforced();
 
+    test_tiles_floor_at_negative_coordinates();
     test_tiling_does_not_change_the_image();
     test_parallel_raster_matches_sequential();
 

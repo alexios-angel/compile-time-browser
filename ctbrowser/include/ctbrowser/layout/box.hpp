@@ -276,11 +276,6 @@ struct box_node {
         }
         return has_in_flow_child;
     }
-    [[nodiscard]] std::size_t descendant_count() const noexcept {
-        std::size_t n = 1;
-        for (const box_node & c : children) { n += c.descendant_count(); }
-        return n;
-    }
 };
 
 // Builds the box tree from a document read view plus resolved styles.
@@ -559,8 +554,8 @@ private:
                 !decoration.empty()) {
                 // `none` CLEARS what was inherited, which is how a link inside
                 // underlined text turns its own underline off.
-                b.underline = decoration.find("underline") != std::string_view::npos;
-                b.line_through = decoration.find("line-through") != std::string_view::npos;
+                b.underline = decoration.contains("underline");
+                b.line_through = decoration.contains("line-through");
             }
 
             if (b.kind == box_kind::replaced) {
@@ -820,7 +815,9 @@ private:
 
     [[nodiscard]] static side_lengths parse_sides(std::string_view shorthand);
 
-    [[nodiscard]] static std::string_view trimmed(std::string_view v);
+    [[nodiscard]] static std::string_view trimmed(std::string_view v) noexcept {
+        return trim(v, html_whitespace);
+    }
 
     // A character's width at a font size, through the injected measure when
     // there is one and a monospace stand-in when there is not.

@@ -1,14 +1,12 @@
 #pragma once
 // Private to lib/Style/css/calc/. NOT installed and in no file set:
-// include/ctbrowser/style/css/calc.hpp declares the whole public surface -
-// evaluate_math, fold_math, simplify_math and the unit conversions - and this
-// exists only so the implementation can be more than one file: it was 1,810
-// lines in one until 2026-09-08. The includes are calc.cpp's, so every file
-// here sees exactly what that one saw.
+// include/ctbrowser/style/css/calc.hpp declares the whole public surface, and
+// this exists only so the implementation can be more than one file.
 
 #include <ctbrowser/style/css/calc.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -33,7 +31,16 @@ namespace ctbrowser::style::css::detail {
 // zero" is what makes `1px + 2` an error rather than 3px, and what makes
 // `1s + 1deg` one too.
 struct term {
-    numeric_type type = numeric_type::number;
+    // THE TYPE, as CSS Values 4 §10.2 defines it: an exponent per base family.
+    // All zero is a <number>; `dims[length] = 1` is a <length>; and since
+    // typed arithmetic (§10.2's "multiplication and division of types")
+    // `dims[length] = 2` is what `2px * 3px` is and `dims[length] = -1` what
+    // `20 / 0.75rem` is - types with no property to land in, which is why
+    // `settle()` still refuses them, but types all the same: `110px / 10px *
+    // 1px` passes through length^0 on the way to being 11px, and
+    // `typed_arithmetic` writes thirty-nine such expressions. Indexed by
+    // numeric_type; the `number` slot is never set.
+    std::array<std::int8_t, 7> dims{};
     double value = 0.0;
     double percent = 0.0;
     bool has_percent = false;
@@ -48,7 +55,29 @@ struct term {
     // arithmetic does not care.
     std::vector<std::pair<std::string, double>> symbols;
 
-    [[nodiscard]] bool is_number() const noexcept { return type == numeric_type::number; }
+    [[nodiscard]] bool is_number() const noexcept {
+        return std::ranges::all_of(dims, [](std::int8_t d) { return d == 0; });
+    }
+    // Exactly one family to the first power, or a number: the terms a property
+    // can take, and the only ones `type()` has an answer for.
+    [[nodiscard]] bool simple() const noexcept {
+        int sum = 0;
+        for (const std::int8_t d : dims) { sum += d == 0 ? 0 : (d == 1 ? 1 : 2); }
+        return sum <= 1;
+    }
+    // The family of a simple term. Asked of a composite one it names the first
+    // base with a non-zero exponent, which is enough to print a diagnostic
+    // and not enough to compute with - check `simple()` first.
+    [[nodiscard]] numeric_type type() const noexcept {
+        for (std::size_t i = 1; i < dims.size(); ++i) {
+            if (dims[i] != 0) { return static_cast<numeric_type>(i); }
+        }
+        return numeric_type::number;
+    }
+    void set_type(numeric_type family) noexcept {
+        dims = {};
+        if (family != numeric_type::number) { dims[static_cast<std::size_t>(family)] = 1; }
+    }
 };
 
 // `unit`'s coefficient in `into`, created at the end if it is not there yet.
@@ -118,5 +147,17 @@ struct function_span {
 [[nodiscard]] std::string_view body_of(std::string_view value, std::size_t at,
                                        std::string_view name, const function_span & span);
 [[nodiscard]] bool has_percentage(std::string_view text);
+
+// The canonical unit's spelling, or an empty view for a `<number>`. This is what
+// a computed value is serialised with. Defined in units.cpp.
+[[nodiscard]] std::string_view canonical_unit(numeric_type type) noexcept;
+
+// One dimension to pixels. `nullopt` for a unit this does not model, so a caller
+// can leave the value alone rather than guess at it - which is the difference
+// between an honest gap and a wrong number. An empty unit is a plain number and
+// answers with itself, because that is what a calc term needs. Defined in
+// units.cpp.
+[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
+                                              const length_context & ctx);
 
 } // namespace ctbrowser::style::css::detail

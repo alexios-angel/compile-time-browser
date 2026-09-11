@@ -55,6 +55,44 @@ namespace {
 
 } // namespace
 
+value context::from_property_descriptor(const property_descriptor & from) {
+    value made = make_object();
+    auto * out = static_cast<object_object *>(made.as_heap());
+    if (from.has_value) { out->set("value", from.held); }
+    if (from.has_writable) { out->set("writable", value::boolean(from.writable)); }
+    if (from.has_get) { out->set("get", from.getter); }
+    if (from.has_set) { out->set("set", from.setter); }
+    if (from.has_enumerable) { out->set("enumerable", value::boolean(from.enumerable)); }
+    if (from.has_configurable) { out->set("configurable", value::boolean(from.configurable)); }
+    return made;
+}
+
+context::property_descriptor context::to_property_descriptor(value from) {
+    property_descriptor out;
+    const auto field = [&](const char * name, bool & has, value & into) {
+        if (has_property(from, string(name))) {
+            has = true;
+            into = lookup_property(from, name);
+        }
+    };
+    const auto flag = [&](const char * name, bool & has, bool & into) {
+        value held = value::undefined();
+        bool present = false;
+        field(name, present, held);
+        if (present) {
+            has = true;
+            into = truthy(held);
+        }
+    };
+    field("value", out.has_value, out.held);
+    field("get", out.has_get, out.getter);
+    field("set", out.has_set, out.setter);
+    flag("writable", out.has_writable, out.writable);
+    flag("enumerable", out.has_enumerable, out.enumerable);
+    flag("configurable", out.has_configurable, out.configurable);
+    return out;
+}
+
 void context::delete_named(value target, const std::string & name) {
     // TODO(strict): a false answer here is a TypeError under "use strict". The
     // engine has no strict mode, and sloppy `delete` evaluates to false without
@@ -77,11 +115,34 @@ void context::delete_index(value target, value key) {
 bool context::own_property(value target, const std::string & name, property_descriptor & out) {
     out = property_descriptor{};
 
-    // A proxy has no ownKeys/getOwnPropertyDescriptor trap here, so the
-    // question goes to the target - the same fall-through every other absent
-    // trap takes.
+    // 10.5.5 [[GetOwnProperty]] of a proxy: the `getOwnPropertyDescriptor`
+    // trap, or the target when there is none. The answer is ToPropertyDescriptor
+    // then CompletePropertyDescriptor (steps 13-14), so a trap that says
+    // `{value: v}` describes a non-writable, non-enumerable, non-configurable
+    // property exactly as Object.defineProperty would read it. The invariant
+    // checks against the target (steps 15-22) are not made.
     if (target.is_kind(heap_kind::proxy)) {
-        return own_property(static_cast<proxy_object *>(target.as_heap())->target, name, out);
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "getOwnPropertyDescriptor");
+        if (!trap.is_callable()) { return own_property(p->target, name, out); }
+        const value args[2] = {p->target, string(name)};
+        const value answer = call(trap, args, p->handler);
+        if (answer.is_undefined()) { return false; }
+        if (!answer.is_object_like()) {
+            throw_error("TypeError", "getOwnPropertyDescriptor trap returned neither object nor "
+                                     "undefined for property '" +
+                                         name + "'");
+            return false;
+        }
+        const rooted keep{*this, answer};
+        out = to_property_descriptor(answer);
+        if (out.is_accessor()) {
+            out.has_get = out.has_set = true;
+        } else {
+            out.has_value = out.has_writable = true;
+        }
+        out.has_enumerable = out.has_configurable = true;
+        return true;
     }
 
     if (target.is_object()) {
@@ -273,8 +334,15 @@ void context::prevent_extensions(value target) {
 
 // --- [[Delete]] -----------------------------------------------------------
 bool context::delete_own_property(value target, const std::string & name) {
+    // 10.5.10: the `deleteProperty` trap, or the target. `delete el.dataset.x`
+    // is the one a page reaches for - the DOMStringMap's handler removes the
+    // attribute, which no delete on its target could do.
     if (target.is_kind(heap_kind::proxy)) {
-        return delete_own_property(static_cast<proxy_object *>(target.as_heap())->target, name);
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "deleteProperty");
+        if (!trap.is_callable()) { return delete_own_property(p->target, name); }
+        const value args[2] = {p->target, string(name)};
+        return truthy(call(trap, args, p->handler));
     }
     if (target.is_object()) {
         auto * obj = static_cast<object_object *>(target.as_heap());
@@ -319,9 +387,14 @@ bool context::delete_own_property(value target, const std::string & name) {
 // (Reflect.defineProperty).
 bool context::define_own_property(value target, const std::string & name,
                                   const property_descriptor & wanted) {
+    // 10.5.6: the `defineProperty` trap sees the descriptor as an OBJECT
+    // (FromPropertyDescriptor, step 8), or the target defines it.
     if (target.is_kind(heap_kind::proxy)) {
-        return define_own_property(static_cast<proxy_object *>(target.as_heap())->target, name,
-                                   wanted);
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = proxy_trap(target, "defineProperty");
+        if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
+        const value args[3] = {p->target, string(name), from_property_descriptor(wanted)};
+        return truthy(call(trap, args, p->handler));
     }
 
     property_descriptor current;

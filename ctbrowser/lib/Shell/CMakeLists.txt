@@ -1,160 +1,11 @@
 # ctbrowser.shell - the engine assembled into something that loads a page.
 #
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
+# browser/ is the assembly itself, bindings/ the web platform bound to the VM,
+# net/ where bytes come from, image/ the codecs (each behind a two-function
+# header, none of them SDL) and page/ what a PAGE can do. Every subdirectory's
+# internal.hpp is private to it.
 add_library(ctbrowser-shell)
-target_sources(ctbrowser-shell
-  PRIVATE
-    app_bundle.cpp
-    # the assembly itself. browser.cpp was 2,871 lines of one class's method
-    # bodies; it is ten files by concern now, with the includes it had in
-    # browser/internal.hpp so every file sees exactly what it saw.
-    browser/lifecycle.cpp
-    browser/frame.cpp
-    browser/styles.cpp
-    browser/scripts.cpp
-    browser/resources.cpp
-    browser/chrome.cpp
-    browser/selection.cpp
-    browser/input.cpp
-    browser/focus.cpp
-    browser/actions.cpp
-    # The web platform bound to the VM. bindings.cpp was 3,926 lines and
-    # webgl_bindings.cpp another 1,431, filed under page/ although it is the
-    # same job as its five siblings here.
-    # The document. document.cpp reached 3,071 lines and was split on 2026-09-08
-    # into a directory of eight, one concern each, sharing
-    # bindings/document/internal.hpp.
-    bindings/document/entry.cpp
-    bindings/document/install.cpp
-    bindings/document/second_document.cpp
-    bindings/document/named_access.cpp
-    bindings/document/tree_accessors.cpp
-    bindings/document/as_node.cpp
-    bindings/document/tree_ops.cpp
-    bindings/document/collections.cpp
-    # The element wrapper. element.cpp reached 5,442 lines and was split on
-    # 2026-09-08 into a directory of twelve, one concern each, sharing
-    # bindings/element/internal.hpp.
-    bindings/element/wrapper.cpp
-    bindings/element/declarations.cpp
-    bindings/element/views.cpp
-    bindings/element/attributes.cpp
-    bindings/element/dataset.cpp
-    bindings/element/methods.cpp
-    bindings/element/node_methods.cpp
-    bindings/element/control_methods.cpp
-    bindings/element/reflection.cpp
-    bindings/element/interfaces.cpp
-    bindings/element/character_data.cpp
-    bindings/element/shadow.cpp
-    # events: what the engine pushes in, the dispatch algorithm, and the Event
-    # interfaces - one 1,647-line file until 2026-09-08, three now, with the
-    # helpers more than one of them needs declared in events/internal.hpp.
-    bindings/events/input.cpp
-    bindings/events/dispatch.cpp
-    bindings/events/interfaces.cpp
-    # DOMException: the platform's error type, which is not an ECMAScript
-    # Error and cannot be built by context::throw_error. Its own file because
-    # every binding throws through it and none of them owns it.
-    bindings/exceptions.cpp
-    # <iframe>: a nested browsing context, which here is a SECOND dom_bindings
-    # over its own tree - the model createHTMLDocument already uses - plus the
-    # bytes and the load event. Its own file because neither document/ nor
-    # element/ owns "a document inside a document".
-    bindings/frames.cpp
-    # MutationObserver: its own file because it is not a binding over the DOM so
-    # much as a diff of it - `mutated()` reports THAT the document changed and
-    # never what, so the records are reconstructed from a snapshot.
-    bindings/mutation.cpp
-    # Web Animations: element.animate, Animation, KeyframeEffect and the
-    # timeline. Its own file because it is a timing model over the clock and
-    # an overlay on the cascade, and neither the element nor the computed
-    # style owns "what an animation says a property is right now".
-    bindings/animations.cpp
-    # customElements: the registry, the constructible HTMLElement, and the
-    # reactions - found by the same scan-from-`mutated()` the observer uses.
-    bindings/custom_elements.cpp
-    # the `CSS` namespace object: CSS.supports gates every computed-value test
-    # in css/css-values, and it is a binding over style/css/properties.hpp
-    bindings/css.cpp
-    # getComputedStyle: its own directory because it is property dispatch over
-    # three sources - one 1,326-line file until 2026-09-08, three now: how a
-    # value is written down, every property of one element, and the live object.
-    bindings/computed_style/serialize.cpp
-    bindings/computed_style/entries.cpp
-    bindings/computed_style/object.cpp
-    # the CSSOM object model: document.styleSheets and everything under it. Its
-    # own file because it is a SECOND parse of the author's sheets - the cascade
-    # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
-    # CSSStyleDeclaration are four interfaces nothing else in bindings/ owns.
-    # stylesheets.cpp reached 2,814 lines and was split on 2026-09-08 into a
-    # directory of six, one concern each, sharing bindings/stylesheets/internal.hpp.
-    bindings/stylesheets/serialize.cpp
-    bindings/stylesheets/source.cpp
-    bindings/stylesheets/rules.cpp
-    bindings/stylesheets/sheets.cpp
-    bindings/stylesheets/objects.cpp
-    bindings/stylesheets/prototypes.cpp
-    # window, console, timers and the callback queue - one 1,106-line file until
-    # 2026-09-08, two now; install_window stays whole at 885 lines.
-    bindings/window/callbacks.cpp
-    bindings/window/window.cpp
-    bindings/canvas.cpp
-    bindings/resources.cpp
-    # WebGL: the context and its wrapper, the constant table, and the methods in
-    # two halves - one 1,431-line file until 2026-09-08, four now, with the
-    # argument helpers every one of them needs in webgl/internal.hpp.
-    bindings/webgl/context.cpp
-    bindings/webgl/constants.cpp
-    bindings/webgl/objects.cpp
-    bindings/webgl/drawing.cpp
-    embedded_fonts.cpp
-    # resources: where bytes come from. net.cpp was net_curl.cpp until
-    # 2026-08-09; the suffix implied a choice of transport, and the Asio one has
-    # been gone for a while.
-    net/net.cpp
-    net/url.cpp
-    # image codecs, each behind a two-function header, none of them SDL
-    image/png.cpp
-    image/jpeg.cpp
-    image/images.cpp
-    # what a PAGE can do
-    page/canvas.cpp
-    page/forms.cpp
-    page/svg_cache.cpp
-    page/webgl.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/app_bundle.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/embedded_fonts.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/shell.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/webgl.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/input.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/metrics.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/assets.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/images.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/url.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/png.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/image/jpeg.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/net/net.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/canvas.hpp"
-        # PUBLIC, and it has to be here: canvas.hpp - which IS installed -
-        # includes it. Missing from this list until 2026-08-09, which made the
-        # INSTALLED package unusable while the build tree was fine, because a
-        # build tree finds a header whether or not anything shipped it.
-        # tools/check/check-package.sh is what proves this, and it is the only thing
-        # that can.
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/composite.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/svg_cache.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/page/forms.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/bindings.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/shell/browser.hpp")
+ctbrowser_subsystem_sources(ctbrowser-shell shell)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)
 
@@ -191,7 +42,7 @@ if(CTBROWSER_EMBED_FONTS)
   " CTBROWSER_COMPILER_HAS_EMBED)
   unset(CMAKE_REQUIRED_FLAGS)
   if(CTBROWSER_COMPILER_HAS_EMBED)
-    set_source_files_properties(embedded_fonts.cpp PROPERTIES COMPILE_OPTIONS
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/embedded_fonts.cpp" PROPERTIES COMPILE_OPTIONS
       "--embed-dir=${PROJECT_SOURCE_DIR}/resources/fonts")
     message(STATUS "ctbrowser: fonts embedded in the binary (+5.2 MB)")
   else()

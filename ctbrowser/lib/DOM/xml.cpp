@@ -1,7 +1,6 @@
 #include <ctbrowser/dom/xml.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,33 +26,11 @@ namespace {
 // browser also renders - and getting those ranges subtly wrong would refuse
 // documents that load everywhere else.
 [[nodiscard]] bool is_name_start(unsigned char c) {
-    return std::isalpha(c) != 0 || c == '_' || c == ':' || c >= 0x80;
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 0x80;
 }
 
 [[nodiscard]] bool is_name_char(unsigned char c) {
-    return is_name_start(c) || std::isdigit(c) != 0 || c == '-' || c == '.';
-}
-
-[[nodiscard]] std::string encode_utf8(char32_t code) {
-    std::string out;
-    const auto byte = [&out](unsigned value) { out.push_back(static_cast<char>(value)); };
-    const auto v = static_cast<std::uint32_t>(code);
-    if (v < 0x80) {
-        byte(v);
-    } else if (v < 0x800) {
-        byte(0xC0u | (v >> 6));
-        byte(0x80u | (v & 0x3Fu));
-    } else if (v < 0x10000) {
-        byte(0xE0u | (v >> 12));
-        byte(0x80u | ((v >> 6) & 0x3Fu));
-        byte(0x80u | (v & 0x3Fu));
-    } else {
-        byte(0xF0u | (v >> 18));
-        byte(0x80u | ((v >> 12) & 0x3Fu));
-        byte(0x80u | ((v >> 6) & 0x3Fu));
-        byte(0x80u | (v & 0x3Fu));
-    }
-    return out;
+    return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
 // One element's namespace bindings. A vector rather than a map: an element
@@ -465,7 +442,7 @@ private:
                 if (code > 0x10FFFF) { code = 0xFFFD; }
             }
             if (code == 0 || (code >= 0xD800 && code <= 0xDFFF)) { code = 0xFFFD; }
-            into += encode_utf8(static_cast<char32_t>(code));
+            append_utf8(into, static_cast<char32_t>(code));
             advance(semicolon + 1 - at_);
             return true;
         }

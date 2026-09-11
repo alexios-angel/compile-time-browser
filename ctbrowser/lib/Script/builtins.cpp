@@ -30,19 +30,4 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_promise(cx);
 }
 
-// NOT here, and deliberately:
-//
-//   * `Date` beyond `now` - calendars, time zones and date parsing, which no
-//     page in this tree uses.
-//   * regular expressions, and therefore `String.match`, `String.search` and
-//     the RegExp forms of `replace`/`split`. Those need a regex engine; the
-//     compiler still rejects a regex literal with a clear message rather than
-//     mis-compiling one.
-//   * `Map`, `Set`, `Symbol`, `Proxy`, typed arrays, generators.
-//   * PENDING promises, a job queue and `new Promise(executor)` - see the note
-//     above `make_promise`. Promises here are settled when they are made.
-//   * a real prototype CHAIN: one level, no `__proto__`, no `Object.create`.
-//     Everything a page does with builtins works; user-defined inheritance
-//     arrives with `class` in a later stage.
-
 } // namespace ctbrowser::script

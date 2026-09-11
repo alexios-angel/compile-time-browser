@@ -1,115 +1,18 @@
 # ctbrowser.script - JS -> bytecode -> a register machine over NaN-boxed values, + stdlib.
 #
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
-# --- ctbrowser.script ----------------------------------------------------
-# The script engine. Reuses ctjs's Pratt parser (vparse.hpp) and replaces everything
-# after it; the tree-walk interpreter and the refcounted variant value model
-# are gone. Depends on core only for the warning set - the VM shares no state
-# with the DOM by design (one agent per thread).
+# Reuses ctjs's Pratt parser (vparse.hpp) and replaces everything after it.
+# Depends on core only for the warning set - the VM shares no state with the
+# DOM by design (one agent per thread). Dependencies are found in
+# cmake/dependencies.cmake. Each subdirectory's internal.hpp is private to it
+# and deliberately in NO file set.
 add_library(ctbrowser-script)
+# The .cpp list is globbed like every other subsystem's; the header list is
+# NOT, because include/ctbrowser/script/ holds dispatch.hpp, which vm.hpp
+# includes but which has never been installed. Globbing would ship it, so the
+# list stays what it was until someone decides that on purpose.
+file(GLOB_RECURSE script-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 target_sources(ctbrowser-script
-  PRIVATE
-    # The AOT ABI's bodies. struct aot_bridge is declared in aot_bridge/internal.hpp
-    # and each member is defined beside the extern "C" row that calls it - four
-    # files, from one of 1,586 lines (2026-09-08).
-    aot_bridge/frames.cpp
-    aot_bridge/operators.cpp
-    aot_bridge/properties.cpp
-    aot_bridge/calls.cpp
-    dispatch.cpp
-    aot_contract.cpp
-    # The program image: the writer and the reader, from one file of 1,156 lines
-    # (2026-09-08); program_image/internal.hpp holds what both must agree on.
-    program_image/write.cpp
-    program_image/read.cpp
-    # The compiler. compile.cpp is `compiler::compile()` alone; the class is
-    # declared in compile/compiler_impl.hpp and its bodies live beside it.
-    # compile.hpp still declares exactly one function.
-    compile.cpp
-    # The static semantics: the source text a conforming implementation must
-    # REFUSE. It runs before the compiler and shares nothing with it but the
-    # AST, which is why it is a directory rather than a pass inside one. The
-    # checker is declared in compile/early_errors/checker.hpp, private to these
-    # six files; compile/early_errors.hpp still declares one function.
-    compile/early_errors/entry.cpp
-    compile/early_errors/scopes.cpp
-    compile/early_errors/statements.cpp
-    compile/early_errors/functions.cpp
-    compile/early_errors/expressions.cpp
-    compile/early_errors/patterns.cpp
-    compile/ast.cpp
-    compile/limits.cpp
-    compile/entry.cpp
-    compile/helpers.cpp
-    compile/destructuring.cpp
-    # Statements, by concern: the dispatch, loops and labels, try/finally, and
-    # the function body that holds every other statement.
-    compile/statements/dispatch.cpp
-    compile/statements/loops.cpp
-    compile/statements/try_finally.cpp
-    compile/statements/functions.cpp
-    compile/expressions.cpp
-    compile/classes.cpp
-    compile/frames.cpp
-    compile/capture.cpp
-    compile/strings.cpp
-    # The line table the debug offsets are read through.
-    source_lines.cpp
-    # The type oracle's recorder - ctcompile Phase 54B. Its hook in the dispatch
-    # loop is one null test; everything it does lives here.
-    type_record.cpp
-    # The standard library. builtins.cpp is now just install_builtins() calling
-    # the files beside it - two of them, and three directories where a file
-    # outgrew 1,000 lines; builtins/internal.hpp is private to all of them and is
-    # deliberately in NO file set - builtins.hpp still declares one function.
-    builtins.cpp
-    builtins/values.cpp
-    # Array, the keyed collections and the typed arrays - four files, from one
-    # of 1,824 lines (2026-09-08); builtins/collections/internal.hpp is theirs.
-    builtins/collections/array.cpp
-    builtins/collections/array_iteration.cpp
-    builtins/collections/keyed.cpp
-    builtins/collections/typed_arrays.cpp
-    # String, btoa/atob and structuredClone, RegExp, Symbol - four files, from
-    # one of 1,333 lines (2026-09-08), sharing nothing but builtins/internal.hpp.
-    builtins/text/string.cpp
-    builtins/text/globals.cpp
-    builtins/text/regexp.cpp
-    builtins/text/symbol.cpp
-    # Object, the errors, Proxy/Reflect and Function - five files, from one of
-    # 1,429 lines (2026-09-08); builtins/objects/internal.hpp declares the four
-    # abstract operations Object and Reflect share.
-    builtins/objects/operations.cpp
-    builtins/objects/object.cpp
-    builtins/objects/errors.cpp
-    builtins/objects/proxy.cpp
-    builtins/objects/function.cpp
-    builtins/async.cpp
-    bigint.cpp
-    number_format.cpp
-    # The interpreter. run_loop.cpp is the dispatch loop and stays whole: it is
-    # ONE function, and the thing docs/history/computed-goto.md is about.
-    vm/coerce.cpp
-    # Property lookup, storage and descriptors, the prototype chain, and the
-    # collector - vm/objects.cpp until 2026-09-08.
-    vm/objects/context.cpp
-    vm/objects/gc.cpp
-    vm/objects/lookup.cpp
-    vm/objects/store.cpp
-    vm/objects/chain.cpp
-    vm/objects/descriptors.cpp
-    # Calls, construction, modules, running a program, closures and
-    # coroutines - vm/call.cpp until 2026-09-08.
-    vm/call/invoke.cpp
-    vm/call/construct.cpp
-    vm/call/modules.cpp
-    vm/call/run.cpp
-    vm/call/coroutines.cpp
-    vm/run_loop.cpp
+  PRIVATE ${script-sources}
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -125,48 +28,24 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/type_record.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"
-        # builtins.cpp includes it. Absent from this list until 2026-08-09, so it
-        # was compiled against and never installed.
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/regex.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
-# PRIVATE: the dispatch strategy is an implementation detail of run_loop and
-# nothing a consumer compiles against can see it.
+
+# All three PRIVATE, and they must be: none changes the shape of a public
+# header. The dispatch strategy is run_loop's alone; the debug side tables are
+# read through `debug_names_enabled()`; `context::recorder_` is a member in
+# EVERY build and only run_loop's recording instantiation disappears
+# (`script::type_recording_enabled()` says which). Gating a member on a flag
+# would compile this library against one `context` and every consumer against
+# another - which links, and then reads the wrong offsets.
 if(CTBROWSER_COMPUTED_GOTO)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_COMPUTED_GOTO)
 endif()
-
-# PRIVATE for the same reason: the debug side tables are filled by the compiler
-# and read through `debug_names_enabled()`, so no header a consumer compiles
-# against changes shape with the flag. That is deliberate - the alternative,
-# #ifdef-ing the vectors off `function_proto`, would make the struct a different
-# type in a consumer built without the flag.
 if(NOT CTBROWSER_SCRIPT_DEBUG_NAMES)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_DEBUG_NAMES=0)
 endif()
-
-# AND PRIVATE FOR THE SAME REASON, which is sharper here than it is above:
-# `context::recorder_` is a member in EVERY build, so vm.hpp has the same layout
-# either way and only run_loop's recording INSTANTIATION disappears. Gating the
-# member instead would compile this library against one `context` and every
-# consumer against another - which links, and then reads the wrong offsets.
-# `script::type_recording_enabled()` is how a caller finds out.
 if(NOT CTBROWSER_SCRIPT_RECORD_TYPES)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_RECORD_TYPES=0)
-endif()
-
-# PUBLIC, unlike the one above, and it MUST be: CTBROWSER_WITH_GMP selects the
-# type of `ctbrowser::script::bigint` inside value.hpp, which is a PUBLIC
-# header. A private definition would compile this library against mpz_int and
-# every consumer against cpp_int - one ODR violation per translation unit, and
-# the kind that links cleanly and then reads a bigint through the wrong layout.
-#
-# The root CMakeLists says why this is opt-in rather than on-when-found. GMP is
-# LGPL and this engine links statically; see NOTICE.
-if(CTBROWSER_WITH_GMP)
-  target_compile_definitions(ctbrowser-script PUBLIC CTBROWSER_WITH_GMP)
-  target_include_directories(ctbrowser-script PUBLIC "${CTBROWSER_GMP_INCLUDE_DIR}")
-  target_link_libraries(ctbrowser-script PUBLIC "${CTBROWSER_GMP_LIBRARY}")
-  message(STATUS "ctbrowser: BigInt backend GMP ${CTBROWSER_GMP_LIBRARY} (LGPL - see NOTICE)")
 endif()
 
 ctbrowser_target(ctbrowser-script)

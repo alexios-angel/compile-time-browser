@@ -1,12 +1,5 @@
 // dom_bindings - the live, read-only CSSStyleDeclaration getComputedStyle hands
 // back, and the global itself.
-//
-// One of three files carved out of a 1,326-line bindings/computed_style.cpp
-// on 2026-09-08. The member functions belong to the one class declared in
-// include/ctbrowser/shell/bindings.hpp; the serialisation helpers more than
-// one file needs are declared in internal.hpp beside this, with external
-// linkage in ctbrowser::shell::detail, and internal.hpp carries the note on
-// where a computed value comes from. Nothing about the public header changed.
 
 #include "internal.hpp"
 

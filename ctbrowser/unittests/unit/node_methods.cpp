@@ -166,11 +166,12 @@ void test_the_constructible_dom() {
         y.replaceWith(w);
         console.log('replaced=' + ids(list));
 
-        // A comment is a node with data, and it is not an element.
+        // A comment is a node with data, and it is not an element - and an
+        // element has no `data` at all (CharacterData's, not Node's).
         var note = document.createComment('hi');
         list.append(note);
         console.log('comment=' + note.nodeType + ',' + note.nodeName + ',' + note.data +
-                    ',' + (b.data === null) + ',' + list.children.length +
+                    ',' + (b.data === undefined) + ',' + list.children.length +
                     ',' + list.childNodes.length);
 
         // cloneNode: shallow keeps the attributes only, deep keeps the subtree,

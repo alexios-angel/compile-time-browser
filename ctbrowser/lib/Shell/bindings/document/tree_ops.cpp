@@ -1,12 +1,5 @@
 // dom_bindings - tree operations: clone, insert, innerHTML, textContent, and
 // the lookups by id, selector and tag.
-//
-// One of eight files carved out of a 3,071-line bindings/document.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the name productions every one of
-// them needs are in internal.hpp beside this. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 
@@ -20,16 +13,22 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
         made = doc_->create_text(from.text(node));
     } else {
         made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node));
-        for (const attribute & a : from.attributes(node)) {
-            (void)doc_->set_attribute(made, a.name, a.value);
-        }
+        // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
+        for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
     }
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
     return made;
 }
 
-node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep) {
+// `owner` is the bindings the SOURCE node belongs to - this one when null,
+// which is every call but `importNode`'s. It matters twice: the namespace an
+// element was created in is in the owner's `namespaces_` and not the tree, and
+// a `<template>`'s contents are in the owner's document and not under the
+// element.
+node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep,
+                                 const dom_bindings * owner) {
+    const dom_bindings & src = owner == nullptr ? *this : *owner;
     node_id made;
     switch (from.kind(source).value_or(node_kind::element)) {
     case node_kind::text: made = doc_->create_text(from.text(source)); break;
@@ -44,17 +43,30 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // AND ITS NAMESPACE, which is not on the node: a clone of an element
         // createElementNS made must report the same namespaceURI, and reading
         // it off `element_ns` alone would answer for the wrong one.
-        if (const auto it = namespaces_.find(pack(source)); it != namespaces_.end()) {
+        if (const auto it = src.namespaces_.find(pack(source)); it != src.namespaces_.end()) {
             namespaces_.emplace(pack(made), it->second);
         }
+        // THE WHOLE ATTRIBUTE, namespace and all. Copying `(name, value)` put
+        // a cloned `xlink:href` in no namespace, and `Node-cloneNode-svg.html`
+        // reads the namespaceURI off the clone's attributes.
         for (const attribute & held : from.attributes(source)) {
-            (void)doc_->set_attribute(made, held.name, held.value);
+            (void)doc_->set_attribute(made, held);
         }
         break;
     }
     if (deep) {
         for (const node_id child : from.children(source)) {
-            (void)doc_->append_child(made, clone_node(from, child, true));
+            (void)doc_->append_child(made, clone_node(from, child, true, owner));
+        }
+        // HTML 4.12.3, the cloning steps for a template: its CONTENTS clone
+        // with it, into the copy's own contents fragment. They are not
+        // children of the element, so the loop above never sees them.
+        if (const node_id contents = src.doc_->template_content(source)) {
+            const node_id copied = doc_->create_fragment();
+            doc_->set_template_content(made, copied);
+            for (const node_id child : from.children(contents)) {
+                (void)doc_->append_child(copied, clone_node(from, child, true, owner));
+            }
         }
     }
     return made;
@@ -126,13 +138,59 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
 // Read back as markup. A serialiser rather than the original text: the DOM is
 // the truth, and a page that appended a node after setting innerHTML expects to
 // see it.
+// HTML 13.2, "serializing HTML fragments". Text is escaped except inside the
+// raw-text elements, attribute values escape `&`, `"` and U+00A0, and a comment
+// is `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
+namespace {
+[[nodiscard]] std::string escape_html(std::string_view text, bool attribute) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '&') {
+            out += "&amp;";
+        } else if (c == '\xc2' && i + 1 < text.size() && text[i + 1] == '\xa0') {
+            out += "&nbsp;";
+            ++i;
+        } else if (attribute && c == '"') {
+            out += "&quot;";
+        } else if (!attribute && c == '<') {
+            out += "&lt;";
+        } else if (!attribute && c == '>') {
+            out += "&gt;";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+[[nodiscard]] bool serializes_raw(std::string_view tag) {
+    for (const std::string_view raw :
+         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"}) {
+        if (tag == raw) { return true; }
+    }
+    return false;
+}
+} // namespace
+
 std::string dom_bindings::inner_html(node_id target) const {
     const auto txn = doc_->read();
     std::string out;
-    const auto write = [&](auto && self, node_id node) -> void {
-        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
-            out += txn.text(node);
+    const auto write = [&](auto && self, node_id node, bool raw) -> void {
+        switch (txn.kind(node).value_or(node_kind::element)) {
+        case node_kind::text:
+            out += raw ? std::string{txn.text(node)} : escape_html(txn.text(node), false);
             return;
+        case node_kind::comment:
+            out += "<!--";
+            out += txn.text(node);
+            out += "-->";
+            return;
+        case node_kind::document:
+        case node_kind::document_fragment:
+            for (const node_id child : txn.children(node)) { self(self, child, false); }
+            return;
+        case node_kind::element: break;
         }
         const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
         out += "<";
@@ -141,24 +199,31 @@ std::string dom_bindings::inner_html(node_id target) const {
             out += " ";
             out += atoms_->text(a.name);
             out += "=\"";
-            out += a.value;
+            out += escape_html(a.value, true);
             out += "\"";
         }
         out += ">";
         if (ctbrowser::html::is_void_element(tag)) { return; }
-        for (const node_id child : txn.children(node)) { self(self, child); }
+        const bool raw_below = txn.element_ns(node) == node_ns::html && serializes_raw(tag);
+        for (const node_id child : txn.children(node)) { self(self, child, raw_below); }
         out += "</";
         out += tag;
         out += ">";
     };
-    for (const node_id child : txn.children(target)) { write(write, child); }
+    for (const node_id child : txn.children(target)) { write(write, child, false); }
     return out;
 }
 
 // Every text node under the element, concatenated - which is what
-// `textContent` is, and what makes it the safe way to read a label.
+// `textContent` is, and what makes it the safe way to read a label. A Text or
+// Comment node's textContent is its own data (DOM 4.4, "the descendant text
+// content" applies only to an element or fragment).
 std::string dom_bindings::text_content(node_id target) const {
     const auto txn = doc_->read();
+    const node_kind kind = txn.kind(target).value_or(node_kind::element);
+    if (kind == node_kind::text || kind == node_kind::comment) {
+        return std::string{txn.text(target)};
+    }
     std::string out;
     const auto walk = [&](auto && self, node_id node) -> void {
         if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
@@ -171,6 +236,9 @@ std::string dom_bindings::text_content(node_id target) const {
 }
 
 node_id dom_bindings::find_by_id(const std::string & want) {
+    // "If elementId is the empty string, return null" - DOM 4.2.6, and an
+    // element with `id=""` is not a match for it.
+    if (want.empty()) { return node_id{}; }
     const auto txn = doc_->read();
     const atom key = atoms_->intern("id");
     node_id found{};

@@ -129,10 +129,6 @@ int main() {
         "lib/App/app/run.cpp",                   //   and the loop that drives one
         "include/ctbrowser/raster/text/ttf.hpp", // real fonts, through SDL3_ttf - see its header
         "lib/Raster/text/ttf.cpp",               //   and its implementation
-        "include/ctbrowser/gpu/device.hpp",      // the SDL_GPUDevice backend
-        "lib/GPU/device.cpp",                    //   and its implementation
-        "include/ctbrowser/gpu/select.hpp",
-        "include/ctbrowser/gpu/gpu.hpp",
     };
     std::size_t swept = 0;
     for (const char * tree : {"include", "lib"}) {

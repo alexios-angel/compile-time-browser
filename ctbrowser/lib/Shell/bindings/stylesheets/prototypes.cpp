@@ -1,11 +1,5 @@
 // dom_bindings' CSSOM - install_stylesheet_prototypes: the CSSStyleSheet,
 // CSSRuleList, CSSRule, MediaList and CSSStyleDeclaration interfaces.
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 
@@ -41,6 +35,11 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                         }});
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
+        // `@@toStringTag`, which is what `Object.prototype.toString` - and so
+        // `rule.toString()` - reads: `[object CSSFontFaceRule]`, not
+        // `[object Object]`. The same key element/interfaces.cpp stamps on the
+        // element prototypes; Web IDL puts one on every interface prototype.
+        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
         internals->set(std::string{name} + ".prototype", value::object(proto));
         internals->set(std::string{name}, value::object(ctor));
         cx.define_global(name, value::object(ctor));
@@ -65,6 +64,18 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                 std::string{"set "} + name, std::move(write))),
                             script::attr_configurable);
     };
+    // `@@iterator` on every collection here. `for (const x of list)` already
+    // worked - context::iterable_values reads `length` and the indices - but
+    // `Symbol.iterator in CSSStyleDeclaration.prototype` is asked by name, and
+    // a page driving the iterator by hand needs a real one. Web IDL gives an
+    // indexed-getter interface exactly the Array iterator, so it IS that one,
+    // over the snapshot iterable_values already takes.
+    const auto iterable = [&](script::object_object * on) {
+        method(on, "@@iterator", [](context & c, std::span<value>) {
+            const value items = c.iterable_values(c.current_this());
+            return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);
+        });
+    };
 
     // --- MediaList
     //
@@ -74,6 +85,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // `rule.media.appendMedium('print')` change `rule.cssText` - the two are one
     // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto = interface("MediaList", nullptr, nullptr);
+    iterable(media_proto);
     method(media_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
     accessor(
@@ -151,11 +163,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
 
     // --- StyleSheetList
     script::object_object * list_proto = interface("StyleSheetList", nullptr, nullptr);
+    iterable(list_proto);
     method(list_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
 
     // --- CSSRuleList
     script::object_object * rules_proto = interface("CSSRuleList", nullptr, nullptr);
+    iterable(rules_proto);
     method(rules_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
 
@@ -237,13 +251,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
             return make_sheet_object(c, at);
         });
-    getter(sheet_proto, "cssRules", [this](context & c, std::span<value>) {
+    // "If the origin-clean flag is unset, throw a SecurityError" - the first
+    // step of cssRules, insertRule and deleteRule alike, CSSOM 6.3.
+    const auto origin_dirty = [this](context & c) {
+        const css_sheet_record * sheet = receiver_sheet(c);
+        if (sheet == nullptr || sheet->origin_clean) { return false; }
+        throw_dom_exception(c, "SecurityError", "the stylesheet is not origin-clean");
+        return true;
+    };
+    getter(sheet_proto, "cssRules", [this, origin_dirty](context & c, std::span<value>) {
         // [SameObject]: `sheet.cssRules === sheet.cssRules` and
         // `sheet.cssRules === sheet.rules` are both asserted, so the list is
         // built once and REFRESHED rather than rebuilt.
         script::object_object * self = as_object(c.current_this());
         const css_sheet_record * sheet = receiver_sheet(c);
-        if (self == nullptr || sheet == nullptr) { return value::undefined(); }
+        if (self == nullptr || sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (const value * held = self->find(rules_key)) {
             refresh_rule_list(c, *held, sheet->rules);
             return *held;
@@ -261,9 +283,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                          return c.lookup_property(self, "cssRules");
                                      })),
                                  value::undefined(), script::attr_configurable);
-    method(sheet_proto, "insertRule", [this](context & c, std::span<value> args) {
+    method(sheet_proto, "insertRule", [this, origin_dirty](context & c, std::span<value> args) {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr) { return value::undefined(); }
+        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (args.empty()) {
             c.throw_error("TypeError", "insertRule requires a rule");
             return value::undefined();
@@ -351,9 +373,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         style_sheets_changed();
         return value::number(asked);
     });
-    method(sheet_proto, "deleteRule", [this](context & c, std::span<value> args) {
+    method(sheet_proto, "deleteRule", [this, origin_dirty](context & c, std::span<value> args) {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr) { return value::undefined(); }
+        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
         if (args.empty()) {
             c.throw_error("TypeError", "deleteRule requires an index");
             return value::undefined();
@@ -378,6 +400,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 }
             }
         }
+        detach_rule(css_rule_store_, going);
         sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
         return value::undefined();
@@ -625,6 +648,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
             return value::undefined();
         }
+        detach_rule(css_rule_store_, rule->children[static_cast<std::size_t>(asked)]);
         rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
         return value::undefined();
@@ -657,6 +681,26 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             return value::undefined();
         });
     (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
+    // --- CSSContainerRule, css-conditional-5. The prelude is `<container-name>?
+    // <container-query>`: a name is an identifier and a query begins with `(`
+    // (or `not`/`and`/`or` of one), so the first component decides which.
+    script::object_object * container_proto =
+        interface("CSSContainerRule", "CSSConditionRule", nullptr);
+    const auto container_part = [this](context & c, bool want_name) {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return c.string(""); }
+        std::size_t at = 0;
+        const std::string_view first = next_component(rule->prelude, at);
+        const bool named = !first.empty() && first.front() != '(' && !ascii_iequals(first, "not") &&
+                           !ascii_iequals(first, "and") && !ascii_iequals(first, "or");
+        if (want_name) { return c.string(named ? std::string{first} : std::string{}); }
+        const std::string_view whole = rule->prelude;
+        return c.string(collapse_whitespace(named ? whole.substr(at) : whole));
+    };
+    getter(container_proto, "containerName",
+           [container_part](context & c, std::span<value>) { return container_part(c, true); });
+    getter(container_proto, "containerQuery",
+           [container_part](context & c, std::span<value>) { return container_part(c, false); });
     declaration_accessor(interface("CSSFontFaceRule", "CSSRule", nullptr));
 
     // --- CSSImportRule, CSSOM 6.4.7
@@ -760,18 +804,23 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             style_sheets_changed();
             return value::undefined();
         });
-    getter(keyframes_proto, "cssRules", [this](context & c, std::span<value>) {
+    // The list is made with the rule object (make_rule_object), because the
+    // rule is itself indexed - `keyframes[0]` - and MIRRORS it after each read
+    // and each write.
+    const auto keyframes_list = [this](context & c) {
         script::object_object * self = as_object(c.current_this());
         const css_rule_record * rule = receiver_rule(c);
         if (self == nullptr || rule == nullptr) { return value::undefined(); }
         if (const value * held = self->find(rules_key)) {
             refresh_rule_list(c, *held, rule->children);
-            return *held;
+        } else {
+            self->define(rules_key, make_rule_list(c, rule->children), script::attr_none);
         }
-        const value list = make_rule_list(c, rule->children);
-        self->define(rules_key, list, script::attr_none);
-        return list;
-    });
+        mirror_rule_list(*self);
+        return *self->find(rules_key);
+    };
+    getter(keyframes_proto, "cssRules",
+           [keyframes_list](context & c, std::span<value>) { return keyframes_list(c); });
     getter(keyframes_proto, "length", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
         return value::number(rule == nullptr ? 0 : static_cast<double>(rule->children.size()));
@@ -779,7 +828,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // `appendRule` takes a whole keyframe and `deleteRule`/`findRule` take a
     // keyText - NOT an index, which is what makes this trio different from
     // every other insert/delete pair in the CSSOM.
-    method(keyframes_proto, "appendRule", [this](context & c, std::span<value> a) {
+    method(keyframes_proto, "appendRule", [this, keyframes_list](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return value::undefined(); }
         const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
@@ -792,6 +841,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         const std::size_t frame = css_rule_store_[made]->children.front();
         css_rule_store_[frame]->parent = self;
         rule->children.push_back(frame);
+        (void)keyframes_list(c);
         style_sheets_changed();
         return value::undefined();
     });
@@ -814,14 +864,17 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (rule == nullptr || found == no_index) { return value::null(); }
         return make_rule_object(c, rule->children[found]);
     });
-    method(keyframes_proto, "deleteRule", [this, keyframe_at](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
-        if (rule == nullptr || found == no_index) { return value::undefined(); }
-        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
-        style_sheets_changed();
-        return value::undefined();
-    });
+    method(keyframes_proto, "deleteRule",
+           [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
+               css_rule_record * rule = receiver_rule(c);
+               const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+               if (rule == nullptr || found == no_index) { return value::undefined(); }
+               detach_rule(css_rule_store_, rule->children[found]);
+               rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
+               (void)keyframes_list(c);
+               style_sheets_changed();
+               return value::undefined();
+           });
     script::object_object * keyframe_proto = interface("CSSKeyframeRule", "CSSRule", nullptr);
     declaration_accessor(keyframe_proto);
     accessor(
@@ -839,19 +892,27 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         });
     declaration_accessor(interface("CSSCounterStyleRule", "CSSRule", nullptr));
 
-    // --- CSSStyleDeclaration
+    // --- CSSStyleDeclaration, and the three blocks that inherit it
     //
-    // ONE PROTOTYPE FOR THE WHOLE PAGE, carrying an accessor per property under
-    // both spellings. `el.style` is a PROXY over a store, which is the other way
-    // to answer an unbounded property set - it costs two natives per element and
-    // makes `el.style instanceof CSSStyleDeclaration` false, a proxy not being
-    // an object as far as the prototype walk is concerned. Here the set is
-    // bounded (the property table IS the set of IDL attributes a
-    // CSSStyleDeclaration has), so ~290 accessors on one shared prototype answer
-    // every rule in the document and `instanceof` works.
+    // ONE PROTOTYPE PER KIND OF BLOCK FOR THE WHOLE PAGE, carrying an accessor
+    // per property under both spellings. `el.style` is a PROXY over a store,
+    // which is the other way to answer an unbounded property set - it costs two
+    // natives per element and makes `el.style instanceof CSSStyleDeclaration`
+    // false, a proxy not being an object as far as the prototype walk is
+    // concerned. Here the set is bounded (the property table IS the set of IDL
+    // attributes a CSSStyleProperties has), so ~290 accessors on one shared
+    // prototype answer every rule in the document and `instanceof` works.
+    //
+    // CSSStyleDeclaration itself carries the generic API - cssText, item,
+    // getPropertyValue and the rest - and the property accessors sit on
+    // CSSStyleProperties beneath it, exactly as CSSOM draws the split; the
+    // descriptor blocks of `@font-face` and `@page` are its other two
+    // subclasses and carry their descriptors instead. objects.cpp picks.
     script::object_object * declaration_proto = interface("CSSStyleDeclaration", nullptr, nullptr);
-    const auto property_accessor = [&](const std::string & idl, const std::string & css) {
-        declaration_proto->define_accessor(
+    iterable(declaration_proto);
+    const auto property_accessor = [&](script::object_object * on, const std::string & idl,
+                                       const std::string & css) {
+        on->define_accessor(
             idl,
             value::object(cx.allocate<script::native_object>(
                 "get " + idl,
@@ -868,8 +929,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 [this, css](context & c, std::span<value> a) {
                     css_rule_record * rule = receiver_rule(c);
                     if (rule == nullptr) { return value::undefined(); }
-                    if (store_declaration(rule->declarations, css, arg_string(c, a, 0), false,
-                                          false)) {
+                    if (store_declaration(*rule, css, arg_string(c, a, 0), false, false)) {
                         refresh_declaration_object(c, c.current_this());
                         style_sheets_changed();
                     }
@@ -877,11 +937,36 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 })),
             script::attr_enumerable | script::attr_configurable);
     };
-    for (const style::css::property_syntax & property : known_properties()) {
-        const std::string css{property.name};
-        property_accessor(css, css);
+    const auto both_spellings = [&](script::object_object * on, std::string_view name) {
+        const std::string css{name};
+        property_accessor(on, css, css);
         const std::string idl = idl_name_of(css);
-        if (idl != css) { property_accessor(idl, css); }
+        if (idl != css) { property_accessor(on, idl, css); }
+    };
+    script::object_object * properties_proto =
+        interface("CSSStyleProperties", "CSSStyleDeclaration", nullptr);
+    for (const style::css::property_syntax & property : known_properties()) {
+        both_spellings(properties_proto, property.name);
+    }
+    // CSS Fonts 4 §11.1 and CSS Paged Media 3 §7.1: the descriptor sets, by
+    // name - the property table knows none of them, so a value is kept as the
+    // author wrote it, which is what a descriptor's grammar this engine does
+    // not model amounts to.
+    script::object_object * font_face_proto =
+        interface("CSSFontFaceDescriptors", "CSSStyleDeclaration", nullptr);
+    for (const std::string_view name :
+         {"ascent-override", "descent-override", "font-display", "font-family",
+          "font-feature-settings", "font-language-override", "font-named-instance", "font-stretch",
+          "font-style", "font-weight", "font-width", "font-variation-settings", "line-gap-override",
+          "size-adjust", "src", "unicode-range"}) {
+        both_spellings(font_face_proto, name);
+    }
+    script::object_object * page_descriptors_proto =
+        interface("CSSPageDescriptors", "CSSStyleDeclaration", nullptr);
+    for (const std::string_view name :
+         {"margin", "margin-top", "margin-right", "margin-bottom", "margin-left", "size",
+          "page-orientation", "marks", "bleed"}) {
+        both_spellings(page_descriptors_proto, name);
     }
     getter(declaration_proto, "length", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
@@ -906,16 +991,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // declaration-list parser a `style` attribute goes through - so a
             // `;` inside a string cannot end a declaration here either.
             rule->declarations.clear();
-            const style::css::stylesheet parsed =
-                style::css::parse_declaration_list(arg_string(c, a, 0), *atoms_);
-            for (const style::css::raw_declaration & d : parsed.declarations) {
-                const std::string name{atoms_->text(d.property)};
-                const style::css::value_check checked =
-                    check_declaration(name, parsed.text_of(d), false);
-                if (!checked.valid) { continue; }
-                rule->declarations.push_back(
-                    css_declaration{name, checked.serialized, d.important});
-            }
+            parse_declarations_into(*rule, arg_string(c, a, 0), *atoms_);
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
@@ -947,15 +1023,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "setProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return value::undefined(); }
+        // [LegacyNullToEmptyString] on both `value` and `priority`, and
+        // `priority` is optional: null is "", and an undefined priority is the
+        // default "" rather than the string "undefined" - which was refusing
+        // the whole call. An undefined VALUE is the string "undefined", which
+        // no grammar accepts, so it is a no-op by a different route.
+        const auto text = [&](std::size_t i) {
+            return i < a.size() && !a[i].is_null() ? c.to_string(a[i]) : std::string{};
+        };
+        const std::string priority = a.size() > 2 && a[2].is_undefined() ? std::string{} : text(2);
         // "If priority is not the empty string and is not an ASCII
         // case-insensitive match for 'important', return" - CSSOM 6.7.2.
-        const std::string priority = a.size() > 2 ? c.to_string(a[2]) : std::string{};
         if (!priority.empty() && !ascii_iequals(priority, "important")) {
             return value::undefined();
         }
-        if (store_declaration(rule->declarations, asked_name(c, a),
-                              a.size() > 1 ? c.to_string(a[1]) : std::string{}, false,
-                              !priority.empty())) {
+        if (store_declaration(*rule, asked_name(c, a), text(1), false, !priority.empty())) {
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
         }

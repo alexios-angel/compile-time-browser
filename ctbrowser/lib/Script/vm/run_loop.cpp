@@ -1,8 +1,5 @@
-// ctbrowser.script context - the interpreter loop itself.
-//
-// One of four files carved out of a 3,232-line vm.cpp on 2026-08-09. All
-// members of `context`, declared in include/ctbrowser/script/vm.hpp - so
-// they split across translation units with nothing to declare.
+// ctbrowser.script context - the interpreter loop itself. All members of
+// `context`, declared in include/ctbrowser/script/vm.hpp.
 
 #include <array>
 #include <charconv>
@@ -23,58 +20,31 @@
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
-
 namespace ctbrowser::script {
-
-// THE OPCODE LIST LIVES IN include/ctbrowser/script/bytecode_opcodes.def NOW,
-// and this file no longer keeps a second copy of it.
-//
-// It used to: a private VM_OPCODES(X) macro listing all 93 names, with a
-// static_assert tying its length to the enum's. That assert has moved to
-// bytecode.hpp beside the table it checks, and the label table below is built
-// by including the .def directly. One list, and the compiler reads the same
-// one - which is the point of Phase 0's inventory: a compiler's opcode table
-// and an interpreter's that can drift present as a MISCOMPILE rather than as a
-// build failure.
 
 // --- INSTRUCTION DISPATCH: computed goto, or a switch ------------------------
 //
-// The dispatch loop is 15% of a Phaser frame (measured - callgrind on
-// test/corpus/phaser/phaser_invaders) and 77% of benchmarks/bench_script. A `switch` compiles to
-// ONE indirect branch that all 88 opcodes share, so the predictor sees a single
-// site with 88 targets and mispredicts constantly. Replicating the jump into
-// every handler gives it 88 sites, each of which can learn the PAIRS this
-// bytecode actually emits - `less` then `jump_if_false`, `get_prop` then
-// `call_method`. docs/history/computed-goto.md has the measurement that justified
-// trying it and the numbers it actually produced.
+// The dispatch loop is 15% of a Phaser frame and 77% of benchmarks/bench_script.
+// A `switch` compiles to ONE indirect branch that every opcode shares;
+// replicating the jump into every handler gives the predictor one site per
+// opcode, each of which can learn the PAIRS this bytecode actually emits.
+// docs/history/computed-goto.md has the measurements.
 //
-// GNU ONLY, and the switch is not a poor relation - it is the fallback that
-// keeps this portable, and both paths must stay live. Any compiler without the
-// address-of-label extension takes it, as does anyone defining
-// CTBROWSER_NO_COMPUTED_GOTO to compare the two.
-// OFF BY DEFAULT, BECAUSE IT MEASURED SLOWER - see the table in
-// docs/performance.md. Opt in with -DCTBROWSER_COMPUTED_GOTO (or the CMake
-// option of the same name) to measure it on your own hardware: the result is a
-// property of the branch predictor, not of this code, and a different
-// microarchitecture may well answer differently.
+// GNU ONLY, and the switch is the fallback that keeps this portable - both
+// paths must stay live. OFF BY DEFAULT, BECAUSE IT MEASURED SLOWER (the table
+// in docs/performance.md). Opt in with -DCTBROWSER_COMPUTED_GOTO to measure
+// it on your own hardware: the result is a property of the branch predictor.
 #if defined(__GNUC__) && defined(CTBROWSER_COMPUTED_GOTO)
 #define VM_COMPUTED_GOTO 1
 #else
 #define VM_COMPUTED_GOTO 0
 #endif
 
-// --- THE TYPE ORACLE'S HOOK, ctcompile Phase 54B -----------------------------
+// --- THE TYPE ORACLE'S HOOK ---------------------------------------------------
 //
 // ONE LINE, AND IT IS `if constexpr`. The loop below is a template on `Record`
 // and is instantiated twice; in the instantiation a build without a recorder
-// runs, this expands to nothing at all. The measurement that made it a template
-// rather than a run-time test is in the comment above `run_loop_impl`.
+// runs, this expands to nothing at all - see `run_loop_impl`.
 //
 // PLACED AFTER THE FETCH, so `record_step` sees the instruction ABOUT to run
 // and `vm_frame->ip` already pointing past it. What it actually records is the
@@ -95,7 +65,7 @@ namespace ctbrowser::script {
         if constexpr (Record) { record_step(in); }                                                 \
     } while (0)
 // THE FRAME POP IN `ret`, WITH THE ESCAPE ORACLE'S HOOK BETWEEN THE POP AND THE
-// RESULT WRITE - ctcompile Phase 55O, FrameEnds.def row `ret`. The hook needs
+// RESULT WRITE - FrameEnds.def row `ret`. The hook needs
 // the frame's base and serial from BEFORE the pop and must run AFTER it, so
 // that the ending frame's own per-frame roots are gone and `frames_.back()`
 // is the caller; and it must run before the return value lands in the
@@ -122,8 +92,7 @@ namespace ctbrowser::script {
 #if VM_COMPUTED_GOTO
 // GNU extensions, suppressed HERE and nowhere else: the address-of-label and
 // indirect-goto forms, and the C99 array designators that index the table by
-// opcode rather than by position. Verified under
-// -O2 -pedantic -Wall -Wextra -Werror -Wconversion on clang 24 and gcc 13.
+// opcode rather than by position.
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
@@ -160,19 +129,12 @@ namespace ctbrowser::script {
 #define VM_NEXT break
 #endif
 
-// THE ONE PER-INSTRUCTION TEST, AND WHY IT IS NOT ONE.
-//
-// The obvious hook is `if (recorder_ != nullptr) record_step(in);` at the loop
-// head, and it was measured: +0.53% on benchmarks/bench_script and +0.48% on
-// test/corpus/phaser/phaser_invaders (callgrind, 14.25 G -> 14.32 G
-// instructions). A perfectly predicted not-taken branch is not free here
-// because this loop runs a hundred million times and the branch is inside it.
-//
-// So the whole loop is a template on ONE bool, instantiated twice, and
-// `run_loop` below picks. The `Record=false` instantiation contains no trace of
-// the hook and is what every shipped build runs; the `Record=true` one is cold
-// code nothing loads unless a recorder is installed. The cost moved from time
-// to ~15 KB of object file, which is the right currency for a developer mode.
+// THE ONE PER-INSTRUCTION TEST, AND WHY IT IS NOT ONE. A run-time
+// `if (recorder_ != nullptr)` at the loop head measured +0.53% on
+// bench_script and +0.48% on phaser_invaders: a predicted not-taken branch is
+// not free in a loop that runs a hundred million times. So the whole loop is
+// a template on ONE bool, instantiated twice, and `run_loop` below picks; the
+// `Record=true` instantiation is ~15 KB of cold code.
 template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 #if VM_COMPUTED_GOTO
     // Indexed BY OPCODE, which is what the array designators buy: the order of
@@ -336,14 +298,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(to_number) do {
-            // `+x` IS A CONVERSION. It compiled to a plain `move` for a long time,
-            // so `+"2"` stayed the string "2" - and that is invisible in most of the
-            // places it is written, because `+x + "/"` concatenates either way. It
-            // shows up where the result is USED as a number: `d[(+y * 8 + +x) * 4]`
-            // indexed with a string built by concatenation and read undefined.
-            //
-            // It was sitting in VM_CASE(negate), after a `break` and describing
-            // a different opcode.
+            // `+x` IS A CONVERSION, not a move: `+"2"` is the number 2.
             reg(in.a) = value::number(to_number_value(reg(in.b)));
             break;
         }
@@ -377,12 +332,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(loose_not_equal) do {
             reg(in.a) = value::boolean(!loose_equals(reg(in.b), reg(in.c)));
             break;
-
-            // `x instanceof C` is true when C.prototype appears anywhere in x's
-            // prototype chain - the same chain lookup_property walks.
         }
         while (0);
         VM_NEXT;
+        // `x instanceof C` is true when C.prototype appears anywhere in x's
+        // prototype chain - the same chain lookup_property walks.
         VM_CASE(instance_of) do {
             reg(in.a) = value::boolean(instance_of(reg(in.b), reg(in.c)));
             break;
@@ -467,8 +421,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         // All four are ONE comparison asked four ways - see
-        // context::compare_relational, which is where strings stopped being
-        // coerced to NaN.
+        // context::compare_relational.
         VM_CASE(less) do {
             reg(in.a) = value::boolean(std::is_lt(compare_relational(reg(in.b), reg(in.c))));
             break;
@@ -595,13 +548,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(get_prop) do {
             reg(in.a) = lookup_property(reg(in.b), vm_proto->names[in.c]);
             break;
-            // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does is an
-            // own data property defined. Getting that backwards is how a setter
-            // silently stops running: the write lands on the instance and shadows
-            // the accessor from then on. store_property has the whole rule.
         }
         while (0);
         VM_NEXT;
+        // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does is an
+        // own data property defined - store_property has the whole rule.
         VM_CASE(set_prop) do {
             store_property(reg(in.a), vm_proto->names[in.b], reg(in.c));
             break;
@@ -623,11 +574,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(closure) do {
             {
-                // THE BODY IS context::make_closure NOW, shared with
-                // ct_aot_make_closure so the two tiers cannot drift - which is
-                // what the ABI row for that helper asks for. What stays here is
-                // the part that is the INTERPRETER's: its register window, and
-                // the effective receiver an arrow captures.
+                // THE BODY IS context::make_closure, shared with
+                // ct_aot_make_closure so the two tiers cannot drift. What stays
+                // here is the INTERPRETER's part: its register window, and the
+                // effective receiver an arrow captures.
                 //
                 // BY REGISTER, because this frame has a window and a descriptor
                 // marked from_parent_local names a register in it. A compiled
@@ -794,18 +744,6 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(load_this) do {
             reg(in.a) = effective_this((*vm_frame));
             break;
-            // `new.target` IS THE CONSTRUCTOR, OR UNDEFINED. The (*vm_frame) already
-            // carries both halves - `constructing`, so `new C()` can evaluate to
-            // the new object rather than the body's return, and `closure`, which is
-            // the function running - so this reads state that was there rather than
-            // adding any.
-            //
-            // The closure is the function this (*vm_frame) is EXECUTING, which for a
-            // direct `new C()` is C. The spec's new.target follows the originally
-            // invoked constructor through a `super()` chain to the derived-most
-            // class; that distinction only shows up in a hierarchy, and the pages
-            // that use this - a transpiler's `_classCallCheck`, Babylon's decorator
-            // metadata - ask whether it is undefined, not which constructor it is.
         }
         while (0);
         VM_NEXT;
@@ -864,16 +802,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // awaits to itself. A REJECTED promise throws, which is what makes
                 // `try { await f() } catch` work.
                 const value awaited = reg(in.b);
-                // A PENDING PROMISE SUSPENDS THE FRAME.
-                //
-                // There is one stack and the event loop is above it, so `await`
-                // cannot block: the (*vm_frame) is lifted out, the caller is handed a
-                // promise, and the (*vm_frame) comes back when the awaited one settles.
-                //
-                // It used to read `__value` off a promise that had none, so `await`
-                // on anything genuinely asynchronous evaluated to UNDEFINED and ran
-                // the rest of the function immediately - the single largest wrong
-                // answer left in this engine, and silent.
+                // A PENDING PROMISE SUSPENDS THE FRAME. There is one stack and
+                // the event loop is above it, so `await` cannot block: the frame
+                // is lifted out, the caller is handed a promise, and the frame
+                // comes back when the awaited one settles.
                 if (is_pending_promise(awaited) && pending_promise_factory_ && promise_settler_) {
                     if (vm_frame->async_promise.is_undefined()) {
                         vm_frame->async_promise = pending_promise_factory_(*this);
@@ -1027,23 +959,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // loader evaluates the module it fetches, which RE-ENTERS this VM
             // and grows `registers_` - so a reference to reg(in.a) taken before
             // the call points into a freed buffer by the time the value comes
-            // back. Written that way it stored the promise into memory nobody
-            // owned and `import(...)` read undefined, with no error anywhere.
+            // back.
             const value loaded = dynamic_import(
                 reg(in.b), vm_frame->proto == nullptr ? std::string{} : vm_frame->proto->module);
-            // NO PRE-WRITE OF undefined, unlike the three above: on the
-            // no-loader raise this register keeps whatever it held, which the
-            // opcode row calls out for an AOT backend that would model this as
-            // "always defines a".
-            //
-            // AND THE STORE IS SKIPPED ON ANY raise, not only that one. This
-            // narrows a store the previous shape made after a loader that had
-            // already failed - which is DEAD, for the reason the ABI rows give
-            // about the other three handlers' pre-writes: raise sets failed_,
-            // the loop's condition is `!failed_`, so VM_NEXT reaches vm_done
-            // and nothing ever reads the register. Narrowing it here is what
-            // makes ct_aot_dynamic_import's "*out written ONLY on CT_AOT_OK"
-            // the same rule rather than a second one.
+            // NO PRE-WRITE OF undefined, and the store is skipped on ANY raise:
+            // the register keeps whatever it held, which the opcode row calls
+            // out and which is ct_aot_dynamic_import's "*out written ONLY on
+            // CT_AOT_OK" rule.
             if (!failed_) { reg(in.a) = loaded; }
             break;
         }
@@ -1103,13 +1025,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     reg(in.a) = construct(callee, args);
                     break;
                 }
-                // A NATIVE GOES THE LONG WAY TOO, for the same reason as a proxy: the
-                // inline path exists to avoid a nested interpreter loop, which only a
-                // JavaScript body needs. Duplicating the native case here is what let
-                // the two disagree - this copy neither set the instance's prototype
-                // from a native's `prototype` property nor honoured the conversion
-                // flag, so `new Number(5)` was an empty object down this path and a 5
-                // down the other, depending only on whether a proxy was involved.
+                // A NATIVE GOES THE LONG WAY TOO, for the same reason as a proxy:
+                // the inline path exists to avoid a nested interpreter loop, which
+                // only a JavaScript body needs, and a second copy of the native
+                // case is a second chance to disagree about `new Number(5)`.
                 if (callee.is_kind(heap_kind::native)) {
                     const std::size_t arg_base = base + in.a + 1;
                     std::vector<value> args{
@@ -1141,7 +1060,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 const std::size_t arg_base = base + in.a + 1;
 
                 if (!callee.is_kind(heap_kind::function)) {
-                    // THE MESSAGE IS SHARED NOW, so a compiled `new` on a
+                    // THE MESSAGE IS SHARED, so a compiled `new` on a
                     // non-constructor cannot spell it differently. The origin
                     // is the backwards scan, which only an interpreted frame
                     // has an ip for.
@@ -1161,21 +1080,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     raise("call stack exhausted");
                     break;
                 }
-                // AND `new` ASKS TOO, which it never did: this handler pushed a
-                // frame of its own, so a constructor with a compiled body was
-                // interpreted and nothing said so. It also passes
-                // `constructing`, which is not a detail - it is what makes a
-                // constructor returning a primitive evaluate to its receiver,
-                // and the ABI hands that decision to ct_aot_return_value.
+                // `new` ASKS FOR A COMPILED BODY TOO, and passes `constructing`,
+                // which is what makes a constructor returning a primitive
+                // evaluate to its receiver (ct_aot_return_value).
                 //
-                // AND IT MUST HAND OVER new.target, which it did not. The
-                // interpreted path below sets fresh.new_target directly;
-                // ct_aot_enter can only read it from pending_new_target_, so a
-                // compiled constructor entered from HERE saw undefined while
-                // the same constructor entered from context::construct_new saw
-                // the callee. `class Kid extends Parent { constructor(v) {
-                // super(v * 2); } }` then handed Parent an undefined
-                // new.target, which is what Babel's _classCallCheck tests.
+                // IT MUST HAND OVER new.target: the interpreted path below sets
+                // fresh.new_target directly, but ct_aot_enter can only read it
+                // from pending_new_target_.
                 //
                 // SET AND RESTORED rather than set and cleared: op::construct
                 // never consumes the flag on its own path, and ct_aot_enter

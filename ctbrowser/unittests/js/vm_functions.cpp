@@ -473,6 +473,52 @@ void test_closures() {
                   "  return fns[0](); }"
                   "return build();",
                   "3"); // `let i` outside the loop body is ONE binding, so all three see 3
+
+    // A `let`/`const` DECLARED IN THE BODY is a fresh binding per iteration
+    // (ECMA-262 evaluates the block's declarations in a new declarative
+    // environment each time), so a closure from iteration 0 keeps iteration
+    // 0's value. AT THE TOP LEVEL OF A SCRIPT, on purpose: inside a function
+    // this always held, but a classic script's var_decl arm sent every
+    // declaration to set_global regardless of block depth, so the loop had
+    // one `el` and out[0] saw out[1]'s. Every loop form, and a nested block.
+    expect_result("var out = []; for (const id of ['a', 'b']) { const el = id + '!';"
+                  "  out.push(function (e) { return e === el; }); }"
+                  "return out[0]('a!') + ',' + out[1]('b!') + ',' + out[1]('a!');",
+                  "true,true,false");
+    expect_result("var out = []; for (let i = 0; i < 2; i++) { let v = i * 10;"
+                  "  out.push(function () { return v; }); }"
+                  "return out[0]() + ',' + out[1]();",
+                  "0,10");
+    expect_result("var out = []; var i = 0; while (i < 2) { const v = i; i++;"
+                  "  out.push(function () { return v; }); }"
+                  "return out[0]() + ',' + out[1]();",
+                  "0,1");
+    expect_result("var out = []; var i = 0; do { const v = i; i++;"
+                  "  out.push(function () { return v; }); } while (i < 2);"
+                  "return out[0]() + ',' + out[1]();",
+                  "0,1");
+    expect_result("var out = []; for (const k in {a: 1, b: 2}) { const v = k + k;"
+                  "  out.push(function () { return v; }); }"
+                  "return out[0]() + ',' + out[1]();",
+                  "aa,bb");
+    expect_result("var out = []; for (const id of ['a', 'b']) { if (true) { const el = id + '!';"
+                  "  out.push(function () { return el; }); } }"
+                  "return out[0]() + ',' + out[1]();",
+                  "a!,b!");
+    // and the loop variable itself, which was per-iteration already
+    expect_result("var out = []; for (const id of ['a', 'b']) { out.push(function () {"
+                  "  return id; }); } return out[0]() + ',' + out[1]();",
+                  "a,b");
+    // the same shape inside a function, which held before and must still
+    expect_result("function f() { var out = []; for (const id of ['a', 'b']) {"
+                  "  const el = id + '!'; out.push(function () { return el; }); }"
+                  "  return out[0]() + ',' + out[1](); } return f();",
+                  "a!,b!");
+    // a top-level `var` in a block is still the script's own, shared binding
+    expect_result("var out = []; for (const id of ['a', 'b']) { var el = id + '!';"
+                  "  out.push(function () { return el; }); }"
+                  "return out[0]() + ',' + out[1]() + ',' + el;",
+                  "b!,b!,b!");
 }
 
 void test_this() {

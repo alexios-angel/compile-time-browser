@@ -9,21 +9,12 @@
 #include <utility>
 #include <vector>
 
-#if defined(CTBROWSER_WITH_GMP)
-#include <boost/multiprecision/gmp.hpp>
-#else
 #include <boost/multiprecision/cpp_int.hpp>
-#endif
 
 #include <ctbrowser/core/core.hpp>
 
-// The JS value, in one 64-bit word.
-//
-// the previous engine represented a value as a std::variant over string/array/object/function
-// with hand-rolled refcounting, because it had to stay constexpr-evaluable.
-// Retiring the compile-time thesis retired that constraint, and NaN-boxing is
-// the first thing it buys: every value is a machine word, passed in a
-// register, with no allocation and no refcount traffic to represent a number.
+// The JS value, in one 64-bit word: NaN-boxed, so every value is a machine
+// word passed in a register, with no allocation to represent a number.
 //
 // The trick is that IEEE-754 doubles waste an enormous amount of encoding
 // space on NaN. Any bit pattern with the exponent all ones and a non-zero
@@ -55,15 +46,12 @@ inline constexpr std::uint64_t tag_null = qnan_mask | 1;
 inline constexpr std::uint64_t tag_false = qnan_mask | 2;
 inline constexpr std::uint64_t tag_true = qnan_mask | 3;
 
-// THE ONE NaN A NUMBER IS ALLOWED TO BE. The comment above is right that no
-// ARITHMETIC produces a NaN with bit 50 set - hardware default NaNs are
-// 0x7FF8... and 0xFFF8..., both clear of the mask. What it did not account for
-// is a NaN that arrives with its payload already set: a Float64Array (or a
-// Float32Array, whose bit 21 widens to bit 50) lets JavaScript write any bit
-// pattern and read it back as a double. 0x7FF4000000000003 passes is_number(),
-// and the first `- 1` on it quiets bit 51 and yields 0x7FFC000000000003 - which
-// is tag_true. `typeof (x - 1)` was "boolean". Found by ctcompile's Phase 54B
-// oracle, which observed a boolean in a register the inference had proved f64.
+// THE ONE NaN A NUMBER IS ALLOWED TO BE. No ARITHMETIC produces a NaN with
+// bit 50 set - hardware default NaNs are 0x7FF8... and 0xFFF8... - but a
+// Float64Array (or a Float32Array, whose bit 21 widens to bit 50) lets
+// JavaScript write any bit pattern and read it back as a double.
+// 0x7FF4000000000003 passes is_number(), and the first `- 1` on it quiets bit
+// 51 and yields 0x7FFC000000000003 - which is tag_true.
 //
 // So every NaN that crosses INTO the engine from raw bits is canonicalised to
 // this one at the boundary (view_get), the way JSC's purifyNaN and
@@ -151,20 +139,15 @@ public:
     [[nodiscard]] bool is_object() const noexcept { return is_kind(heap_kind::object); }
     [[nodiscard]] bool is_array() const noexcept { return is_kind(heap_kind::array); }
     // A PROXY IS CALLABLE WHEN ITS TARGET IS - `new Proxy(SomeClass, {...})`
-    // has to be constructible, or the proxy is useless for the one thing p5.js
-    // uses it for. Defined out of line, below proxy_object.
+    // has to be constructible. Defined out of line, below proxy_object.
     [[nodiscard]] bool is_callable() const noexcept;
     // "AN OBJECT" in the sense `new` means it: the spec says a constructor's
     // return overrides the fresh instance when it is an object, and an array, a
-    // function and a proxy all are. Testing is_object() alone threw away every
-    // one of them - which is how `new Proxy(...)` returned a bare instance
-    // instead of the proxy.
+    // function and a proxy all are.
     [[nodiscard]] bool is_object_like() const noexcept {
         return is_object() || is_array() || is_callable() || is_kind(heap_kind::proxy);
     }
 
-    // Strict equality (===) is a bit compare for everything except numbers,
-    // where NaN != NaN and +0 == -0 both have to hold.
     // `===`. Defined out of line below, because STRINGS compare by CONTENT and
     // string_object is not declared yet here.
     [[nodiscard]] bool strict_equals(value o) const noexcept;
@@ -203,10 +186,9 @@ struct string_object final : heap_object {
     explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
 };
 
-// The spelling that marks a property key as a SYMBOL rather than a string.
-// Declared here beside the reason for it, because three places now have to
-// recognise one: the enumeration walk, the JSON writer, and the code that mints
-// them.
+// The spelling that marks a property key as a SYMBOL rather than a string:
+// the enumeration walk, the JSON writer and the code that mints them all
+// recognise it.
 inline constexpr std::string_view symbol_key_prefix = "@@sym:";
 
 // A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
@@ -227,73 +209,25 @@ struct symbol_object final : heap_object {
         : heap_object(heap_kind::symbol), description(std::move(d)), key(std::move(k)) {}
 };
 
-// AN ARBITRARY-PRECISION INTEGER.
-//
-// `boost::multiprecision::cpp_int` holds it, and the value IS the integer -
-// there is no text form to keep in step, so `===` is an integer compare and
-// arithmetic is linear in the WORD count rather than the digit count.
+// AN ARBITRARY-PRECISION INTEGER. `boost::multiprecision::cpp_int` holds it,
+// and the value IS the integer - there is no text form to keep in step.
 //
 // THIS IS A DELIBERATE EXCEPTION to the rule against a third-party header in a
-// public one, taken on the owner's instruction. The rule's reason is compile
-// time: `value.hpp` reaches every translation unit that touches the engine, so
-// each pays for `<boost/multiprecision/cpp_int.hpp>`. The measured cost is in
-// docs/build.md. The alternative considered and rejected was storing decimal
-// TEXT and converting in one `.cpp`, which keeps the header light and makes
-// every operation parse and re-format its operands - correct, and the wrong
-// shape for a numeric type.
+// public one, taken on the owner's instruction; the measured compile-time
+// cost is in docs/build.md. cpp_int is header-only, signed and unbounded,
+// which is exactly the BigInt semantic.
 //
-// cpp_int is header-only, so the cross-build needs nothing, and it is signed
-// and unbounded, which is exactly the BigInt semantic: no width, no wrapping,
-// no rounding.
-//
-// THE BACKEND IS SWITCHABLE, and cpp_int is the default DELIBERATELY.
-// `-DCTBROWSER_WITH_GMP=ON` selects `mpz_int` instead, which is the same
-// Boost.Multiprecision interface over GNU GMP. It is opt-in rather than
-// "on when GMP is found" for two measured reasons, both in docs/script.md:
-//
-//   - IT IS SLOWER HERE. GMP wins on numbers thousands of bits wide, and a
-//     JavaScript BigInt is almost never one - it is an id, a nanosecond
-//     timestamp, a 64-bit hash. At 64 bits, the width that matters, GMP
-//     measured 2.9x slower on Linux and 5.5x slower on Windows. cpp_int keeps
-//     a small value INLINE while every mpz_t is a heap allocation, and that
-//     one allocation swamps the arithmetic - which is also why the Windows gap
-//     is the wider one, its CRT allocator being the slower.
-//
-//     BUILDING GMP FOR A MODERN CPU DOES NOT CHANGE THIS, which was measured
-//     rather than assumed: GMP 6.3.0's own config.guess reads a Core Ultra 9
-//     185H as `nehalem` (2008), so the obvious build is mistuned, and a
-//     correctly tuned alderlake build moved the 64-bit numbers not at all. The
-//     cost is allocation, not instruction selection.
-//   - IT CHANGES THE LICENCE OF THE BINARY. GMP is LGPLv3+ or GPLv2+, and this
-//     engine ships STATICALLY LINKED self-contained .exe files under Apache-2.0
-//     with LLVM exceptions. Static LGPL linking carries relinking obligations
-//     that a default-on flag would attach silently. See NOTICE.
-//
-// The two backends agree on every operation this engine performs -
-// unittests/js/bigint_basics.cpp is the gate and passes identically on both - so the
-// switch moves no observable JavaScript result.
-#if defined(CTBROWSER_WITH_GMP)
-using bigint = boost::multiprecision::mpz_int;
-#else
 using bigint = boost::multiprecision::cpp_int;
-#endif
 
 struct bigint_object final : heap_object {
     bigint digits;
     explicit bigint_object(bigint d) : heap_object(heap_kind::bigint), digits(std::move(d)) {}
 };
 
-// `===` in full.
-//
-// Comparing the raw bits is right for objects (identity), for the singletons
-// and for booleans - but WRONG for strings, which JavaScript compares by
-// content. Two strings with the same characters are almost never the same
-// allocation, so `e.code === "Space"` was false for every event, `switch` on a
-// string never matched a case, and indexOf/includes could not find a string in
-// an array. It looked like the event was not arriving.
-//
-// Numbers go through the double comparison so NaN !== NaN and -0 === 0, both of
-// which the bit comparison gets wrong in the other direction.
+// `===` in full. Comparing the raw bits is right for objects (identity), for
+// the singletons and for booleans - but WRONG for strings, which JavaScript
+// compares by content. Numbers go through the double comparison so NaN !== NaN
+// and -0 === 0, both of which the bit comparison gets wrong.
 [[nodiscard]] inline bool value::strict_equals(value o) const noexcept {
     if (is_number() && o.is_number()) { return as_number() == o.as_number(); }
     if (bits_ == o.bits_) { return true; }
@@ -320,11 +254,9 @@ struct bigint_object final : heap_object {
     return strict_equals(o);
 }
 
-// `new Proxy(target, handler)`. Three traps are implemented - `get`, `has` and
-// `construct` - because those are the three p5.js uses, and one of them runs at
-// its top level: `p5.renderers['p2d-p3'] = new Proxy(Renderer2D, {construct(){...}})`.
-// A trap that is not implemented is not silently skipped; the operation falls
-// through to the target, which is what an absent trap means anyway.
+// `new Proxy(target, handler)`. A trap that is not implemented is not silently
+// skipped; the operation falls through to the target, which is what an absent
+// trap means anyway.
 struct proxy_object final : heap_object {
     value target;
     value handler;
@@ -417,20 +349,12 @@ struct array_object final : heap_object {
 
     // --- a VIEW over somebody else's bytes ---------------------------------
     //
-    // A typed array used to OWN its elements, one `value` each, and an
-    // ArrayBuffer handed the same array_object to every view made over it. Two
-    // views of DIFFERENT kinds could not both be right about that storage: each
-    // `new` overwrote the shared element kind, the last one won, and every
-    // write through an earlier view was silently coerced to the wrong type.
-    // Phaser makes four views over one buffer - Float32Array, Uint8Array,
-    // Uint16Array, Uint32Array - so its vertex positions were stored as
-    // integers and read back as denormal floats: a black canvas, no error.
-    //
-    // So a view now VIEWS. `viewed` is the ArrayBuffer's byte array, one value
-    // per byte, and this object carries its own kind, offset and length over
-    // it. `items` stays EMPTY for a view - deliberately, so that any path which
-    // reads it directly rather than going through length()/view_get is
-    // obviously empty rather than subtly stale.
+    // `viewed` is the ArrayBuffer's byte array, one value per byte, and this
+    // object carries its own kind, offset and length over it - Phaser makes
+    // four views of different kinds over one buffer. `items` stays EMPTY for a
+    // view - deliberately, so that any path which reads it directly rather
+    // than going through length()/view_get is obviously empty rather than
+    // subtly stale.
     value viewed;
     std::uint32_t byte_offset = 0;
     std::uint32_t view_length = 0; // in ELEMENTS, not bytes
@@ -442,28 +366,16 @@ struct array_object final : heap_object {
 
     // --- SPARSE STORAGE, and why an array needs any -------------------------
     //
-    // `a[4294967295] = "x"` is one line of test262 (built-ins/Array/15.4.5.1-5-1)
-    // and it used to ask this engine for 4,294,967,296 `value` slots - 34 GB -
-    // because `context::store_index` resized `items` to cover whatever gap the
-    // write left. std::bad_alloc then took the process down with SIGABRT, and
-    // the runner's 2 GB RLIMIT_AS is the only reason it took ITSELF down rather
-    // than the shared machine. 18 of the 19 crashes in `built-ins/Array` were
-    // that one allocation, measured 2026-09-02.
+    // `a[4294967295] = "x"` must not ask for 4,294,967,296 `value` slots. An
+    // array materialises at most `dense_limit` NEW slots per operation; past
+    // that the write is RECORDED instead: `sparse` holds the index and the
+    // value, and `sparse_length` holds what `length` must read back as. The
+    // rule is on the SIZE OF THE JUMP rather than on the index, deliberately -
+    // a sequential fill grows by one slot at a time and stays dense.
     //
-    // So an array materialises at most `dense_limit` NEW slots per operation.
-    // Past that the write is RECORDED instead: `sparse` holds the index and the
-    // value, and `sparse_length` holds what `length` must read back as. The rule
-    // is on the SIZE OF THE JUMP rather than on the index, deliberately - a
-    // sequential fill grows by one slot at a time and therefore stays dense
-    // however long it runs, so nothing that works today becomes sparse.
-    //
-    // WHAT THIS DOES NOT DO, said here rather than discovered: the array
-    // built-ins (join, forEach, map, indexOf, ...) walk `items` and do not
-    // consult `sparse`, so an element out there is reachable by index and by
-    // `length` and is invisible to iteration. That is a deviation and it is the
-    // cheap half of a real sparse array; the expensive half is 364 uses of
-    // `.items` across the engine, the DOM and the bindings. What it replaces is
-    // a process that died, which is not a better answer to any question.
+    // The array built-ins (join, forEach, map, indexOf, ...) walk `items` and
+    // do not consult `sparse`, so an element out there is reachable by index
+    // and by `length` and is invisible to iteration. That is a known deviation.
     //
     // A SORTED VECTOR RATHER THAN A MAP because a sparse array holds a handful
     // of entries in practice and `value.hpp` reaches every translation unit
@@ -503,8 +415,8 @@ struct array_object final : heap_object {
         }
     }
     // `a.length = n`, WITHOUT MATERIALISING WHAT IT DOES NOT HAVE TO. False
-    // means `n` is not a valid array length, which is the specification's
-    // RangeError (10.4.2.4) and used to be a 34 GB `resize`.
+    // means `n` is not a valid array length, the specification's RangeError
+    // (10.4.2.4).
     [[nodiscard]] bool set_js_length(double n) {
         if (!(n >= 0) || n > max_length || n != std::trunc(n)) { return false; }
         const auto wanted = static_cast<std::uint64_t>(n);
@@ -526,8 +438,7 @@ struct array_object final : heap_object {
     }
     // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
     // the array as ordinary properties; an array here has no property table, so
-    // they live in named slots and property lookup checks them first. p5.js
-    // reads `.index` 143 times, which is why they are not simply dropped.
+    // they live in named slots and property lookup checks them first.
     bool is_match = false;
     value index;
     value input;
@@ -541,9 +452,8 @@ struct array_object final : heap_object {
     // bools: nothing may be ADDED (extensible), nothing may be OVERWRITTEN
     // (elements_writable) and nothing may be REMOVED or reshaped
     // (elements_configurable) - which is exactly the difference between seal
-    // and freeze. Element-by-element attributes are the part this does not
-    // model, and `Object.defineProperty(a, 0, {writable: false})` is therefore
-    // still ignored - stated here rather than discovered.
+    // and freeze. Element-by-element attributes are not modelled, so
+    // `Object.defineProperty(a, 0, {writable: false})` is ignored.
     bool extensible = true;
     bool elements_writable = true;
     bool elements_configurable = true;
@@ -614,29 +524,9 @@ inline void view_set(array_object & view, std::size_t i, double v) noexcept {
     }
 }
 
-// Insertion-ordered, like a JS object. A flat hash index over the property
-// names keeps lookup O(1) - the previous engine scanned a vector of pairs linearly on every
-// property access, which is the single largest interpreter cost there is.
-// This is the slot a shape/inline-cache design replaces later; the map is
-// already the right shape for that, since it hands back a stable index.
-// One `get x()` / `set x(v)` pair, and the table they live in.
-//
-// A property is EITHER data or accessor, never both, which is what lets this
-// sit BESIDE the data properties instead of widening every one of them into a
-// descriptor. Widening would have touched every place that iterates `props` -
-// the DOM bindings among them, whose whole design is that a live property is a
-// periodic re-`set()` of a plain data property.
-//
-// Shared by objects and closures because a CLASS is a closure: `static get w()`
-// has to go somewhere, and that somewhere is the constructor.
 // --- PROPERTY ATTRIBUTES -------------------------------------------------
 //
 // [[Writable]], [[Enumerable]] and [[Configurable]], three bits per property.
-// The engine had none of them, which is what made `Object.defineProperty(o,
-// "x", {enumerable: false})` a lie, `Object.freeze` a no-op that returned its
-// argument, and every built-in method turn up in `Object.keys` and `for-in`
-// where the specification says none of them may. test262 measures that gap
-// through `verifyProperty`, which 13,621 of its files call.
 //
 // A byte rather than three bools because it is stored per property in a vector
 // PARALLEL to the property table (see object_object::attrs) rather than inside
@@ -648,10 +538,9 @@ inline constexpr std::uint8_t attr_writable = 1;
 inline constexpr std::uint8_t attr_enumerable = 2;
 inline constexpr std::uint8_t attr_configurable = 4;
 
-// WHAT AN ORDINARY ASSIGNMENT AND AN OBJECT LITERAL PRODUCE: all three. This is
-// the default for object_object::set(), so every existing caller in the engine
-// - the DOM bindings above all, which are written as a periodic re-`set()` of a
-// plain data property - keeps exactly the behaviour it had.
+// WHAT AN ORDINARY ASSIGNMENT AND AN OBJECT LITERAL PRODUCE: all three. The
+// default for object_object::set(), which the DOM bindings are written against
+// as a periodic re-`set()` of a plain data property.
 inline constexpr std::uint8_t attr_default = attr_writable | attr_enumerable | attr_configurable;
 // WHAT A BUILT-IN METHOD GETS (17, "Every other data property described in
 // clauses 19 through 28 ... has the attributes { [[Writable]]: true,
@@ -660,6 +549,12 @@ inline constexpr std::uint8_t attr_builtin = attr_writable | attr_configurable;
 // WHAT `Object.defineProperty` GIVES A FIELD IT WAS NOT TOLD ABOUT: nothing.
 inline constexpr std::uint8_t attr_none = 0;
 
+// One `get x()` / `set x(v)` pair, and the table they live in.
+//
+// A property is EITHER data or accessor, never both, which is what lets this
+// sit BESIDE the data properties instead of widening every one of them into a
+// descriptor. Shared by objects and closures because a CLASS is a closure:
+// `static get w()` has to go somewhere, and that somewhere is the constructor.
 struct accessor_entry {
     std::string key;
     value getter;
@@ -712,6 +607,8 @@ struct accessor_table {
     }
 };
 
+// Insertion-ordered, like a JS object, with a flat hash index over the
+// property names so lookup is O(1).
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
     string_flat_map<std::uint32_t> index;
@@ -768,9 +665,7 @@ struct object_object final : heap_object {
     }
 
     [[nodiscard]] value * find(std::string_view name) {
-        // NO TEMPORARY. This used to be `index.find(std::string{name})`, which
-        // built and destroyed a std::string on every property read in the
-        // engine - see the note on string_flat_map.
+        // NO TEMPORARY - see the note on string_flat_map.
         const auto it = index.find(name);
         return it == index.end() ? nullptr : &props[it->second].second;
     }
@@ -858,38 +753,18 @@ struct object_object final : heap_object {
         each_own_entry([&](const std::string & key, std::uint8_t) { visit(key); });
     }
 
-    // A SYMBOL KEY IS NOT A STRING KEY, and almost nothing that enumerates an
-    // object is supposed to see one: Object.keys, Object.values, for-in,
-    // getOwnPropertyNames and JSON.stringify are all string-only. This engine
-    // spells a symbol key "@@sym:N:description" and keeps it in the same table,
-    // so without a filter the internal spelling appeared in a page's own output.
-    //
-    // It is a SECOND method rather than a filter inside each_own_key because
-    // the two genuinely differ: `Object.assign` and object spread copy symbol
-    // keys as well, and Reflect.ownKeys reports them, so those keep the
-    // unfiltered walk.
-    template <typename Fn> void each_own_string_key(Fn && visit) const {
-        each_own_entry([&](const std::string & key, std::uint8_t) {
-            if (!key.starts_with(symbol_key_prefix)) { visit(key); }
-        });
-    }
-
     // THE SAME WALK, ENUMERABLE ONLY - what Object.keys/values/entries, for-in,
     // Object.assign, object spread and JSON.stringify are each specified to
-    // see, and what none of them could distinguish before there were
-    // attributes. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered
-    // walks above, because those two report every own property by definition.
+    // see. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered walks
+    // above, because those two report every own property by definition.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
             if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix)) { visit(key); }
         });
     }
     // AN EXISTING PROPERTY KEEPS ITS ATTRIBUTES; a new one gets `attr_default`.
-    // That is what an ordinary assignment does (`o.x = 1` on an existing
-    // non-writable x is NOT this function's problem - see
-    // context::store_property, which is [[Set]] and does the checking) and it
-    // is why every caller in the engine, the DOM and the Shell keeps the
-    // behaviour it had before attributes existed.
+    // `o.x = 1` on an existing non-writable x is NOT this function's problem -
+    // see context::store_property, which is [[Set]] and does the checking.
     void set(std::string_view name, value v) {
         normalise();
         if (value * existing = find(name)) {

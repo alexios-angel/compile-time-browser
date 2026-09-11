@@ -13,25 +13,46 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/shell/image/jpeg.hpp>
-#include <ctbrowser/shell/image/png.hpp>
 #include <ctbrowser/shell/page/assets.hpp>
 
 // Decoding images into the bitmap the display list already carries.
 //
 // BMP is built in - uncompressed 24/32bpp, which every image tool can write and
-// which needs no library at all. PNG goes through libpng (`png.hpp`) and JPEG
-// through libjpeg-turbo (`jpeg.hpp`), both part of the SDL-free engine.
-// Everything else - GIF, WEBP, TIFF - arrives through `decoder`, a hook the
-// application layer fills in from SDL3_image when it was found.
+// which needs no library at all. PNG goes through libpng (`image/png.cpp`) and
+// JPEG through libjpeg-turbo (`image/jpeg.cpp`), both part of the SDL-free
+// engine: a format whose result depended on whether SDL was found is one no
+// golden can compare. Everything else - GIF, WEBP, TIFF - arrives through
+// `decoder`, a hook the application layer fills in from SDL3_image when it was
+// found.
 //
-// PNG MOVED OUT OF THAT HOOK on 2026-08-01. Leaving it there meant `test/` and `unittests/`,
-// which is SDL-free by an invariant `test/lint/api_surface` lints for, saw every
-// PNG as a zero-sized image - and nothing in the suite said so, because the
-// pages in this tree load BMPs. Phaser found it: its texture manager loads
-// three base64 PNGs during boot and will not start until all three settle.
+// NOTHING THIRD-PARTY IS INCLUDED ABOVE, the rule url.hpp states for Boost.URL
+// and net.hpp for curl.h: png.cpp is the only translation unit that has heard
+// of libpng, and jpeg.cpp of libjpeg-turbo.
 
 namespace ctbrowser::shell {
+
+// An empty bitmap for anything that is not a PNG this can read - truncated,
+// corrupt, or not a PNG at all. Every colour type and bit depth the format has
+// arrives as the engine's 8-bit ARGB, interlaced images included, because the
+// alternative is a decoder that is right about most PNGs.
+[[nodiscard]] paint::bitmap decode_png(std::span<const std::byte> data);
+
+// RGBA, 8 bits per channel: the encoding a decoder needs no options for. Empty
+// for an empty bitmap. What `canvas.toDataURL()` and `toBlob()` hand back.
+[[nodiscard]] std::vector<std::byte> encode_png(const paint::bitmap & image);
+
+// An empty bitmap for anything that is not a JPEG this can read. Baseline and
+// progressive, greyscale and colour, and every subsampling mode arrive as the
+// engine's 8-bit ARGB with alpha fully opaque: JPEG has no transparency, and
+// leaving the alpha byte to chance is how an image decodes and then draws as
+// nothing.
+[[nodiscard]] paint::bitmap decode_jpeg(std::span<const std::byte> data);
+
+// The PNG signature and the JPEG SOI marker, checked before decoding is
+// attempted. Cheap enough to ask of every load, which is what lets
+// `image_store` try formats in order without a decode attempt per format.
+[[nodiscard]] bool looks_like_png(std::span<const std::byte> data) noexcept;
+[[nodiscard]] bool looks_like_jpeg(std::span<const std::byte> data) noexcept;
 
 // Decode an uncompressed 24- or 32-bit BMP. An empty bitmap on any problem -
 // truncated, or a flavour this does not read.
@@ -79,29 +100,6 @@ namespace ctbrowser::shell {
     return out;
 }
 
-// Encode a bitmap as a PNG, with NO COMPRESSION LIBRARY.
-//
-// `canvas.toBlob()` and `canvas.toDataURL()` mean PNG - that is what p5's
-// save() asks for and what a page expects to get - so an engine that cannot
-// write one cannot export anything.
-//
-// A PNG's pixel data is a zlib stream, and a zlib stream may be made entirely of
-// STORED blocks: a five-byte header per block and the bytes verbatim. That is
-// valid deflate, so every decoder in the world reads this, and it needs no zlib.
-// The file is bigger than a compressed one - about 1.05x the raw pixels - which
-// is the whole cost, and it buys the engine one fewer dependency in a header
-// that is part of the SDL-free core.
-//
-// RGBA, 8 bits per channel, filter 0 on every row: the encoding a decoder needs
-// no options for.
-//
-// DEFINED IN images.cpp, not here, and that is the point of the split: the CRC
-// comes from Boost.CRC now instead of a 256-entry table rebuilt per call, and
-// `<boost/crc.hpp>` belongs in a .cpp. `decode_bmp` above stays inline because
-// it pulls in nothing. This is the rule core/cpu_time.hpp set for <windows.h>
-// and lib/Core/algorithms.cpp follows for boost/algorithm.
-[[nodiscard]] std::vector<std::byte> encode_png(const paint::bitmap & image);
-
 // What a script's image handle refers to, and what an <img> element resolves
 // to. Bitmaps are shared_ptr because the display list holds them too - a
 // re-record must not copy every sprite in the page.
@@ -113,14 +111,30 @@ public:
     using decode_fn = std::function<paint::bitmap(std::span<const std::byte>, std::string_view)>;
 
     void set_decoder(decode_fn decoder) { decoder_ = std::move(decoder); }
-    [[nodiscard]] bool has_decoder() const noexcept { return static_cast<bool>(decoder_); }
 
     // Loads at most once per name: two <img src="x"> and a script loadImage("x")
     // share one decode and one bitmap.
     [[nodiscard]] std::shared_ptr<const paint::bitmap> load(const asset_registry & assets,
                                                             std::string_view name) {
-        for (const auto & [cached, image] : cache_) {
-            if (cached == name) { return image; }
+        return cache_[slot_for(assets, name)].second;
+    }
+
+    // The script-facing handle: a stable index, because a script holds numbers
+    // and a vector of shared_ptr moves its elements. -1 for a load that failed.
+    [[nodiscard]] int handle_for(const asset_registry & assets, std::string_view name) {
+        const std::size_t slot = slot_for(assets, name);
+        return cache_[slot].second ? static_cast<int>(slot) : -1;
+    }
+    [[nodiscard]] std::shared_ptr<const paint::bitmap> at(int handle) const {
+        if (handle < 0 || static_cast<std::size_t>(handle) >= cache_.size()) { return nullptr; }
+        return cache_[static_cast<std::size_t>(handle)].second;
+    }
+
+private:
+    // The cache only ever appends, so an entry's index is its handle.
+    [[nodiscard]] std::size_t slot_for(const asset_registry & assets, std::string_view name) {
+        for (std::size_t i = 0; i < cache_.size(); ++i) {
+            if (cache_[i].first == name) { return i; }
         }
         const std::vector<std::byte> bytes = assets.load(name);
         std::shared_ptr<const paint::bitmap> image;
@@ -139,29 +153,11 @@ public:
         }
         // A FAILED load is cached too, as a null. Otherwise a page with a
         // missing sprite re-reads the filesystem every frame.
-        cache_.emplace_back(std::string{name}, image);
-        return image;
+        cache_.emplace_back(std::string{name}, std::move(image));
+        return cache_.size() - 1;
     }
 
-    // The script-facing handle: a stable index, because a script holds numbers
-    // and a vector of shared_ptr moves its elements.
-    [[nodiscard]] int handle_for(const asset_registry & assets, std::string_view name) {
-        const std::shared_ptr<const paint::bitmap> image = load(assets, name);
-        if (!image) { return -1; }
-        for (std::size_t i = 0; i < handles_.size(); ++i) {
-            if (handles_[i] == image) { return static_cast<int>(i); }
-        }
-        handles_.push_back(image);
-        return static_cast<int>(handles_.size()) - 1;
-    }
-    [[nodiscard]] std::shared_ptr<const paint::bitmap> at(int handle) const {
-        if (handle < 0 || static_cast<std::size_t>(handle) >= handles_.size()) { return nullptr; }
-        return handles_[static_cast<std::size_t>(handle)];
-    }
-
-private:
     std::vector<std::pair<std::string, std::shared_ptr<const paint::bitmap>>> cache_;
-    std::vector<std::shared_ptr<const paint::bitmap>> handles_;
     decode_fn decoder_;
 };
 

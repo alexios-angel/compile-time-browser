@@ -87,8 +87,8 @@ load-bearing: **`docs/tools.md`**.
 - **No third-party header in a public header.** Boost/SDL/FreeType includes
   belong in a `.cpp`: every consumer parses what a header includes, and
   `<windows.h>` or `<boost/asio.hpp>` in one is a cost paid by everyone who
-  touches the engine. `core/cpu_time.hpp` is the pattern - it declares one
-  function and its `.cpp` owns the platform headers. See `docs/build.md`.
+  touches the engine. `raster/svg.hpp` is the pattern - it declares two
+  functions and `lib/Raster/svg.cpp` owns plutosvg. See `docs/build.md`.
 - **`Math.random` is seeded and DETERMINISTIC** by default. Three example pages
   (widgets, elements, svg) byte-compare their render against
   `ctbrowser/test/golden/*.ppm`; a page drawing with random cannot have a golden

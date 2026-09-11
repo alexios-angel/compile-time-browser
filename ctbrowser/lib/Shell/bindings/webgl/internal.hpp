@@ -1,9 +1,5 @@
 #pragma once
-// Private to lib/Shell/bindings/webgl/. NOT installed and in no file set:
-// include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and this
-// exists only so its WebGL half can be more than one file - it was 1,431
-// lines in one until 2026-09-08. The includes are webgl.cpp's, so every
-// file here sees exactly what that one saw.
+// Private to lib/Shell/bindings/webgl/ - not installed.
 
 #include <algorithm>
 #include <cstring>
@@ -11,10 +7,6 @@
 #include <utility>
 
 // `canvas.getContext('webgl')` - the JavaScript surface over shell/page/webgl.hpp.
-//
-// IN ITS OWN FILE because it is a different kind of code from the rest of the
-// bindings: seventy-nine methods that almost all do one thing, plus a constant
-// table. Mixed into bindings.cpp it would double that file and bury the DOM.
 //
 // This layer is DELIBERATELY THIN. It unpacks arguments, hands them to
 // webgl_context, and packs the answer back; every decision about what a call
