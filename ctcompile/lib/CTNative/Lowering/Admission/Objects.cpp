@@ -80,6 +80,11 @@ std::string admission::argumentReason(mlir::Value object) {
 std::string admission::whyOpen(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
+        if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
+            use.getOperandNumber() == 0 && keyOf(user->getOperand(1)) == "__proto__") {
+            return "an object literal reached through the inherited Object.prototype.__proto__ "
+                   "accessor";
+        }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0) {
                 if (!keyOf(get.getKey()).empty()) { continue; }
@@ -151,6 +156,9 @@ std::string admission::whyOpenReceiver(mlir::Value self) {
         mlir::Operation * user = use.getOwner();
         if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
             use.getOperandNumber() == 0) {
+            if (keyOf(user->getOperand(1)) == "__proto__") {
+                return "it reaches the inherited Object.prototype.__proto__ accessor";
+            }
             continue;
         }
         if (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() == 0 &&

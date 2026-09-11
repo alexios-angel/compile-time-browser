@@ -19,6 +19,14 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shadowed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SHADOWED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/keyword.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=KEYWORD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/macro.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MACRO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-computed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-computed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-method.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROTO
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proto-method.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PROTO
 
 // --- read but never written, and the prototype answers it -------------------
 //
@@ -37,6 +45,12 @@
 //
 // SHADOWED: emitc.func @shadowed_1() -> f64
 // SHADOWED-NOT: ctnative.not_native
+
+// __proto__ is an inherited ACCESSOR. Its setter ignores a primitive value,
+// and a following read still returns the prototype object. Treating the store
+// as an own field instead made typeof return "number". The same proof guards
+// literals and lifted method receivers in both modes.
+// PROTO: ctnative.not_native = "{{.*}}Object.prototype.__proto__ accessor
 
 // --- a JavaScript name that is also a C++ keyword ---------------------------
 //
@@ -76,3 +90,17 @@ function macro() {
   return p.NAN;
 }
 var d = macro();
+
+//--- proto-read.js
+function proto_read() { var o = {}; return typeof o.__proto__; }
+var trace = proto_read();
+
+//--- proto-write.js
+function probe() { var o = {}; o.__proto__ = 1; return typeof o.__proto__; }
+var trace = probe();
+//--- proto-computed.js
+function probe() { var o = {}; o["__proto__"] = 1; return typeof o["__proto__"]; }
+var trace = probe();
+//--- proto-method.js
+function probe() { var o = { run() { this.__proto__ = 1; return typeof this.__proto__; } }; return o.run(); }
+var trace = probe();

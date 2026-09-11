@@ -145,12 +145,20 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
     }
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
+        // Assignment to __proto__ invokes an inherited accessor, so even a
+        // dominating constant-key store does not establish an own data field.
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || constantKey(get.getKey()).empty()) { return false; }
+            if (use.getOperandNumber() != 0 || constantKey(get.getKey()).empty() ||
+                constantKey(get.getKey()) == "__proto__") {
+                return false;
+            }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             // The object as the TARGET only: stored as a value into another
             // object it would escape, and that is not this rule's business.
-            if (use.getOperandNumber() != 0 || constantKey(set.getKey()).empty()) { return false; }
+            if (use.getOperandNumber() != 0 || constantKey(set.getKey()).empty() ||
+                constantKey(set.getKey()) == "__proto__") {
+                return false;
+            }
         } else if (!passesAReceiver(use)) {
             return false;
         }
