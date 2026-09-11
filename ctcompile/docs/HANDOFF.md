@@ -6,6 +6,73 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Named global object keys, 2026-09-11
+
+Continued the exact **7573e89b** boundary left by **2df63e19** and the
+**2026-09-11 23:03:27 UTC** synchronization journal. The checkout was clean;
+the interrupted accessor repair and old codex-wip work were already landed.
+Three agents handled HostContract provenance, source/lifetime regressions and
+the focused workflow; root integrated native consumers and serialized gates.
+No browser/runtime source changed.
+
+**d7b2e3f0** proves an empty object allocation, its sole unconditional global
+initialization and all dominated reads across the complete captured-Map call
+family. The actual argument remains the source LoadGlobal; an independent
+checked edge carries its allocation. OwnedGlobalMethods revalidates that edge
+before existing identity, type, Map and owned-global emission consume it.
+Generated C++ owns the global leaf identity and shares that same identity with
+Map keys, using the existing acyclic ownership carrier. No Script/VM dependency
+or new runtime helper is introduced. Early reads, second/late stores, global
+aliases, fields, unknown consumers, object payloads/returns and incompatible
+later actuals remain refused. Requesting the key as a scalar observation also
+refuses in both modes; review caught and closed an emitter crash on that path.
+
+The exact source now admits **4/4 functions**, preserves **four source calls**
+and emits typed **trace=0** in both optimization modes. All **21 historical
+source bodies/hashes/call counts** remain intact. The expanded cohort passes
+**12 native programs / 21 refusals**, **33 source rows / 36 typed Node/interpreter
+observations** and **16 distinguishing mutations**. Repeated global reads and
+Map retention pass with GCC/Clang in explicit/deduced layouts. The lifetime
+checks cover global overwrite, caller/table release, **128 future key rounds**,
+entry reexecution and final key/Map destruction with ASan/UBSan/leak detection.
+The exact global proof completes at budget **1626**, with **31 cutoffs** checked.
+
+**e55cf329** adds `--group object-keys` to the existing ownership driver. It
+reuses the complete object-key observer, native execution and refusal phases;
+the default full workflow is unchanged. Current full matrix: **425 positives /
+1700 baseline C++ compilations**. The focused group uses **48 baseline
+compilations plus ten sanitizer builds**. Run on the devbox under the build lock:
+
+```sh
+python3 ctcompile/test/CTNative/Ownership/global-maps.py \
+  --translate build/ctcompile/tools/ctjs-translate/ctjs-translate \
+  --opt build/ctcompile/tools/ctjs-opt/ctjs-opt \
+  --work /tmp/ctcompile-object-keys --group object-keys
+```
+
+The final **255-step rebuild** and **4/4 focused CTests in 1.71 seconds** pass.
+Stable clang-format **22.1.8** passes **795 files**; bundled 23 has the same nine
+pre-existing differences, byte-identical to the previous gate. All **1238
+frozen input hashes** match locally and remotely. The full **530-test** standard
+monorepo gate is running; a full pass is not yet claimed.
+Evidence: `/tmp/ctcompile-global-key-final.log`,
+`/tmp/ctcompile-global-key-{frozen,matrix}.json`,
+`/tmp/ctcompile-global-key-test-static.json`.
+
+**Next: one immutable global alias**, tracked **abbf4b9c**
+(`object_argument_global_alias`: four functions/four calls/trace=0), then
+unchanged **600b8fb6** (`object_argument_siblings_global`: seven functions/
+fifteen calls/trace=11, aliases and two identities). The missing proof is the
+LoadGlobal-to-StoreGlobal initialization edge, including predecessor loads
+used only to initialize an alias. Keep each original store/load and resolve
+its allocation through checked predecessor edges; revalidate all names and
+uses before publication. Reuse current identity storage and retained-key
+lifetime checks, accounting for every owning global at overwrite/reentry.
+Both sources remain measured refusals. The bounded audit is
+`/tmp/ctcompile-global-key-next-boundary.md`. Full native Bootstrap, field and
+nested-Map ownership, direct browser API integration, and the independent
+ordinary-object own-data/prototype escape proof remain unfinished.
+
 ## Inherited accessor proof repair, 2026-09-11
 
 Resumed the interrupted ND-3 repair recorded by **bff05404** and the
@@ -82,10 +149,10 @@ and refusal controls. For quick object-key feedback, the scratch cohort reuses
 native execution loop and `check_object_argument_controls`: **36 baseline
 compilations plus eight sanitizer builds**. A future optional cohort selector
 must include historical `parameter_object` and avoid unrelated controls that
-index other saved programs. No selector is implemented; the standard full gate
+index other saved programs. At that checkpoint no selector was implemented; the standard full gate
 still covers the complete matrix.
 
-**Next: named empty-object keys for Bootstrap Data**, exact **7573e89b**
+**Then-next: named empty-object keys for Bootstrap Data**, exact **7573e89b**
 (`object_argument_global` in `native_owned_global_maps/sources_map_keys.py`).
 Prove one allocation, its sole unconditional store and each dominated global
 load across the complete captured-Map call family. Preserve the actual
