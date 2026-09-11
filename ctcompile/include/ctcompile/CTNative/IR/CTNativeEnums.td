@@ -13,7 +13,7 @@
 //    program that is right on Tuesday."
 //
 // So THE ORDER OF THESE CASES IS LOAD-BEARING, and reordering them silently
-// changes the type lattice. CTNativeLattice.cpp static_asserts both chains so
+// changes the type lattice. ctcompile/test/Analysis/Types/Lattice.cpp static_asserts both chains so
 // that a reorder is a build error rather than a wrong answer.
 //
 //===----------------------------------------------------------------------===//

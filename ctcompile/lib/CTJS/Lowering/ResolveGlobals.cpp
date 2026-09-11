@@ -96,7 +96,7 @@
 //
 //     That is not a licence to relax anything here: the reasons are still
 //     sound and they are the ceiling on programs that DO declare functions
-//     (differential.js resolves 56 of 72, launcher.js 9 of 10). It says where
+//     (differential.js resolves 56 of 72, application.js 9 of 10). It says where
 //     a bundle is actually lost, which is the census's first clause.
 //
 //     Bootstrap's first escape is `window.scrollTo(...)` at

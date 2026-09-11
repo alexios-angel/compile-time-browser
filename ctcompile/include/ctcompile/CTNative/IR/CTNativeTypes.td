@@ -228,7 +228,7 @@ def CTNative_OptType : CTNative_Type<"Opt", "opt"> {
     number or a string, possibly absent" is
     `opt<variant<num<f64>, str<utf8>>>` and never
     `variant<opt<num<f64>>, str<utf8>>`. Without that rule meet is not
-    associative, and CTNativeLattice.cpp's property test says so by failing.
+    associative, and ctcompile/test/Analysis/Types/Lattice.cpp's property test says so by failing.
 
     `null` AND `undefined` COLLAPSE INTO ONE EMPTY OPTIONAL, and that is a
     real narrowing: `null == undefined` is true but `null === undefined` is

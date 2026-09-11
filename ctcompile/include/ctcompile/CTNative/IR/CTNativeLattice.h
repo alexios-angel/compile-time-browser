@@ -52,7 +52,7 @@ namespace ctcompile::ctnative {
 /// IT IS LOAD-BEARING AND THAT WAS CHECKED, not assumed: replacing the cap's
 /// condition with `false` leaves the meet table, commutativity and all 9261
 /// associativity triples green, and turns exactly one check red - "the fifth
-/// falls off the cap into json" in ctcompile/test/CTNativeLattice.cpp.
+/// falls off the cap into json" in ctcompile/test/Analysis/Types/Lattice.cpp.
 inline constexpr unsigned kMaxVariantAlternatives = 4;
 
 /// The C++ representation a JavaScript string gets when nothing has proved a
@@ -73,7 +73,7 @@ inline constexpr unsigned kMaxVariantAlternatives = 4;
 ///
 /// So the semantics-preserving default is the one the engine already has.
 /// Flipping this constant to UTF16 makes `stringLengthPinnedToInterpreter` in
-/// ctcompile/test/CTNativeLattice.cpp fail, and it fails by asking the real
+/// ctcompile/test/Analysis/Types/Lattice.cpp fail, and it fails by asking the real
 /// interpreter rather than by comparing against a number written down here.
 ///
 /// The day the engine closes its UTF-16 gap - `string_basics.cpp` calls its

@@ -5,14 +5,14 @@
  * it escape". So every path that truncates `context::frames_` is either a
  * hook - the oracle sees the frame go - or a documented hole whose records are
  * reported UNCHECKED, never confined. This table is the list, and the escape
- * self-test (ctcompile/test/TypeOracle.cpp) asserts its shape so another
+ * self-test (ctcompile/test/Analysis/Types/Oracle.cpp) asserts its shape so another
  * exit path cannot be added without deciding which it is.
  *
  * CT_FRAME_END(name, where, hooked, note)
  *
  *   name     the row, as the self-test and this file's readers refer to it
  *   where    the site, cited BY NAME first and by file:line second. The line
- *            is checked by check-def-citations.cmake (inside the file, no
+ *            is checked by test/Core/source-citations.cmake (inside the file, no
  *            more than that) and is the one at the commit that wrote the row;
  *            the name is what to search for when it has moved.
  *   hooked   1 if the oracle's hook runs there, 0 if the records of a frame

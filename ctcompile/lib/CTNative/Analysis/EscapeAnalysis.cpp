@@ -417,7 +417,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     };
 
     // PASS 1: the sites, the arguments builders, the suspension points -
-    // live blocks only. TypeClaims.cpp's split applied to sites: a site in a
+    // live blocks only. ctcompile/test/Analysis/Types/Claims.cpp's split applied
+    // to sites: a site in a
     // block DeadCodeAnalysis proved dead never executes and is dropped; a
     // site in a live block with no lattice is a gap and is counted.
     llvm::SmallVector<mlir::Operation *, 2> argumentsBuilders;

@@ -90,7 +90,7 @@ void collect(Type type, Alternatives & into) {
     //
     // So the guard on this is the HAND-WRITTEN MEET TABLE, not the property
     // sweep - six of its rows go red - and that is the argument for having both
-    // in ctcompile/test/CTNativeLattice.cpp rather than either alone.
+    // in ctcompile/test/Analysis/Types/Lattice.cpp rather than either alone.
     if (auto optional = llvm::dyn_cast<OptType>(type)) {
         into.nullable = true;
         collect(optional.getElementType(), into);

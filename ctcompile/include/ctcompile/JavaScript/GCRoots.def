@@ -10,7 +10,7 @@
  * CT_GC_ROOT(name, owner, marked_in, note)
  *
  * VERIFIED against `context::each_root` (ctbrowser/include/ctbrowser/script/vm.hpp)
- * - cited by NAME, as check-def-citations.cmake asks, after the line number this
+ * - cited by NAME, as test/Core/source-citations.cmake asks, after the line number this
  * used to carry rotted twice. Since ctcompile Phase 55O that template IS the
  * inventory: collect() marks through it with the whole register file and every
  * frame, and the escape oracle's `mark_roots(limit)` / `adjudicate` walk the
