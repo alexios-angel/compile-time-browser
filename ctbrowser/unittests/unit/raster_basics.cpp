@@ -184,6 +184,18 @@ void test_frame_bracketing_is_enforced() {
 
 // --- tiling is invisible --------------------------------------------------
 
+// The grid is anchored at the content origin, so a negative coordinate has to
+// floor toward -infinity: the hand-rolled division this replaced answered -2
+// for -64 / 64 and dropped the tile that content in [-64, 0) lives in.
+void test_tiles_floor_at_negative_coordinates() {
+    const auto first_tile_x = [](float x) {
+        return tiles_for(rect{x, 0, 1, 1}, 0, 64).at(0).area.x;
+    };
+    check(first_tile_x(-64) == -64 && first_tile_x(-65) == -128 && first_tile_x(63) == 0 &&
+              first_tile_x(64) == 64,
+          "tile columns floor toward -infinity at exact negative multiples");
+}
+
 void test_tiling_does_not_change_the_image() {
     page p;
     p.load("<html><body><div class=a>alpha beta gamma delta</div>"
@@ -481,6 +493,7 @@ int main() {
     test_a_ring_is_hollow();
     test_frame_bracketing_is_enforced();
 
+    test_tiles_floor_at_negative_coordinates();
     test_tiling_does_not_change_the_image();
     test_parallel_raster_matches_sequential();
 
