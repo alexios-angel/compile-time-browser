@@ -1,9 +1,7 @@
 # ctbrowser.style - selector matching, the cascade, computed values, the UA sheet.
 #
 # Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
+# ${CTBROWSER_INCLUDE_DIR}. Dependencies are found in cmake/dependencies.cmake.
 
 # --- ctbrowser.style -----------------------------------------------------
 # Owns the CSS front end (css/) as well as the cascade. It used to borrow a
@@ -26,8 +24,7 @@ target_sources(ctbrowser-style
     css/selector.cpp
     css/substitute.cpp
     css/media.cpp
-    # calc/ - the math functions. One 1,810-line calc.cpp until 2026-09-08;
-    # the pieces share calc/internal.hpp and nothing about calc.hpp changed.
+    # calc/ - the math functions; the pieces share calc/internal.hpp.
     css/calc/evaluator.cpp
     css/calc/units.cpp
     css/calc/serialize.cpp
@@ -35,8 +32,7 @@ target_sources(ctbrowser-style
     css/calc/simplify.cpp
     # properties/ - the property table, the value grammar and the canonical
     # serialisation: what el.style, getComputedStyle and CSS.supports all three
-    # ask. One 1,155-line properties.cpp until 2026-09-08; the pieces share
-    # properties/internal.hpp and nothing about properties.hpp changed.
+    # ask; the pieces share properties/internal.hpp.
     css/properties/table.cpp
     css/properties/grammar.cpp
     css/properties/declaration.cpp
