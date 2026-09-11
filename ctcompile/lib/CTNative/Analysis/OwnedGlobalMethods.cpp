@@ -126,8 +126,11 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             if (!spend()) { return; }
             if (!argument.object) { continue; }
             auto made = argument.object;
-            if (made.getResult() != argument.actual || made->getParentOp() != entry ||
-                !made->isBeforeInBlock(edge.call)) {
+            auto load = argument.actual.getDefiningOp<ctjs::LoadGlobalOp>();
+            const auto * global = load ? host.objectRead(load) : nullptr;
+            if ((made.getResult() != argument.actual &&
+                 (!global || global->object != made || global->read != load)) ||
+                made->getParentOp() != entry || !made->isBeforeInBlock(edge.call)) {
                 reject("owned global object argument lacks its earlier entry allocation");
                 return;
             }
@@ -373,6 +376,75 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         scalarReads.push_back(edge);
     }
 
+    llvm::SmallVector<HostObjectGlobalRead> objectReads;
+    llvm::DenseMap<mlir::Operation *, unsigned> objectIndex;
+    for (const HostObjectGlobalRead & edge : host.objectReads()) {
+        if (!spend()) { return; }
+        auto made = edge.object;
+        auto store = edge.initialization;
+        auto read = edge.read;
+        for (const std::string & observation : contract.observations) {
+            if (!spend()) { return; }
+            if (observation == read.getName()) {
+                reject("object key global cannot be a scalar observation");
+                return;
+            }
+        }
+        if (!argumentObjects.contains(made) || made->getParentOp() != entry ||
+            store->getParentOp() != entry || read->getParentOp() != entry ||
+            store.getName() != read.getName() || store.getValue() != made.getResult() ||
+            !made->isBeforeInBlock(store) || !store->isBeforeInBlock(read)) {
+            reject("object global read disagrees with the complete key ownership proof");
+            return;
+        }
+        for (mlir::Operation * operation : operations) {
+            if (!spend()) { return; }
+            if (auto other = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
+                other && other.getName() == store.getName() && other != store) {
+                reject("object key global has another source store");
+                return;
+            }
+            if (auto other = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                other && other.getName() == read.getName()) {
+                const auto * checkedRead = host.objectRead(other);
+                if (!checkedRead || checkedRead->object != made ||
+                    checkedRead->initialization != store) {
+                    reject("object key global has an unchecked source read");
+                    return;
+                }
+            }
+        }
+        for (mlir::Value value : {made.getResult(), read.getResult()}) {
+            for (mlir::OpOperand & use : value.getUses()) {
+                if (!spend()) { return; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                    (use.getOwner() == store.getOperation() && value == made.getResult())) {
+                    continue;
+                }
+                const auto * call = host.callable(use.getOwner());
+                if (!call || !methodCalls.contains(use.getOwner()) ||
+                    use.getOwner()->getParentOp() != entry ||
+                    !value.getDefiningOp()->isBeforeInBlock(use.getOwner())) {
+                    reject("object key global has a use outside its owning call family");
+                    return;
+                }
+                const unsigned offset = llvm::isa<ctjs::CallDirectOp>(use.getOwner()) ? 3u : 2u;
+                const bool argument = llvm::any_of(call->arguments, [&](const auto & actual) {
+                    return actual.actual == value && actual.object == made &&
+                           use.getOperandNumber() == actual.parameter.getArgNumber() - 3 + offset;
+                });
+                if (!argument) {
+                    reject("object key global use lacks its exact original actual argument");
+                    return;
+                }
+            }
+        }
+        const auto index = static_cast<unsigned>(objectReads.size());
+        objectIndex[store] = index;
+        objectIndex[read] = index;
+        objectReads.push_back(edge);
+    }
+
     // The query exposes only source ownership. A later consumer must prove a
     // callable carrier and native call component; no annotation closes them.
     OwnedGlobalRoot result{owner, initialization, std::move(loads), field,
@@ -398,6 +470,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     edges = std::move(committed);
     checkedScalarReads = std::move(scalarReads);
     scalarEdges = std::move(scalarIndex);
+    checkedObjectReads = std::move(objectReads);
+    objectEdges = std::move(objectIndex);
 }
 
 } // namespace ctcompile::ctnative

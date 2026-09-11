@@ -487,10 +487,10 @@ int main() {
                            f"{result.stdout}{result.stderr}")
 
 
-def object_argument_observer_source(source):
+def object_argument_observer_source(source, global_key=False):
     # Capture the actual Map in a separate interpreter observer. The native
     # source and its standard intrinsic contract remain untouched.
-    return source + '''
+    observed = source + '''
 (function() {
     const get = host.slot.get;
     const original = Map.prototype.has;
@@ -524,7 +524,19 @@ def object_argument_observer_source(source):
             (typeof f === 'number' && f === 0 ? 32 : 0) |
             (typeof g === 'number' && g === 0 ? 64 : 0) | (future ? 128 : 0);
 })();
-''', 255
+'''
+    if not global_key:
+        return observed, 255
+    return observed.replace('const first = {}, alias = first, other = {};',
+        'const first = key, alias = first, other = {};').replace(
+        '    trace = (typeof a', '''    const startup = key === first;
+    captured.set(key, 17);
+    key = {};
+    const distinct = key !== first && get(first) === 1 && get(key) === 0;
+    captured.clear();
+    const cleared = get(first) === 0;
+    trace = (typeof a''').replace('(future ? 128 : 0);',
+        '(future ? 128 : 0) | (startup ? 256 : 0) | (distinct ? 512 : 0) | (cleared ? 1024 : 0);'), 2047
 
 
 def check_object_argument_calls(cpp, name, mode):
@@ -549,10 +561,19 @@ def check_object_argument_calls(cpp, name, mode):
     if name == 'object_argument_seeded' and (
             'std::variant<double, std::shared_ptr<ctnative::identity_object>>' not in cpp):
         raise RuntimeError(f'{name}/{mode}: lost independent Number/Object key alternatives')
+    if object_argument_cases()[name].get('global_key'):
+        created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
+        stores = re.findall(r'\bg_key = (\w+);', entry[1])
+        loads = re.findall(r'\b(\w+) = g_key;', entry[1])
+        actuals = re.findall(r'ctnative::invoke_callable\(\w+, (\w+)\);', entry[1])
+        if (not re.search(r'std::shared_ptr<ctnative::identity_object>\s+g_key\s*;', cpp)
+                or len(created) != 1 or stores != created
+                or len(loads) != source.count('host.slot.get(key)') or actuals != loads):
+            raise RuntimeError(f'{name}/{mode}: lost the sole global allocation/store/load/call identity')
 
 
-def object_argument_lifetime_cpp(cpp):
-    return instrument_leaf_objects(cpp) + r'''
+def object_argument_lifetime_cpp(cpp, global_key=False):
+    changed = instrument_leaf_objects(cpp) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     using Map = ctnative::number_map<Key>;
@@ -598,6 +619,27 @@ int main() {
     return 0;
 }
 '''
+    if not global_key:
+        return changed
+    return changed.replace('!ctn_test_objects[0].expired()',
+        'ctn_test_objects[0].expired() || !g_key || g_key != ctn_test_objects[0].lock()').replace(
+        '    auto other = std::make_shared<ctnative::identity_object>();', '''    std::weak_ptr original_key = g_key;
+    ctnative::map_set(map, g_key, js_num{9});
+    if (get(g_key) != 1) { return 240; }
+    g_key = std::make_shared<ctnative::identity_object>();
+    if (original_key.expired() || get(g_key) != 0) { return 241; }
+    auto other = std::make_shared<ctnative::identity_object>();''').replace(
+        '    std::weak_ptr key_lifetime = other;',
+        '    std::weak_ptr overwritten_key = g_key;\n    std::weak_ptr key_lifetime = other;').replace(
+        '!ctn_test_objects[1].expired()',
+        'ctn_test_objects[1].expired() || !overwritten_key.expired() || '
+        'g_key != ctn_test_objects[1].lock() || g_key == original_key.lock()').replace(
+        'if (!key_lifetime.expired() || !ctn_test_maps[0].expired() ||',
+        'if (!key_lifetime.expired() || !original_key.expired() || !ctn_test_maps[0].expired() ||').replace(
+        '    if (!ctn_test_maps[1].expired()) { return 209; }',
+        '''    if (!ctn_test_maps[1].expired() || ctn_test_objects[1].expired()) { return 209; }
+    g_key.reset();
+    if (!ctn_test_objects[1].expired()) { return 242; }''')
 
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
@@ -606,7 +648,8 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
                     'object_argument_siblings', 'object_argument_siblings_named'}
                 else parameter_object_lifetime_cpp if name == 'parameter_object'
                 else object_argument_lifetime_cpp)
-    source.write_text(observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
+    source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
+                      else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
                       else observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
     host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',

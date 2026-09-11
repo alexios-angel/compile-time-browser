@@ -6,6 +6,7 @@ from .driver_common import (
     contract,
     forge_leaf_evidence,
     host,
+    json,
     methods,
     object_argument_cases,
     object_argument_observer_source,
@@ -41,6 +42,19 @@ def check_object_argument_observations(args, node, reference):
 
     for name, row in cases.items():
         observe(name, row['source'], row['expected_trace'])
+    named, value = object_argument_observer_source(
+        cases['object_argument_global']['source'], global_key=True)
+    expected_named = observe('object_argument_global_future', named, value)
+    named_mutations = (('const first = key,', 'const first = {},'),
+                       ('key = {};\n    const distinct', 'key = first;\n    const distinct'))
+    for index, (old, replacement) in enumerate(named_mutations):
+        assert named.count(old) == 1, old
+        js = args.work / f'global-key-blinded-{index}.js'
+        js.write_text(named.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected_named:
+            raise RuntimeError(f'global key observer cannot distinguish {replacement}')
     source, value = object_argument_observer_source(cases['object_argument_exact']['source'])
     expected = observe('object_argument_future', source, value)
     mutations = (
@@ -87,8 +101,8 @@ def check_object_argument_observations(args, node, reference):
                             capture_output=True, text=True, timeout=30)
     if not result.returncode and result.stdout == 'trace=1\n':
         raise RuntimeError('historical object setter observation cannot distinguish a skipped write')
-    return dict(sources=len(cases), observations=len(cases) + 2,
-                mutations=len(mutations) + len(retained_mutations) + 1)
+    return dict(sources=len(cases), observations=len(cases) + 3,
+                mutations=len(mutations) + len(retained_mutations) + len(named_mutations) + 1)
 
 
 def check_object_argument_census(args, ir, name):
@@ -101,7 +115,8 @@ def check_object_argument_census(args, ir, name):
             or len(source_calls(raw)) != row['raw_calls']
             or len(source_calls(prepared)) != row['prepared_calls']):
         raise RuntimeError(f'{name}: changed exact object actual function/call census')
-    for operation in ('create_object', 'construct', 'get_property', 'set_property'):
+    for operation in ('create_object', 'construct', 'get_property', 'set_property',
+                      'load_global', 'store_global'):
         if raw.count(operation) != prepared.count(operation):
             raise RuntimeError(f'{name}: preparation changed the live {operation} census')
     if raw.count('cf.cond_br') != prepared.count('scf.if'):
@@ -144,6 +159,17 @@ def check_object_argument_controls(args, saved):
     check_budgets(args, ir, config, 'object_argument_exact', functions=4)
     ir, config, _ = saved['object_argument_key_write']
     check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
+    ir, config, _ = saved['object_argument_global']
+    check_budgets(args, ir, config, 'object_argument_global', functions=4)
+    observation = json.loads(config.read_text())
+    observation['observations'] = ['trace', 'key']
+    invalid = args.work / 'object_argument_global-object-observation.contract.json'
+    invalid.write_text(json.dumps(observation, indent=2) + '\n')
+    for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+        name = 'object_argument_global-object-observation-' + mode
+        failed = methods.refused(args, ir, name, invalid, options=options, admitted=0,
+            reason='object key global cannot be a scalar observation')
+        check_call_preservation(ir.read_text(), failed.read_text(), name)
     ir, config, _ = saved['object_argument_siblings_named']
     check_budgets(args, ir, config, 'object_argument_siblings_named', functions=7)
     ir, config, _ = saved['parameter_object']

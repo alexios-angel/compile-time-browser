@@ -62,6 +62,12 @@ public:
         return checkedScalarReads;
     }
     [[nodiscard]] const HostScalarGlobalRead * scalarRead(ctjs::LoadGlobalOp read) const;
+    // Empty keys keep their original global store/load operations. Only the
+    // complete Map-family proof supplies these independent identity edges.
+    [[nodiscard]] llvm::ArrayRef<HostObjectGlobalRead> objectReads() const {
+        return checkedObjectReads;
+    }
+    [[nodiscard]] const HostObjectGlobalRead * objectGlobal(mlir::Operation * operation) const;
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
 
@@ -72,6 +78,8 @@ private:
     llvm::DenseMap<mlir::Operation *, unsigned> edges;
     llvm::SmallVector<HostScalarGlobalRead> checkedScalarReads;
     llvm::DenseMap<mlir::Operation *, unsigned> scalarEdges;
+    llvm::SmallVector<HostObjectGlobalRead> checkedObjectReads;
+    llvm::DenseMap<mlir::Operation *, unsigned> objectEdges;
     std::string refusal;
     unsigned workSteps = 0;
     bool budgetExhausted = false;

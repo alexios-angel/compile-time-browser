@@ -311,10 +311,17 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             if (!step()) { return {}; }
             const auto parameter = function.getBody().front().getArgument(3 + offset + index);
             const auto actual = arguments[offset + index];
-            edge.arguments.push_back({parameter, actual, parameters->alternatives[index],
-                                      llvm::is_contained(parameters->objectKeys, parameter)
-                                          ? actual.getDefiningOp<ctjs::CreateObjectOp>()
-                                          : ctjs::CreateObjectOp{}});
+            ctjs::CreateObjectOp made;
+            if (llvm::is_contained(parameters->objectKeys, parameter)) {
+                made = actual.getDefiningOp<ctjs::CreateObjectOp>();
+                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    const auto global = objectGlobalRead(load);
+                    if (!global) { return {}; }
+                    made = global->object;
+                }
+                if (!made) { return {}; }
+            }
+            edge.arguments.push_back({parameter, actual, parameters->alternatives[index], made});
         }
     }
     return edge;
@@ -769,89 +776,6 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
         if (!found) { return std::nullopt; }
     }
     return result;
-}
-
-bool analyzer::capturedMapParameters(
-    ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
-    const llvm::DenseSet<mlir::Operation *> & familyCalls,
-    const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
-    HostMethodParameters & result) {
-    const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
-    std::optional<std::vector<PrimitiveAlternatives>> found;
-    std::vector<mlir::BlockArgument> objectKeys;
-    for (mlir::Operation * operation : calls) {
-        if (!step()) { return false; }
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-        const auto args = direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
-        std::vector<PrimitiveAlternatives> tags;
-        std::vector<mlir::BlockArgument> objects;
-        for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
-            if (!step()) { return false; }
-            const auto categories = entryCategories(actual, results, operation);
-            if (!categories.known || !(categories.truthy | categories.falsy)) {
-                auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-                if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
-                    !dominance.properlyDominates(made.getOperation(), operation)) {
-                    return false;
-                }
-                // Every use must be an explicit argument in this Map's exact
-                // invocation census. Every sibling body independently permits
-                // object formals only as keys, so a Map can retain a key but
-                // the key cannot retain the Map or acquire an outgoing edge.
-                for (mlir::OpOperand & use : actual.getUses()) {
-                    if (!step() || !dominance.dominates(actual, use.getOwner())) { return false; }
-                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                    auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                    auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                    if ((!directUse && !callUse) ||
-                        use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u) ||
-                        !familyCalls.contains(use.getOwner())) {
-                        return false;
-                    }
-                }
-                objects.push_back(function.getBody().front().getArgument(
-                    (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size())));
-            }
-            tags.push_back(categories);
-        }
-        if (found) {
-            if (found->size() != tags.size() || objectKeys != objects) { return false; }
-            for (unsigned index = 0; index < tags.size(); ++index) {
-                if (!step()) { return false; }
-                tags[index] = tags[index].joined((*found)[index]);
-            }
-        }
-        objectKeys = std::move(objects);
-        found = std::move(tags);
-    }
-    // An uncalled zero-argument sibling can still have its effects checked;
-    // the owning plan separately requires current calls for the full family.
-    if (exhausted || (!found && count != 0)) { return false; }
-    if (found) {
-        for (auto [index, alternatives] : llvm::enumerate(*found)) {
-            if (!step()) { return false; }
-            if (llvm::is_contained(objectKeys,
-                                   function.getBody().front().getArgument(
-                                       (prepared ? 4u : 3u) + static_cast<unsigned>(index)))) {
-                continue;
-            }
-            const auto mask = alternatives.truthy | alternatives.falsy;
-            // Extend the established exact primitive boundary only to the
-            // existing nullable String family. Unknown/empty sets and other
-            // heterogeneous parameters still lack a supported proof here.
-            constexpr unsigned nullableString = PrimitiveAlternatives::String |
-                                                PrimitiveAlternatives::Null |
-                                                PrimitiveAlternatives::Undefined;
-            if (!alternatives.known || !mask ||
-                (!alternatives.tag() &&
-                 (!(mask & PrimitiveAlternatives::String) || (mask & ~nullableString)))) {
-                return false;
-            }
-        }
-    }
-    result.alternatives = found ? std::move(*found) : std::vector<PrimitiveAlternatives>{};
-    result.objectKeys = std::move(objectKeys);
-    return true;
 }
 
 bool analyzer::singleInvocation(ctjs::FuncOp function) {

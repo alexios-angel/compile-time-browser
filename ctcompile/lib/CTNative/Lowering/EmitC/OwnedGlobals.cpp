@@ -25,6 +25,26 @@ void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
         }
         for (ctjs::GetPropertyOp read : root.reads) { ownedGlobalOperations[read] = index; }
     }
+    for (const HostObjectGlobalRead & edge : roots.objectReads()) {
+        auto object = edge.object;
+        if (!llvm::is_contained(accepted, object->getParentOfType<ctjs::FuncOp>())) { continue; }
+        auto initialization = edge.initialization;
+        auto read = edge.read;
+        auto found = ownedGlobalOperations.find(initialization);
+        unsigned index;
+        if (found == ownedGlobalOperations.end()) {
+            const auto type = carrierType(context, carrier::objectIdentity);
+            index = static_cast<unsigned>(ownedGlobalStoragePlans.size());
+            ownedGlobalStoragePlans.push_back(
+                {initialization.getName().str(), "ctnative::identity_object", {}, type, {}});
+            ownedGlobals[initialization.getName()] = type;
+            ownedGlobalOperations[initialization] = index;
+            needsObjectIdentity = true;
+        } else {
+            index = found->second;
+        }
+        ownedGlobalOperations[read] = index;
+    }
 }
 
 bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {

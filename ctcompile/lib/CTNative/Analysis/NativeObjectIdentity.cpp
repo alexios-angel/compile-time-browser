@@ -190,6 +190,16 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     // native closure lifter immediately before this analysis.
     llvm::StringMap<ctjs::CreateClosureOp> environments;
     llvm::DenseSet<mlir::Operation *> reads;
+    llvm::DenseMap<mlir::Operation *, mlir::Value> keyInitializations;
+    if (globals && globals->proved()) {
+        for (const HostObjectGlobalRead & edge : globals->objectReads()) {
+            auto object = edge.object;
+            auto read = edge.read;
+            flow.join(object.getResult(), read.getResult());
+            reads.insert(read);
+            keyInitializations[edge.initialization] = object.getResult();
+        }
+    }
     module.walk([&](ctjs::CreateClosureOp made) {
         if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
     });
@@ -310,6 +320,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     continue;
                 }
                 if (mapKeyUse(use)) { continue; }
+                if (keyInitializations.lookup(use.getOwner()) == value) { continue; }
                 if ((comparisonOnly ? comparisonFieldsSafe : fieldsSafe) &&
                     object_detail::scalarFieldUse(use)) {
                     fields.insert(use.getOwner());

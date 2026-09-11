@@ -543,6 +543,20 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+        load && ownedRoots_ && ownedRoots_->proved()) {
+        if (const auto * edge = ownedRoots_->objectGlobal(load)) {
+            // The owner proof establishes this exact allocation/store/load
+            // edge. Its type still comes from the original live allocation.
+            auto object = edge->object;
+            const auto * stored =
+                getLatticeElementFor(getProgramPointAfter(op), object.getResult());
+            if (!stored->getValue().isUninitialized()) {
+                propagateIfChanged(results[0], results[0]->join(stored->getValue()));
+            }
+            return mlir::success();
+        }
+    }
     if (llvm::isa<ctjs::CreateObjectOp>(op) && op->hasAttr(kNativeObjectIdentity)) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{ObjectIdentityType::get(c)}));
         return mlir::success();

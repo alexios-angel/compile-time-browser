@@ -124,6 +124,15 @@ struct HostScalarGlobalRead {
     std::vector<mlir::Value> dependencies;
 };
 
+// A fresh empty object stored once in an ordinary entry global. Every read
+// follows that initialization, and all allocation/read uses belong to the
+// completed captured-Map family as keys. The actual load remains live.
+struct HostObjectGlobalRead {
+    ctjs::StoreGlobalOp initialization;
+    ctjs::LoadGlobalOp read;
+    ctjs::CreateObjectOp object;
+};
+
 struct HostSlotReport {
     std::string binding;
     std::string property;
@@ -157,6 +166,10 @@ public:
         return checkedScalarReads;
     }
     [[nodiscard]] const HostScalarGlobalRead * scalarRead(ctjs::LoadGlobalOp read) const;
+    [[nodiscard]] llvm::ArrayRef<HostObjectGlobalRead> objectReads() const {
+        return checkedObjectReads;
+    }
+    [[nodiscard]] const HostObjectGlobalRead * objectRead(ctjs::LoadGlobalOp read) const;
 
 private:
     std::string refusal;
@@ -164,6 +177,7 @@ private:
     std::vector<ctjs::StoreGlobalOp> observed;
     std::vector<HostCallableEdge> checkedCalls;
     std::vector<HostScalarGlobalRead> checkedScalarReads;
+    std::vector<HostObjectGlobalRead> checkedObjectReads;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

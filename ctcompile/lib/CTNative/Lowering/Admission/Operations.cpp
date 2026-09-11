@@ -23,6 +23,17 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
+    if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
+        auto object = edge->object;
+        if (!llvm::isa_and_nonnull<ObjectIdentityType>(typeOf(object.getResult()))) {
+            return refuse("object key global lacks an independently proved identity carrier");
+        }
+        if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
+            return llvm::isa_and_nonnull<ObjectIdentityType>(typeOf(load.getResult())) ||
+                   refuse("object key global read lost its allocation's identity carrier");
+        }
+        return true; // The owner query also checked this exact initialization.
+    }
     if (llvm::isa<CreateObjectOp>(o) && o->hasAttr(kNativeObjectIdentity)) { return true; }
     if (!methodTableName(o).empty()) {
         if (llvm::isa<CreateObjectOp>(o)) { return true; }

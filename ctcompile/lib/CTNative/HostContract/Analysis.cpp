@@ -5,6 +5,145 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read) {
+    if (!step() || read->getParentOp() != entry || !llvm::hasSingleElement(entry.getBody())) {
+        return std::nullopt;
+    }
+    // The initial census includes every store in the module, including
+    // inactive arms, later writes and stores outside the script entry.
+    const auto & stores = globals[read.getName()];
+    if (stores.size() != 1) { return std::nullopt; }
+    auto store = stores.front();
+    auto made = store.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+    if (!made || store->getParentOp() != entry || made->getParentOp() != entry ||
+        !dominance.properlyDominates(made.getOperation(), store.getOperation()) ||
+        !dominance.properlyDominates(store.getOperation(), read.getOperation())) {
+        return std::nullopt;
+    }
+    // This is structural evidence only. The family-use and environment
+    // proofs must complete before any public HostObjectGlobalRead exists.
+    return HostObjectGlobalRead{store, read, made};
+}
+
+bool analyzer::capturedMapParameters(
+    ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
+    const llvm::DenseSet<mlir::Operation *> & familyCalls,
+    const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
+    HostMethodParameters & result) {
+    const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
+    std::optional<std::vector<PrimitiveAlternatives>> found;
+    std::vector<mlir::BlockArgument> objectKeys;
+    for (mlir::Operation * operation : calls) {
+        if (!step()) { return false; }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+        const auto args = direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
+        std::vector<PrimitiveAlternatives> tags;
+        std::vector<mlir::BlockArgument> objects;
+        for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
+            if (!step()) { return false; }
+            const auto categories = entryCategories(actual, results, operation);
+            if (!categories.known || !(categories.truthy | categories.falsy)) {
+                auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
+                std::optional<HostObjectGlobalRead> global;
+                if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    global = objectGlobalRead(read);
+                    if (!global) { return false; }
+                    made = global->object;
+                }
+                if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
+                    !dominance.properlyDominates(made.getOperation(), operation) ||
+                    !dominance.dominates(actual, operation)) {
+                    return false;
+                }
+                llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+                if (global) {
+                    // A named key has one initialization and no other global
+                    // aliases. Inspect all same-name loads, even unused or
+                    // inactive ones, before permitting any actual call.
+                    const auto census = module.walk([&](ctjs::LoadGlobalOp read) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        if (read.getName() != global->read.getName()) {
+                            return mlir::WalkResult::advance();
+                        }
+                        const auto edge = objectGlobalRead(read);
+                        if (!edge || edge->initialization != global->initialization ||
+                            edge->object != made) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                        aliases.push_back(read.getResult());
+                        return mlir::WalkResult::advance();
+                    });
+                    if (census.wasInterrupted()) { return false; }
+                }
+                // Every use must be an explicit argument in this Map's exact
+                // invocation census. Every sibling body independently permits
+                // object formals only as keys, so a Map can retain a key but
+                // the key cannot retain the Map or acquire an outgoing edge.
+                for (mlir::Value alias : aliases) {
+                    for (mlir::OpOperand & use : alias.getUses()) {
+                        if (!step() || !dominance.dominates(alias, use.getOwner())) {
+                            return false;
+                        }
+                        if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                            (global && alias == made.getResult() &&
+                             use.getOwner() == global->initialization.getOperation() &&
+                             use.getOperandNumber() == 0)) {
+                            continue;
+                        }
+                        auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                        auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                        if ((!directUse && !callUse) ||
+                            use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u) ||
+                            !familyCalls.contains(use.getOwner())) {
+                            return false;
+                        }
+                    }
+                }
+                objects.push_back(function.getBody().front().getArgument(
+                    (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size())));
+            }
+            tags.push_back(categories);
+        }
+        if (found) {
+            if (found->size() != tags.size() || objectKeys != objects) { return false; }
+            for (unsigned index = 0; index < tags.size(); ++index) {
+                if (!step()) { return false; }
+                tags[index] = tags[index].joined((*found)[index]);
+            }
+        }
+        objectKeys = std::move(objects);
+        found = std::move(tags);
+    }
+    // An uncalled zero-argument sibling can still have its effects checked;
+    // the owning plan separately requires current calls for the full family.
+    if (exhausted || (!found && count != 0)) { return false; }
+    if (found) {
+        for (auto [index, alternatives] : llvm::enumerate(*found)) {
+            if (!step()) { return false; }
+            if (llvm::is_contained(objectKeys,
+                                   function.getBody().front().getArgument(
+                                       (prepared ? 4u : 3u) + static_cast<unsigned>(index)))) {
+                continue;
+            }
+            const auto mask = alternatives.truthy | alternatives.falsy;
+            // Extend the established exact primitive boundary only to the
+            // existing nullable String family. Unknown/empty sets and other
+            // heterogeneous parameters still lack a supported proof here.
+            constexpr unsigned nullableString = PrimitiveAlternatives::String |
+                                                PrimitiveAlternatives::Null |
+                                                PrimitiveAlternatives::Undefined;
+            if (!alternatives.known || !mask ||
+                (!alternatives.tag() &&
+                 (!(mask & PrimitiveAlternatives::String) || (mask & ~nullableString)))) {
+                return false;
+            }
+        }
+    }
+    result.alternatives = found ? std::move(*found) : std::vector<PrimitiveAlternatives>{};
+    result.objectKeys = std::move(objectKeys);
+    return true;
+}
+
 std::string analyzer::environmentProblem() {
     std::string reason;
     const auto reject = [&](llvm::StringRef why) {
@@ -234,18 +373,48 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         }
     }
     std::vector<HostScalarGlobalRead> scalarReads;
+    std::vector<HostObjectGlobalRead> objectReads;
+    llvm::StringMap<ctjs::CreateObjectOp> objectGlobals;
+    if (refusal.empty()) {
+        // Reconstruct named-key origins from completed callable edges only.
+        // Failed/provisional family attempts cannot publish global evidence.
+        for (const HostCallableEdge & call : analysis.checkedCalls) {
+            for (const HostMethodArgument & argument : call.arguments) {
+                if (!analysis.step()) { break; }
+                auto read = argument.actual.getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!argument.object || !read) { continue; }
+                const auto edge = analysis.objectGlobalRead(read);
+                if (!edge || edge->object != argument.object) {
+                    refusal = "named object key lacks its completed source initialization";
+                    break;
+                }
+                objectGlobals.try_emplace(read.getName(), argument.object);
+            }
+            if (analysis.exhausted || !refusal.empty()) { break; }
+        }
+        if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
+    }
     if (refusal.empty()) {
         module.walk([&](ctjs::LoadGlobalOp read) {
-            if (analysis.exhausted) { return; }
+            if (analysis.exhausted || !refusal.empty()) { return; }
             if (auto edge = analysis.scalarGlobalRead(read)) {
                 scalarReads.push_back(std::move(*edge));
             }
+            const auto found = objectGlobals.find(read.getName());
+            if (found == objectGlobals.end()) { return; }
+            const auto edge = analysis.objectGlobalRead(read);
+            if (!edge || edge->object != found->second) {
+                refusal = "named object key read lacks its completed source initialization";
+                return;
+            }
+            objectReads.push_back(*edge);
         });
         if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
     }
     if (refusal.empty()) {
         checkedCalls = std::move(analysis.checkedCalls);
         checkedScalarReads = std::move(scalarReads);
+        checkedObjectReads = std::move(objectReads);
     }
 }
 
@@ -268,6 +437,13 @@ const HostCallableEdge * HostContractAnalysis::callable(mlir::Operation * call) 
 
 const HostScalarGlobalRead * HostContractAnalysis::scalarRead(ctjs::LoadGlobalOp read) const {
     for (const HostScalarGlobalRead & edge : checkedScalarReads) {
+        if (edge.read == read) { return &edge; }
+    }
+    return nullptr;
+}
+
+const HostObjectGlobalRead * HostContractAnalysis::objectRead(ctjs::LoadGlobalOp read) const {
+    for (const HostObjectGlobalRead & edge : checkedObjectReads) {
         if (edge.read == read) { return &edge; }
     }
     return nullptr;

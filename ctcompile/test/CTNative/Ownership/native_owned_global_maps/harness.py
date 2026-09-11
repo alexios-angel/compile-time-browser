@@ -112,14 +112,15 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
-        if name in {'object_argument_exact', 'object_argument_siblings',
+        if name in {'object_argument_exact', 'object_argument_global', 'object_argument_siblings',
                     'object_argument_siblings_named', 'parameter_object'}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             observer = (retained_key_lifetime_cpp if name in {
                             'object_argument_siblings', 'object_argument_siblings_named'}
                         else parameter_object_lifetime_cpp if name == 'parameter_object'
                         else object_argument_lifetime_cpp)
-            source.write_text(observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
+            source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
+                              else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
                               else observer(cpp))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
@@ -174,7 +175,7 @@ def standalone(args, output, name, value, compilers, nm):
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
                                   "joined_size_saved_lifetime", "joined_mutation_saved_lifetime",
-                                  "object_argument_exact", "object_argument_siblings",
+                                  "object_argument_exact", "object_argument_global", "object_argument_siblings",
                                   "object_argument_siblings_named", "parameter_object"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
@@ -215,6 +216,6 @@ def standalone(args, output, name, value, compilers, nm):
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {'object_argument_exact', 'object_argument_siblings',
+        if name in {'object_argument_exact', 'object_argument_global', 'object_argument_siblings',
                     'object_argument_siblings_named', 'parameter_object'}:
             object_argument_lifetime(args, cpp, name, mode, compilers[1])

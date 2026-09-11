@@ -441,7 +441,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         llvm::SmallVector<llvm::StringRef> neverStored;
         for (ctjs::FuncOp fn : accepted) {
             fn.getBody().walk([&](mlir::Operation * o) {
-                if (admittedGlobals && admittedGlobals->lookup(o)) { return; }
+                if (admittedGlobals &&
+                    (admittedGlobals->lookup(o) || admittedGlobals->objectGlobal(o))) {
+                    return;
+                }
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                     if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }

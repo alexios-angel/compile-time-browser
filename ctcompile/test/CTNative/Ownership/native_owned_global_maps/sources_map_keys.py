@@ -690,7 +690,31 @@ var trace = host.slot.get({});
                          ('array', '[]')):
         add(name, base.replace('host.slot.get({})', 'host.slot.get(' + actual + ')'))
     add('global', base.replace('var trace = host.slot.get({});',
-                              'var key = {}; var trace = host.slot.get(key);'))
+                              'var key = {}; var trace = host.slot.get(key);'), admitted=True)
+    named = rows['object_argument_global']['source']
+    add('global_repeated', named.replace('var trace =', 'host.slot.get(key); var trace ='),
+        5, admitted=True)
+    add('global_retained', rows['object_argument_global_repeated']['source'].replace(
+        'return t.has(e) ? 1 : 0;', 't.set(e, 1); return t.has(e) ? t.size : 0;'), 6, 1, True)
+    for name in ('global', 'global_repeated', 'global_retained'):
+        rows['object_argument_' + name]['global_key'] = True
+    add('global_early', named.replace('var key = {}; var trace = host.slot.get(key);',
+        'var trace = host.slot.get(key); var key = {};'))
+    add('global_second_store', named.replace('var trace =', 'key = {}; var trace ='))
+    add('global_late_store', named + 'key = {};\n')
+    add('global_alias', named.replace('var trace = host.slot.get(key);',
+        'var alias = key; var trace = host.slot.get(alias);'))
+    add('global_field_write', named.replace('var trace =', 'key.value = 1; var trace ='))
+    add('global_unknown_consumer',
+        'function consume(value) { return 0; }\n' + named.replace(
+            'return t.has(e)', 'consume(e); return t.has(e)'), 5, functions=5)
+    add('global_object_payload', named.replace('return t.has(e)',
+        't.set(e, e); return t.has(e)'), 5, 1)
+    add('global_object_return', named.replace('return t.has(e) ? 1 : 0;', 'return e;').replace(
+        'var trace = host.slot.get(key);', 'var trace = host.slot.get(key) === key ? 1 : 0;'), 3, 1)
+    add('global_later_number', named.replace('var trace = host.slot.get(key);',
+        'host.slot.get(key); var trace = host.slot.get(1);'), 5)
+    add('global_later_object', named.replace('var trace =', 'host.slot.get(1); var trace ='), 5)
     add('later_object', base.replace('var trace =', 'host.slot.get(1); var trace ='), 5)
     add('later_number', base.replace('var trace = host.slot.get({});',
                                     'host.slot.get({}); var trace = host.slot.get(1);'), 5)
@@ -737,6 +761,8 @@ var trace = host.slot.get({});
         'b6d341ad2c2ad02ca5ca78483291c5c66f0636720c022dfdf33b39ae52eef8d1')
     assert rows['object_argument_siblings_global']['sha256'] == (
         '600b8fb69ef191ed02c4f4fb9db9a9d204a011aeb516a072025d81c2edd15882')
+    assert rows['object_argument_global']['sha256'] == (
+        '7573e89b9f576f9d433b7003b033e0aa8525b2fff97c6991ea5325d669f4ab81')
     assert rows['object_argument_exact']['sha256'] == (
         '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
     assert rows['object_argument_evaluated_number']['sha256'] == (

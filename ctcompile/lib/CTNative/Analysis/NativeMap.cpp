@@ -522,6 +522,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
             // observations and native annotations never authorize a read.
             if (globals && globals->proved()) {
                 if (globals->lookup(load)) { return; }
+                if (globals->objectGlobal(load)) { return; }
                 const auto * scalar = globals->scalarRead(load);
                 if (scalar &&
                     (scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>() ||

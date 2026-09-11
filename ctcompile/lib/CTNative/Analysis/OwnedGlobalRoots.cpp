@@ -210,4 +210,9 @@ const HostScalarGlobalRead * OwnedGlobalRoots::scalarRead(ctjs::LoadGlobalOp rea
     return found == scalarEdges.end() ? nullptr : &checkedScalarReads[found->second];
 }
 
+const HostObjectGlobalRead * OwnedGlobalRoots::objectGlobal(mlir::Operation * operation) const {
+    const auto found = objectEdges.find(operation);
+    return found == objectEdges.end() ? nullptr : &checkedObjectReads[found->second];
+}
+
 } // namespace ctcompile::ctnative
