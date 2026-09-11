@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -51,8 +52,7 @@ struct tile {
     std::vector<tile> out;
     if (content.empty() || extent <= 0) { return out; }
     const auto floor_div = [extent](float v) {
-        const int i = static_cast<int>(v < 0 ? v - static_cast<float>(extent) + 1 : v);
-        return i / extent - (i % extent != 0 && v < 0 ? 1 : 0);
+        return static_cast<int>(std::floor(v / static_cast<float>(extent)));
     };
     const int first_col = floor_div(content.x);
     const int first_row = floor_div(content.y);
