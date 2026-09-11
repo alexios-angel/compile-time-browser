@@ -88,8 +88,6 @@ public:
         return value_of(e);
     }
 
-    [[nodiscard]] bool contains(handle_type h) const noexcept { return get(h) != nullptr; }
-
     // --- writer side: caller-serialized ------------------------------------
 
     template <typename... Args> [[nodiscard]] handle_type insert(Args &&... args) {
@@ -141,9 +139,6 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return live_; }
     [[nodiscard]] std::size_t pending() const noexcept { return pending_.size(); }
-    [[nodiscard]] std::uint32_t capacity() const noexcept {
-        return capacity_.load(std::memory_order_relaxed);
-    }
 
 private:
     struct entry {
