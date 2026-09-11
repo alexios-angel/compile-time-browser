@@ -25,7 +25,7 @@ add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
 # is what has drifted here before.
 #
 # IT NEEDS NO MLIR either - it reads a .cpp as text.
-add_executable(ctcompile-test-importer-coverage CTJS/Import/ImporterCoverage.cpp)
+add_executable(ctcompile-test-importer-coverage CTJS/Import/Coverage.cpp)
 target_compile_definitions(ctcompile-test-importer-coverage PRIVATE
   CTCOMPILE_IMPORTER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/BytecodeImport.cpp"
   CTCOMPILE_IMPORTER_DISPATCH="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/Bytecode/Instructions.cpp"
@@ -35,7 +35,7 @@ ctcompile_target(ctcompile-test-importer-coverage)
 add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
 
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-importer-source-names CTJS/Import/ImporterSourceNames.cpp)
+  add_executable(ctcompile-test-importer-source-names CTJS/Import/SourceNames.cpp)
   target_link_libraries(ctcompile-test-importer-source-names PRIVATE ctcompile::ctjs-import)
   ctcompile_target(ctcompile-test-importer-source-names)
   add_test(NAME ctcompile_importer_source_names COMMAND ctcompile-test-importer-source-names)
@@ -67,17 +67,17 @@ set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
 
 # DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Six of its DELEGATES TO
 # citations ended up past the end of files that Phases 3-5 shrank. See the
-# header of check-def-citations.cmake for what this can and cannot catch.
+# header of source-citations.cmake for what this can and cannot catch.
 add_test(NAME ctcompile_def_citations
          COMMAND ${CMAKE_COMMAND}
                  -DDEF=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include/ctbrowser/aot/aot_helpers.def
                  -DROOT=${CTBROWSER_MONOREPO_ROOT}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/check-def-citations.cmake)
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/source-citations.cmake)
 
 # THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
 # from accepting anything. A comparator too lenient does not fail to catch a
 # bad blueprint - it certifies one.
-add_executable(ctcompile-test-html_comparator Comparison/HtmlComparator.cpp)
+add_executable(ctcompile-test-html_comparator Comparison/Html.cpp)
 target_link_libraries(ctcompile-test-html_comparator PRIVATE ctcompile::html)
 ctcompile_target(ctcompile-test-html_comparator)
 add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
@@ -86,7 +86,7 @@ add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
 # selector_count() and rule_count() untouched and changes what the page looks
 # like - which is exactly the class of difference the two counts cannot see and
 # the reason engine::for_each_rule exists.
-add_executable(ctcompile-test-css_comparator Comparison/CssComparator.cpp)
+add_executable(ctcompile-test-css_comparator Comparison/Css.cpp)
 target_link_libraries(ctcompile-test-css_comparator PRIVATE ctcompile::css)
 ctcompile_target(ctcompile-test-css_comparator)
 add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
@@ -119,7 +119,7 @@ target_link_libraries(ctcompile-test-app_bundle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-app_bundle)
 # THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
 # here: they are bundles the LAUNCHER has to refuse, and the guard that refuses
-# them lives behind a window. It writes them out and check-package.cmake below
+# them lives behind a window. It writes them out and roundtrip.cmake below
 # feeds them to the real ctrun.
 add_test(NAME ctcompile_app_bundle
          COMMAND ctcompile-test-app_bundle ${CMAKE_CURRENT_BINARY_DIR})
@@ -131,7 +131,7 @@ add_test(NAME ctcompile_app_bundle
 #
 # A pass means more than "exit 0" - `run_bundle` sets require_script_images, so
 # the packaged application refuses to start if any of its scripts had to be
-# compiled from source. See the header of check-package.cmake.
+# compiled from source. See the header of roundtrip.cmake.
 #
 # NOT GUARDED WITH if(TARGET). ctcompile is configured after ctbrowser's tools,
 # so the launcher is always there - and a guard would turn "the launcher stopped
@@ -146,7 +146,7 @@ add_test(NAME ctcompile_package
                  -DREFUSALS=${CMAKE_CURRENT_BINARY_DIR}
                  -DBROWSE=$<TARGET_FILE:ctbrowser-tool-ctbrowse>
                  -DFONTS=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/resources/fonts
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Packaging/check-package.cmake)
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Packaging/roundtrip.cmake)
 # ORDER, not a mere preference: the two bundles the launcher must refuse are
 # written by the test above.
 set_tests_properties(ctcompile_package PROPERTIES DEPENDS ctcompile_app_bundle)

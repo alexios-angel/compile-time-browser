@@ -8,7 +8,7 @@
 // RUN: FileCheck %s --check-prefix=HOISTED < %t/hoisted.cpp
 // RUN: ctjs-translate --mlir-to-cpp %t/isolation.mlir > %t/isolation.cpp
 // RUN: FileCheck %s --check-prefix=ISOLATION < %t/isolation.cpp
-// RUN: python3 %S/check-const-bindings.py --fixtures %t --work %t.executables
+// RUN: python3 %S/const-bindings.py --fixtures %t --work %t.executables
 
 // Explicit types, deduction, source names and exact pins share qualification.
 // BINDINGS: double scalar(double const catalog);

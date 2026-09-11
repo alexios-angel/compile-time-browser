@@ -48,10 +48,10 @@ endif()
 if(NOT packaging_err MATCHES "2 scripts compiled")
   message(FATAL_ERROR "expected two compiled scripts, got: ${packaging_err}")
 endif()
-# AND THE RESOURCES IT WAS NEVER TOLD ABOUT. lib.js and app.css are named by the
+# AND THE RESOURCES IT WAS NEVER TOLD ABOUT. greeting.js and app.css are named by the
 # document, not by the command line; a run that packs neither still produces a
 # working executable today, and a broken one the moment the page needs them.
-if(NOT packaging_err MATCHES "asset  lib\\.js")
+if(NOT packaging_err MATCHES "asset  greeting\\.js")
   message(FATAL_ERROR "the script's own file was not packaged: ${packaging_err}")
 endif()
 if(NOT packaging_err MATCHES "asset  app\\.css")

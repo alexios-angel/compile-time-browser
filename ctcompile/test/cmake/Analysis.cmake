@@ -301,12 +301,12 @@ endif()
 # and says which three are hooked; the escape self-test
 # static_asserts its shape, and this checks that the file:line half of each
 # citation still lands inside the file it names - the one class of rot a
-# machine can see, per check-def-citations.cmake's own header.
+# machine can see, per source-citations.cmake's own header.
 add_test(NAME ctcompile_frame_ends_citations
          COMMAND ${CMAKE_COMMAND}
                  -DDEF=${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/JavaScript/FrameEnds.def
                  -DROOT=${CTBROWSER_MONOREPO_ROOT}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/check-def-citations.cmake)
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/source-citations.cmake)
 
 # === PHASE 55 CLOSED: the escape claims over four corpora ===
 #

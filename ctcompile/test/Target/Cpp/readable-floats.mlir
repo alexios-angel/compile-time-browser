@@ -3,7 +3,7 @@
 // RUN: ctjs-translate --mlir-to-cpp %t/unmarked.mlir | FileCheck %s --check-prefix=UPSTREAM
 // RUN: ctjs-translate --mlir-to-cpp %t/scopes.mlir | FileCheck %s --check-prefix=SCOPES
 // RUN: ctjs-translate --mlir-to-cpp %t/wrong-marker.mlir | FileCheck %s --check-prefix=UPSTREAM
-// RUN: python3 %S/check-readable-float-bits.py --translate ctjs-translate --work %t.bits
+// RUN: python3 %S/readable-floats.py --translate ctjs-translate --work %t.bits
 
 // NATIVE: double price = 100.0;
 // NATIVE: double fraction = 0.1;

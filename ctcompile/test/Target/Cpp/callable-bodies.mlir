@@ -1,7 +1,7 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --mlir-to-cpp %t/callables.mlir > %t/callables.cpp
 // RUN: ctjs-translate --mlir-to-cpp --declare-variables-at-top %t/callables.mlir > %t/hoisted.cpp
-// RUN: python3 %S/check-callable-bodies.py --fixtures %t --work %t.executables --translate ctjs-translate
+// RUN: python3 %S/callable-bodies.py --fixtures %t --work %t.executables --translate ctjs-translate
 
 // An immutable capture permits body emission even when a lambda argument is
 // mutable: that argument is a fresh value on each invocation. A mutable or

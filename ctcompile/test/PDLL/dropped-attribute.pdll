@@ -11,7 +11,7 @@
 // `%1 = attribute` - no constraint at all. The pattern below, built by an
 // unguarded mlir-pdll, matches `ctjs.binary sub` exactly as happily as `add`.
 //
-// check-pdll-guard.cmake asserts BOTH halves: that the raw tool accepts this
+// guard.cmake asserts BOTH halves: that the raw tool accepts this
 // file (so the hole is real and the test is not vacuous), and that
 // utils/pdll-strict.sh refuses it.
 //

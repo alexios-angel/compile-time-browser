@@ -14,7 +14,7 @@
 // the guard's census is over the ODS the run actually loaded rather than over a
 // list of dialects somebody maintains.
 //
-// check-pdll-guard.cmake asserts that the raw tool accepts this file and that
+// guard.cmake asserts that the raw tool accepts this file and that
 // utils/pdll-strict.sh names `ctjs.binry` and refuses it. The first half is the
 // important one here: this overrides documented behaviour, so the assertion
 // that the raw tool still accepts the file is what notices a change.

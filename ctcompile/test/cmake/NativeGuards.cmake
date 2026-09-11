@@ -32,7 +32,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   list(GET MLIR_PDLL_TABLEGEN_EXE 1 _pdll_real)
   # THE SAME TWO ROOTS THE PATTERNS THEMSELVES GET. Comma-separated because a
   # -D value carrying semicolons is one list argument CMake would split at the
-  # wrong level; check-pdll-guard.cmake splits it back.
+  # wrong level; guard.cmake splits it back.
   string(REPLACE ";" "," _pdll_includes "${PROJECT_SOURCE_DIR}/include;${MLIR_INCLUDE_DIRS}")
   add_test(NAME ctcompile_pdll_guard
            COMMAND ${CMAKE_COMMAND}
@@ -41,7 +41,7 @@ if(CTCOMPILE_ENABLE_MLIR)
                    -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/PDLL
                    "-DINCLUDES=${_pdll_includes}"
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/PDLL/check-pdll-guard.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/PDLL/guard.cmake)
 endif()
 
 # === THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS ===

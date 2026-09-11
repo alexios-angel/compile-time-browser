@@ -9,7 +9,7 @@
 // RUN: ctjs-translate --mlir-to-cpp %t/unsafe-integers.mlir | FileCheck %s --check-prefix=UNSAFE
 // RUN: ctjs-translate --mlir-to-cpp %t/isolation.mlir > %t/isolation.cpp
 // RUN: FileCheck %s --check-prefix=ISOLATION < %t/isolation.cpp
-// RUN: python3 %S/check-constexpr-bindings.py --fixtures %t --work %t.executables --translate ctjs-translate --opt ctjs-opt
+// RUN: python3 %S/constexpr-bindings.py --fixtures %t --work %t.executables --translate ctjs-translate --opt ctjs-opt
 
 // Deduced and explicit bindings share a transitive proof. constexpr itself
 // implies const, which remains the exact type expected by the existing pin.

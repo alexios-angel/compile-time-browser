@@ -16,7 +16,7 @@
 // RUN: env ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 %t/asan-explicit
 // RUN: clang++ -std=c++23 -O1 -g -Wall -Wextra -Werror -Wconversion -pedantic -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope %t/deduced.cpp -o %t/asan-deduced
 // RUN: env ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 %t/asan-deduced
-// RUN: %python %S/native-call-exceptions.py --opt ctjs-opt --fixture %t/valid.mlir --work %t/controls
+// RUN: %python %S/call-exceptions.py --opt ctjs-opt --fixture %t/valid.mlir --work %t/controls
 // RUN: ctjs-translate --mlir-to-cpp %t/controls/wrong-state.mlir > %t/wrong-state.cpp
 // RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/wrong-state.cpp -o %t/wrong-state
 // RUN: not %t/wrong-state

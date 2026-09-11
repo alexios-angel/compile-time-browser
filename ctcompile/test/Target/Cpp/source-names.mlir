@@ -14,7 +14,7 @@
 // RUN: ctjs-translate --mlir-to-cpp %t/opaque-types.mlir > %t/opaque-types.cpp
 // RUN: FileCheck %s --check-prefix=OPAQUE < %t/opaque-types.cpp
 // RUN: ctjs-translate --mlir-to-cpp %t/isolation.mlir | FileCheck %s --check-prefix=ISOLATION
-// RUN: python3 %S/check-source-names.py --fixtures %t --work %t.executables
+// RUN: python3 %S/source-names.py --fixtures %t --work %t.executables
 
 // First binding, returned snapshot, and other materialized intermediates.
 // The prototype and definition must allocate the same parameter spelling.

@@ -355,7 +355,7 @@ int main(int argc, char ** argv) {
     // ---- two bundles for the launcher to refuse ---------------------------
     //
     // Written out rather than run here, because the guard they exercise lives
-    // in run_app, which needs a window. check-package.cmake feeds them to the
+    // in run_app, which needs a window. roundtrip.cmake feeds them to the
     // real launcher; without an output directory this does nothing.
     if (argc > 1) {
         const std::filesystem::path out_dir{argv[1]};

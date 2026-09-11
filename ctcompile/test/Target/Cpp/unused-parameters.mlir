@@ -2,7 +2,7 @@
 // RUN: ctjs-translate --mlir-to-cpp %t/parameters.mlir > %t/parameters.cpp
 // RUN: ctjs-translate --mlir-to-cpp --declare-variables-at-top %t/parameters.mlir > %t/hoisted.cpp
 // RUN: ctjs-opt --canonicalize %t/cleanup.mlir | ctjs-translate --mlir-to-cpp > %t/cleanup.cpp
-// RUN: python3 %S/check-unused-parameters.py --fixtures %t --work %t.executables --translate ctjs-translate --opt ctjs-opt
+// RUN: python3 %S/unused-parameters.py --fixtures %t --work %t.executables --translate ctjs-translate --opt ctjs-opt
 
 // A suppression marker is compiler-owned. Used entry parameters need no cast;
 // unused parameters still need one after cleanup. Explicit calls, other opaque

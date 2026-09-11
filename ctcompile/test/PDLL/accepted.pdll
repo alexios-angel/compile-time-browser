@@ -5,7 +5,7 @@
 // the kind test is a NATIVE constraint, because the attribute literal that
 // would express it is dropped - see dropped-attribute.pdll next door.
 //
-// This file is never compiled into the product. check-pdll-guard.cmake runs
+// This file is never compiled into the product. guard.cmake runs
 // utils/pdll-strict.sh over it and requires exit 0: a guard that refused
 // everything would pass the two negative cases and be worthless.
 //
