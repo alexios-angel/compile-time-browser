@@ -42,16 +42,48 @@ one-key repair does not prove arbitrary external caller prototype environments.
 The frozen **282-step rebuild** passes **10/10 focused CTests in 9.57 seconds**
 and the expanded field-name lit test passes **1/1 in 0.15 seconds**. Stable
 clang-format **22.1.8** passes **795 files**; bundled 23 retains its same nine
-pre-existing differences. All **1,238 frozen inputs** remain unchanged.
+pre-existing differences. All **1,238 frozen inputs** match locally and remotely
+before and after the full run.
 An intermediate gate used stale array test objects: local changes predated
 compilation of the first remote snapshot, and the next rsync preserved those
 older source mtimes. Refreshing only authored input mtimes after freeze and
 rebuilding resolves all 846 stale assertions; three genuine switch-budget
-expectations now check the earlier refusal. The full standard **530-test**
-monorepo gate is running at **8bc3563a**; it is not yet a full pass.
+expectations now check the earlier refusal. The full standard monorepo gate
+passes **529/530 CTests in 2158.31 seconds**, including all **158 browser
+CTests**. Its one failure is the stale block-const expectation described below;
+**167/168 lit cases** pass in **1341.67 seconds**.
 Evidence: `/tmp/ctcompile-nd3-{frozen-focused,full}.log`,
 `/tmp/ctcompile-nd3-{native-before,native-after}/summary.json`,
 `/tmp/ctcompile-nd3-measured-pins/verification.json`.
+
+**6e01ec5b** promotes the exact block-const Bootstrap key source **b6d341ad**,
+which now admits **7/7 functions**, preserving all **15 calls** and typed **trace=11**, after the
+integrated **d99ddf7b** scope fix. The source-preserving test promotion passes
+its focused cohort: **nine native programs**, **21 source rows / 23 typed
+Node/interpreter observations**, **14 distinguishing mutations**, and **twelve
+refusals**. Explicit/deduced GCC/Clang output retains the two actual key
+allocations. Saved set/get/delete/clear callables preserve aliases and distinct
+keys, retain keys after caller release, and free them after erase/clear or final
+Map destruction through **128 future rounds** and reentry under ASan/UBSan/leak
+checks. The shared lifetime helper's original six-key output is byte-identical.
+The new exact budget boundary is **42113**, with **30 cutoffs** checked.
+The affected ownership CTest passes **1/1 in 1461.21 seconds** (lit **1461.14
+seconds**). All **530 CTests and 168 lit cases** are covered across the full
+run and affected rerun; this is not a single green full run. All **1,238 final
+source hashes** still agree locally and remotely.
+Evidence: `/tmp/ctcompile-named-key-{gate,rerun}.log`,
+`/tmp/ctcompile-named-key-measured/summary.json`,
+`/tmp/ctcompile-named-key-promotion-static.json`.
+
+The ownership matrix contains **422 positive programs**, each built in two
+layouts with two compilers: **1,688 baseline C++ compilations**, plus sanitizer
+and refusal controls. For quick object-key feedback, the scratch cohort reuses
+`object_argument_sources`, `check_object_argument_observations`, the existing
+native execution loop and `check_object_argument_controls`: **36 baseline
+compilations plus eight sanitizer builds**. A future optional cohort selector
+must include historical `parameter_object` and avoid unrelated controls that
+index other saved programs. No selector is implemented; the standard full gate
+still covers the complete matrix.
 
 **Next: named empty-object keys for Bootstrap Data**, exact **7573e89b**
 (`object_argument_global` in `native_owned_global_maps/sources_map_keys.py`).
@@ -62,9 +94,11 @@ checked edge, following `scalarGlobalRead`. Revalidate it in OwnedGlobalMethods
 before type, identity, Map and typed-global emission consume it. Early loads,
 second stores including late ones, fields, unknown consumers, payload/return
 escapes and incompatible later arguments remain refusals. **600b8fb6** adds
-aliases and two identities and remains a later extension. Remeasure block-const
-**b6d341ad** with the now-integrated **d99ddf7b** scope fix. Full native Bootstrap,
-field/nested-Map ownership, and direct browser API integration remain unfinished.
+aliases and two identities and remains a later extension. Both original
+true-global sources now have measured refusals in both modes, including stale
+and fresh forgeries and reruns; they are distinct from the admitted block consts.
+Full native Bootstrap, field/nested-Map ownership, and direct browser API
+integration remain unfinished.
 Independent boundary audit: `/tmp/ctcompile-nd3-native-review/report.md`.
 
 ## Retained object keys, mixed key carriers and test splits, 2026-09-10
