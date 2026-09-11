@@ -66,5 +66,7 @@ if(CTCOMPILE_ENABLE_MLIR)
     # ctest and nothing else.
     add_test(NAME ctcompile_lit
              COMMAND "${CTCOMPILE_LIT}" -v "${CMAKE_CURRENT_BINARY_DIR}")
+    # Native ownership cases build both C++ layouts under GCC, Clang and sanitizers.
+    set_tests_properties(ctcompile_lit PROPERTIES TIMEOUT 2400)
   endif()
 endif()
