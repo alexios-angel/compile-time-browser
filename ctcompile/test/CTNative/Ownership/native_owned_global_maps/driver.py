@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--opt", required=True)
     parser.add_argument("--node")
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--group", choices=("all", "object-keys"), default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     node = boundary.node_executable(args)
@@ -93,7 +94,11 @@ def main():
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
     }
     saved = {}
-    check_source_observations(args, node, reference, positives)
+    if args.group == "object-keys":
+        positives = object_argument_sources()
+        check_object_argument_observations(args, node, reference)
+    else:
+        check_source_observations(args, node, reference, positives)
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (object_argument_cases()[name]['functions'] if name in object_argument_sources()
@@ -190,6 +195,9 @@ def main():
         saved[name] = ir, config, output
 
     check_object_argument_controls(args, saved)
+    if args.group == "object-keys":
+        print(f"object keys: {len(positives)} native programs and their controls")
+        return
     check_primitive_absence_forgeries(args, saved, node, reference)
     check_leaf_object_forgeries(args, saved)
     check_leaf_object_forgeries(args, saved,
