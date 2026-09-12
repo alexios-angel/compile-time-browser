@@ -33,6 +33,9 @@
 
 namespace ctbrowser::script {
 
+// ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
+bool array_set_length(array_object & arr, double n);
+
 // op::set_index's body, extracted verbatim so the interpreter and a compiled
 // body run one implementation rather than two - ct_aot_set_index is the other
 // caller.
@@ -276,7 +279,12 @@ void context::store_property(value target, const std::string & name, value v) {
         // ToNumber runs a valueOf: `a.length = new Number(6)` is 6 (10.4.2.4).
         const double n = to_number_value(v);
         if (throw_pending()) { return; }
-        if (!arr->set_js_length(n)) { throw_error("RangeError", "Invalid array length"); }
+        if (!(n >= 0) || n > array_object::max_length || n != std::trunc(n)) {
+            throw_error("RangeError", "Invalid array length");
+            return;
+        }
+        // A non-configurable element stops the shrink (descriptors.cpp).
+        if (!array_set_length(*arr, n)) { store_rejected_ = true; }
         return;
     }
     if (target.is_kind(heap_kind::native)) {

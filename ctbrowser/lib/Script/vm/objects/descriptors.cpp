@@ -53,6 +53,47 @@ namespace {
     return object_object::array_index_key(name, out);
 }
 
+} // namespace
+
+// ArraySetLength's shrink (10.4.2.4 steps 12-19): the elements from the top
+// down are deleted one by one and a non-configurable one STOPS it - the
+// length lands one above that element and the answer is false, which
+// defineProperty turns into a TypeError and a sloppy `a.length = n` into a
+// silent refusal. Only an array with element attributes of its own or a seal
+// can have one; everything else truncates outright.
+bool array_set_length(array_object & arr, double n) {
+    const double current = static_cast<double>(arr.js_length());
+    if (n < current && !arr.items.empty()) {
+        std::uint32_t stop = 0;
+        bool blocked = false;
+        if (!arr.elements_configurable) {
+            // Sealed: nothing at or above n can go, so the length stays.
+            const std::size_t top = std::min(arr.items.size(), static_cast<std::size_t>(current));
+            if (static_cast<double>(top) > n) {
+                stop = static_cast<std::uint32_t>(top - 1);
+                blocked = true;
+            }
+        } else {
+            for (auto it = arr.element_attrs.rbegin(); it != arr.element_attrs.rend(); ++it) {
+                if (static_cast<double>(it->first) < n) { break; }
+                if ((it->second & array_object::elem_hole) == 0 &&
+                    (it->second & attr_configurable) == 0) {
+                    stop = it->first;
+                    blocked = true;
+                    break;
+                }
+            }
+        }
+        if (blocked) {
+            (void)arr.set_js_length(static_cast<double>(stop) + 1);
+            return false;
+        }
+    }
+    return arr.set_js_length(n);
+}
+
+namespace {
+
 // 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
 // refuses an index at or past it, and the slot is materialised the way
 // store_index would - dense up to array_object::dense_limit, sparse beyond.
@@ -609,7 +650,7 @@ bool context::define_own_property(value target, const std::string & name,
                 if (!arr->length_writable && n != static_cast<double>(arr->js_length())) {
                     return false;
                 }
-                if (!arr->set_js_length(n)) { return false; }
+                if (!array_set_length(*arr, n)) { return false; }
             }
             if (wanted.has_writable && !wanted.writable) { arr->length_writable = false; }
             return true;

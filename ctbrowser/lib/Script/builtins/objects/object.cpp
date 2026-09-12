@@ -706,21 +706,55 @@ void install_object(context & cx) {
     // through [[Get]] of "0" and "1" - so an entry may be any object with those
     // two, not only an Array, and an entry that is NOT an object is a TypeError
     // rather than a silently skipped element.
+    // 20.1.2.7 Object.fromEntries: AddEntriesFromIterable over the ITERATOR
+    // PROTOCOL - GetIterator refuses a non-iterable, an entry that is not an
+    // object is a TypeError that CLOSES the iterator (step 4.d), a key or
+    // value read that throws closes it too, and a `next` that throws does not.
+    // Each entry lands with CreateDataProperty. `iterable_values` would have
+    // drained the source first and lost every one of those orderings.
     method(cx, object_ctor, "fromEntries", 1, [](context & c, std::span<value> a) {
         if (!object_coercible(c, arg_at(a, 0), "Object.fromEntries")) { return value::undefined(); }
         object_object * out = new_table(c);
         const value made = value::object(out);
         const context::rooted keep{c, made};
-        const double count = detail::array_like_length(c, a[0]);
-        for (double i = 0; i < count; ++i) {
-            const value pair = c.lookup_index(a[0], value::number(i));
-            if (!pair.is_object_like()) {
+        const value iterator = c.get_iterator(a[0]);
+        if (c.throw_pending() || !iterator.is_object()) { return value::undefined(); }
+        const context::rooted keep_iterator{c, iterator};
+        const value next = c.lookup_property(iterator, "next");
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto close = [&] {
+            const value ret = c.lookup_property(iterator, "return");
+            if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
+        };
+        for (;;) {
+            bool done = false;
+            const value entry = c.iterator_step(iterator, next, done);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (done) { break; }
+            if (!entry.is_object_like()) {
+                close();
                 c.throw_error("TypeError", "Iterator value is not an entry object");
                 return value::undefined();
             }
-            const value key = c.lookup_index(pair, value::number(0));
-            const value held = c.lookup_index(pair, value::number(1));
-            out->set(c.to_string(key), held);
+            const context::rooted keep_entry{c, entry};
+            const value key = c.lookup_index(entry, value::number(0));
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            const context::rooted keep_key{c, key};
+            const value held = c.lookup_index(entry, value::number(1));
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            const context::rooted keep_held{c, held};
+            const std::string name = c.to_string(key);
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            out->set(name, held);
         }
         return made;
     });

@@ -121,6 +121,21 @@ int main() {
     js_expect("Object.groupBy([1], 1)", "THREW");
     js_expect("Object.groupBy(null, function(){})", "THREW");
     js_expect("Object.groupBy.length", "2");
+    js_expect("Object.groupBy({[Symbol.iterator]: undefined}, function(){})", "THREW");
+
+    // Object.fromEntries (20.1.2.7) runs the iterator protocol: a Map, an
+    // entry that is not an object closes the iterator with a TypeError, a
+    // throwing `next` does not close it.
+    js_expect("Object.fromEntries(new Map([['k', 3]])).k", "3");
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){return {done:false,value:null};},return(){closed=true;return {};}};}};"
+              "try{Object.fromEntries(it);}catch(e){return e.name+','+closed;}})()",
+              "TypeError,true");
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){throw new Error('n');},return(){closed=true;return {};}};}};"
+              "try{Object.fromEntries(it);}catch(e){return e.message+','+closed;}})()",
+              "n,false");
+    js_expect("Object.fromEntries(5)", "THREW");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

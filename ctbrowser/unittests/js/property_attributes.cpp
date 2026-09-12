@@ -336,6 +336,17 @@ int main() {
               "{value:{valueOf:function(){return 1;}}});return a.length;})()",
               "1");
     js_expect("(function(){var a=[1];Object.freeze(a);a.push(2);})()", "THREW");
+    // ArraySetLength (10.4.2.4 steps 12-19): a non-configurable element stops
+    // the shrink one above itself, and the write is refused there.
+    js_expect(
+        "(function(){var a=[0,1,2,3];Object.defineProperty(a,'1',{value:1,configurable:false});"
+        "a.length=0;return a.length;})()",
+        "2");
+    js_expect("(function(){var a=[0,1];Object.defineProperty(a,'1',{value:1,configurable:false});"
+              "try{Object.defineProperty(a,'length',{value:1});}catch(e){return "
+              "e.name+','+a.length;}})()",
+              "TypeError,2");
+    js_expect("(function(){var a=[0,1,2];Object.seal(a);a.length=1;return a.length;})()", "3");
     js_expect("(function(){var a=[];Object.freeze(a);a.pop();})()", "THREW");
     js_expect("(function(){var a=[1];Object.freeze(a);return Object.isFrozen(a);})()", "true");
     // A native's `length` USED TO BE absent - a native_fn takes a span and
