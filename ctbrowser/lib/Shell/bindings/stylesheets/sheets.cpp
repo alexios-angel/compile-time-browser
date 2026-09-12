@@ -36,6 +36,11 @@ dom_bindings::link_sheet dom_bindings::link_sheet_state(std::string_view rel,
     return alternate && !explicitly_enabled ? link_sheet::alternate : link_sheet::active;
 }
 
+std::string_view dom_bindings::preferred_sheet_title() {
+    if (css_preferred_title_.empty() && cx_ != nullptr) { sync_style_sheets(*cx_); }
+    return css_preferred_title_;
+}
+
 bool dom_bindings::link_explicitly_enabled(node_id id) const {
     return std::ranges::find(enabled_links_, pack(id)) != enabled_links_.end();
 }
@@ -286,10 +291,14 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
     std::vector<value> ordered;
     if (order != nullptr) {
         order->clear();
-        for (const found_sheet & each : found) {
-            if (!each.title.empty()) {
-                (void)preferred_sheet_title(each.title);
-                break;
+        if (css_preferred_title_.empty()) {
+            std::uint64_t earliest = 0;
+            for (const found_sheet & each : found) {
+                if (each.title.empty()) { continue; }
+                if (css_preferred_title_.empty() || pack(each.owner) < earliest) {
+                    css_preferred_title_ = each.title;
+                    earliest = pack(each.owner);
+                }
             }
         }
     }

@@ -916,16 +916,15 @@ public:
                                                      bool explicitly_enabled);
     [[nodiscard]] bool link_explicitly_enabled(node_id id) const;
     // HTML 4.2.6, the preferred style sheet set - STICKY, as every engine has
-    // it: the first titled sheet to arrive names the set and a titled sheet
+    // it: the first titled sheet to ARRIVE names the set, and a titled sheet
     // inserted before it later does not take over
-    // (preferred-stylesheet-reversed-order.html). `candidate` is the first
-    // titled sheet the caller's walk met, taken when nothing has named the set.
+    // (preferred-stylesheet-reversed-order.html). Arrival order is node
+    // creation order, which is what the smallest owner handle among the
+    // titled sheets picks out; the sheets are re-derived to find it when
+    // nothing has named the set yet.
     // ponytail: never reset, so a page that removes its preferred sheet keeps
     // the name; clear it on removal if a page ever needs that.
-    [[nodiscard]] std::string_view preferred_sheet_title(std::string_view candidate) {
-        if (css_preferred_title_.empty()) { css_preferred_title_ = std::string{candidate}; }
-        return css_preferred_title_;
-    }
+    [[nodiscard]] std::string_view preferred_sheet_title();
     // An `@import`'s URL against the sheet it sits in. A `<style>`'s sheet has
     // no href, so its imports resolve as the document's own paths do; a
     // `<link href="a/b.css">` importing `c.css` names `a/c.css`.

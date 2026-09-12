@@ -117,7 +117,10 @@ std::string browser::collect_author_styles() {
     const auto applies = [&](node_id at, bool enabled) {
         const std::string_view title = txn.attribute_value(at, title_attribute);
         if (title.empty()) { return true; }
-        if (bindings_) { return enabled || title == bindings_->preferred_sheet_title(title); }
+        if (bindings_) {
+            const std::string_view preferred = bindings_->preferred_sheet_title();
+            return enabled || preferred.empty() || title == preferred;
+        }
         if (!have_preferred) {
             preferred = std::string{title};
             have_preferred = true;
