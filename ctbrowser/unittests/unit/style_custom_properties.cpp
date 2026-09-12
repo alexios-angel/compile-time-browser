@@ -212,9 +212,24 @@ void test_var_substitution() {
     }
 }
 
+// inherit-function-basic: `inherit(--x)` is the parent's computed value of
+// the custom property, and the fallback when the parent has none.
+void test_inherit_function() {
+    fixture f;
+    f.load("<div id=p><div id=a></div></div><div id=b></div>",
+           ":root { --r: 3 } #p { --z: 2 } #a { --z: 13; z-index: inherit(--z); "
+           "order: inherit(--r) } #b { --z: 13; z-index: inherit(--z, 4); "
+           "order: inherit(--q); --w: inherit(--z, 5) }");
+    expect_value(f, f.find_id("a"), "z-index", "2", "the parent's value");
+    expect_value(f, f.find_id("a"), "order", "3", "an ancestor's value");
+    expect_value(f, f.find_id("b"), "z-index", "4", "the fallback");
+    expect_value(f, f.find_id("b"), "order", "", "no value and no fallback");
+}
+
 } // namespace
 
 int main() {
+    test_inherit_function();
     test_initial_on_a_custom_property_is_guaranteed_invalid();
     test_var_substitution();
     REPORT("style_custom_properties");

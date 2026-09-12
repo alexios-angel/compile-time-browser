@@ -32,6 +32,7 @@ struct call {
     bool is_if = false;
     bool is_ident = false;
     bool is_random_item = false;
+    bool is_inherit = false; // `inherit(--x, fallback)`: var()'s shape, the parent's value
     // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
     // which is read only once that function has been substituted.
     bool name_is_call = false;
@@ -61,12 +62,17 @@ struct call {
             !is_var && !is_attr && !is_if && is_function_named(s, s.tokens[i], "ident");
         const bool is_random_item = !is_var && !is_attr && !is_if && !is_ident &&
                                     is_function_named(s, s.tokens[i], "random-item");
-        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item) { continue; }
+        const bool is_inherit = !is_var && !is_attr && !is_if && !is_ident && !is_random_item &&
+                                is_function_named(s, s.tokens[i], "inherit");
+        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item && !is_inherit) {
+            continue;
+        }
         out = call{};
         out.is_attr = is_attr;
         out.is_if = is_if;
         out.is_ident = is_ident;
         out.is_random_item = is_random_item;
+        out.is_inherit = is_inherit;
         out.open = i;
         int depth = 1;
         std::size_t j = i + 1;
@@ -557,6 +563,8 @@ public:
             if (!identifier(s, found, depth, expansion)) { return false; }
         } else if (found.is_random_item) {
             if (!random_item(s, found, depth, expansion)) { return false; }
+        } else if (found.is_inherit) {
+            if (!inherited_value(s, found, depth, expansion)) { return false; }
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
@@ -618,6 +626,27 @@ private:
             }
         }
         if (ok) { return true; }
+        return fallback(s, found, depth, expansion);
+    }
+
+    // inherit( <custom-property-name> , <declaration-value>? ), CSS Values 5
+    // §inherit-notation: the PARENT's computed value of the property, which
+    // is what `style(--x: inherit)` already reads, and the fallback when the
+    // parent has none (inherit-function-basic).
+    //
+    // ponytail: custom properties only, and one level - the parent's own value
+    // is substituted in the parent's scope with no grandparent to ask, so
+    // `--v: e2 inherit(--v)` on the parent does not accumulate through it.
+    [[nodiscard]] bool inherited_value(const token_stream & s, const call & found, int depth,
+                                       std::string & expansion) {
+        const std::string_view name_text = s.text_of(s.tokens[found.name_at]);
+        if (!name_text.starts_with("--")) { return false; }
+        if (conditions_ != nullptr && conditions_->inherited) {
+            if (std::optional<std::string> held = conditions_->inherited(name_text)) {
+                expansion = std::move(*held);
+                return true;
+            }
+        }
         return fallback(s, found, depth, expansion);
     }
 
@@ -1340,6 +1369,9 @@ bool may_have_var(std::string_view value) noexcept {
         }
         if (boundary && i + 12 <= value.size() &&
             ascii_iequals(value.substr(i, 12), "random-item(")) {
+            return true;
+        }
+        if (boundary && i + 8 <= value.size() && ascii_iequals(value.substr(i, 8), "inherit(")) {
             return true;
         }
     }
