@@ -202,6 +202,14 @@ void test_scope_and_has() {
     // no such element - a whole-document query, or a stylesheet.
     is("ids(':scope')", "");
     is("document.querySelector(':scope').tagName", "HTML");
+    // `:root` is the DOCUMENT's root element and nothing else: not a fragment's
+    // top-level children, not a detached element.
+    is("document.querySelector(':root').tagName", "HTML");
+    is("(function () { var f = document.createDocumentFragment();"
+       " f.appendChild(document.createElement('div'));"
+       " return f.querySelectorAll(':root').length; })()",
+       "0");
+    is("document.createElement('p').matches(':root')", "false");
     is("[].map.call(document.getElementById('outer').querySelectorAll(':scope > p'), "
        "function (e) { return e.id; }).join(',')",
        "p1,p2");

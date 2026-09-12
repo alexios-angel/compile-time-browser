@@ -166,12 +166,12 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
     split_classes(txn.attribute_value(id, class_name()), f.classes);
     f.states = state_of(id);
-    // The document element: no ELEMENT parent. Asked here rather than by comparing
-    // against the document root, because the root node is the document itself and
-    // <html>'s parent is that - so "parent is not an element" is the test that does
-    // not depend on how the tree is rooted.
-    const node_id parent = txn.parent(id);
-    f.is_root = !parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element;
+    // The document element: THE TREE'S ROOT, which is <html> itself here - there
+    // is no Document node above it. Not "no element parent": a fragment's
+    // top-level children and a detached element have none either, and Selectors
+    // 4 §14.1 makes `:root` the document's root element alone -
+    // `fragment.querySelectorAll(":root")` asserts the miss.
+    f.is_root = id == txn.root();
     // The form-control facts. `disabled` is an attribute, so `:disabled` is a
     // question about the document rather than about UI state.
     const std::string_view tag_text = atoms_->text(f.tag);
