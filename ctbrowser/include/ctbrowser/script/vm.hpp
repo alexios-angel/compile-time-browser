@@ -550,8 +550,22 @@ public:
     // non-function is a TypeError in JavaScript and pages CATCH it - feature
     // detection is written as `try { thing() } catch (e) {}`.
     void throw_error(std::string_view kind, std::string message) {
+        // A throw is already crossing this native (see `call`): the first
+        // one propagates, this one is the native carrying on after it.
+        if (has_pending_throw_) { return; }
         thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+    // The throw `call` parked, thrown again from the native's call site.
+    // Answers whether there was one; the caller then continues as after any
+    // other unwind.
+    bool rethrow_pending() {
+        if (!has_pending_throw_) { return false; }
+        has_pending_throw_ = false;
+        thrown_ = pending_throw_;
+        pending_throw_ = value::undefined();
+        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+        return true;
     }
 
     // THROW SOMETHING THAT IS NOT AN ECMAScript Error - a DOM method must throw
@@ -559,6 +573,7 @@ public:
     // `e.constructor === DOMException`. The unwinding is `throw_error`'s
     // exactly, with the object supplied rather than made.
     void throw_value(value thrown) {
+        if (has_pending_throw_) { return; }
         thrown_ = thrown;
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
     }
@@ -614,6 +629,18 @@ public:
     // requestAnimationFrame callback. Re-entrant: it runs a nested interpreter
     // loop on the existing register stack, so a listener may itself call back
     // into script.
+    // A THROW THE CALLEE DOES NOT CATCH IS HELD UNTIL THE NATIVE RETURNS.
+    // Inside a native (native_scope), `call` fences the callee (see
+    // call_fenced); a throw that crosses it is parked in pending_throw_, this
+    // returns undefined, every further `call` from the same native returns
+    // undefined without calling, and the VM rethrows it at the native's own
+    // call site (rethrow_pending, at the three places a native returns to
+    // it). Outside a native the throw unwinds at once, as before. So `[1, 2].forEach(f)` with `f`
+    // throwing on 1 never calls `f` for 2, and the page's `try` around the
+    // forEach catches once - before, the first throw unwound to that `try`
+    // while forEach kept going, and the second throw found the handler
+    // already consumed and was an engine fault. A native that wants to see
+    // the throw itself uses call_fenced.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
     // `call`, WITH THE THROW VISIBLE TO THE CALLER. A throw the callee does
     // not catch unwinds to the innermost `try` on the WHOLE stack - which,
@@ -1877,7 +1904,8 @@ private:
         }
         // A thrown value in flight is reachable from nothing else.
         visit(root_label::thrown, thrown_);
-        visit(root_label::thrown, fence_thrown_); // caught by a C++ fence, not yet consumed
+        visit(root_label::thrown, fence_thrown_);  // caught by a C++ fence, not yet consumed
+        visit(root_label::thrown, pending_throw_); // parked by `call`, not yet rethrown
         // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates
         // the instance and then runs field initialisers and the constructor
         // body with it in a local; without this the object being constructed
@@ -2098,6 +2126,9 @@ private:
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;
+    // What `call` parked for rethrow_pending - see `call`.
+    bool has_pending_throw_ = false;
+    value pending_throw_;
     // How many throws have unwound, ever. A handler that called into
     // something that may throw compares it before and after, which is the
     // only way to know a throw crossed the call: the landing already cleared

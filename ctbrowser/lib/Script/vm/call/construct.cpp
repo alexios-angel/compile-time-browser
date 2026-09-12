@@ -118,6 +118,7 @@ value context::construct(value callee, std::span<const value> args) {
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        if (rethrow_pending()) { return value::undefined(); } // see context::call
         // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
         // evaluate to the fresh empty instance, because a native returning a
         // primitive looks exactly like a constructor that returned nothing - so

@@ -44,7 +44,21 @@ namespace ctbrowser::script {
 // caller's registers are untouched, so a listener that triggers another
 // listener works rather than corrupting the frame that dispatched it.
 value context::call(value callable, std::span<const value> args, value this_value) {
-    return invoke(callable, args, this_value, /*constructing*/ false);
+    // NOT INSIDE A NATIVE - a getter reached from op::get_prop, an event
+    // handler from the browser's tick, a test's direct call: the throw
+    // unwinds to the JavaScript handler below at once, as it always did;
+    // there is no native to return through.
+    if (native_depth_ == 0) { return invoke(callable, args, this_value, /*constructing*/ false); }
+    if (has_pending_throw_) { return value::undefined(); } // see the declaration
+    bool threw = false;
+    value thrown = value::undefined();
+    const value out = call_fenced(callable, args, this_value, threw, thrown);
+    if (threw) {
+        has_pending_throw_ = true;
+        pending_throw_ = thrown;
+        return value::undefined();
+    }
+    return out;
 }
 
 value context::call_fenced(value callable, std::span<const value> args, value this_value,
@@ -108,6 +122,9 @@ value context::invoke(value callable, std::span<const value> args, value this_va
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        // A throw the native's own `call` parked leaves here, from the
+        // native's call site: the enclosing fence or handler, or a fault.
+        if (rethrow_pending()) { return value::undefined(); }
         return out;
     }
     if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {
