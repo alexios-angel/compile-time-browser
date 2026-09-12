@@ -841,6 +841,23 @@ void test_array_patterns_iterate() {
 
 } // namespace
 
+// 10.2.4: `caller` and `arguments` are %ThrowTypeError% accessors on
+// Function.prototype - a strict function, an arrow, a class and a built-in
+// throw; a sloppy function answers null, as every browser does.
+void test_restricted_properties() {
+    expect_result("function f() {} return f.caller + ',' + f.arguments;", "null,null");
+    expect_result("'use strict'; function f() {} try { return f.caller; } catch (e) { return "
+                  "e.constructor.name; }",
+                  "TypeError");
+    expect_result("try { return (() => 1).arguments; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("try { return Math.abs.caller; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("const d = Object.getOwnPropertyDescriptor(Function.prototype, 'caller');"
+                  "return (d.get === d.set) + ',' + d.configurable + ',' + d.enumerable;",
+                  "true,true,false");
+}
+
 int main() {
     test_default_parameters();
     test_rest_parameters();
@@ -869,5 +886,6 @@ int main() {
     test_named_function_expressions();
     test_anonymous_functions_take_the_binding_name();
     test_array_patterns_iterate();
+    test_restricted_properties();
     REPORT("vm_functions");
 }

@@ -178,6 +178,19 @@ void install_function(context & cx) {
     detail::install_arity(cx, has_instance, 1);
     has_instance->is_constructor = false;
     function_proto->define("@@hasInstance", value::object(has_instance), attr_none);
+    // 10.2.4 AddRestrictedFunctionProperties: `caller` and `arguments` on
+    // Function.prototype are accessors whose getter and setter are
+    // %ThrowTypeError% - `f.caller` on a strict function (a class, an arrow, a
+    // built-in) is a TypeError. A sloppy function answers null before the
+    // chain gets here (lookup_property's closure arm), as every browser does.
+    const value thrower = detail::accessor_fn(cx, "", [](context & c, std::span<value>) {
+        c.throw_error("TypeError", "'caller', 'callee', and 'arguments' properties may not be "
+                                   "accessed on strict mode functions or the arguments objects "
+                                   "for calls to them");
+        return value::undefined();
+    });
+    function_proto->define_accessor("caller", thrower, thrower, attr_configurable);
+    function_proto->define_accessor("arguments", thrower, thrower, attr_configurable);
     cx.set_prototype(context::proto_kind::function, function_proto);
 }
 
