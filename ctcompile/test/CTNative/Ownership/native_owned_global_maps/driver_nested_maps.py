@@ -163,6 +163,11 @@ var trace = host.slot.get();
             key = 'previous_' + name + '_' + order
             add(key, prefix + source + 'host.slot.poison();\n', calls, functions=functions)
             rows['nested_map_' + key]['previous_poison'] = (mutation, expected)
+    for family in ('cross_mixed', 'previous_boolean', 'previous_string'):
+        for order in ('before', 'after'):
+            rows[f'nested_map_{family}_{order}'].update(owner=True,
+                refusal='which has no native carrier yet' if family == 'previous_string' else
+                'mixed native Map read needs independent present payload type evidence')
     add('dynamic_nullable', '''var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
@@ -341,8 +346,9 @@ host.slot.poison(); trace = host.slot.get();
         'var traceNumber = host.slot.get();', 'var traceNumber = host.slot.get() === 64;').replace(
         'var traceObject = host.slot.get();', 'var traceObject = host.slot.get() === key;').replace(
         'var trace = host.slot.get();', 'var trace = host.slot.get() === null;')
-    add('mixed_child_returned_identity', returned, 16, functions=5)
-    rows['nested_map_mixed_child_returned_identity'].update(expected_trace=True,
+    add('mixed_child_returned_identity', returned, 16, functions=5, admitted=True)
+    rows['nested_map_mixed_child_returned_identity'].update(mixed_child=True,
+        mixed_child_kind='returned', expected_trace=True,
         observations={'traceMissing': True, 'traceNumber': True, 'traceObject': True})
     add('mixed_child_returned_field', returned.replace(
         'var traceObject = host.slot.get() === key;',
@@ -447,7 +453,8 @@ def caller_payload_lifetime_cpp(cpp, row):
 def mixed_child_observer(source, row):
     kind = row.get('mixed_child_kind', 'number')
     expected = {'number': 'value === 64', 'null': 'value === null',
-                'undefined': 'value === undefined', 'truthy': '!!value', 'identity': 'true'}[kind]
+                'undefined': 'value === undefined', 'truthy': '!!value', 'identity': 'true',
+                'returned': 'true'}[kind]
     observed = source + '''
 (function() {
     const set = host.slot.set, get = host.slot.get;
@@ -494,16 +501,23 @@ def mixed_child_observer(source, row):
     trace = ok ? 1 : 0;
 })();
 '''
-    return observed.replace('GET', 'get(value)' if kind == 'identity' else 'get()').replace(
+    if kind == 'returned':
+        observed = observed.replace("const saved = child.get('value');", 'const saved = get();').replace(
+            '        POISON_CHECK', "        child.delete('value'); child.clear();\n"
+            '        ok = ok && saved === item && saved.value === value + 2;')
+    return observed.replace('GET', 'get(value)' if kind == 'identity' else
+        'get() === (value || null)' if kind == 'returned' else 'get()').replace(
         'EXPECTED', expected).replace('POISON_BINDING',
         'const poison = host.slot.poison;' if 'child_mutation' in row else '').replace(
-        'DISTINCT', '&& read(item) === false' if kind == 'identity' else '').replace(
+        'DISTINCT', '&& read(item) === false' if kind in {'identity', 'returned'} else '').replace(
         'POISON_CHECK', '''const prior = outer.get(1);
         ok = ok && set(64) === 0 && poison() === 0 && read(64) === MISSING &&
              (outer.get(1) !== prior) === REPLACEMENT &&
              prior.get('value') === PRIOR;'''.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
                  'PRIOR', '64' if row['replacement'] else 'undefined') if 'child_mutation' in row else '').replace(
-        'NULL_CHECK', 'ok = ok && set(null) === 0 && read(null) === true;' if kind == 'null' else '').replace(
+        'NULL_CHECK', 'ok = ok && set(null) === 0 && read(null) === true;' if kind == 'null' else
+        'for (const value of [null, false, 0, -0, NaN]) { '
+        'ok = ok && set(value) === 0 && get() === null; }' if kind == 'returned' else '').replace(
         'MISSING', 'true' if kind == 'undefined' else 'false')
 
 
@@ -602,16 +616,26 @@ int main() {
     return 0;
 }
 '''
+    if kind == 'returned':
+        changed = changed.replace('std::function<bool(GET_SIGNATURE)>', 'std::function<Value()>').replace(
+            'auto saved = ctnative::map_get(child, std::string{"value"});', 'auto saved = get();').replace(
+            'auto saved = ctnative::map_get(outer->at(js_num{1}), std::string{"value"});',
+            'auto saved = get();').replace('        POISON_CHECK',
+            '        ctnative::map_delete(child, std::string{"value"}); ctnative::map_clear(child);\n'
+            '        if (first_lifetime.expired() || saved.object->field_76616c7565.value != number + 2) '
+            '{ return 352; }')
     return changed.replace('INITIAL_MAPS', '3' if row.get('replacement') else '2').replace(
         'POISON_BINDING', 'auto poison = table->m_poison;' if 'child_mutation' in row else '').replace(
         'POISON_DROP', 'poison = {};' if 'child_mutation' in row else '').replace(
         'GET_SIGNATURE', 'Value' if kind == 'identity' else '').replace(
-        'GET', 'get(value)' if kind == 'identity' else 'get()').replace(
-        'NUMBER_64', 'true' if kind in {'number', 'truthy', 'identity'} else 'false').replace(
-        'OBJECT_RESULT', 'true' if kind in {'truthy', 'identity'} else 'false').replace(
-        'NUMBER_RESULT', 'true' if kind == 'identity' else '(number != 0)' if kind == 'truthy'
+        'GET', 'get(value)' if kind == 'identity' else
+        'ctnative::object_strict_equal(get(), ctnative::object_truthy(value) ? value : Value{Scalar::null()})'
+        if kind == 'returned' else 'get()').replace(
+        'NUMBER_64', 'true' if kind in {'number', 'truthy', 'identity', 'returned'} else 'false').replace(
+        'OBJECT_RESULT', 'true' if kind in {'truthy', 'identity', 'returned'} else 'false').replace(
+        'NUMBER_RESULT', 'true' if kind in {'identity', 'returned'} else '(number != 0)' if kind == 'truthy'
             else '(number == 64)' if kind == 'number' else 'false').replace(
-        'DISTINCT', '|| read(saved)' if kind == 'identity' else '').replace(
+        'DISTINCT', '|| read(saved)' if kind in {'identity', 'returned'} else '').replace(
         'POISON_CHECK', '''if (set(js_num{64}) != 0 || poison() != 0 ||
             read(js_num{64}) != MISSING || (outer->at(js_num{1}) != child) != REPLACEMENT) { return 348; }
         const auto prior = ctnative::map_get(child, std::string{"value"});
@@ -620,7 +644,11 @@ int main() {
             if row['replacement'] else 'prior.object || prior.scalar.tag != Scalar::kind::undefined')
             if 'child_mutation' in row else '').replace(
         'NULL_CHECK', 'if (set(Scalar::null()) != 0 || !read(Scalar::null())) { return 350; }'
-            if kind == 'null' else '').replace('MISSING', 'true' if kind == 'undefined' else 'false')
+            if kind == 'null' else
+            'for (Value value : {Value{Scalar::null()}, Value{false}, Value{0.0}, Value{-0.0}, '
+            'Value{std::nan("")}}) { if (set(value) != 0 || get().object || '
+            'get().scalar.tag != Scalar::kind::null) { return 351; } }'
+            if kind == 'returned' else '').replace('MISSING', 'true' if kind == 'undefined' else 'false')
 
 
 def nested_map_observer(source, row):
@@ -988,6 +1016,10 @@ def nested_map_preserved(original, output, name, prepared=False):
         targets = (["fn$3", "fn$4", "fn$5"] if 'before' in name else
                    ["fn$5", "fn$3", "fn$4"]) if 'cross_' in name else ["fn$3"]
         arities = [4, 5, 4] if 'cross_' in name else [5]
+        previous = 'previous_' in name
+        if previous:
+            targets = ["fn$4", "fn$3"] if 'before' in name else ["fn$3", "fn$4"]
+            arities = [5, 4]
         entry = output.split("\n  }", 1)[0]
         reads = dict(re.findall(r'(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', entry))
         captures = dict(re.findall(r'(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', entry))
@@ -997,8 +1029,12 @@ def nested_map_preserved(original, output, name, prepared=False):
                 [len(args) for args in actuals] != arities or
                 any(reads.get(args[2]) != args[0] or captures.get(args[3]) != args[2]
                     for args in actuals) or
-                f'ctjs.store_global "trace", {calls[-1][0]}' not in output):
+                f'ctjs.store_global "trace", {calls[0 if previous else -1][0]}' not in output):
             raise RuntimeError(f'{name}: nullable refusal lost a prepared source call edge')
+        if previous or 'cross_mixed_' in name:
+            number = actuals[0 if previous else 1][-1]
+            if f'{number} = ctjs.constant #ctjs.number<4630967054332067840>' not in entry:
+                raise RuntimeError(f'{name}: mixed refusal lost its original Number actual')
         for op in ('ctjs.create_object', 'ctjs.construct', 'ctjs.get_property',
                    'ctjs.set_property', 'ctjs.load_global', 'ctjs.store_global', 'ctjs.compare',
                    'ctjs.unary', 'ctjs.binary', 'ctjs.truthy', 'scf.if', 'scf.yield'):
@@ -1106,6 +1142,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
             if 'child_mutation' in row:
                 replacements.append(('poison() { ' + row['child_mutation'] + ' return 0; }',
                                      'poison() { return 0; }'))
+            if row.get('mixed_child_kind') == 'returned':
+                replacements.append((' || null;', ';'))
         for index, (old, replacement) in enumerate(replacements):
             assert row['source'].count(old) == 1, (name, old)
             blinded = args.work / f'{name}-blinded-{index}.js'
@@ -1135,6 +1173,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
             if not row['admitted']:
                 output = owned.lower(args, ir, label, config, options=options, cleanup=False)
                 methods.census(output, functions, label, admitted=0)
+                if row.get('refusal') and row['refusal'] not in output.read_text():
+                    raise RuntimeError(f'{label}: lost independent mixed carrier refusal')
                 nested_map_preserved(ir.read_text(), output.read_text(), label, row['owner'])
                 if ('ctnative.host_owner_proved = true' in output.read_text()) != row['owner']:
                     raise RuntimeError(f'{label}: nullable ownership outcome changed')
@@ -1157,6 +1197,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                                   options=options, cleanup=row['admitted'])
             methods.census(checked, functions, label, admitted=functions if row['admitted'] else 0)
             if not row['admitted']:
+                if row.get('refusal') and row['refusal'] not in checked.read_text():
+                    raise RuntimeError(f'{label}: forged reports changed mixed carrier refusal')
                 nested_map_preserved(forged.read_text(), checked.read_text(), label, row['owner'])
                 if ('ctnative.host_owner_proved = true' in checked.read_text()) != row['owner']:
                     raise RuntimeError(f'{label}: forged presence changed nullable ownership')
@@ -1207,7 +1249,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                     'nested_map_conditional_unknown_contents', 'nested_map_dynamic_nullable',
                     'nested_map_previous_observed', 'nested_map_dynamic_nullable_observed',
                     'nested_map_caller_payload_fields_observed', 'nested_map_caller_payload_number_last_observed',
-                    'nested_map_mixed_child_identity', 'nested_map_mixed_child_replace'}:
+                    'nested_map_mixed_child_identity', 'nested_map_mixed_child_replace',
+                    'nested_map_mixed_child_returned_identity'}:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
