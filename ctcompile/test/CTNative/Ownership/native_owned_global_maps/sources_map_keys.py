@@ -688,7 +688,8 @@ var trace = host.slot.get({});
     add('evaluated_number', base.replace('host.slot.get({})', 'host.slot.get(({}, 1))'))
     for name, actual in (('root', 'host'), ('table', 'host.slot'), ('field', '{value: 1}'),
                          ('array', '[]')):
-        add(name, base.replace('host.slot.get({})', 'host.slot.get(' + actual + ')'))
+        add(name, base.replace('host.slot.get({})', 'host.slot.get(' + actual + ')'),
+            admitted=name == 'field')
     add('global', base.replace('var trace = host.slot.get({});',
                               'var key = {}; var trace = host.slot.get(key);'), admitted=True)
     named = rows['object_argument_global']['source']
@@ -734,7 +735,7 @@ var trace = host.slot.get({});
         'function consume(value) { return 0; }\n' + aliased.replace(
             'var trace =', 'consume(alias); var trace ='), 5, functions=5)
     add('global_alias_unused', aliased.replace('host.slot.get(alias)', 'host.slot.get(key)'))
-    add('global_field_write', named.replace('var trace =', 'key.value = 1; var trace ='))
+    add('global_field_write', named.replace('var trace =', 'key.value = 1; var trace ='), admitted=True)
     add('global_unknown_consumer',
         'function consume(value) { return 0; }\n' + named.replace(
             'return t.has(e)', 'consume(e); return t.has(e)'), 5, functions=5)
@@ -764,7 +765,8 @@ var trace = host.slot.get({});
     rows['object_argument_scalar_key_payload'].update(
         global_key=True, object_payload=True, payload_only=True)
     retained = rows['object_argument_global_object_payload']['source']
-    add('payload_field', retained.replace('var key = {};', 'var key = {value: 1};'), 5, 1)
+    add('payload_field', retained.replace('var key = {};', 'var key = {value: 1};'), 5, 1, True)
+    rows['object_argument_payload_field'].update(global_key=True, object_payload=True)
     add('payload_field_write', retained.replace('t.set(e, e);', 'e.value = 1; t.set(e, e);'), 5, 1)
     add('payload_cycle', retained.replace('t.set(e, e);', 'e.self = e; t.set(e, e);'), 5, 1)
     add('payload_return', retained.replace('return t.has(e) ? 1 : 0;', 't.has(e); return e;').replace(
@@ -774,6 +776,9 @@ var trace = host.slot.get({});
     add('payload_later_number', retained.replace('var trace = host.slot.get(key);',
         'host.slot.get(key); var trace = host.slot.get(1);'), 6, 1)
     add('payload_later_object', retained.replace('var trace =', 'host.slot.get(1); var trace ='), 6, 1)
+    for name in ('global_later_number', 'global_later_object', 'later_object', 'later_number',
+                 'payload_later_number', 'payload_later_object'):
+        rows['object_argument_' + name]['owner'] = True
     siblings = base.replace('return { get(e) { return t.has(e) ? 1 : 0; } };', '''return {
         get(e) { return t.has(e) ? t.get(e) : 0; },
         set(e, value) { t.set(e, value); return t.get(e); },

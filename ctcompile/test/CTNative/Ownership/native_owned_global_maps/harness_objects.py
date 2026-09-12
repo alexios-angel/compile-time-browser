@@ -563,11 +563,17 @@ def check_object_argument_calls(cpp, name, mode):
     arity = 2 if name == 'object_argument_two_formals' else 1
     signature = 'std::function<js_num(' + ', '.join(
         ['std::shared_ptr<ctnative::identity_object>'] * arity) + ')>'
-    if (not entry or signature not in cpp or 'struct identity_object {};' not in cpp
+    fields = name in {'object_argument_field', 'object_argument_global_field_write',
+                      'object_argument_payload_field'}
+    identity = ('struct identity_object {\n    nullable_scalar field_76616c7565;\n};'
+                if fields else 'struct identity_object {};')
+    field_literal = name in {'object_argument_field', 'object_argument_payload_field'}
+    if (not entry or signature not in cpp or identity not in cpp
             or entry[1].count('ctnative::invoke_callable(')
             != len(re.findall(r'host\.slot\.\w+\(', source))
             or entry[1].count('std::make_shared<ctnative::identity_object>()')
-            != source.count('{}') - 1):
+            != source.count('{}') - 1 + int(field_literal)
+            or fields and entry[1].count('ctnative::object_set_field_76616c7565(') != 1):
         raise RuntimeError(f'{name}/{mode}: changed live object allocations or callable actuals')
     for method in ('has', 'set', 'get', 'delete', 'clear'):
         emitted = len(re.findall(rf'ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
