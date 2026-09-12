@@ -1,4 +1,4 @@
-# RUN: python3 %S/global-maps.py --translate ctjs-translate --opt ctjs-opt --work %t --jobs 2
+# RUN: python3 %S/global-maps.py --translate ctjs-translate --opt ctjs-opt --work %t
 
 # A published setter takes proved primitive or empty-object actuals while the
 # sibling getter retains its zero-argument signature. Saved typed C++ callables

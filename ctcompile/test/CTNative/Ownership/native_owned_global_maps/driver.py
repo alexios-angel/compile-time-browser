@@ -1,6 +1,7 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 
 from .driver_common import *
 from .driver_object_maps import *
@@ -17,7 +18,8 @@ def main():
     parser.add_argument("--node")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--group", choices=("all", "object-keys"), default="all")
-    parser.add_argument("--jobs", type=int, default=1, help="parallel positive programs (default: 1)")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                        help="parallel positive programs (default: available CPUs)")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")

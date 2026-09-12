@@ -66,7 +66,15 @@ if(CTCOMPILE_ENABLE_MLIR)
     # ctest and nothing else.
     add_test(NAME ctcompile_lit
              COMMAND "${CTCOMPILE_LIT}" -v "${CMAKE_CURRENT_BINARY_DIR}")
+    # Lit has its own CPU-sized worker pool. Reserve those CTest slots so
+    # another pool of native compilation tests does not run alongside it.
+    include(ProcessorCount)
+    ProcessorCount(ctcompile_lit_processors)
+    if(ctcompile_lit_processors LESS 1)
+      set(ctcompile_lit_processors 1)
+    endif()
     # Native ownership cases build both C++ layouts under GCC, Clang and sanitizers.
-    set_tests_properties(ctcompile_lit PROPERTIES TIMEOUT 2400)
+    set_tests_properties(ctcompile_lit PROPERTIES
+      TIMEOUT 2400 PROCESSORS ${ctcompile_lit_processors})
   endif()
 endif()
