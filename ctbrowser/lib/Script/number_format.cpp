@@ -388,6 +388,51 @@ double out_of_range_value(std::string_view text) {
     return order > 0 ? std::numeric_limits<double>::infinity() : 0.0;
 }
 
+// --- StrWhiteSpaceChar, over UTF-8 ------------------------------------------
+//
+// StringToNumber (7.1.4.1.1) and StringToBigInt strip 12.2 WhiteSpace and 12.3
+// LineTerminator, and fourteen of those code points are not ASCII: U+00A0,
+// U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF.
+// `core::js_whitespace` is the ASCII six, so `Number("\u00A0 1")` was NaN.
+// The bytes are fixed and no locale enters into it, so the width of a space
+// at `at` - or 0 - is answerable from the encoding alone.
+[[nodiscard]] std::size_t js_space_width(std::string_view s, std::size_t at) {
+    const auto b = [&](std::size_t i) {
+        return at + i < s.size() ? static_cast<unsigned char>(s[at + i]) : 0u;
+    };
+    if (js_whitespace.find(s[at]) != std::string_view::npos) { return 1; }
+    if (b(0) == 0xC2 && b(1) == 0xA0) { return 2; }
+    if (b(0) == 0xE1 && b(1) == 0x9A && b(2) == 0x80) { return 3; }
+    if (b(0) == 0xE2 && b(1) == 0x80 &&
+        ((b(2) >= 0x80 && b(2) <= 0x8A) || b(2) == 0xA8 || b(2) == 0xA9 || b(2) == 0xAF)) {
+        return 3;
+    }
+    if (b(0) == 0xE2 && b(1) == 0x81 && b(2) == 0x9F) { return 3; }
+    if (b(0) == 0xE3 && b(1) == 0x80 && b(2) == 0x80) { return 3; }
+    if (b(0) == 0xEF && b(1) == 0xBB && b(2) == 0xBF) { return 3; }
+    return 0;
+}
+
+std::string_view trim_js_space(std::string_view text) {
+    std::size_t from = 0;
+    while (from < text.size()) {
+        const std::size_t w = js_space_width(text, from);
+        if (w == 0) { break; }
+        from += w;
+    }
+    std::size_t to = text.size();
+    while (to > from) {
+        // A trailing space ends at `to`; its lead byte is 1 to 3 bytes back.
+        std::size_t w = 0;
+        for (std::size_t width = 1; width <= 3 && width <= to - from; ++width) {
+            if (js_space_width(text, to - width) == width) { w = width; }
+        }
+        if (w == 0) { break; }
+        to -= w;
+    }
+    return text.substr(from, to - from);
+}
+
 // --- ToNumber on a string --------------------------------------------------
 //
 // from_chars, never strtod: strtod reads LC_NUMERIC for the decimal separator,
@@ -396,7 +441,7 @@ double out_of_range_value(std::string_view text) {
 // check this needs - ToNumber is all-or-NaN, so anything left over is a
 // failure rather than a prefix.
 double string_to_number(std::string_view text) {
-    const std::string_view body = trim(text, js_whitespace);
+    const std::string_view body = trim_js_space(text);
     if (body.empty()) { return 0; } // "" and "   " are both 0, per StringToNumber
 
     // THE RADIX PREFIXES TAKE NO SIGN. `Number("0x10")` is 16 and
@@ -468,8 +513,8 @@ double string_to_number(std::string_view text) {
 
 double string_to_number_prefix(std::string_view text) {
     std::string_view rest = text;
-    while (!rest.empty() && js_whitespace.find(rest.front()) != std::string_view::npos) {
-        rest.remove_prefix(1);
+    while (const std::size_t w = rest.empty() ? 0 : js_space_width(rest, 0)) {
+        rest.remove_prefix(w);
     }
     if (rest.empty()) { return std::nan(""); } // parseFloat("") is NaN, unlike Number("")
 
