@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/shell/net/url.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -265,6 +267,20 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // `title` is NOT, which is not an omission - the specification says
             // a constructed sheet has no title however it was constructed, and
             // `CSSStyleSheet-constructable.html` asserts exactly that.
+            // `baseURL` is parsed against the document's; one that cannot be
+            // parsed is a NotAllowedError (CSSStyleSheet-constructable-baseURL).
+            // Nothing here resolves a `url()` against it, so it is only checked.
+            if (!args.empty() && args[0].is_object()) {
+                auto * options = static_cast<script::object_object *>(args[0].as_heap());
+                if (const value * base = options->find("baseURL");
+                    base != nullptr && !base->is_undefined()) {
+                    const std::string given = c.to_string(*base);
+                    if (given.find("://") != std::string::npos && !parse_absolute(given).valid) {
+                        throw_dom_exception(c, "NotAllowedError", "baseURL is not a valid URL");
+                        return value::undefined();
+                    }
+                }
+            }
             css_sheets_.push_back(std::make_unique<css_sheet_record>());
             const std::size_t at = css_sheets_.size() - 1;
             css_sheets_[at]->constructed = true;
