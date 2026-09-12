@@ -354,5 +354,29 @@ int main() {
     js_expect("Math.clz32(NaN)", "32");
     js_expect("Math.clz32()", "32");
 
+    // --- Math.sumPrecise: the EXACT sum, rounded once (test262's own cases) --
+    js_expect("Math.sumPrecise([1, 2, 3])", "6");
+    js_expect("Math.sumPrecise([0.1, 0.1])", "0.2");
+    js_expect("Math.sumPrecise([1e308, 1e308, 0.1, 0.1, 1e30, 0.1, -1e30, -1e308, -1e308])",
+              "0.30000000000000004");
+    js_expect("Math.sumPrecise([8.98846567431158e+307, 8.988465674311579e+307, "
+              "-1.7976931348623157e+308])",
+              "9.9792015476736e+291");
+    js_expect("Math.sumPrecise([-1.1442589134409902e+308, 4.494232837155791e+307, "
+              "-1.3482698511467367e+308, 4.494232837155792e+307])",
+              "-1.5936821971565687e+308");
+    js_expect("Math.sumPrecise([8.98846567431158e+307, 8.98846567431158e+307])", "Infinity");
+    js_expect("Math.sumPrecise([5e-324, 5e-324])", "1e-323");
+    js_expect("Math.sumPrecise([Infinity, -Infinity])", "NaN");
+    js_expect("Math.sumPrecise([-Infinity, 1e308])", "-Infinity");
+    js_expect("Object.is(Math.sumPrecise([]), -0)", "true");
+    js_expect("Object.is(Math.sumPrecise([-0, -0]), -0)", "true");
+    js_expect("Object.is(Math.sumPrecise([-0, 0]), 0)", "true");
+    js_expect("Math.sumPrecise([{}])", "THREW");
+    js_expect("Math.sumPrecise()", "THREW");
+    js_expect("(function*(){ yield 1; yield 2; })().constructor && Math.sumPrecise((function*(){ "
+              "yield 1; yield 2; })())",
+              "3");
+
     REPORT("math_basics");
 }

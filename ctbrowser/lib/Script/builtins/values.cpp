@@ -255,6 +255,93 @@ void install_math(context & cx, std::uint64_t seed) {
         }
         return value::number(largest * std::sqrt(total));
     });
+    // 21.3.2.35 Math.sumPrecise: the EXACT sum of an iterable of Numbers,
+    // rounded once. Every double is an integer multiple of 2^-1074, so the sum
+    // is kept as a bigint in that unit - at most ~2100 bits - and rounded to
+    // nearest-even by hand at the end; that is what makes
+    // `[1e308, 1e308, -1e308, -1e308, 0.1, 0.1]` come out 0.2 rather than NaN.
+    // An element that is not a Number is a TypeError, uncoerced, and closes
+    // the iterator (steps 5.b.iii-iv).
+    method(cx, math, "sumPrecise", 1, [](context & c, std::span<value> a) {
+        const value iterator = c.get_iterator(arg_at(a, 0));
+        if (c.throw_pending() || !iterator.is_object_like()) { return value::undefined(); }
+        const context::rooted keep_iterator{c, iterator};
+        const value next = c.lookup_property(iterator, "next");
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto close = [&] {
+            const value ret = c.lookup_property(iterator, "return");
+            if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
+        };
+        enum class state {
+            minus_zero,
+            finite,
+            plus_inf,
+            minus_inf,
+            nan
+        } st = state::minus_zero;
+        bigint total = 0;
+        for (;;) {
+            bool done = false;
+            const value item = c.iterator_step(iterator, next, done);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (done) { break; }
+            if (!item.is_number()) {
+                close();
+                c.throw_error("TypeError", "Math.sumPrecise: every element must be a Number");
+                return value::undefined();
+            }
+            const double x = item.as_number();
+            if (std::isnan(x)) {
+                st = state::nan;
+            } else if (std::isinf(x)) {
+                const state want = x > 0 ? state::plus_inf : state::minus_inf;
+                if (st == state::nan ||
+                    (st != want && st != state::minus_zero && st != state::finite)) {
+                    st = state::nan;
+                } else if (st != state::nan) {
+                    st = want;
+                }
+            } else if (st == state::minus_zero || st == state::finite) {
+                if (x != 0 || !std::signbit(x)) { st = state::finite; }
+                int exp = 0;
+                const double mant = std::frexp(x, &exp); // x = mant * 2^exp, |mant| in [0.5, 1)
+                auto scaled = static_cast<std::int64_t>(std::ldexp(mant, 53));
+                const int shift = exp - 53 + 1074;
+                // A subnormal has fewer than 53 significant bits: the shift is
+                // negative and the low bits it drops are zero.
+                if (shift < 0) {
+                    total += bigint{scaled >> -shift};
+                } else {
+                    total += bigint{scaled} << shift;
+                }
+            }
+        }
+        switch (st) {
+        case state::nan: return value::number(std::nan(""));
+        case state::plus_inf: return value::number(std::numeric_limits<double>::infinity());
+        case state::minus_inf: return value::number(-std::numeric_limits<double>::infinity());
+        case state::minus_zero: return value::number(-0.0);
+        case state::finite: break;
+        }
+        if (total == 0) { return value::number(0.0); }
+        const bool negative = total < 0;
+        bigint magnitude = negative ? -total : total;
+        const auto bits = static_cast<int>(boost::multiprecision::msb(magnitude)) + 1;
+        int shift = std::max(bits - 53, 0);
+        bigint q = magnitude >> shift;
+        if (shift > 0) {
+            const bigint rem = magnitude - (q << shift);
+            const bigint half = bigint{1} << (shift - 1);
+            if (rem > half || (rem == half && (q & 1) != 0)) { q += 1; }
+            if (q == (bigint{1} << 53)) {
+                q >>= 1;
+                ++shift;
+            }
+        }
+        const double out =
+            std::ldexp(static_cast<double>(q.convert_to<std::int64_t>()), shift - 1074);
+        return value::number(negative ? -out : out);
+    });
     // min/max with no arguments are Infinity and -Infinity, which is what makes
     // `Math.max(...list)` on an empty list behave.
     //
