@@ -2,10 +2,10 @@
 // reflection table (lib/Shell/bindings/element/reflection.cpp) that w3c/aria#2484
 // turned from a nullable DOMString into a nullable ENUMERATED attribute:
 // `ariaBusy`, `ariaChecked`, `ariaLive` and the rest. What this pins down is
-// the rule's three defaults per row, each of which may be a keyword or null:
-// the getter folds a keyword, a non-keyword reads the invalid value default,
-// and an absent attribute reads the missing value default - while the content
-// attribute keeps exactly what was written.
+// the rule's two defaults per row: the getter folds a keyword, a non-keyword
+// reads the invalid value default - a keyword or null per row - and an absent
+// attribute is null, while the content attribute keeps exactly what was
+// written.
 //
 // `aria-attribute-reflection-enumerated.tentative.html` is the corpus file, and
 // unit/element_attrs.cpp holds the nullable-DOMString half of the same table.
@@ -38,12 +38,14 @@ void is(const std::string & expression, const std::string & expected) {
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
-void test_the_missing_value_default_is_a_keyword_or_null_per_row() {
+void test_an_absent_attribute_is_null() {
+    // Not the "missing value default" the tentative file's table names for
+    // thirteen rows - see aria_enum_attr for why absent is null on every row.
     is(R"JS((function () {
         var e = document.createElement('div');
         return e.ariaBusy + ',' + e.ariaAtomic + ',' + e.ariaLive + ',' + e.ariaChecked;
     })())JS",
-       "false,null,off,null");
+       "null,null,null,null");
 }
 
 void test_a_keyword_folds_and_anything_else_reads_the_invalid_value_default() {
@@ -74,13 +76,13 @@ void test_null_still_removes_the_attribute() {
         e.ariaHidden = undefined;
         return a + ',' + e.hasAttribute('aria-hidden');
     })())JS",
-       "false,false,false");
+       "false,null,false");
 }
 
 } // namespace
 
 int main() {
-    test_the_missing_value_default_is_a_keyword_or_null_per_row();
+    test_an_absent_attribute_is_null();
     test_a_keyword_folds_and_anything_else_reads_the_invalid_value_default();
     test_null_still_removes_the_attribute();
     REPORT("reflection_aria");

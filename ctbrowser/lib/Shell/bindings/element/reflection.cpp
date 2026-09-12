@@ -47,15 +47,19 @@ constexpr reflected_attribute legacy_text_attr(std::string_view iface, std::stri
 constexpr reflected_attribute aria_attr(std::string_view idl, std::string_view content) {
     return {"Element", idl, content, reflect_type::nullable_dom_string, 0, 0, 0, {}, {}, {}};
 }
-// AN ENUMERATED ARIA ATTRIBUTE: nullable, with keywords and a missing and an
-// invalid value default that may each be null - spelt as an empty string_view,
-// which no keyword is. Twenty of them, from w3c/aria#2484, which is what
-// `aria-attribute-reflection-enumerated.tentative.html` measures.
+// AN ENUMERATED ARIA ATTRIBUTE: nullable, with keywords and an invalid value
+// default that may be null - spelt as an empty string_view, which no keyword
+// is. Twenty of them, from w3c/aria#2484, which is what
+// `aria-attribute-reflection-enumerated.tentative.html` measures. NO MISSING
+// VALUE DEFAULT, deliberately: that file's table names one for thirteen rows
+// (`ariaBusy` absent is "false") and then expects null after `el.ariaBusy =
+// null` has removed the attribute, and the stable aria-attribute-reflection
+// .html expects the null too - so absent is null, and the thirteen "IDL get
+// with DOM attribute unset" subtests are the ones given up.
 constexpr reflected_attribute aria_enum_attr(std::string_view idl, std::string_view content,
-                                             std::string_view keywords, std::string_view missing,
-                                             std::string_view invalid) {
-    return {"Element", idl,     content, reflect_type::nullable_enumerated, 0, 0, 0,
-            keywords,  missing, invalid};
+                                             std::string_view keywords, std::string_view invalid) {
+    return {"Element", idl, content, reflect_type::nullable_enumerated, 0, 0, 0,
+            keywords,  {},  invalid};
 }
 constexpr reflected_attribute url_attr(std::string_view iface, std::string_view idl,
                                        std::string_view content = {}) {
@@ -221,48 +225,47 @@ constexpr reflected_attribute reflection_table[] = {
     // and `aria-element-reflection*.html` is what measures it. The strings are
     // a table and the table is what is affordable.
     aria_attr("role", "role"),
-    aria_enum_attr("ariaAtomic", "aria-atomic", "true false", "", "false"),
-    aria_enum_attr("ariaAutoComplete", "aria-autocomplete", "inline list both none", "none",
-                   "none"),
+    aria_enum_attr("ariaAtomic", "aria-atomic", "true false", "false"),
+    aria_enum_attr("ariaAutoComplete", "aria-autocomplete", "inline list both none", "none"),
     aria_attr("ariaBrailleLabel", "aria-braillelabel"),
     aria_attr("ariaBrailleRoleDescription", "aria-brailleroledescription"),
-    aria_enum_attr("ariaBusy", "aria-busy", "true false", "false", "false"),
-    aria_enum_attr("ariaChecked", "aria-checked", "true false mixed", "", ""),
+    aria_enum_attr("ariaBusy", "aria-busy", "true false", "false"),
+    aria_enum_attr("ariaChecked", "aria-checked", "true false mixed", ""),
     aria_attr("ariaColCount", "aria-colcount"),
     aria_attr("ariaColIndex", "aria-colindex"),
     aria_attr("ariaColIndexText", "aria-colindextext"),
     aria_attr("ariaColSpan", "aria-colspan"),
     aria_enum_attr("ariaCurrent", "aria-current", "page step location date time true false",
-                   "false", "true"),
+                   "true"),
     aria_attr("ariaDescription", "aria-description"),
-    aria_enum_attr("ariaDisabled", "aria-disabled", "true false", "false", "false"),
-    aria_enum_attr("ariaExpanded", "aria-expanded", "true false", "", ""),
-    aria_enum_attr("ariaHasPopup", "aria-haspopup", "true false menu dialog listbox tree grid", "",
+    aria_enum_attr("ariaDisabled", "aria-disabled", "true false", "false"),
+    aria_enum_attr("ariaExpanded", "aria-expanded", "true false", ""),
+    aria_enum_attr("ariaHasPopup", "aria-haspopup", "true false menu dialog listbox tree grid",
                    "false"),
-    aria_enum_attr("ariaHidden", "aria-hidden", "true false", "false", "false"),
-    aria_enum_attr("ariaInvalid", "aria-invalid", "true false spelling grammar", "false", "true"),
+    aria_enum_attr("ariaHidden", "aria-hidden", "true false", "false"),
+    aria_enum_attr("ariaInvalid", "aria-invalid", "true false spelling grammar", "true"),
     aria_attr("ariaKeyShortcuts", "aria-keyshortcuts"),
     aria_attr("ariaLabel", "aria-label"),
     aria_attr("ariaLevel", "aria-level"),
-    aria_enum_attr("ariaLive", "aria-live", "polite assertive off", "off", "off"),
-    aria_enum_attr("ariaModal", "aria-modal", "true false", "false", "false"),
-    aria_enum_attr("ariaMultiLine", "aria-multiline", "true false", "false", "false"),
-    aria_enum_attr("ariaMultiSelectable", "aria-multiselectable", "true false", "false", "false"),
-    aria_enum_attr("ariaOrientation", "aria-orientation", "horizontal vertical", "", ""),
+    aria_enum_attr("ariaLive", "aria-live", "polite assertive off", "off"),
+    aria_enum_attr("ariaModal", "aria-modal", "true false", "false"),
+    aria_enum_attr("ariaMultiLine", "aria-multiline", "true false", "false"),
+    aria_enum_attr("ariaMultiSelectable", "aria-multiselectable", "true false", "false"),
+    aria_enum_attr("ariaOrientation", "aria-orientation", "horizontal vertical", ""),
     aria_attr("ariaPlaceholder", "aria-placeholder"),
     aria_attr("ariaPosInSet", "aria-posinset"),
-    aria_enum_attr("ariaPressed", "aria-pressed", "true false mixed", "", ""),
-    aria_enum_attr("ariaReadOnly", "aria-readonly", "true false", "false", "false"),
+    aria_enum_attr("ariaPressed", "aria-pressed", "true false mixed", ""),
+    aria_enum_attr("ariaReadOnly", "aria-readonly", "true false", "false"),
     aria_attr("ariaRelevant", "aria-relevant"),
-    aria_enum_attr("ariaRequired", "aria-required", "true false", "false", "false"),
+    aria_enum_attr("ariaRequired", "aria-required", "true false", "false"),
     aria_attr("ariaRoleDescription", "aria-roledescription"),
     aria_attr("ariaRowCount", "aria-rowcount"),
     aria_attr("ariaRowIndex", "aria-rowindex"),
     aria_attr("ariaRowIndexText", "aria-rowindextext"),
     aria_attr("ariaRowSpan", "aria-rowspan"),
-    aria_enum_attr("ariaSelected", "aria-selected", "true false", "", ""),
+    aria_enum_attr("ariaSelected", "aria-selected", "true false", ""),
     aria_attr("ariaSetSize", "aria-setsize"),
-    aria_enum_attr("ariaSort", "aria-sort", "ascending descending other none", "none", "none"),
+    aria_enum_attr("ariaSort", "aria-sort", "ascending descending other none", "none"),
     aria_attr("ariaValueMax", "aria-valuemax"),
     aria_attr("ariaValueMin", "aria-valuemin"),
     aria_attr("ariaValueNow", "aria-valuenow"),
@@ -739,14 +742,15 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     case reflect_type::enumerated:
     case reflect_type::nullable_enumerated: {
         const bool nullable = row.type == reflect_type::nullable_enumerated;
-        // A nullable row's missing and invalid value defaults are null when
-        // the table leaves them empty - `crossOrigin` absent is null, and so is
-        // `ariaChecked` set to "maybe" - and a keyword when it names one:
-        // `ariaBusy` absent is "false". No keyword is the empty string.
+        // A nullable row's invalid value default is null when the table leaves
+        // it empty - `ariaChecked` set to "maybe" - and a keyword when it names
+        // one - `crossOrigin` set to "maybe" is "anonymous". No keyword is the
+        // empty string. Absent is null for every nullable row; see
+        // aria_enum_attr for the file that wanted otherwise and then did not.
         const auto keyword_or_null = [&](std::string_view fallback) {
             return nullable && fallback.empty() ? value::null() : cx.string(std::string{fallback});
         };
-        if (!present) { return keyword_or_null(row.missing); }
+        if (!present) { return nullable ? value::null() : cx.string(std::string{row.missing}); }
         // ASCII-INSENSITIVE AND NOTHING WIDER, which is the whole of the
         // corpus's interest in this line: `TRUE` is the keyword `true` and
         // U+212A KELVIN SIGN is not the letter `k`. Every keyword in the table
