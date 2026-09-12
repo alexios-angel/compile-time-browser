@@ -116,7 +116,7 @@ void test_a_frame_has_a_document_of_its_own() {
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
     constexpr const char * xml_frame = "<iframe id=f src=inner.xml></iframe>";
-    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "text/xml");
+    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "application/xml");
     // CASE IS PRESERVED, which is the whole reason the XML front end exists: the
     // HTML tree builder would answer `LEAF` here and lowercase `viewBox`.
     is(xml_frame, "document.getElementById('f').contentDocument.documentElement.tagName", "root");
