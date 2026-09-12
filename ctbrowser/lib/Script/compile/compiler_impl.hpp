@@ -621,7 +621,12 @@ public:
     // private_key_prefix and private_scopes_) - `@#x` alone when none does,
     // which is an early error the checker owns - anything else is itself.
     [[nodiscard]] std::uint16_t member_operand(std::string_view text) {
-        if (!text.starts_with('#')) { return name_operand(std::string{text}); }
+        return name_operand(member_key(text));
+    }
+    // The same resolution, as the KEY STRING - for a definition that goes
+    // through a native rather than an operand.
+    [[nodiscard]] std::string member_key(std::string_view text) {
+        if (!text.starts_with('#')) { return std::string{text}; }
         std::string key = std::string{private_key_prefix} + std::string{text};
         for (std::size_t i = private_scopes_.size(); i-- > 0;) {
             const private_scope & scope = private_scopes_[i];
@@ -630,7 +635,7 @@ public:
                 break;
             }
         }
-        return name_operand(std::move(key));
+        return key;
     }
 
     // Called where a frame's size is finally written, because that is the only

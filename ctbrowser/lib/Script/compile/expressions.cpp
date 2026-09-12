@@ -340,7 +340,13 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t lhs = alloc_reg();
     const std::uint16_t rhs = alloc_reg();
-    compile_expr(n.a, lhs);
+    // `#x in o` (13.10.1): the private name is the KEY the brand is checked
+    // under, spelled as the class body resolved it - never a name to read.
+    if (n.text == "in" && at(n.a).kind == vp::nk::ident && at(n.a).text.starts_with('#')) {
+        emit_string(lhs, member_key(at(n.a).text));
+    } else {
+        compile_expr(n.a, lhs);
+    }
     compile_expr(n.b, rhs);
     const std::string_view o = n.text;
     op code = op::add_generic;
