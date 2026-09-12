@@ -1890,6 +1890,12 @@ private:
     // not one. And a detached copy of one, for cloneNode and importNode.
     [[nodiscard]] attribute attribute_of_object(context & cx, value given);
     [[nodiscard]] value clone_attr_object(context & cx, value given);
+    // `outerHTML`, HTML 13.2 / DOM Parsing: the element serialised WITH its own
+    // tag, and the setter that parses in the parent's context and puts the
+    // result in the element's place. See document/tree_ops.cpp.
+    [[nodiscard]] std::string outer_html(node_id target) const;
+    void set_outer_html(context & cx, node_id target, std::string_view markup);
+    [[nodiscard]] std::string serialize_html(node_id target, bool outer) const;
 };
 
 } // namespace ctbrowser::shell

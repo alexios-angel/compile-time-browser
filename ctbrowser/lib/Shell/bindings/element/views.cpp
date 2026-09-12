@@ -418,6 +418,12 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             set_inner_html(id, arg_string(c, a, 0));
             return value::undefined();
         });
+    tree_property(
+        "outerHTML", [this, id](context & c, std::span<value>) { return c.string(outer_html(id)); },
+        [this, id](context & c, std::span<value> a) {
+            set_outer_html(c, id, arg_string(c, a, 0));
+            return value::undefined();
+        });
     // `data` AND `nodeValue` - the text a Text or Comment node holds, which is
     // the one thing those two nodes are FOR. `childNodes` has handed them out
     // all along and there was no way to read what was in one: `.data` was

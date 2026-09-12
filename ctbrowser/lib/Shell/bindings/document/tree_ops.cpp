@@ -235,6 +235,57 @@ namespace {
 } // namespace
 
 std::string dom_bindings::inner_html(node_id target) const {
+    return serialize_html(target, false);
+}
+
+std::string dom_bindings::outer_html(node_id target) const {
+    return serialize_html(target, true);
+}
+
+// `outerHTML = markup`: the markup parsed as the PARENT's children would be,
+// then swapped in for the element. A parentless element is left alone, and
+// the Document as a parent is a NoModificationAllowedError - there is no
+// context to parse in. ONE `mutated()` for the swap, so an observer sees a
+// single childList record naming both the removed element and what replaced
+// it, which is what MutationObserver-inner-outer.html asserts.
+void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view markup) {
+    node_id parent;
+    {
+        const auto txn = doc_->read();
+        parent = dom_parent(txn, target);
+        if (!parent) { return; }
+        if (txn.kind(parent).value_or(node_kind::element) == node_kind::document) {
+            throw_dom_exception(cx, "NoModificationAllowedError",
+                                "outerHTML: the element's parent is a Document");
+            return;
+        }
+    }
+    document scratch{*atoms_};
+    (void)parse_html(scratch, markup);
+    const auto from = scratch.read();
+    const node_id fragment = doc_->create_fragment();
+    node_id body{};
+    const auto find_body = [&](auto && self, node_id at) -> void {
+        if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) { body = at; }
+        for (const node_id child : from.children(at)) { self(self, child); }
+    };
+    find_body(find_body, from.root());
+    if (body) {
+        for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
+    }
+    std::vector<node_id> moving;
+    {
+        const auto txn = doc_->read();
+        for (const node_id held : txn.children(fragment)) { moving.push_back(held); }
+    }
+    for (const node_id one : moving) { (void)doc_->insert_before(parent, one, target); }
+    (void)doc_->remove_child(target);
+    mutated();
+}
+
+// HTML 13.2, "serializing HTML fragments": the children of `target`, or with
+// `outer` the node itself, as markup.
+std::string dom_bindings::serialize_html(node_id target, bool outer) const {
     const auto txn = doc_->read();
     std::string out;
     const auto write = [&](auto && self, node_id node, bool raw) -> void {
@@ -292,6 +343,10 @@ std::string dom_bindings::inner_html(node_id target) const {
         out += tag;
         out += ">";
     };
+    if (outer) {
+        write(write, target, false);
+        return out;
+    }
     for (const node_id child : txn.children(target)) { write(write, child, false); }
     return out;
 }
