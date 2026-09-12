@@ -88,6 +88,11 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
+    for (const auto & [packed, held] : attr_objects_) {
+        for (const auto & [key, obj] : held) {
+            if (obj != nullptr) { mark(value::object(obj)); }
+        }
+    }
     // Blob.prototype is held here as well as on the global, and the global
     // is what keeps it alive - but a page can delete a global, and a Blob
     // whose prototype was collected stops being `instanceof Blob`.

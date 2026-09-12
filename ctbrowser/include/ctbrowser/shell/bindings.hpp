@@ -1902,6 +1902,13 @@ private:
     [[nodiscard]] bool validate_and_extract_element(context & cx, std::string_view where,
                                                     const std::string & ns,
                                                     const std::string & qualified);
+    // ONE Attr OBJECT PER (element, namespace, local name), so that
+    // `el.getAttributeNode("x") === el.attributes[0]` - an Attr is a node and
+    // a node has an identity. Keyed by pack(element), then by the pair; rooted
+    // by mark_roots like wrappers_; an entry goes when the attribute does.
+    flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
+        attr_objects_;
+    void forget_attr_object(node_id owner, std::string_view ns, std::string_view local);
 };
 
 } // namespace ctbrowser::shell

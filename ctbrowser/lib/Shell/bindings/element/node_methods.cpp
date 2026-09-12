@@ -985,6 +985,11 @@ void dom_bindings::install_node_methods(context & cx) {
         // separate method because `isEqualNode` is not.
         const node_id self = receiver(c);
         const node_id other = handle_of(arg(args, 0));
+        // An Attr has no handle and is itself and nothing else.
+        if (!self) {
+            const value given = arg(args, 0);
+            return value::boolean(given.is_object() && given.bits() == c.current_this().bits());
+        }
         return value::boolean(self && other && self == other);
     });
     method(node, "hasChildNodes", 0, [this](context & c, std::span<value>) {

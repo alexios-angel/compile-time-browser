@@ -75,6 +75,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             c.throw_error("TypeError", "setNamedItem: the argument is not an Attr");
             return value::null();
         }
+        // "SET AN ATTRIBUTE", DOM 4.9.2. An Attr that is some OTHER element's
+        // is an InUseAttributeError; one that is already this element's is
+        // handed straight back.
+        const value owner_now = c.lookup_property(given, "ownerElement");
+        if (const node_id owner = handle_of(owner_now); owner && owner != id) {
+            throw_dom_exception(c, "InUseAttributeError",
+                                "setNamedItem: the attribute belongs to another element");
+            return value::null();
+        }
         const value ns_property = c.lookup_property(given, "namespaceURI");
         const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
         const std::string qualified = c.to_string(c.lookup_property(given, "name"));
@@ -83,17 +92,29 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
         // THE ONE IT REPLACES IS THE RETURN VALUE, and it has to be read before
         // the write: "return oldAttr" is how a page takes an attribute off one
-        // element and puts it on another.
+        // element and puts it on another. Read as the OBJECT it already is,
+        // then detached - and if that object is the argument, nothing moves.
         const std::optional<attribute> replaced = found_by_pair(ns, local);
+        value old = value::null();
+        if (replaced) {
+            old = attribute_object(c, id, *replaced);
+            if (old.bits() == given.bits()) { return given; }
+            forget_attr_object(id, ns, local);
+            bind_attr_object(c, *static_cast<script::object_object *>(old.as_heap()), node_id{},
+                             *replaced);
+        }
         const attribute written{atoms_->intern(qualified), atoms_->intern(ns),
                                 text.is_undefined() ? std::string{} : c.to_string(text)};
         (void)doc_->set_attribute_ns(id, written.ns, written.name, written.value);
         mutated();
         // THE GIVEN Attr IS NOW THIS ELEMENT'S: its ownerElement and its value
         // read through, which is what `attr.lookupNamespaceURI("xml")` after
-        // `setAttributeNode(attr)` depends on.
-        bind_attr_object(c, *static_cast<script::object_object *>(given.as_heap()), id, written);
-        return replaced ? attribute_object(c, id, *replaced) : value::null();
+        // `setAttributeNode(attr)` depends on - and it is the object every
+        // later getAttributeNode answers with.
+        auto * attached = static_cast<script::object_object *>(given.as_heap());
+        bind_attr_object(c, *attached, id, written);
+        attr_objects_[pack(id)].emplace_back(ns + '\0' + std::string{local}, attached);
+        return old;
     };
     map_method("setNamedItem", set_named);
     map_method("setNamedItemNS", set_named);
@@ -107,11 +128,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItem: no attribute called '" + qualified + "'");
             return value::null();
         }
-        // DETACHED, and made AFTER the removal so it cannot be read live: the
-        // Attr this hands back keeps the value it had, and no element.
+        // THE OBJECT THE PAGE MAY HOLD, detached: it keeps the value it had
+        // and loses its element.
+        const value gone = attribute_object(c, id, *held);
         (void)doc_->remove_attribute(id, held->name);
         mutated();
-        return attribute_object(c, node_id{}, *held);
+        forget_attr_object(id, atoms_->text(held->ns), attribute_local_name(*atoms_, *held));
+        bind_attr_object(c, *static_cast<script::object_object *>(gone.as_heap()), node_id{},
+                         *held);
+        return gone;
     });
     map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
         const std::string ns = namespace_argument(c, a, 0);
@@ -122,9 +147,13 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItemNS: no attribute called '" + local + "'");
             return value::null();
         }
+        const value gone = attribute_object(c, id, *held);
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
-        return attribute_object(c, node_id{}, *held);
+        forget_attr_object(id, ns, local);
+        bind_attr_object(c, *static_cast<script::object_object *>(gone.as_heap()), node_id{},
+                         *held);
+        return gone;
     });
     {
         // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are

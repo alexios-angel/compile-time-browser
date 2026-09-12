@@ -126,6 +126,14 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     const std::string local{attribute_local_name(*atoms_, held)};
     const std::string prefix{attribute_prefix(*atoms_, held)};
 
+    // THE ONE THAT ALREADY EXISTS, for an attached attribute: its accessors
+    // read the element, so nothing about it is stale.
+    const std::string key = ns + '\0' + local;
+    if (owner) {
+        for (const auto & [known, obj] : attr_objects_[pack(owner)]) {
+            if (known == key) { return value::object(obj); }
+        }
+    }
     auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
     attr->set("name", cx.string(qualified));
     attr->set("nodeName", cx.string(qualified));
@@ -140,7 +148,15 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
         attr->prototype = proto;
     }
     bind_attr_object(cx, *attr, owner, held);
+    if (owner) { attr_objects_[pack(owner)].emplace_back(key, attr); }
     return value::object(attr);
+}
+
+void dom_bindings::forget_attr_object(node_id owner, std::string_view ns, std::string_view local) {
+    const auto it = attr_objects_.find(pack(owner));
+    if (it == attr_objects_.end()) { return; }
+    const std::string key = std::string{ns} + '\0' + std::string{local};
+    std::erase_if(it->second, [&key](const auto & entry) { return entry.first == key; });
 }
 
 // The half of an Attr that depends on WHERE IT IS: the three spellings of its
@@ -154,6 +170,9 @@ void dom_bindings::bind_attr_object(context & cx, script::object_object & attr, 
     const atom uri = held.ns;
     // A detached Attr's value is ONE string behind the three spellings, so a
     // page that writes `attr.value` and reads `attr.nodeValue` sees the write.
+    // An attached one reads the element - and REMEMBERS what it read, which is
+    // the value it keeps once `removeAttribute` has taken the attribute away
+    // (DOM 4.9.2: a removed Attr keeps its value and loses its element).
     const auto shared = std::make_shared<std::string>(held.value);
     for (const char * spelling : {"value", "nodeValue", "textContent"}) {
         const std::string property{spelling};
@@ -176,29 +195,48 @@ void dom_bindings::bind_attr_object(context & cx, script::object_object & attr, 
             property,
             value::object(cx.allocate<script::native_object>(
                 property,
-                [this, owner, ns, local](context & c, std::span<value>) {
+                [this, owner, ns, local, shared](context & c, std::span<value>) {
                     const auto txn = doc_->read();
                     const attribute * found = txn.find_attribute_ns(owner, ns, local);
-                    return c.string(found == nullptr ? std::string{} : found->value);
+                    if (found != nullptr) { *shared = found->value; }
+                    return c.string(*shared);
                 })),
             value::object(cx.allocate<script::native_object>(
-                property, [this, owner, name, uri](context & c, std::span<value> a) {
-                    (void)doc_->set_attribute_ns(owner, uri, name, arg_string(c, a, 0));
+                property,
+                [this, owner, ns, local, name, uri, shared](context & c, std::span<value> a) {
+                    const std::string text = arg_string(c, a, 0);
+                    if (doc_->read().find_attribute_ns(owner, ns, local) == nullptr) {
+                        *shared = text;
+                        return value::undefined();
+                    }
+                    (void)doc_->set_attribute_ns(owner, uri, name, text);
                     mutated();
                     return value::undefined();
                 })));
     }
+    (void)attr.erase_accessor("ownerElement");
+    (void)attr.erase("ownerElement");
     if (!owner) {
         attr.set("ownerElement", value::null());
         return;
     }
-    // THE WRAPPER THAT ALREADY EXISTS, which is how `attributes_are`'s
-    // `assert_equals(el.attributes[i].ownerElement, el)` can be an identity
-    // comparison at all. `wrap` is the fallback rather than the path: it
-    // REFRESHES the whole element, and going through it once per attribute
-    // would re-measure the box for an answer already in hand.
-    const value already = value_of_wrapper(owner);
-    attr.set("ownerElement", already.is_object() ? already : wrap(cx, owner));
+    // WHILE THE ELEMENT HAS THE ATTRIBUTE, and null once it does not: every
+    // removal path - removeAttribute, a reflected setter writing null, a
+    // token list update - then detaches the Attr without knowing it exists.
+    // `value_of_wrapper` is the path and `wrap` the fallback: wrap REFRESHES
+    // the whole element, and `el.attributes[i].ownerElement === el` is an
+    // identity comparison either way.
+    attr.define_accessor("ownerElement",
+                         value::object(cx.allocate<script::native_object>(
+                             "ownerElement",
+                             [this, owner, ns, local](context & c, std::span<value>) {
+                                 if (doc_->read().find_attribute_ns(owner, ns, local) == nullptr) {
+                                     return value::null();
+                                 }
+                                 const value already = value_of_wrapper(owner);
+                                 return already.is_object() ? already : wrap(c, owner);
+                             })),
+                         value::undefined());
 }
 
 // What an Attr carries, read off the OBJECT - the page may hold one this
@@ -518,11 +556,10 @@ void dom_bindings::install_attribute_methods(context & cx) {
         }
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
-        // THE ARGUMENT IS THE ANSWER, and it is the ARGUMENT that has to be
-        // detached: this is the one removal that hands back an object the page
-        // already holds rather than one made here, so the live accessors on it
-        // are still reading through to an element that no longer has the
-        // attribute. Rebound to nowhere, keeping the value it had.
+        // THE ARGUMENT IS THE ANSWER, rebound to nowhere with the value it had
+        // and forgotten by this element, so a later attribute of the same name
+        // is a new Attr.
+        forget_attr_object(id, ns, local);
         bind_attr_object(c, *static_cast<script::object_object *>(given.as_heap()), node_id{},
                          *held);
         return given;
