@@ -1,7 +1,10 @@
 #pragma once
-// Private to lib/Shell/bindings/document/ - not installed. The namespace
-// URIs, qualified names, and the element, doctype, attribute and XML Name
-// rules shared by the files here; stateless and small, so inline.
+// Private to lib/Shell/bindings/document/ - not installed. The element, doctype
+// and XML Name rules shared by the files here; stateless and small, so inline.
+// The rules element/ shares - qualified names, attribute names, namespace
+// prefixes - are in ../names.hpp, and the namespace URIs are dom/xml.hpp's.
+
+#include "../names.hpp"
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -25,30 +28,6 @@
 #include <vector>
 
 namespace ctbrowser::shell::detail {
-
-// The four namespaces the DOM names by URI. Spelled out rather than derived,
-// because getting one character wrong makes a NamespaceError fire on the valid
-// case and not on the invalid one, and nothing about the failure would say so.
-inline constexpr std::string_view html_namespace = "http://www.w3.org/1999/xhtml";
-inline constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
-inline constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
-inline constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
-
-// The prefix and the local part of a qualified name, split at the FIRST colon.
-// `a:b:c` is prefix `a` and local `b:c`, which is what the DOM says and is not
-// what the XML QName production says - the two disagree and the DOM is what a
-// page is measured against.
-struct qualified_name {
-    std::string_view prefix; // empty when there is no colon
-    std::string_view local;
-    bool has_colon = false;
-};
-
-[[nodiscard]] inline qualified_name split_qualified(std::string_view name) {
-    const std::size_t colon = name.find(':');
-    if (colon == std::string_view::npos) { return qualified_name{{}, name, false}; }
-    return qualified_name{name.substr(0, colon), name.substr(colon + 1), true};
-}
 
 // WHAT A NAME MAY CONTAIN, AND WHY IT IS NOT THE XML `Name` PRODUCTION.
 //
@@ -107,49 +86,9 @@ inline constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
            name.find('\0') == std::string_view::npos;
 }
 
-// A "valid namespace prefix" (DOM 4.9): not empty, no ASCII whitespace,
-// U+0000, `/` or `>`. Looser than an attribute name - `=` is allowed - and
-// with no first-character rule; element/internal.hpp spells the same one.
-[[nodiscard]] inline bool is_valid_namespace_prefix(std::string_view prefix) {
-    return !prefix.empty() && prefix.find_first_of(element_name_breaks) == std::string_view::npos &&
-           prefix.find('\0') == std::string_view::npos;
-}
-
-// AND THE THIRD NAME RULE, WHICH IS AN ATTRIBUTE'S, and it is LOOSER than
-// both of the two above rather than stricter.
-//
-// `dom/nodes/productions.js` is the whole of the evidence and it is blunt:
-//
-//     var invalid_names = [""]
-//     var valid_names = ["x", "X", ":", "a:0", "invalid^Name", "\\", "'",
-//                        '"', "0", "0:a", ":a", "x:y:x", "~"]
-//
-// Thirteen names, every one of which the XML `Name` production refuses, and
-// every one of which `Document-createAttribute.html` and `attributes.html`
-// require to SUCCEED. Only the empty string throws. That is not an oversight
-// in the corpus: an attribute name is measured by whether it survives being
-// written into a start tag and read back, and the HTML tokenizer's attribute
-// name state ends the name on whitespace, `/`, `>` and `=` and on nothing
-// else. `"` and `'` inside one are a parse error the tokenizer explicitly
-// recovers from BY INCLUDING THE CHARACTER, so they round-trip; `~` and `^`
-// are not special at all.
-//
-// Hence a break set of its own rather than a share of `element_name_breaks`,
-// and NO first-character rule: `"0"` and `":a"` are legal attribute names and
-// illegal element names, which is exactly the pair productions.js draws.
-//
-// NOT the rule `valid_attribute_name` in bindings/element/attributes.cpp applies to
-// `setAttribute` and `toggleAttribute` - that one is an ASCII approximation of
-// `Name` and refuses twelve of the thirteen above. The two disagree, this one
-// is the one the corpus scores, and reconciling them is element/attributes.cpp's to do.
-inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
-
-[[nodiscard]] inline bool is_valid_attribute_name(std::string_view name) {
-    // U+0000 is the one character the tokenizer cannot carry: it becomes
-    // U+FFFD, so a name containing one does not read back as itself.
-    return !name.empty() && name.find_first_of(attribute_name_breaks) == std::string_view::npos &&
-           name.find('\0') == std::string_view::npos;
-}
+// The third name rule, an ATTRIBUTE's, is looser than both of the above and
+// lives in ../names.hpp with the namespace-prefix rule, because element/
+// applies the same two.
 
 // One code point out of UTF-8, and the byte count it took. A truncated or
 // malformed sequence yields the lead byte itself, which is not a code point

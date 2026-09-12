@@ -118,9 +118,11 @@ its header, and the header did not change:
   three-line lambda, which each new function re-creates.
 - `ctbrowser/lib/Shell/bindings/document/` — eight, from a 3,071-line `document.cpp`
   (2026-09-08), with `internal.hpp` beside them holding the name productions
-  (namespace URIs, qualified names, the element/doctype/attribute/XML Name
-  rules) every file needs, inline. No function was split and the public header
-  did not change.
+  (the element/doctype/XML Name rules) every file needs, inline; the rules
+  `element/` applies too (qualified names, attribute names, namespace
+  prefixes) are in `bindings/names.hpp`, the one header both directories'
+  `internal.hpp` include, and the namespace URIs are `dom/xml.hpp`'s. No
+  function was split and the public header did not change.
 - `ctbrowser/lib/Shell/bindings/stylesheets/` — six, from a 2,814-line
   `stylesheets.cpp` (2026-09-08). Its 890-line anonymous namespace was the hard
   part: the helpers more than one file needs have external linkage in

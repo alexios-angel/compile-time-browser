@@ -1104,8 +1104,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     {
         const auto txn = doc_->read();
         const std::string ns = namespace_of(id);
-        const bool wanted = txn.kind(id).value_or(node_kind::text) == node_kind::element &&
-                            (ns == html_namespace || ns == svg_namespace || ns == mathml_namespace);
+        const bool wanted =
+            txn.kind(id).value_or(node_kind::text) == node_kind::element &&
+            (ns == xhtml_namespace || ns == svg_namespace || ns == mathml_namespace);
         if (wanted) { install_dataset(cx, obj, id); }
     }
 }

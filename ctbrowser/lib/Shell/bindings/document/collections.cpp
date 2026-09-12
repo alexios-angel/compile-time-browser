@@ -155,7 +155,7 @@ std::string dom_bindings::namespace_of(node_id id) const {
     if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
     switch (doc_->read().element_ns(id)) {
     case node_ns::svg: return std::string{svg_namespace};
-    case node_ns::html: return std::string{html_namespace};
+    case node_ns::html: return std::string{xhtml_namespace};
     // An `other` element with no recorded URI cannot happen - the only thing
     // that makes one records it - but a stale handle resolves to `html` and
     // then to this, and the null namespace is the honest answer for a node that

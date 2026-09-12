@@ -78,7 +78,7 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         const bool prefixed = split_qualified(qualified).has_colon;
-        const node_ns kind = ns == html_namespace  ? node_ns::html
+        const node_ns kind = ns == xhtml_namespace ? node_ns::html
                              : ns == svg_namespace ? node_ns::svg
                                                    : node_ns::other;
         // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag

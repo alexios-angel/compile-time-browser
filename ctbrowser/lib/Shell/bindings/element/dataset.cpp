@@ -63,7 +63,7 @@ enum class dataset_fault : std::uint8_t {
         }
         out.push_back(idl[i]);
     }
-    return valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
+    return is_valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
 }
 
 } // namespace
