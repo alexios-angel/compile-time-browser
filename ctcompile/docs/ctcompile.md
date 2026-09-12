@@ -37,11 +37,12 @@ will run.
 | `--verbose` | report each stage |
 | `-v, --version` | the compiler version and the engine it was built against |
 
-**`--mode`.** `vm` is the semantic reference and the only one that works today.
-`hybrid` (use native code where available) and `aot-only` (require it) both need
-code generation, which arrives with the EmitC backend in Phases 10A–10C; passing
-either is refused with a message naming that phase rather than accepted as a
-flag that changes nothing.
+**`--mode`.** `vm` is the semantic reference and the only one this driver is
+wired to. The native EmitC backend exists and runs whole applications with no
+interpreter (`plans/launcher.md`), but packaging is a copy of `ctrun` with a
+bundle appended, and an AOT application needs a link step this tool does not
+have - so `hybrid` (use native code where available) and `aot-only` (require
+it) are refused by name rather than accepted as a flag that changes nothing.
 
 **There is no `--target`.** Nothing here cross-compiles: packaging is a copy of
 a launcher, so the target is whatever that launcher was built for. Point
@@ -148,8 +149,9 @@ startup and rendering a frame:
 | the packaged executable, run from `/tmp` | **47.3** |
 
 Reading JavaScript is about 40% of a page load and executing it is 1.4%, so this
-is what deleting the parse is worth. **It does not generate native code** — the
-bytecode still runs on the interpreter, and that is Phases 7–12A.
+is what deleting the parse is worth. **This path generates no native code** — the
+bytecode still runs on the interpreter; the native backend and what it runs are
+in `plans/launcher.md`.
 
 ## Gaps
 
