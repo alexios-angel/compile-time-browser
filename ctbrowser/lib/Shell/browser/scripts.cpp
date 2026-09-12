@@ -252,6 +252,19 @@ void browser::run_scripts() {
                 }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
+            // A <template>'s contents are inert: a script in them never ran
+            // and is not `already started`, so a clone of it runs when the
+            // clone connects (HTML 4.12.3). Noted, never run from here.
+            if (const node_id contents = doc_->template_content(at)) {
+                const auto note = [&](auto && again, node_id inert) -> void {
+                    if (txn.tag(inert).value_or(atom{}) == script_tag &&
+                        txn.element_ns(inert) == ctbrowser::node_ns::html) {
+                        bindings_->note_unstarted_script(inert);
+                    }
+                    for (const node_id child : txn.children(inert)) { again(again, child); }
+                };
+                note(note, contents);
+            }
         };
         walk(walk, txn.root());
     }

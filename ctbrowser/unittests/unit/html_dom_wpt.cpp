@@ -232,6 +232,17 @@ void test_an_inserted_script_runs_when_it_connects() {
         CHECK_EQ(logged[0], std::string{"ran:empty"});
         CHECK_EQ(logged[1], std::string{"after"});
     }
+    // A <template>'s script never started, so its CLONE runs when the clone
+    // connects; the parser's own script that ran is started, and its clone
+    // does not (remove-next-sibling-during-replace-with.html).
+    browser cloned{browser_options{400, 300}};
+    cloned.load_html("<!DOCTYPE html><html><body><template id=t><script>window.ran = "
+                     "(window.ran || 0) + 1;</script></template><script id=s>window.also = "
+                     "(window.also || 0) + 1;</script><script>"
+                     "document.body.appendChild(document.getElementById('t').content.cloneNode("
+                     "true)); document.body.appendChild(document.getElementById('s').cloneNode("
+                     "true)); console.log(window.ran + ',' + window.also);</script></body></html>");
+    CHECK_EQ(cloned.bindings().console_output().back(), std::string{"1,1"});
 }
 
 void test_aria_element_references_reflect_both_ways() {

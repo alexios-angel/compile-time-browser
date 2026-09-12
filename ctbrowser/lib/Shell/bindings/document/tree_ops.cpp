@@ -62,6 +62,11 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         for (const attribute & held : from.attributes(source)) {
             (void)doc_->set_attribute(made, held);
         }
+        // HTML 4.12.1's cloning steps: the copy's `already started` is the
+        // source's - a script that never ran clones into one that will.
+        if (std::ranges::find(src.unstarted_scripts_, source) != src.unstarted_scripts_.end()) {
+            note_unstarted_script(made);
+        }
         break;
     }
     if (deep) {
