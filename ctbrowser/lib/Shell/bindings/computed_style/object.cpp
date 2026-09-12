@@ -208,6 +208,18 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     for (const auto & [name, text] : cached->entries) {
         if (style::css::find_property(name) == nullptr) { publish(name); }
     }
+    // THE LEGACY `-webkit-` ALIASES of the properties this table has, as CSSOM
+    // §6.7.2's "webkit-cased attribute" - `webkitTransition` is an attribute
+    // of a computed style, and writing it throws like any other
+    // (computed-style-set-property). They answer as the unprefixed one.
+    for (const std::string_view aliased :
+         {"transition", "transform", "animation", "filter", "box-sizing", "user-select"}) {
+        if (style::css::find_property(aliased) == nullptr) { continue; }
+        const value get = reader(std::string{aliased});
+        const std::string css = "-webkit-" + std::string{aliased};
+        held->define_accessor(css, get, refuse);
+        held->define_accessor(style::css::idl_name_of(css), get, refuse);
+    }
 
     // THE INDEXED GETTER AND `length`, CSSOM §6.7 - as DATA properties, which is
     // also what makes the object ITERABLE. `[...style]` and `for (const p of
