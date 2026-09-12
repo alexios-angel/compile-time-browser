@@ -132,7 +132,6 @@ private:
     void collect_context_contents(const paint_ref & parent, std::span<const rect> clips,
                                   std::size_t & order, context_contents & out) const;
     void emit_stacking_context(const paint_ref & root, display_list & into) const;
-    void emit_positioned(const paint_ref & root, display_list & into) const;
     void emit_normal_backgrounds(const paint_ref & parent, display_list & into) const;
     void emit_normal_contents(const paint_ref & parent, display_list & into) const;
     void emit_normal_atomic(const paint_ref & ref, display_list & into) const;

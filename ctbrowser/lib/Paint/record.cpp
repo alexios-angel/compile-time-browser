@@ -192,28 +192,6 @@ void recorder::emit_normal_atomic(const paint_ref & ref, display_list & into) co
     if (clipped) { into.pop_clip(); }
 }
 
-void recorder::emit_positioned(const paint_ref & root, display_list & into) const {
-    const color text_color = text_color_of(root);
-    emit_decoration(root, text_color, into);
-    if (root.value->box != nullptr && root.value->box->is_replaced()) {
-        emit_own_content(root, text_color, into);
-        return;
-    }
-
-    const bool clipped = clips_children(*root.value);
-    if (clipped) { into.push_clip(box_of(root)); }
-    // Appendix E treats an auto-z positioned box as a pseudo-context for its
-    // ordinary contents only. Positioned descendants and real descendant
-    // contexts were extracted into the nearest real context and are skipped.
-    emit_normal_backgrounds(root, into);
-    if (clipped) { into.pop_clip(); }
-
-    emit_own_content(root, text_color, into);
-    if (clipped) { into.push_clip(box_of(root)); }
-    emit_normal_contents(root, into);
-    if (clipped) { into.pop_clip(); }
-}
-
 void recorder::emit_stacking_context(const paint_ref & root, display_list & into) const {
     // CSS opacity makes the descendants one atomic stacking context. The flat
     // display list still approximates group compositing by folding alpha into
@@ -284,13 +262,16 @@ void recorder::emit_stacking_context(const paint_ref & root, display_list & into
 
     // Auto/zero positioned descendants follow all ordinary content; positive
     // contexts follow those. Equal levels retain tree order and every real
-    // context is emitted atomically.
+    // context is emitted atomically. Appendix E treats an auto-z positioned box
+    // as a pseudo-context for its ordinary contents only - the same shape as an
+    // atomic inline - so its positioned descendants and real descendant
+    // contexts, already extracted into the nearest real context, are skipped.
     for (const zero_entry & entry : zero) {
         push_clips(entry.ref->clips, into);
         if (entry.context) {
             emit_stacking_context(*entry.ref, into);
         } else {
-            emit_positioned(*entry.ref, into);
+            emit_normal_atomic(*entry.ref, into);
         }
         pop_clips(entry.ref->clips.size(), into);
     }
