@@ -37,7 +37,9 @@
             } else if (n < 0x20 || n === 0x7f) {
                 // \u00XX rather than the short forms: fewer cases, same meaning.
                 var hex = n.toString(16);
-                while (hex.length < 4) { hex = "0" + hex; }
+                while (hex.length < 4) {
+                    hex = "0" + hex;
+                }
                 out += "\\u" + hex;
             } else if (n > 0x7e) {
                 // NON-ASCII ESCAPED TOO. The bytes travel through a socket, a
@@ -46,7 +48,9 @@
                 // about an encoding. Test NAMES in WPT contain astral
                 // characters on purpose - dom/nodes is full of them.
                 var hex2 = n.toString(16);
-                while (hex2.length < 4) { hex2 = "0" + hex2; }
+                while (hex2.length < 4) {
+                    hex2 = "0" + hex2;
+                }
                 out += "\\u" + hex2;
             } else {
                 out += c;
@@ -61,12 +65,18 @@
     // this file throw.
     function subtest_status(code) {
         switch (code) {
-        case 0: return "PASS";
-        case 1: return "FAIL";
-        case 2: return "TIMEOUT";
-        case 3: return "NOTRUN";
-        case 4: return "PRECONDITION_FAILED";
-        default: return "UNKNOWN";
+            case 0:
+                return "PASS";
+            case 1:
+                return "FAIL";
+            case 2:
+                return "TIMEOUT";
+            case 3:
+                return "NOTRUN";
+            case 4:
+                return "PRECONDITION_FAILED";
+            default:
+                return "UNKNOWN";
         }
     }
 
@@ -75,11 +85,16 @@
     // errors into passes.
     function harness_status_name(code) {
         switch (code) {
-        case 0: return "OK";
-        case 1: return "ERROR";
-        case 2: return "TIMEOUT";
-        case 3: return "PRECONDITION_FAILED";
-        default: return "UNKNOWN";
+            case 0:
+                return "OK";
+            case 1:
+                return "ERROR";
+            case 2:
+                return "TIMEOUT";
+            case 3:
+                return "PRECONDITION_FAILED";
+            default:
+                return "UNKNOWN";
         }
     }
 
@@ -97,13 +112,13 @@
         var parts = [];
         for (var i = 0; i < tests.length; i++) {
             parts.push('{"name":' + quote(tests[i].name) + ',"status":' +
-                       quote(subtest_status(tests[i].status)) + ',"message":' +
-                       quote(tests[i].message === null || tests[i].message === undefined
-                                 ? ""
-                                 : tests[i].message) + "}");
+                quote(subtest_status(tests[i].status)) + ',"message":' +
+                quote(tests[i].message === null || tests[i].message === undefined ?
+                    "" :
+                    tests[i].message) + "}");
         }
         return '{"harness":' + quote(status_name) + ',"message":' + quote(message || "") +
-               ',"subtests":[' + parts.join(",") + "]}";
+            ',"subtests":[' + parts.join(",") + "]}";
     }
 
     // THE HARNESS ITSELF MAY NOT BE THERE. `<script src="/resources/testharness.js">`
@@ -112,7 +127,7 @@
     // payload, is what stops that arriving as "0 subtests, must be a pass".
     if (typeof add_completion_callback !== "function") {
         publish('{"harness":"ERROR","message":"testharness.js did not load: ' +
-                'add_completion_callback is not defined","subtests":[]}');
+            'add_completion_callback is not defined","subtests":[]}');
         return;
     }
 
@@ -126,7 +141,11 @@
     //
     // The subtests are read from the completion callback's own array, which is
     // the harness's data rather than its rendering.
-    if (typeof setup === "function") { setup({output: false}); }
+    if (typeof setup === "function") {
+        setup({
+            output: false
+        });
+    }
 
     add_completion_callback(function (tests, status) {
         var json;
@@ -137,7 +156,7 @@
             // page would simply never publish and the runner would call it a
             // timeout - blaming the engine for a bug in this file.
             json = '{"harness":"ERROR","message":' + quote("testharnessreport threw: " + e) +
-                   ',"subtests":[]}';
+                ',"subtests":[]}';
         }
         publish(json);
     });

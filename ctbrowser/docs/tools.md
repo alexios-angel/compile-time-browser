@@ -2,7 +2,10 @@
 
 Everything in `tools/`, by job. `format.sh` (clang-format for the C++, black
 for the Python - `pyproject.toml` at the root is black's whole configuration,
-`tools/Brewfile` pins it), `remote-build.sh` and
+`tools/Brewfile` pins it - and js-beautify for the hand-written JS, HTML and
+CSS - `.jsbeautifyrc` at the root, the npm package since brew's Python port
+has no html-beautify; `ctbrowser/test/`, `ctcompile/test/` and `vendor/` are
+test data and stay byte-exact), `remote-build.sh` and
 `fetch-angle.sh` stay at the top level because they are the everyday entry
 points; the rest are foldered:
 

@@ -10,63 +10,67 @@
      from the metrics' bounding box rather than from `width` - drawn as the
      underline beneath the last row. -->
 <html>
-  <head>
+<head>
     <!-- p5.js has identifiers written in Greek - `const π = Math.PI` - so the
          file is UTF-8 and the page has to say so. Without this a browser
          guesses, and one that guesses Latin-1 splits that identifier in two
          and rejects the whole bundle with a syntax error 7,000 lines in. -->
     <meta charset="utf-8">
-    <script>var IS_MINIFIED = true;</script>
-    <script src="../../vendor/p5/p5.js"></script>
-  </head>
-  <body style="margin:0;background:#ffffff">
     <script>
-      new p5(function (s) {
-        s.setup = function () {
-          s.createCanvas(320, 240);
-          s.noLoop();
-        };
-        s.draw = function () {
-          s.background(245);
-          s.textSize(26);
+        var IS_MINIFIED = true;
 
-          const x = 160;
-          // The reference each row is aligned to.
-          s.stroke(200, 60, 60);
-          s.strokeWeight(1);
-          s.line(x, 10, x, 190);
-          s.noStroke();
-          s.fill(30);
-
-          s.textAlign(s.LEFT);
-          s.text('LEFT', x, 45);
-          s.textAlign(s.CENTER);
-          s.text('CENTER', x, 90);
-          s.textAlign(s.RIGHT);
-          s.text('RIGHT', x, 135);
-
-          // The baselines, against a common line.
-          s.stroke(60, 120, 200);
-          s.line(20, 180, 300, 180);
-          s.noStroke();
-          s.textSize(18);
-          s.textAlign(s.LEFT, s.TOP);
-          s.text('TOP', 24, 180);
-          s.textAlign(s.LEFT, s.CENTER);
-          s.text('MID', 110, 180);
-          s.textAlign(s.LEFT, s.BOTTOM);
-          s.text('BOT', 200, 180);
-
-          // p5's own measurement of a run, drawn as the run's own underline.
-          s.textSize(22);
-          s.textAlign(s.LEFT, s.BASELINE);
-          const label = 'measured';
-          s.text(label, 24, 220);
-          s.stroke(40, 150, 80);
-          s.strokeWeight(2);
-          s.line(24, 226, 24 + s.textWidth(label), 226);
-        };
-      });
     </script>
-  </body>
+    <script src="../../vendor/p5/p5.js"></script>
+</head>
+<body style="margin:0;background:#ffffff">
+    <script>
+        new p5(function (s) {
+            s.setup = function () {
+                s.createCanvas(320, 240);
+                s.noLoop();
+            };
+            s.draw = function () {
+                s.background(245);
+                s.textSize(26);
+
+                const x = 160;
+                // The reference each row is aligned to.
+                s.stroke(200, 60, 60);
+                s.strokeWeight(1);
+                s.line(x, 10, x, 190);
+                s.noStroke();
+                s.fill(30);
+
+                s.textAlign(s.LEFT);
+                s.text('LEFT', x, 45);
+                s.textAlign(s.CENTER);
+                s.text('CENTER', x, 90);
+                s.textAlign(s.RIGHT);
+                s.text('RIGHT', x, 135);
+
+                // The baselines, against a common line.
+                s.stroke(60, 120, 200);
+                s.line(20, 180, 300, 180);
+                s.noStroke();
+                s.textSize(18);
+                s.textAlign(s.LEFT, s.TOP);
+                s.text('TOP', 24, 180);
+                s.textAlign(s.LEFT, s.CENTER);
+                s.text('MID', 110, 180);
+                s.textAlign(s.LEFT, s.BOTTOM);
+                s.text('BOT', 200, 180);
+
+                // p5's own measurement of a run, drawn as the run's own underline.
+                s.textSize(22);
+                s.textAlign(s.LEFT, s.BASELINE);
+                const label = 'measured';
+                s.text(label, 24, 220);
+                s.stroke(40, 150, 80);
+                s.strokeWeight(2);
+                s.line(24, 226, 24 + s.textWidth(label), 226);
+            };
+        });
+
+    </script>
+</body>
 </html>

@@ -53,8 +53,10 @@ global `operator new` in a static archive can be silently dropped by link order.
 
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
-gate - clang-format for the C++ and black (`brew install black`,
-`pyproject.toml`) for every tracked `.py` - **run it yourself before committing**. There is NO CI: the GitHub
+gate - clang-format for the C++, black (`brew install black`, `pyproject.toml`)
+for every tracked `.py`, and js-beautify (`npm install -g js-beautify`,
+`.jsbeautifyrc`) for the hand-written JS/HTML/CSS, test data excluded -
+**run it yourself before committing**. There is NO CI: the GitHub
 workflow was deleted on 2026-08-08, so nothing checks formatting or runs the
 suite unless a person does. `tools/remote-build.sh` is the whole gate now.
 
