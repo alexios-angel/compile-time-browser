@@ -14,6 +14,94 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-12
+
+**585 of the 1,090 tests that ran, which is 53.7%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `b570bd29` on
+`ctbrowser-wpt` — browser gate 186/186 at that commit. The day started at
+491/1,090 = 45.0%, re-measured at `0e5cfbef` (identical to the 09-10 row, so
+the audit cuts moved nothing).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 175 | 117 | 14 | 0 | 3 | 53 | 362 |
+| `dom/events` | 71 | 14 | 4 | 0 | 2 | 85 | 176 |
+| `html/dom` | 113 | 95 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 115 | 67 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 111 | 132 | 10 | 0 | 18 | 237 | 508 |
+| **total** | **585** | **425** | **38** | **0** | **42** | **542** | **1,632** |
+
+Subtests: **25,113 PASS, 7,537 FAIL, 212 NOTRUN, 26 TIMEOUT.**
+
+(The run's JSON also holds 14 files under `html/dom/agentE-tmp/` that an agent
+left in the corpus checkout on the devbox while iterating on the reflection
+tests; they are excluded above and the corpus checkout was cleaned.)
+
+Against `0e5cfbef`: **+94 files, +7,522 passing subtests**, FAIL subtests
+8,455 -> 7,537. Per suite: `dom/nodes` +38, `css/cssom` +29, `css/css-values`
++21, `html/dom` +4, `dom/events` +3. What did it, from the PASS-set diff and
+the agents' own measurements (each on its own branch, against this JSON):
+
+- `dom/nodes` +38: every Node/Element/ParentNode/ChildNode operation now lives
+  on its interface PROTOTYPE, one native per realm with a `length`
+  (`c49750cc`: `Node-constants`, `Element-remove`, `Document-createComment`,
+  `*-getElementsByTagNameNS`, +3,700 subtests in `ParentNode-querySelector-All`,
+  `Element-classlist`, `Element-matches` alone); the three missing node kinds —
+  DocumentType, ProcessingInstruction, CDATASection — with the Document node
+  owning its child list and cross-document `adoptNode`/insert-adopts
+  (`055be4c3`, `d42d36ab`: `Document-doctype`, `DocumentType-literal`,
+  `Document-createProcessingInstruction`, `Node-nodeName`, `Node-nodeValue`,
+  `Node-isEqualNode`, `Document-adoptNode`, `rootNode`, `Node-parentElement`);
+  the Selectors engine — An+B in every spelling, `[ns|attr]`, `:has()`,
+  `:scope`, `:root` as the tree root only, a scoped `querySelectorAll` that
+  walks only its subtree (`87f64857`: `ParentNode-querySelector-scope`,
+  `ParentNode-querySelectors-namespaces`, `Element-matches-namespaced-elements`);
+  and the VM: a throw crossing a native is thrown ONCE at the native's call
+  site (`0f2a3ca8` — `ParentNode-append`, `ParentNode-prepend`, and every
+  assertion inside a `forEach` callback inside `test()`).
+- `css/cssom` +29: `@import` expanded into the cascade with `CSSImportRule`,
+  shadow-root `sheet`/`styleSheets`/`adoptedStyleSheets`,
+  `HTMLLinkElement.disabled` (all seven files), preferred style-sheet sets,
+  `@namespace`, `selectorText` against the sheet's namespaces, constructable
+  sheets' `baseURL`/`replace` (`6c68232b`), and value serialisation
+  (`serialize-values`, `dd255c38`).
+- `css/css-values` +21: `progress()`/`hypot()`/`exp()`/`round()` families,
+  signed zero, a percentage basis for used-value math, `lh`/`rlh`/`ic`/`rex`
+  /`rch` and the viewport-variant units, computed `transform` as `matrix()`,
+  the `border-radius` shorthand (`dd255c38`); the three `url-font-*-negative`
+  files and `viewport-units-css2-001` moved with the VM's `null.x` TypeError
+  and the promise-reaction fence.
+- `html/dom` +4 and `dom/events` +3: `EventListener-handleEvent`, the two
+  `scroll*` event files, `stream-append-*` and `src-buffered` — the VM changes
+  (async functions rejecting, throws through natives), not shell work.
+
+**PASS -> FAIL, three, all unmaskings:** `css/cssom/property-accessors` (a
+setter's throw parked past the test body's own `try` — fixed in `849c7b50`,
+after this measurement); `html/dom/historical` (`document.all` and
+`HashChangeEvent` are absent and reading through them is now an honest
+TypeError rather than a silent undefined); `css/css-values/animations/
+line-height-lh-transition` (`20lh` resolves now, and with no transitions the
+end value is read). **TIMEOUT 33 -> 38**: `MutationObserver-textContent`,
+`MutationObserver-cross-realm-callback-report-exception` and the six
+`*-invalidation` files for the new font-relative units (`cap`, `rcap`, `rch`,
+`rex`, `ric`, `rlh`) — each a restyle that does not converge, named for the
+next agent in `lib/Style`.
+
+### What is standing in front of the most tests now
+
+| what | where | counted |
+|---|---|---:|
+| reading an UNRESOLVABLE name is `undefined`, not a ReferenceError — `get_global`'s row says may_throw 0, so it is an ABI change made together with Codex (proposed in the journal) | `bytecode_opcodes.def`, `run_loop.cpp` | 1,211 test262 files; every WPT `assert_throws_js(ReferenceError, ...)` |
+| no strict mode at all: writes to non-writable properties, `this` in a plain call, `arguments` — the `-s.js` tests | the compiler (directive prologue) and `store_property` | ~1,000 test262 files across `-s` and `gs` |
+| `for await` / the sync `for-of` do not close the iterator on `break`/throw; `.return()` runs no `finally` | `compile_for_await`, `generator_resume` | ~100 test262 files |
+| the six `*-invalidation` TIMEOUTs above — a font-relative unit change on the root does not settle | `lib/Style` restyle | 6 files |
+| `document.all`, `HashChangeEvent`, `MutationObserver` on `textContent` | `bindings/document`, `events/`, `mutation.cpp` | `historical`, 2 TIMEOUTs |
+| the wrapper of an adopted node is not the wrapper that was adopted (identity across `adoptNode`) | `document/tree_ops.cpp` `node_from` | named in `unit/second_document` |
+| `:target`; null-namespace elements (`|div`); `#eof\` tokenisation | `lib/Shell/page` -> engine hook; the DOM/bindings; `css/token.cpp` | 6 + 16 + 2 subtests |
+| shorthand reconstruction in `el.style`/`cssText`; `@property` registration (`typed_arithmetic_cycle`) | `element/declarations.cpp`; `css/parser.cpp` | the `shorthand-*` files, 1 subtest |
+| the seven `reflection-*.html` files: they now finish (collection inside a turn) and report; the remaining rows are the table in `element/reflection.cpp` | `element/reflection.cpp` | thousands of subtests, an agent is on it |
+
 ## The baseline — 2026-09-10, late
 
 **491 of the 1,090 tests that ran, which is 45.0%**, and still not one crash.

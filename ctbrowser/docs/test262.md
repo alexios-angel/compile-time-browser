@@ -780,9 +780,44 @@ causes, counted from the JSON and named by what they are:
 | 959 | Expected a TypeError | strict-mode writes to non-writable properties (no strict mode), destructuring `null`, private-name access on the wrong object |
 | 466 | descriptor should not be enumerable | class methods were enumerable |
 
-## What moved on 2026-09-12 (to be re-measured at the day's tip)
+## Measured at `b570bd29` — 2026-09-12, after the day's runtime work
 
-Landed on `ctbrowser-wpt`, each named so the next run's delta can be read:
+Same instrument, same corpus, engine at `b570bd29` (browser gate 186/186):
+
+| area | tests | pass at `0e5cfbef` | pass at `b570bd29` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 8,754 | **12,624** | +3,870 | 11,075 | 0 / 6 |
+| `built-ins/Array` | 3,082 | 1,983 | **2,161** | +178 | 886 | 6 / 11 |
+| `built-ins/Object` | 3,411 | 2,459 | **2,519** | +60 | 890 | 0 |
+| `built-ins/Number` | 340 | 260 | **261** | +1 | 78 | 0 |
+| `built-ins/Math` | 327 | 274 | **275** | +1 | 52 | 0 |
+| `built-ins/String` | 1,223 | 860 | **893** | +33 | 327 | 0 |
+| `built-ins/Boolean` | 51 | 27 | **28** | +1 | 22 | 0 |
+| `built-ins/Function` | 509 | 231 | **286** | +55 | 210 | 0 |
+| `built-ins/Error` | 93 | 35 | **31** | -4 | 57 | 0 |
+| `built-ins/JSON` | 165 | 98 | **101** | +3 | 62 | 0 |
+| **total** | **32,927** | **14,981** | **19,179** | **+4,198** | | |
+
+**19,179 of the 32,927 (58.2%), from 45.5% in the morning.** `test/language`
+carries it: the async generators (+~1,500 files by themselves), `for await`
+(+~1,000), the class member attributes (+~450), the escaped identifiers
+(+~800 class files), `eval`, the null/undefined TypeError. The 6 `host` rows in
+`test/language` are `harness/deepEqual.js` (a parse error at 125:60 — the
+harness uses syntax the parser lacks) and `harness/testTypedArray.js`, and
+the 11 in `Array` are the same `testTypedArray.js` prelude, which now
+reaches a property of an undefined constructor (`BigInt64Array`) and throws
+where it used to read undefined. **`built-ins/Error` -4**: the four
+`prototype/stack/setter-*` files read `.set` off a descriptor the engine does
+not have (no `Error.prototype.stack` accessor) — a silent undefined until
+today, an honest TypeError now. The 6 crashes in `Array` are two
+`fromAsync` files running the box to `std::bad_alloc` under the 2 GB cap —
+fixed after this run (`30dcd8e0`: a constructor `this` with an unsettable
+element, and an array-like of length 2^53) — and the four `slice` files that
+were crashing before.
+
+## What moved on 2026-09-12
+
+Landed on `ctbrowser-wpt`, each named so the delta above can be read:
 
 - **async functions reject** instead of throwing synchronously or faulting
   after an `await` (the compiler's fence; `05ece7bc..ad116e42`).
