@@ -46,26 +46,27 @@ constexpr std::array<std::string_view, 27> math_functions{
 // known until substitution, so the declaration survives parsing with its tokens
 // intact. CSS Variables 1 §3.
 //
-// `attr()` IS IN THIS LIST AND NOT IN `performed_substitutions` below, and the
-// split is the point: it is a substitution in the specification, so a
-// declaration using one is not a syntax error and must survive - and this engine
-// does not PERFORM it, so `CSS.supports` has to say no.
-//
 // `random-item()`, `inherit()` and `ident()` are three more of them, and naming
 // them is what makes `width: random-item(auto, 1px, 2px, 3px)` and
 // `left: inherit(--x)` declarations rather than lengths the grammar could not
 // read. CSS Values 5 calls all of these ARBITRARY SUBSTITUTION FUNCTIONS: their
 // specified value is their arguments and what those arguments mean is decided
 // later. `substitution_grammar_ok` below is the part that IS decided now.
+//
+// EVERY ONE OF THEM IS PERFORMED - css/substitute.cpp runs all six - so
+// `CSS.supports` says yes to all six. `attr()` and `random-item()` were kept
+// off the performed list from before the engine could substitute them, and
+// random-item-computed guards twenty-three assertions on the answer.
 constexpr std::array<std::string_view, 6> substitution_functions{"var",         "env",     "attr",
                                                                  "random-item", "inherit", "ident"};
-constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
+constexpr std::array<std::string_view, 6> performed_substitutions{
+    "var", "env", "attr", "random-item", "inherit", "ident"};
 
-// THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
+// THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the
 // substitutions. `CSS.supports` is "would this declaration be dropped", and a
 // value calling a function nothing here can evaluate WOULD be - so answering
-// true for `attr()`, `random-item()` or `type(*)` is a lie: five `css/css-values`
-// files guard their assertions on `CSS.supports`.
+// true for `type(*)` or `image-set()` is a lie: five `css/css-values` files
+// guard their assertions on `CSS.supports`.
 //
 // AN ALLOW-LIST rather than a list of what is missing, because the missing set
 // is the whole of CSS Values 5 and grows every month while this one grows only

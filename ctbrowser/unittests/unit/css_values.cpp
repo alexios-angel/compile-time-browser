@@ -596,9 +596,12 @@ void test_important_and_the_empty_value() {
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
     // `el.style` still stores the value. Five `css/css-values` files guard
     // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // running and failing when this said yes to everything. The substitution
+    // functions are all performed now, so all six are support.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(supports_declaration("font-family", "random-item(auto, serif)"));
+    CHECK(supports_declaration("color", "random-item(fixed 0, rgb(1, 0, 0), rgb(0, 1, 0))"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
@@ -616,7 +619,8 @@ void test_important_and_the_empty_value() {
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
     CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
     // An empty value is reported invalid because both callers want the same
     // thing from it - store nothing - and `el.style.width = ""` is how a page
     // removes a declaration.
@@ -697,19 +701,17 @@ void test_css_supports() {
     // `!important` is part of a <declaration> and does not change the answer.
     CHECK(supports_condition("(width: 10px !important)"));
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
-    // `el.style` still stores the value. Five `css/css-values` files guard
-    // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // `el.style` still stores the value; a substitution it performs is.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
-    CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
 }
 
 // AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
