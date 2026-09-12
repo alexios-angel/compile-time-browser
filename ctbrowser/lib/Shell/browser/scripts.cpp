@@ -56,7 +56,19 @@ void browser::run_scripts() {
     // write. `styles` is the honest level: the only callers are script mutating
     // the document, and every one of them can change which rules match.
     bindings_ = std::make_unique<dom_bindings>(
-        *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::styles); },
+        *doc_, atoms_, canvases_, forms_,
+        [this] {
+            mark(dirty::styles);
+            // HTML's focus fixup rule: a focused element that left the
+            // document is focused no more, and the next `focus()` on it is a
+            // real one - moveBefore/fire-focusin-focusout.html re-focuses a
+            // button its cleanup re-appended. Silently, as the rule says.
+            if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved())) {
+                (void)set_state(focused_, state_focus, false);
+                focused_ = node_id{};
+                bindings_->observe_focus(focused_);
+            }
+        },
         [this](node_id id) { (void)focus(id); });
     // The back end a caller chose before the page loaded - see
     // browser::prefer_angle_webgl. Applied here because this is the first
@@ -234,6 +246,11 @@ void browser::run_scripts() {
                 *into += '\n';
                 if (is_module) {
                     modules.emplace_back(std::move(module_text), std::move(specifier));
+                } else if (src.empty() && classic_text.size() <= 1) {
+                    // EMPTY, SO NEVER STARTED: "prepare" returns before it sets
+                    // the flag when there is no src and no source text, and
+                    // text a script appends later runs it (HTML 4.12.1).
+                    bindings_->note_unstarted_script(at);
                 } else if (classic_text.find_first_not_of(" \t\r\n\f\v") != std::string::npos) {
                     // A CONTRIBUTION THAT IS ONLY THE NEWLINES THIS WALK ADDED
                     // IS NOT A SCRIPT, and it is dropped HERE rather than
@@ -247,6 +264,19 @@ void browser::run_scripts() {
                 }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
+            // A <template>'s contents are inert: a script in them never ran
+            // and is not `already started`, so a clone of it runs when the
+            // clone connects (HTML 4.12.3). Noted, never run from here.
+            if (const node_id contents = doc_->template_content(at)) {
+                const auto note = [&](auto && again, node_id inert) -> void {
+                    if (txn.tag(inert).value_or(atom{}) == script_tag &&
+                        txn.element_ns(inert) == ctbrowser::node_ns::html) {
+                        bindings_->note_unstarted_script(inert);
+                    }
+                    for (const node_id child : txn.children(inert)) { again(again, child); }
+                };
+                note(note, contents);
+            }
         };
         walk(walk, txn.root());
     }
@@ -317,12 +347,14 @@ void browser::run_scripts() {
         classic_programs_.push_back(std::move(compiled));
         bindings_->set_current_script(classic_elements[index]);
         const script::run_result result = script_->run(running);
-        bindings_->set_current_script(node_id{});
         // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
         // belongs to a document that is being replaced, so it does not run -
         // and the replacement happens in load_html, after this returns, rather
         // than under our feet.
-        if (pending_load_) { return; }
+        if (pending_load_) {
+            bindings_->set_current_script(node_id{});
+            return;
+        }
         // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
         // runs. That is what the specification says: a script that throws or
         // does not parse is that script's problem.
@@ -351,8 +383,13 @@ void browser::run_scripts() {
             // page is a HANDOFF, and the page cannot be handed anything while
             // the VM is still refusing to run its code.
             (void)script_->take_error();
+            // STILL THE CURRENT SCRIPT while its error is reported: a
+            // window.onerror reading document.currentScript sees the script
+            // that failed - to parse, too - which Document.currentScript.html
+            // asserts by id.
             (void)bindings_->dispatch_error(result.error);
         }
+        bindings_->set_current_script(node_id{});
     }
 
     // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own

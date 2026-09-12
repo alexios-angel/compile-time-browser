@@ -116,7 +116,7 @@ void test_a_frame_has_a_document_of_its_own() {
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
     constexpr const char * xml_frame = "<iframe id=f src=inner.xml></iframe>";
-    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "text/xml");
+    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "application/xml");
     // CASE IS PRESERVED, which is the whole reason the XML front end exists: the
     // HTML tree builder would answer `LEAF` here and lowercase `viewBox`.
     is(xml_frame, "document.getElementById('f').contentDocument.documentElement.tagName", "root");
@@ -134,9 +134,10 @@ void test_a_frame_with_no_source_is_still_a_document() {
        "text/html");
 }
 
-void test_a_source_that_resolves_to_nothing_reports_error() {
+void test_a_source_that_resolves_to_nothing_still_loads() {
     // A Document is still there - a browser shows its own error page in one -
-    // and it is `error` rather than `load` that the element hears.
+    // and it is `load` that the element hears, as for a 404: an iframe's
+    // navigation always ends in a document. An EMPTY file is the same case.
     is("<iframe id=f src=missing.html></iframe>",
        "document.getElementById('f').contentDocument.body.tagName", "BODY");
     // The listener is registered by a script in the markup, which runs while
@@ -145,10 +146,10 @@ void test_a_source_that_resolves_to_nothing_reports_error() {
     // is one moment too late for this.
     is("<iframe id=f src=missing.html></iframe><script>"
        "document.getElementById('f').addEventListener('error', function () {"
-       " window.__saw = (window.__saw || 0) + 1; });"
+       " window.__saw = 'error'; });"
        "document.getElementById('f').addEventListener('load', function () {"
        " window.__saw = 'load'; });</script>",
-       "String(window.__saw)", "1");
+       "String(window.__saw)", "load");
 }
 
 void test_the_load_event_arrives_at_the_frame() {
@@ -210,6 +211,18 @@ void test_a_named_frame_is_its_window_on_the_window() {
        "true,inner,IFRAME");
 }
 
+void test_the_frames_are_indexed_on_the_window() {
+    // Node-removeChild.html reads `frames[0].document`: `frames` is the
+    // window, `length` counts the child navigables, and an index is one's
+    // WindowProxy - and not a property past the end.
+    is("<iframe src=inner.html></iframe>",
+       "(frames === window) + ',' + window.length + ',' + frames[0].document.title + ','"
+       " + (0 in window) + ',' + (1 in window) + ',' + String(window[1]) + ','"
+       " + (new frames[0].Text('x').ownerDocument === frames[0].document) + ','"
+       " + (new frames[0].Comment('x') instanceof Comment)",
+       "true,1,inner,true,false,undefined,true,true");
+}
+
 void test_an_inserted_frame_has_its_window_at_once() {
     // event-global-extra.window.js: `appendChild(iframe).contentWindow` in the
     // same statement, before any tick has reconciled the frames.
@@ -225,12 +238,13 @@ void test_an_inserted_frame_has_its_window_at_once() {
 } // namespace
 
 int main() {
+    test_the_frames_are_indexed_on_the_window();
     test_an_inserted_frame_has_its_window_at_once();
     test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
     test_a_frame_with_no_source_is_still_a_document();
-    test_a_source_that_resolves_to_nothing_reports_error();
+    test_a_source_that_resolves_to_nothing_still_loads();
     test_the_load_event_arrives_at_the_frame();
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();

@@ -1417,6 +1417,7 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
     install_element_reflection(cx);
     install_double_reflection(cx);
     install_option_reflection(cx);
+    install_form_owner(cx);
     std::vector<script::object_object *> hosts;
     for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
         if (const value proto = interface_prototype(interface); proto.is_object()) {
@@ -1438,6 +1439,16 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
         for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
     };
     for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
+    // The Document's own (HTML 3.1.3 and the pointer lock, fullscreen and
+    // selection specifications): null on the prototype until assigned.
+    if (const value proto = interface_prototype("Document"); proto.is_object()) {
+        auto * document_proto = static_cast<script::object_object *>(proto.as_heap());
+        for (const std::string_view attribute :
+             {"onreadystatechange", "onvisibilitychange", "onselectionchange", "onfullscreenchange",
+              "onfullscreenerror", "onpointerlockchange", "onpointerlockerror"}) {
+            install(attribute, std::span<script::object_object *>{&document_proto, 1});
+        }
+    }
     // WindowEventHandlers is the window's alone here - see the note above on
     // what forwarding would need.
     if (auto * window = window_object()) {

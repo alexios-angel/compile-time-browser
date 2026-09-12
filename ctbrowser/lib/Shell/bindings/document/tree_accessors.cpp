@@ -65,6 +65,13 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
         "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
         [this](context & c, std::span<value> a) {
             const node_id fresh = handle_of(arg(a, 0));
+            // WebIDL first: anything that is not an element at all - a string
+            // - fails the HTMLElement? conversion with a TypeError; null and
+            // an element that is not a body pass it and fail HTML's check.
+            if (!fresh && !arg(a, 0).is_null()) {
+                c.throw_error("TypeError", "document.body must be an HTMLElement or null");
+                return value::undefined();
+            }
             std::string local;
             if (fresh) {
                 const auto txn = doc_->read();
@@ -83,8 +90,22 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             }
             const node_id existing = body_element();
             if (existing == fresh) { return value::undefined(); }
-            const node_id root = first_html_element("html");
-            if (!root) { return value::undefined(); }
+            // "If there is no document element, throw a HierarchyRequestError";
+            // otherwise the new body goes on the document element WHATEVER it
+            // is called - Document.body.html appends one to a <test> root.
+            node_id root;
+            {
+                const auto txn = doc_->read();
+                root = txn.root();
+                if (txn.kind(root).value_or(node_kind::document) != node_kind::element) {
+                    root = node_id{};
+                }
+            }
+            if (!root) {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "document.body: there is no document element");
+                return value::undefined();
+            }
             // Insert before the old body and then remove it, rather than the
             // other way round: removing first leaves the document with no body
             // for the length of one statement, and `mutated()` is not the only
@@ -98,6 +119,65 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             mutated();
             return value::undefined();
         });
+
+    // `document.dir`, HTML 3.2.6.4: the html element's `dir`, limited to the
+    // three known values on the way out and written verbatim on the way in -
+    // "" when there is no html element. reflection-sections.html's 68
+    // #document.dir rows and document-dir.html.
+    const auto html_element = [this]() -> node_id {
+        const auto txn = doc_->read();
+        const node_id root = txn.root();
+        if (txn.element_ns(root) != node_ns::html) { return node_id{}; }
+        return txn.local_name(root) == "html" ? root : node_id{};
+    };
+    accessor(
+        "dir",
+        [this, html_element](context & c, std::span<value>) {
+            const node_id html = html_element();
+            if (!html) { return c.string(""); }
+            const std::string folded =
+                ascii_lower_copy(doc_->read().attribute_value(html, atoms_->intern("dir")));
+            return c.string(folded == "ltr" || folded == "rtl" || folded == "auto" ? folded
+                                                                                   : std::string{});
+        },
+        [this, html_element](context & c, std::span<value> a) {
+            if (const node_id html = html_element()) {
+                (void)doc_->set_attribute(html, atoms_->intern("dir"), arg_string(c, a, 0));
+                mutated();
+            }
+            return value::undefined();
+        });
+    // The five body colours, HTML 16.3 (obsolete, and 190 rows of
+    // reflection-sections.html): [LegacyNullToEmptyString] DOMStrings over
+    // the BODY element's attribute, "" when the body element is not a body.
+    for (const auto & [idl, content] :
+         {std::pair{"fgColor", "text"}, std::pair{"bgColor", "bgcolor"},
+          std::pair{"linkColor", "link"}, std::pair{"vlinkColor", "vlink"},
+          std::pair{"alinkColor", "alink"}}) {
+        const auto body = [this]() -> node_id {
+            const node_id found = body_element();
+            if (!found) { return found; }
+            return doc_->read().local_name(found) == "body" ? found : node_id{};
+        };
+        const std::string attribute{content};
+        accessor(
+            idl,
+            [this, body, attribute](context & c, std::span<value>) {
+                const node_id element = body();
+                if (!element) { return c.string(""); }
+                return c.string(
+                    std::string{doc_->read().attribute_value(element, atoms_->intern(attribute))});
+            },
+            [this, body, attribute](context & c, std::span<value> a) {
+                if (const node_id element = body()) {
+                    (void)doc_->set_attribute(element, atoms_->intern(attribute),
+                                              arg(a, 0).is_null() ? std::string{}
+                                                                  : arg_string(c, a, 0));
+                    mutated();
+                }
+                return value::undefined();
+            });
+    }
 
     // `document.title`, HTML 4.2.2, both halves.
     //
@@ -124,24 +204,30 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             if (!title) {
                 const auto txn = doc_->read();
                 const node_id root = txn.root();
-                const bool svg_root = txn.element_ns(root) == node_ns::svg;
-                // AN SVG ROOT AND A ROOT THAT IS NEITHER BOTH DO NOTHING
-                // HERE, for two different reasons. HTML says a non-HTML,
-                // non-SVG root makes the setter return - an XML document's
-                // title is not settable at all. An SVG root should get a new
-                // SVG `<title>` prepended, and does not yet: this engine can
-                // only be handed an SVG-rooted document by `createDocument`,
-                // which is absent, so there is no way to reach the branch and
-                // no way to test one written blind.
-                if (svg_root || txn.element_ns(root) != node_ns::html) {
+                const bool svg_root =
+                    txn.element_ns(root) == node_ns::svg && txn.local_name(root) == "svg";
+                // HTML 4.2.2: an SVG root gets a new SVG `<title>` as its
+                // FIRST child (document.title-09.html); an HTML document gets
+                // one appended to its head; any other root makes the setter
+                // return - an XML document's title is not settable at all.
+                if (!svg_root && txn.element_ns(root) != node_ns::html) {
                     return value::undefined();
                 }
-                const node_id head = first_html_element("head");
-                if (!head) { return value::undefined(); }
-                const node_id made = doc_->create_element(atoms_->intern_lower("title"));
-                if (!made) { return value::undefined(); }
-                (void)doc_->append_child(head, made);
-                title = made;
+                if (svg_root) {
+                    const node_id made =
+                        doc_->create_element(atoms_->intern("title"), node_ns::svg);
+                    if (!made) { return value::undefined(); }
+                    const std::span<const node_id> kids = txn.children(root);
+                    (void)doc_->insert_before(root, made, kids.empty() ? node_id{} : kids.front());
+                    title = made;
+                } else {
+                    const node_id head = first_html_element("head");
+                    if (!head) { return value::undefined(); }
+                    const node_id made = doc_->create_element(atoms_->intern_lower("title"));
+                    if (!made) { return value::undefined(); }
+                    (void)doc_->append_child(head, made);
+                    title = made;
+                }
             }
             set_text(title, wanted);
             return value::undefined();
@@ -155,12 +241,25 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // `links` and `anchors` are the two that are NOT simply a tag: a link is an
     // `<a>` or an `<area>` THAT HAS AN href, and an anchor is an `<a>` that has
     // a `name`. `document.links.html` builds both kinds and counts.
+    // [SameObject]: `document.embeds === document.embeds`, which
+    // document.embeds-document.plugins-01.html reads as "constant". Kept in
+    // named_collections_ under a key no element name can spell.
     const auto collection = [&](std::string name, std::function<std::vector<node_id>()> members) {
         doc.define_accessor(name,
                             value::object(cx.allocate<script::native_object>(
                                 name,
-                                [this, members](context & c, std::span<value>) {
-                                    return make_live_collection(c, members);
+                                [this, name, members](context & c, std::span<value>) {
+                                    // `plugins` "must return the same object as
+                                    // embeds", HTML 3.1.5.
+                                    const std::string key =
+                                        '\0' + (name == "plugins" ? std::string{"embeds"} : name);
+                                    if (const auto held = named_collections_.find(key);
+                                        held != named_collections_.end()) {
+                                        return held->second;
+                                    }
+                                    const value made = make_live_collection(c, members);
+                                    named_collections_.emplace(key, made);
+                                    return made;
                                 })),
                             value::undefined());
     };

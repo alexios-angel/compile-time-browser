@@ -692,20 +692,19 @@ void test_width_and_height_reflect_the_type_their_interface_names() {
 // --- what a page may NOT overwrite -----------------------------------------
 
 void test_a_same_object_attribute_survives_being_assigned_to() {
-    // `[SameObject] readonly attribute DOMTokenList classList`, and it was a
-    // writable data property: `e.classList = 'foo'` REPLACED the token list
-    // with the string, so every `add`, `contains` and `item` after it was a
-    // method on a primitive. `Element-classlist.html` is 1,420 subtests and its
-    // FIRST case is that assignment - so the whole file ran against a string.
-    // A write to a readonly property is discarded in sloppy mode, silently,
-    // which is what the corpus expects.
+    // `[SameObject, PutForwards=value] readonly attribute DOMTokenList
+    // classList`, and it was a writable data property: `e.classList = 'foo'`
+    // REPLACED the token list with the string, so every `add`, `contains` and
+    // `item` after it was a method on a primitive. `Element-classlist.html` is
+    // 1,420 subtests and its FIRST case is that assignment. The write FORWARDS
+    // to the list's `value` - the class becomes "foo" - and the list stays.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.classList = 'foo';
         e.classList.add('bar');
         return (typeof e.classList) + ',' + e.className + ',' + e.classList.contains('bar');
     })())JS",
-       "object,bar,true");
+       "object,foo bar,true");
     // `style` is readonly TOO, and its write has a meaning:
     // [PutForwards=cssText] sends `el.style = "color: red"` to
     // `el.style.cssText`, and the cssText setter writes the SERIALISED block

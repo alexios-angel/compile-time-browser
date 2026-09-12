@@ -111,7 +111,9 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
     const std::string lowered = ascii_lower_copy(ext);
     if (lowered == "html" || lowered == "htm") { return "text/html"; }
     if (lowered == "xhtml" || lowered == "xht") { return "application/xhtml+xml"; }
-    if (lowered == "xml") { return "text/xml"; }
+    // application/xml, not text/xml: it is what a server sends for `.xml`
+    // and what Document-createElement-namespace.html reads back.
+    if (lowered == "xml") { return "application/xml"; }
     if (lowered == "svg") { return "image/svg+xml"; }
     if (lowered == "txt") { return "text/plain"; }
     if (lowered == "css") { return "text/css"; }
@@ -200,7 +202,13 @@ void dom_bindings::install_frame_accessors(context & cx) {
 // asynchronous in the way a page can observe.
 void dom_bindings::load_frame(context & cx, node_id id, const std::string & src) {
     std::string bytes;
-    bool ok = src.empty(); // an empty src is about:blank, and that always loads
+    // A FRAME ALWAYS LOADS. A navigation that fetched nothing - a 404, and
+    // here a name the registry cannot find - still ends in a document (the
+    // error page), and `load` fires at the element for it; `error` is not an
+    // iframe's event. An EMPTY file is the same as a missing one to the
+    // registry, and Document-createElement-namespace.html's empty.html waits
+    // on exactly that load.
+    bool ok = true;
     std::string type{mime_for_path(src)};
     if (!src.empty()) {
         // A data: URL CARRIES ITS OWN TYPE, and it is the only source here that
@@ -213,7 +221,6 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         }
         if (assets_ != nullptr) {
             const std::vector<std::byte> loaded = assets_->load(src);
-            ok = !loaded.empty();
             bytes.resize(loaded.size());
             for (std::size_t i = 0; i < loaded.size(); ++i) {
                 bytes[i] = static_cast<char>(loaded[i]);
@@ -243,14 +250,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // about:blank IS A DOCUMENT WITH A BODY, and it has to be: `frame
     // .contentDocument.body` is how a page writes into a scratch frame, and
     // parsing the empty string leaves a tree with no body at all to write to.
-    if (src.empty()) {
-        (void)parse_html(fresh, "<html><head></head><body></body></html>");
-    } else if (!ok) {
-        // A `src` that resolved to nothing still leaves a Document behind - a
-        // browser shows its error page in one - and `error` rather than `load`
-        // is what the element hears about it.
+    if (src.empty() || (bytes.empty() && !is_xml)) {
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     } else if (is_xml) {
+        // An EMPTY .xml is still an XML document - createElement in it makes
+        // a null-namespace element, which Document-createElement-namespace
+        // .html's empty.xml row reads.
         // The XML front end, which is why `.xhtml` is worth having at all: the
         // HTML tree builder lowercases `viewBox` and hands `<![CDATA[` to the
         // JavaScript engine. A frame whose XML is not well-formed keeps the
@@ -326,6 +331,19 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
     frame_window->set("frameElement", element);
+    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
+    // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's
+    // cross-global case), so those three are the frame's own natives over the
+    // shared prototypes - `instanceof Text` still holds, `ownerDocument` is
+    // the frame's.
+    for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
+        auto * ctor = cx.allocate<script::native_object>(
+            name, [&made, name](context & c, std::span<value> args) {
+                return made.construct_node_interface(c, name, args);
+            });
+        ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
+        frame_window->set(name, value::object(ctor));
+    }
     frame_window->set("self", frame_view);
     frame_window->set("window", frame_view);
     frame_window->set("length", value::number(0));

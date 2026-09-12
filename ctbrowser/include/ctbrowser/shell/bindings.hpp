@@ -1966,6 +1966,50 @@ public:
         if (flush_layout_) { flush_layout_(); }
     }
     std::function<void()> flush_layout_;
+    // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"
+    // runs when one becomes connected (the post-connection steps) or, once
+    // connected, when its children change; `mutated()` is where both are
+    // noticed. A parser-inserted <script> that was empty is in here too - it
+    // was never started, so text appended later runs it. See document/entry.cpp.
+    std::vector<node_id> unstarted_scripts_;
+    void run_inserted_scripts();
+
+public:
+    void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
+
+private:
+    // DOM 5, Range - bindings/document/range.cpp. `Range` the global and its
+    // prototype, and the document's `createRange`.
+    void install_range(context & cx);
+    [[nodiscard]] value create_range(context & cx);
+    // WRAPPERS THAT LEFT WITH THEIR NODE. `node_from` adopts by cloning into
+    // the other document's slab and rebinding the page's wrapper to the copy;
+    // the node here keeps its slot, and anything that finds it again by id -
+    // `template.content` after the contents were adopted - must answer the
+    // same object. Marked as roots; see wrap().
+    flat_map<std::uint64_t, script::object_object *> adopted_away_;
+    // `document.x` for several elements of one name is ONE live collection
+    // per name (HTML 3.1.5), so `document.a === document.a` even as the
+    // members change. Marked as roots.
+    flat_map<std::string, value> named_collections_;
+    // THE NODES A MUTATION MOVED: connected before the insertion that is
+    // being announced, so their subtrees were REMOVED for a moment - which is
+    // when HTML's focus fixup rule runs, and `is_connected` afterwards cannot
+    // see. moveBefore does not go through this, and keeps focus. Cleared
+    // after the hook.
+    std::vector<node_id> moved_by_mutation_;
+    // Set while `moveBefore` moves: DOM's "move" runs neither the removing
+    // nor the insertion side effects an ordinary insertion has - no focus
+    // fixup, and no script "children changed" steps (script-move-before.html).
+    bool moving_ = false;
+
+public:
+    [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }
+
+private:
+    // `form` on the form-associated elements - the form owner, HTML 4.10.17.3.
+    // element/reflection.cpp.
+    void install_form_owner(context & cx);
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

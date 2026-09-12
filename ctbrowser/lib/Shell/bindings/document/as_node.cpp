@@ -243,7 +243,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         // `length` IS READ: dom/nodes' pre-insertion-validation-hierarchy.js
         // passes an explicit null reference child only when the method says it
         // takes two arguments, and the two that do have to say so.
-        if (name == "insertBefore" || name == "replaceChild") {
+        if (name == "insertBefore" || name == "replaceChild" || name == "moveBefore") {
             native->define("length", value::number(2), script::attr_configurable);
         }
         doc.set(name, value::object(native));
@@ -540,8 +540,11 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         bool doctype_at_or_after_before = false;
         bool passed_before = false;
         for (const node_id child : txn.children(txn.document_node())) {
-            if (child == ignore) { continue; }
+            // The reference is reached even when it is the child being
+            // replaced: replaceChild passes the same node as both, and "a
+            // doctype following child" is asked relative to it.
             if (child == before) { passed_before = true; }
+            if (child == ignore) { continue; }
             const node_kind held = txn.kind(child).value_or(node_kind::comment);
             if (held == node_kind::element) {
                 has_element = true;
@@ -690,7 +693,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                    return value::undefined();
                }
                if (!may_become_a_child(c, given, before, node)) { return value::undefined(); }
+               moving_ = true;
                if (before != node) { place(node, before); }
+               moving_ = false;
                return given;
            });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {

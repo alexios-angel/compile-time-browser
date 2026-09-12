@@ -32,7 +32,11 @@ void dom_bindings::install_document(context & cx) {
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
-        if (!doc_->xml()) { return create_html_element(c, name); }
+        if (!doc_->xml()) {
+            const value made = create_html_element(c, name);
+            if (ascii_iequals(name, "script")) { note_unstarted_script(handle_of(made)); }
+            return made;
+        }
         // AN XML DOCUMENT, DOM 4.5 steps 3-5: the local name is kept AS
         // WRITTEN - only an HTML document lowercases - and the namespace is
         // HTML only when the content type is application/xhtml+xml, null
@@ -81,6 +85,9 @@ void dom_bindings::install_document(context & cx) {
         // here, and folding it would lose the case an XML document depends on.
         const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);
         if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        if (kind == node_ns::html && split_qualified(qualified).local == "script") {
+            note_unstarted_script(made);
+        }
         return wrap(c, made);
     });
     // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on
@@ -305,35 +312,60 @@ void dom_bindings::install_document(context & cx) {
     // NOTHING HERE SETS THE INITIALISED FLAG. Leaving it clear is the point:
     // an event `createEvent` made and `initEvent` has not touched must not be
     // dispatchable.
+    method("createRange", [this](context & c, std::span<value>) { return create_range(c); });
     method("createEvent", [this](context & c, std::span<value> args) {
         const std::string want = ascii_lower_copy(arg_string(c, args, 0));
         struct alias {
             std::string_view spelling;
             std::string_view interface_name;
         };
-        // The DOM's own table, lowercased, minus every entry this engine has no
-        // interface object for - those fall through to Event, which is what
-        // they would get anyway.
-        static constexpr alias aliases[] = {
-            {"customevent", "CustomEvent"}, {"uievent", "UIEvent"},
-            {"uievents", "UIEvent"},        {"mouseevent", "MouseEvent"},
-            {"mouseevents", "MouseEvent"},  {"keyboardevent", "KeyboardEvent"},
-            {"focusevent", "FocusEvent"},   {"compositionevent", "CompositionEvent"},
-            {"wheelevent", "WheelEvent"}};
+        // The DOM's own table (4.5 createEvent), lowercased. An entry this
+        // engine has no interface object for is a plain Event, which is what
+        // it would get anyway; a name OUTSIDE the table is a NotSupportedError
+        // - and `touchevent` is outside it while the legacy touch APIs are
+        // not exposed (`'ontouchstart' in document` is false), which
+        // Document-createEvent-touchevent.window.js checks.
+        static constexpr alias aliases[] = {{"beforeunloadevent", "BeforeUnloadEvent"},
+                                            {"compositionevent", "CompositionEvent"},
+                                            {"customevent", "CustomEvent"},
+                                            {"devicemotionevent", "DeviceMotionEvent"},
+                                            {"deviceorientationevent", "DeviceOrientationEvent"},
+                                            {"dragevent", "DragEvent"},
+                                            {"event", "Event"},
+                                            {"events", "Event"},
+                                            {"focusevent", "FocusEvent"},
+                                            {"hashchangeevent", "HashChangeEvent"},
+                                            {"htmlevents", "Event"},
+                                            {"keyboardevent", "KeyboardEvent"},
+                                            {"messageevent", "MessageEvent"},
+                                            {"mouseevent", "MouseEvent"},
+                                            {"mouseevents", "MouseEvent"},
+                                            {"storageevent", "StorageEvent"},
+                                            {"svgevents", "Event"},
+                                            {"textevent", "TextEvent"},
+                                            {"uievent", "UIEvent"},
+                                            {"uievents", "UIEvent"},
+                                            {"wheelevent", "WheelEvent"}};
+        const alias * found = nullptr;
+        for (const alias & entry : aliases) {
+            if (entry.spelling == want) { found = &entry; }
+        }
+        if (found == nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "createEvent: '" + arg_string(c, args, 0) +
+                                    "' is not an event interface");
+            return value::undefined();
+        }
         value made = make_event_object(c, "", false, false);
         auto * object = static_cast<script::object_object *>(made.as_heap());
-        for (const alias & entry : aliases) {
-            if (entry.spelling != want) { continue; }
-            const value interface_object = c.global(entry.interface_name);
-            if (!interface_object.is_undefined()) {
-                const value proto = c.lookup_property(interface_object, "prototype");
-                if (proto.is_object()) { object->prototype = proto; }
-            }
-            // `detail` is the one member a CustomEvent has that an Event does
-            // not, and it reads null until `initCustomEvent` gives it one.
-            if (want == "customevent") { object->set("detail", value::null()); }
-            break;
+        const value interface_object = c.global(found->interface_name);
+        if (!interface_object.is_undefined()) {
+            const value proto = c.lookup_property(interface_object, "prototype");
+            if (proto.is_object()) { object->prototype = proto; }
         }
+        // `detail` is the one member a CustomEvent has that an Event does
+        // not, and it reads null until `initCustomEvent` gives it one.
+        if (want == "customevent") { object->set("detail", value::null()); }
         return made;
     });
     // `document.dispatchEvent`. The document is a stop on every path, so this
@@ -635,6 +667,27 @@ void dom_bindings::install_document(context & cx) {
         doc->set("fonts", value::object(fonts));
     }
 
+    // `document.lastModified`, HTML 3.1.3: with no Last-Modified header to
+    // read, the current time in the user's local timezone, "MM/DD/YYYY
+    // hh:mm:ss" - document-lastModified-01.html matches the shape.
+    doc->define_accessor("lastModified",
+                         value::object(cx.allocate<script::native_object>(
+                             "lastModified",
+                             [](context & c, std::span<value>) {
+                                 const std::time_t now = std::time(nullptr);
+                                 std::tm local{};
+#ifdef _WIN32
+                                 localtime_s(&local, &now);
+#else
+                                 localtime_r(&now, &local);
+#endif
+                                 char text[32];
+                                 const std::size_t n =
+                                     std::strftime(text, sizeof text, "%m/%d/%Y %H:%M:%S", &local);
+                                 return c.string(std::string{text, n});
+                             })),
+                         value::undefined());
+
     // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
     //
     // An accessor rather than a string, because the API is not a string: READING
@@ -649,43 +702,89 @@ void dom_bindings::install_document(context & cx) {
     // same reasoning localStorage is written down with, and the same answer: a
     // test that leaves state behind fails the next run for reasons that have
     // nothing to do with the code.
+    // COOKIE-AVERSE (HTML 7.7.2): a document with no browsing context - one a
+    // page made - reads "" and ignores writes. The page's own document keeps
+    // the jar whatever its URL: a page served from a file here stands in for
+    // one served over http, and document-cookie.html expects a cookie to
+    // stick.
+    const auto cookie_averse = [this] { return secondary_; };
     doc->define_accessor(
         "cookie",
-        value::object(cx.allocate<script::native_object>("cookie",
-                                                         [this](context & c, std::span<value>) {
-                                                             std::string out;
-                                                             for (const auto & [name, item] :
-                                                                  cookies_) {
-                                                                 if (!out.empty()) { out += "; "; }
-                                                                 out += name + "=" + item;
-                                                             }
-                                                             return c.string(out);
-                                                         })),
-        value::object(cx.allocate<script::native_object>("cookie", [this](context & c,
-                                                                          std::span<value> a) {
-            const std::string written = arg_string(c, a, 0);
-            // Everything after the first `;` is attributes - path, expires,
-            // SameSite - and none of them mean anything without an origin
-            // or a clock to expire against.
-            const std::string pair = written.substr(0, written.find(';'));
-            const std::size_t equals = pair.find('=');
-            if (equals == std::string::npos) { return value::undefined(); }
-            const auto trim = [](std::string_view piece) {
-                const std::size_t first = piece.find_first_not_of(" \t");
-                if (first == std::string_view::npos) { return std::string{}; }
-                return std::string{piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
-            };
-            const std::string name = trim(pair.substr(0, equals));
-            const std::string item = trim(pair.substr(equals + 1));
-            for (auto & [key, held] : cookies_) {
-                if (key == name) {
-                    held = item;
+        value::object(cx.allocate<script::native_object>(
+            "cookie",
+            [this, cookie_averse](context & c, std::span<value>) {
+                if (cookie_averse()) { return c.string(""); }
+                std::string out;
+                for (const auto & [name, item] : cookies_) {
+                    if (!out.empty()) { out += "; "; }
+                    out += name + "=" + item;
+                }
+                return c.string(out);
+            })),
+        value::object(cx.allocate<script::native_object>(
+            "cookie", [this, cookie_averse](context & c, std::span<value> a) {
+                if (cookie_averse()) { return value::undefined(); }
+                const std::string written = arg_string(c, a, 0);
+                // Everything after the first `;` is attributes - path, expires,
+                // SameSite - and none of them mean anything without an origin
+                // or a clock to expire against.
+                const std::string pair = written.substr(0, written.find(';'));
+                const std::size_t equals = pair.find('=');
+                if (equals == std::string::npos) { return value::undefined(); }
+                const auto trim = [](std::string_view piece) {
+                    const std::size_t first = piece.find_first_not_of(" \t");
+                    if (first == std::string_view::npos) { return std::string{}; }
+                    return std::string{
+                        piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
+                };
+                const std::string name = trim(pair.substr(0, equals));
+                const std::string item = trim(pair.substr(equals + 1));
+                // A CONTROL CHARACTER REFUSES THE WHOLE WRITE (RFC 6265
+                // 5.2): `b=A\0Z` leaves the jar as it was.
+                for (const char each : pair) {
+                    if (static_cast<unsigned char>(each) < 0x20 || each == 0x7f) {
+                        return value::undefined();
+                    }
+                }
+                // `expires` IN THE PAST - or a max-age of zero - is how a
+                // page DELETES a cookie, and the one attribute that means
+                // something without an origin. The date is RFC 1123's, read
+                // in the C locale.
+                bool expired = false;
+                for (std::size_t at = written.find(';'); at != std::string::npos;
+                     at = written.find(';', at + 1)) {
+                    const std::string attribute =
+                        trim(written.substr(at + 1, written.find(';', at + 1) - at - 1));
+                    const std::string lowered = ascii_lower_copy(attribute);
+                    if (lowered.starts_with("max-age=")) {
+                        expired = std::atoll(attribute.c_str() + 8) <= 0;
+                    } else if (lowered.starts_with("expires=")) {
+                        std::tm when{};
+                        std::istringstream in{attribute.substr(8)};
+                        in.imbue(std::locale::classic());
+                        in >> std::get_time(&when, "%a, %d %b %Y %H:%M:%S");
+                        if (!in.fail()) {
+#ifdef _WIN32
+                            expired = _mkgmtime(&when) <= std::time(nullptr);
+#else
+                                             expired = timegm(&when) <= std::time(nullptr);
+#endif
+                        }
+                    }
+                }
+                if (expired) {
+                    std::erase_if(cookies_, [&](const auto & held) { return held.first == name; });
                     return value::undefined();
                 }
-            }
-            cookies_.emplace_back(name, item);
-            return value::undefined();
-        })));
+                for (auto & [key, held] : cookies_) {
+                    if (key == name) {
+                        held = item;
+                        return value::undefined();
+                    }
+                }
+                cookies_.emplace_back(name, item);
+                return value::undefined();
+            })));
 
     // `document.implementation`, WHICH DID NOT EXIST.
     //

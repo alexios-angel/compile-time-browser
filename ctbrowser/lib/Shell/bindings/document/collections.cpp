@@ -68,6 +68,13 @@ std::vector<node_id> dom_bindings::all_html_elements(std::string_view local) {
 node_id dom_bindings::body_element() {
     const auto txn = doc_->read();
     const node_id root = txn.root();
+    // "The body element of a document is the first child of the HTML ELEMENT
+    // that is either a body element or a frameset element" - a root that is
+    // not an html element in the HTML namespace has no body, whatever its
+    // children are called (Document.body.html).
+    if (txn.element_ns(root) != node_ns::html || txn.local_name(root) != "html") {
+        return node_id{};
+    }
     for (const node_id child : txn.children(root)) {
         if (txn.element_ns(child) != node_ns::html) { continue; }
         const auto tagged = txn.tag(child);

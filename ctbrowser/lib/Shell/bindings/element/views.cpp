@@ -508,6 +508,12 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const node_id top = root_of_tree(txn, id, true);
         return value::boolean(is_document_root(txn, top));
     });
+    // `baseURI` is the node document's base URL, DOM 4.4 - the document's
+    // address here, there being no <base>; the same string `document.baseURI`
+    // answers, connected or not. Node-baseURI.html compares the two.
+    navigate("baseURI", [this](context & c, std::span<value>) {
+        return c.string(secondary_ ? std::string{"about:blank"} : location_href_);
+    });
     // --- ParentNode and NonDocumentTypeChildNode -----------------------------
     //
     // THE ELEMENT-ONLY HALF OF THE TREE, which this wrapper had none of. Every
@@ -637,47 +643,37 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // its PIXEL BUFFER rather than of its laid-out box - `canvas.width / 2` is
     // the first line of most canvas pages. Assigning one resizes the surface,
     // which is what the spec means by a canvas being reset by the assignment.
-    const auto reflect_size = [&](std::string property, double fallback) {
+    //
+    // An `unsigned long` reflection, HTML 2.6.9: the rules for parsing
+    // non-negative integers on the way out, and on the way in ToUint32 with
+    // anything past 2^31-1 writing the default - which is why `canvas.width =
+    // 2147483648` reads back as 300.
+    const auto reflect_size = [&](std::string property, long long fallback) {
+        const auto read = [this, id](std::string_view name, long long missing) {
+            const auto txn = doc_->read();
+            long long parsed = 0;
+            const bool ok =
+                parse_html_integer(txn.attribute_value(id, atoms_->intern(name)), parsed);
+            return ok && parsed >= 0 && parsed <= 2147483647LL ? parsed : missing;
+        };
         obj.define_accessor(
             property,
             value::object(cx.allocate<script::native_object>(
                 property,
-                [this, id, property, fallback](context &, std::span<value>) {
-                    const auto txn = doc_->read();
-                    const std::string_view text = txn.attribute_value(id, atoms_->intern(property));
-                    double parsed = 0;
-                    bool any = false;
-                    for (const char c : text) {
-                        if (c < '0' || c > '9') { break; }
-                        parsed = parsed * 10 + (c - '0');
-                        any = true;
-                    }
-                    return value::number(any ? parsed : fallback);
+                [property, fallback, read](context &, std::span<value>) {
+                    return value::number(static_cast<double>(read(property, fallback)));
                 })),
             value::object(cx.allocate<script::native_object>(
-                property, [this, id, property](context &, std::span<value> a) {
-                    const double want = arg_number(a, 0);
-                    (void)doc_->set_attribute(id, atoms_->intern(property),
-                                              std::to_string(static_cast<long long>(want)));
+                property, [this, id, property, fallback, read](context &, std::span<value> a) {
+                    long long want = to_uint32(arg_number(a, 0));
+                    if (want > 2147483647LL) { want = fallback; }
+                    (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(want));
                     // The SURFACE follows, or the canvas keeps drawing into a
                     // buffer of the size it was created at and everything past
                     // that edge is silently discarded.
                     if (canvases_ != nullptr) {
-                        const auto txn = doc_->read();
-                        const auto number = [&](std::string_view name, int missing) {
-                            const std::string_view text =
-                                txn.attribute_value(id, atoms_->intern(name));
-                            int out = 0;
-                            bool any = false;
-                            for (const char c : text) {
-                                if (c < '0' || c > '9') { break; }
-                                out = out * 10 + (c - '0');
-                                any = true;
-                            }
-                            return any ? out : missing;
-                        };
-                        const int w = number("width", 300);
-                        const int h = number("height", 150);
+                        const int w = static_cast<int>(read("width", 300));
+                        const int h = static_cast<int>(read("height", 150));
                         canvases_->resize(id, w, h);
                         // And the WebGL context over the same canvas, which held
                         // a pointer INTO the buffer that resize just replaced.
@@ -944,14 +940,27 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         return value::object(
             cx.allocate<script::proxy_object>(value::object(list), value::object(handler)));
     };
-    // READONLY, and this one had a price. `classList` is `[SameObject] readonly
-    // attribute DOMTokenList` and it was a writable data property, so
-    // `Element-classlist.html` - 1,420 subtests - assigned a STRING to it in
-    // its first case and every case after it called `add`, `contains` and
-    // `item` on that string. A write to a readonly property is silently
-    // discarded in sloppy mode, which is what the corpus expects to happen.
-    obj.define("classList", make_token_list("class", {}),
-               script::attr_enumerable | script::attr_configurable);
+    // `[SameObject, PutForwards=value] readonly attribute DOMTokenList
+    // classList`: ONE list, and a write to the property forwards to its
+    // `value` - `el.classList = "a b"` sets the class attribute, which
+    // `Element-classlist.html` assigns in its first case (a readonly data
+    // property threw there from strict code) and then calls `add`, `contains`
+    // and `item` on the list it still expects to find.
+    {
+        const value list = make_token_list("class", {});
+        auto * reader = cx.allocate<script::native_object>(
+            "classList", [list](context &, std::span<value>) { return list; });
+        // A capture is not a GC edge - see the note on `attributes` above.
+        reader->retained.push_back(list);
+        auto * writer = cx.allocate<script::native_object>(
+            "classList", [list](context & c, std::span<value> a) {
+                c.store_property(list, "value", a.empty() ? c.string("") : a[0]);
+                return value::undefined();
+            });
+        writer->retained.push_back(list);
+        obj.define_accessor("classList", value::object(reader), value::object(writer),
+                            script::attr_enumerable | script::attr_configurable);
+    }
 
     // --- element.blocking, HTML 2.5.7 "blocking attributes"
     //

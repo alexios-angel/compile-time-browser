@@ -296,7 +296,15 @@ void dom_bindings::install_node_methods(context & cx) {
     method(child_node, "remove", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (self) {
-            (void)doc_->remove_child(self);
+            // THE DOCUMENT ELEMENT OF A MADE DOCUMENT may go - see the top of
+            // document/as_node.cpp; `remove_child` refuses the root, and
+            // `parent.firstChild.remove()` on a created document is how
+            // pre-insertion-validation-notfound.js empties one.
+            if (self == doc_->root() && secondary_) {
+                doc_->remove_document_element();
+            } else {
+                (void)doc_->remove_child(self);
+            }
             mutated();
         }
         return value::undefined();
@@ -338,6 +346,14 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
+        // ANOTHER DOCUMENT'S NODE is a Node in another tree: the root check
+        // below, not adoption - a move never adopts (moveBefore/throws-
+        // exception.html).
+        if (!child && owner_of(arg(args, 0)) != nullptr) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "moveBefore: the node belongs to another document");
+            return value::undefined();
+        }
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
         }
@@ -361,7 +377,9 @@ void dom_bindings::install_node_methods(context & cx) {
                 return value::undefined();
             }
         }
+        moving_ = true;
         (void)insert_node(parent, child, handle_of(arg(args, 1)));
+        moving_ = false;
         // `undefined`, unlike insertBefore: the IDL return type is void.
         return value::undefined();
     });
@@ -836,9 +854,17 @@ void dom_bindings::install_node_methods(context & cx) {
             walk(walk, self);
         }
         if (merged.empty() && removed.empty()) { return value::undefined(); }
-        for (const auto & [node, data] : merged) { (void)doc_->set_text(node, data); }
-        for (const node_id node : removed) { (void)doc_->remove_child(node); }
-        mutated();
+        // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
+        // is a record and every removal is its own, with the siblings the node
+        // had when it went - MutationObserver-childList.html counts them.
+        for (const auto & [node, data] : merged) {
+            (void)doc_->set_text(node, data);
+            mutated();
+        }
+        for (const node_id node : removed) {
+            (void)doc_->remove_child(node);
+            mutated();
+        }
         return value::undefined();
     });
     method(node, "contains", 1, [this](context & c, std::span<value> args) {

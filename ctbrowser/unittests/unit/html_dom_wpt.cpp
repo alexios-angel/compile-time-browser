@@ -199,6 +199,52 @@ void test_the_document_knows_its_running_script_and_its_ready_state() {
     }
 }
 
+void test_an_inserted_script_runs_when_it_connects() {
+    // dom/nodes/insertion-removing-steps/ and Document.currentScript.html: a
+    // script a page made runs synchronously when it becomes connected, is
+    // `currentScript` while it runs, and runs nested when another script
+    // inserts it - s1 fills s3 and s3's output comes first. An empty
+    // parser-inserted script was never started, so text appended later runs
+    // it; once run, more text does nothing. A throw is reported, not raised.
+    is("(function () { var s1 = document.createElement('script');"
+       " var s2 = document.createElement('script'); var s3 = document.createElement('script');"
+       " window.happened = []; window.s3 = s3; s1.id = 'one';"
+       " s1.textContent = \"s3.appendChild(new Text('happened.push(3)'));"
+       " happened.push(document.currentScript.id)\";"
+       " s2.textContent = 'happened.push(2)';"
+       " var div = document.createElement('div'); div.appendChild(s1); div.appendChild(s2);"
+       " div.appendChild(s3); var before = happened.length; document.body.appendChild(div);"
+       " return before + '|' + happened.join() + '|' + document.currentScript.tagName; })()",
+       "0|3,one,2|SCRIPT");
+    is("(function () { var s = document.createElement('script'); s.textContent = 'throw 1';"
+       " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
+       " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
+       "1");
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script id=empty></script><script>"
+                   "var e = document.getElementById('empty');"
+                   " e.appendChild(new Text('console.log(\"ran:\" + document.currentScript.id)'));"
+                   " e.appendChild(new Text('console.log(\"again\")'));"
+                   " console.log('after');</script></body></html>");
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{2});
+    if (logged.size() == 2) {
+        CHECK_EQ(logged[0], std::string{"ran:empty"});
+        CHECK_EQ(logged[1], std::string{"after"});
+    }
+    // A <template>'s script never started, so its CLONE runs when the clone
+    // connects; the parser's own script that ran is started, and its clone
+    // does not (remove-next-sibling-during-replace-with.html).
+    browser cloned{browser_options{400, 300}};
+    cloned.load_html("<!DOCTYPE html><html><body><template id=t><script>window.ran = "
+                     "(window.ran || 0) + 1;</script></template><script id=s>window.also = "
+                     "(window.also || 0) + 1;</script><script>"
+                     "document.body.appendChild(document.getElementById('t').content.cloneNode("
+                     "true)); document.body.appendChild(document.getElementById('s').cloneNode("
+                     "true)); console.log(window.ran + ',' + window.also);</script></body></html>");
+    CHECK_EQ(cloned.bindings().console_output().back(), std::string{"1,1"});
+}
+
 void test_aria_element_references_reflect_both_ways() {
     // aria-element-reflection.html: the content attribute's ID is looked up
     // in the element's tree, an explicitly set element wins and writes "",
@@ -295,6 +341,17 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
              "\"abc\\tdef\\nghi\"");
     // A replaced element has no text, and outerText reads the same as innerText.
     CHECK_EQ(inner_text_of("'<textarea>abc'"), "\"\"");
+    // The input stream's CR is a newline; a hidden element adds no breaks of
+    // its own; a flex container's children are blockified; a <select>'s text
+    // child has no box; an SVG <defs> renders nothing.
+    CHECK_EQ(inner_text_of("'<pre>abc\\rdef'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div style=visibility:hidden><p><span style=visibility:visible>"
+                           "abc</span></p><div style=visibility:visible>def</div></div>'"),
+             "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div style=display:flex><span>1</span><span>2</span></div>'"),
+             "\"1\\n2\"");
+    CHECK_EQ(inner_text_of("'<div><select>abc<option>x</option></select></div>'"), "\"x\"");
+    CHECK_EQ(inner_text_of("'<div><svg><defs><text>abc</text></defs></svg></div>'"), "\"\"");
     is("(function () { var h = document.getElementById('host'); h.innerHTML = '<p>a<br>b';"
        " return JSON.stringify(h.firstChild.outerText); })()",
        "\"a\\nb\"");
@@ -313,6 +370,7 @@ int main() {
     test_an_anchor_reports_the_parts_of_its_url();
     test_a_located_document_resolves_its_url_attributes();
     test_the_document_knows_its_running_script_and_its_ready_state();
+    test_an_inserted_script_runs_when_it_connects();
     test_aria_element_references_reflect_both_ways();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();

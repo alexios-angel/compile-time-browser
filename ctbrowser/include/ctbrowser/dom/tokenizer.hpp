@@ -125,6 +125,9 @@ private:
     // each recursion widening the span it eventually reports.
     [[nodiscard]] token next_token();
 
+    // One input character onto a text run, with the input stream's newline
+    // normalisation: CR LF and CR are both LF.
+    void append_text(std::string & data);
     [[nodiscard]] char peek(std::size_t ahead = 0) const;
     [[nodiscard]] bool looking_at(std::string_view what) const;
     [[nodiscard]] static bool is_alpha(char c);

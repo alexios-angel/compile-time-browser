@@ -198,4 +198,8 @@ inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 // Defined in reflection.cpp.
 [[nodiscard]] long long to_uint32(double x);
 
+// The rules for parsing integers, HTML 2.4.4.1: false when there is no integer
+// there at all. Defined in reflection.cpp.
+[[nodiscard]] bool parse_html_integer(std::string_view text, long long & out);
+
 } // namespace ctbrowser::shell::detail

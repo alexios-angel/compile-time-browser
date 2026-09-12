@@ -102,6 +102,18 @@ bool browser::via_label(node_id from) {
     return static_cast<bool>(labelled_control(txn, from));
 }
 
+// Did the mutation being announced move the focused element, or an ancestor
+// of it, out of the tree and back? See dom_bindings::moved_by_mutation.
+bool browser::focus_was_moved() const {
+    const std::span<const node_id> moved = bindings_->moved_by_mutation();
+    if (moved.empty()) { return false; }
+    const auto txn = doc_->read();
+    for (node_id at = focused_; at; at = txn.parent(at)) {
+        if (std::ranges::find(moved, at) != moved.end()) { return true; }
+    }
+    return false;
+}
+
 bool browser::focus(node_id id) {
     if (is_disabled(id)) { return false; } // a disabled control cannot take focus
     if (id == focused_) { return false; }
