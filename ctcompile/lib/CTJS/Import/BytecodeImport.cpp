@@ -351,8 +351,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 handled = true;
                 break;
             }
-            if (handled) { continue; }
             for (const compare_row & row : compare_rows) {
+                if (handled) { break; }
                 if (row.code != in.code) { continue; }
                 mlir::Value made = ctjs::CompareOp::create(
                     into, where, value_type, ctjs::CompareKindAttr::get(context, row.kind),
@@ -366,8 +366,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 handled = true;
                 break;
             }
-            if (handled) { continue; }
             for (const unary_row & row : unary_rows) {
+                if (handled) { break; }
                 if (row.code != in.code) { continue; }
                 set(in.a,
                     ctjs::UnaryOp::create(into, where, value_type,
@@ -375,9 +375,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 handled = true;
                 break;
             }
-            if (handled) { continue; }
 
-            importInstruction(state, entry, at);
+            if (!handled) { importInstruction(state, entry, at); }
 
             // ---- and the caught edge, if a region is open ------------------
             //

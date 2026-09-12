@@ -98,6 +98,10 @@ struct HostCapturedMap {
     std::vector<ctjs::GetPropertyOp> leafReads;
     ctjs::LoadUpvalueOp argument;
     std::vector<ctjs::ConstructOp> childMaps{};
+    // Every outer set stores a checked fresh child, across the complete family.
+    // This promises neither a returned child's identity nor its contents.
+    bool childMapContents = false;
+    std::vector<mlir::Value> returnedChildMaps{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

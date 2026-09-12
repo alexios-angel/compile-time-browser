@@ -608,3 +608,37 @@
     endforeach()
     message(STATUS "imported mixed BigInt ${_mixed_kind}: twelve literal sites, twenty-one instances, ten retained; three independent Errors and live claims agree")
   endforeach()
+
+  # Static UShr with two original BigInts throws an independent TypeError.
+  # Literal retention and implicit Error sites have separate measured claims.
+  set(_expected_primitive_ushr_literal_pcs
+      "primitiveUShrEarly 5 obj"
+      "primitiveUShrEarly 7 arr"
+      "primitiveUShrRetained 6 obj"
+      "primitiveUShrRetained 8 arr"
+      "primitiveUShrOpaque 3 obj"
+      "primitiveUShrOpaque 5 arr"
+  )
+  set(_expected_primitive_ushr_rows
+      "primitiveUShrEarly obj 2 2 0 0 0 - confined pc5"
+      "primitiveUShrEarly arr 2 1 1 0 0 temporaries:1 escapes:passed pc7"
+      "primitiveUShrRetained obj 2 1 1 0 0 temporaries:1 escapes:stored pc6"
+      "primitiveUShrRetained arr 2 2 0 0 0 - escapes:passed pc8"
+      "primitiveUShrOpaque obj 2 2 0 0 0 - escapes:stored pc3"
+      "primitiveUShrOpaque arr 2 1 1 0 0 temporaries:1 escapes:passed pc5"
+  )
+  set(_expected_primitive_ushr_error_rows
+      "primitiveUShrEarly obj 1 0 1 0 0 thrown:1 pc24 unclaimed"
+      "primitiveUShrRetained obj 1 0 1 0 0 thrown:1 pc29 unclaimed"
+      "primitiveUShrOpaque obj 1 0 1 0 0 thrown:1 pc11 unclaimed"
+  )
+  foreach(_table IN ITEMS literal_pcs rows error_rows)
+    set(_expected "${_expected_primitive_ushr_${_table}}")
+    set(_observed_rows "${_primitive_ushr_${_table}}")
+    list(SORT _expected)
+    list(SORT _observed_rows)
+    if(NOT _observed_rows STREQUAL _expected)
+      message(FATAL_ERROR "BigInt UShr ${_table} mismatch:\nexpected: ${_expected}\nobserved: ${_observed_rows}")
+    endif()
+  endforeach()
+  message(STATUS "imported BigInt UShr: six literal sites, twelve instances, three retained; three independent Errors and live claims agree")

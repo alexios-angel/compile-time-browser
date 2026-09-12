@@ -99,6 +99,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->childMaps != capture->childMaps ||
+                         edge.capturedMap->childMapContents != capture->childMapContents ||
+                         edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
                          edge.capturedMap->leafWrites != capture->leafWrites ||
                          edge.capturedMap->leafReads != capture->leafReads)) ||
@@ -155,9 +157,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     }
 
     llvm::DenseSet<mlir::Operation *> childMaps;
-    if (capture && !capture->childMaps.empty()) {
+    if (capture && (!capture->childMaps.empty() || !capture->returnedChildMaps.empty() ||
+                    capture->childMapContents)) {
         mlir::DominanceInfo dominance(module);
-        llvm::DenseSet<mlir::Value> outers, children, receivers;
+        llvm::DenseSet<mlir::Value> outers, children, constructedChildren, returnedChildren;
         for (ctjs::LoadUpvalueOp load : capture->upvalues) {
             if (!spend()) { return; }
             outers.insert(load.getResult());
@@ -170,9 +173,17 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 outers.insert(body.getArgument(3));
             }
         }
-        for (ctjs::GetPropertyOp read : capture->reads) {
+        for (mlir::Value child : capture->returnedChildMaps) {
             if (!spend()) { return; }
-            receivers.insert(read.getObject());
+            auto call = child.getDefiningOp<ctjs::CallOp>();
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!read || keyOf(read.getKey()) != "get" ||
+                !llvm::is_contained(capture->calls, call) ||
+                !returnedChildren.insert(child).second) {
+                reject("owned returned child Map lacks its distinct checked get call");
+                return;
+            }
         }
         for (ctjs::ConstructOp made : capture->childMaps) {
             if (!spend()) { return; }
@@ -187,6 +198,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             children.insert(made.getResult());
+            constructedChildren.insert(made.getResult());
         }
         for (ctjs::ConstructOp made : capture->childMaps) {
             for (mlir::OpOperand & use : made.getCallee().getUses()) {
@@ -202,32 +214,58 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 }
             }
         }
-        // These sets distinguish owning roles, not runtime identities. The
-        // complete host body proved each get's exact origin; NativeMap still
-        // independently derives schemas and presence before choosing a carrier.
+        // These sets distinguish owning roles, not runtime identities. A
+        // present outer get can name a child from an earlier invocation. Only
+        // fresh constructors and their fluent aliases establish the universal
+        // payload kind; no returned owner supplies allocation or content facts.
+        // NativeMap independently derives schemas and presence.
         for (ctjs::CallOp call : capture->calls) {
             if (!spend()) { return; }
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!read || read.getObject() != call.getReceiver() ||
+                !llvm::is_contained(capture->reads, read) ||
+                !dominance.dominates(read.getResult(), call) ||
                 (!outers.contains(call.getReceiver()) && !children.contains(call.getReceiver()))) {
                 reject("owned child Map call lacks a checked owning receiver");
                 return;
             }
             const auto action = keyOf(read.getKey());
+            const unsigned arity = action == "set" ? 2u : (action == "clear" ? 0u : 1u);
+            if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
+                 action != "clear") ||
+                call.getArgs().size() != arity) {
+                reject("owned child Map call has another method or arity");
+                return;
+            }
             if (action == "set") {
-                if (call.getArgs().size() != 2 || outers.contains(call.getArgs()[1]) ||
-                    (children.contains(call.getArgs()[1]) &&
-                     !outers.contains(call.getReceiver()))) {
+                if (outers.contains(call.getArgs()[1]) || (children.contains(call.getArgs()[1]) &&
+                                                           !outers.contains(call.getReceiver()))) {
                     reject("owned child Map payload would add an unchecked ownership edge");
                     return;
                 }
+                if (capture->childMapContents && outers.contains(call.getReceiver()) &&
+                    !constructedChildren.contains(call.getArgs()[1])) {
+                    reject("owned child Map contents lack a complete constructor payload "
+                           "census");
+                    return;
+                }
                 (outers.contains(call.getReceiver()) ? outers : children).insert(call.getResult());
-            } else if (action == "get" && receivers.contains(call.getResult())) {
+                if (constructedChildren.contains(call.getReceiver())) {
+                    constructedChildren.insert(call.getResult());
+                }
+            } else if (action == "get" && returnedChildren.contains(call.getResult())) {
                 if (!outers.contains(call.getReceiver())) {
                     reject("owned child Map cannot contain another Map");
                     return;
                 }
                 children.insert(call.getResult());
+            }
+        }
+        for (ctjs::GetPropertyOp read : capture->reads) {
+            if (!spend()) { return; }
+            if (!outers.contains(read.getObject()) && !children.contains(read.getObject())) {
+                reject("owned child Map property lacks its checked owning role");
+                return;
             }
         }
         for (mlir::Value child : children) {

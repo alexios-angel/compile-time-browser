@@ -22,7 +22,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
         const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
         const std::string operation = "  %produced = ctjs.binary_static " + spelling;
         const std::string produce = operation + " %zero, %zero {storage_test_id = \"produced\"}\n";
-        const std::vector<binary_row> rows = {
+        std::vector<binary_row> rows = {
             {.contents = {.what = "static Number results do not prune either overwrite arm",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -67,15 +67,8 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "mixed BigInt rhs can throw before static conversion",
                           .body = values + operation + " %zero, %big\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "two BigInts need their independent static result category",
+            {.contents = {.what = "two BigInts have an independent static result or error",
                           .body = values + operation + " %big, %big\n" + done,
-                          .failure =
-                              kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
-                                      kind == ctjs::BinaryKind::BitOr ||
-                                      kind == ctjs::BinaryKind::BitXor ||
-                                      kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr
-                                  ? ArrayContentsFailure::None
-                                  : ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}"}},
             {.contents = {.what = "a forwarded BigInt arm refuses the complete transaction",
@@ -119,6 +112,63 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + "  %produced = ctjs.binary add %x, %zero\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
+        if (kind == ctjs::BinaryKind::UShr) {
+            const std::string error = operation + " %big, %big {storage_test_id = \"produced\"}\n";
+            const std::string store = "  ctjs.set_property %a[%zero], %produced\n";
+            rows.push_back(
+                {.contents = {.what = "correlated Number and BigInt operands keep both paths",
+                              .body = values +
+                                      "  %flag = ctjs.truthy %p\n"
+                                      "  cf.cond_br %flag, "
+                                      "^join(%zero, %zero : !ctjs.value, !ctjs.value), "
+                                      "^join(%big, %big : !ctjs.value, !ctjs.value)\n"
+                                      "^join(%lhs: !ctjs.value, %rhs: !ctjs.value):\n" +
+                                      operation + " %lhs, %rhs {storage_test_id = \"produced\"}\n" +
+                                      store + "  ctjs.return %a\n",
+                              .arrays = "a:[produced] | a:[produced]",
+                              .exit = "a -> {a}; a -> {a}"}});
+            rows.push_back(
+                {.contents = {.what = "UShr errors cannot prune a saved child return",
+                              .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + error +
+                                      store + "  ctjs.return %saved\n",
+                              .arrays = "a:[produced]",
+                              .reads = "a[0]=x",
+                              .exit = "x -> {x}"},
+                 .discharged = ""});
+            rows.push_back(
+                {.contents = {.what = "UShr error carriers never acquire a BigInt category",
+                              .body = values + error +
+                                      "  %next = ctjs.binary_static bitand %produced, %big\n" +
+                                      done,
+                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+            rows.push_back(
+                {.contents = {.what = "UShr error carriers cannot supply literal indices",
+                              .body = values + error +
+                                      "  %read = ctjs.get_property %a[%produced]\n" + done,
+                              .failure = ArrayContentsFailure::UnknownIndex}});
+            rows.push_back({.contents = {.what = "UShr errors cannot hide structural publication",
+                                         .body = values + error + branch + done +
+                                                 "^no:\n  ctjs.store_global \"held\", %x\n" + done,
+                                         .failure = ArrayContentsFailure::UnsupportedOperation}});
+            for (const bool savedBigInt : {false, true}) {
+                const std::string saved = savedBigInt ? "%big" : "%zero";
+                const std::string replacement = savedBigInt ? "%zero" : "%big";
+                rows.push_back(
+                    {.contents = {.what = "UShr uses saved original operands after slot overwrite",
+                                  .body = values + "  ctjs.set_property %a[%zero], " + saved +
+                                          "\n  %operand = ctjs.get_property %a[%zero]\n"
+                                          "  ctjs.set_property %a[%zero], " +
+                                          replacement + "\n" + operation +
+                                          " %operand, %big {storage_test_id = \"produced\"}\n"
+                                          "  ctjs.return %produced\n",
+                                  .failure = savedBigInt
+                                                 ? ArrayContentsFailure::None
+                                                 : ArrayContentsFailure::UnsupportedOperation,
+                                  .arrays = "a:[zero]",
+                                  .reads = "a[0]=ctjs.constant",
+                                  .exit = "produced -> {}"}});
+            }
+        }
         std::size_t budgets = 0;
         const auto check = [&](mlir::ModuleOp module, const binary_row & expected) {
             checkArrayContents(module, expected.contents);
@@ -255,13 +305,9 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             auto constant = number.getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            // This shared constant is also the later array index. Exact BigInt
-            // arithmetic succeeds independently; it never authorizes that key.
-            inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
-                            kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
-                            kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr
-                        ? ArrayContentsFailure::UnknownIndex
-                        : ArrayContentsFailure::UnsupportedOperation);
+            // This shared constant is also the later array index. Independent
+            // BigInt results or UShr errors never authorize that changed key.
+            inspect(ArrayContentsFailure::UnknownIndex);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
             mlir::Block & last = function.getBody().back();

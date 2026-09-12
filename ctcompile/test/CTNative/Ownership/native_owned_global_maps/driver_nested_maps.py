@@ -1,4 +1,4 @@
-"""Captured outer Maps retain distinct, freshly allocated child Maps."""
+"""Captured outer Maps retain fresh and reused child Map owners."""
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -31,10 +31,11 @@ var trace = host.slot.get(41);
 '''
     rows = {}
 
-    def add(name, source, calls, *, admitted=False, functions=4, children=1, retained=False):
+    def add(name, source, calls, *, admitted=False, functions=4, children=1, retained=False,
+            reused=False):
         rows['nested_map_' + name] = dict(source=source, functions=functions, calls=calls,
             sha256=hashlib.sha256(source.encode()).hexdigest(), admitted=admitted,
-            children=children, retained=retained, expected_trace=41)
+            children=children, retained=retained, reused=reused, expected_trace=41)
 
     add('retained', base, 8, admitted=True, retained=True)
     add('saved_delete', base.replace("        child.set('value', value);",
@@ -83,7 +84,8 @@ var trace = host.slot.get(41);
     add('conditional_initialize', base.replace('''        const child = new Map;
         child.set('value', 0);
         t.set(1, child);''', '        t.has(1) || t.set(1, new Map);').replace(
-        "child.set('value', value);", "saved.set('value', value);"), 8)
+        "child.set('value', value);", "saved.set('value', value);"), 8,
+        admitted=True, retained=True, reused=True)
     add('cross_invocation', '''var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
@@ -95,6 +97,24 @@ var trace = host.slot.get(41);
 host.slot.set(41);
 var trace = host.slot.get();
 ''', 9, functions=5)
+    for name, digest in {
+        'conditional_initialize': '74539aebaf2ec85ee44e45f9ea5fc4c7e2b37523bb0224507d6cdd171acffe26',
+        'cross_invocation': '369d7ceafb8d173d004395715e833aa9ec9f94e494c742e3ddab6a405d735a28',
+    }.items():
+        if rows['nested_map_' + name]['sha256'] != digest:
+            raise RuntimeError(f'{name}: changed the historical child Map source')
+    conditional = rows['nested_map_conditional_initialize']['source']
+    mixed = "mix(value) { t.set(1, value); return value; }"
+    add('conditional_mixed_before', conditional.replace('return { get(value) {',
+        'return { ' + mixed + ', get(value) {') + 'host.slot.mix(0);\n', 10, functions=5)
+    add('conditional_mixed_after', conditional.replace('    } };',
+        '    }, ' + mixed + ' };') + 'host.slot.mix(0);\n', 10, functions=5)
+    add('conditional_unknown_contents', conditional.replace("        saved.set('value', value);",
+        "        const prior = saved.get('value');\n        saved.set('value', value);").replace(
+        "return saved.get('value');", "return prior === void 0 ? saved.get('value') : prior;"), 9)
+    add('conditional_alias_delete', conditional.replace("        return saved.get('value');",
+        "        t.has(2) || t.set(2, new Map);\n        const other = t.get(2);\n"
+        "        other.delete('value');\n        return saved.get('value');"), 12, children=2)
     return rows
 
 
@@ -103,30 +123,42 @@ def nested_map_observer(source, row):
 (function() {
     const get = host.slot.get;
     host = {};
-    const seen = [], original = Map.prototype.set;
-    Map.prototype.set = function(key, value) {
-        if (value instanceof Map) { seen.push([this, key, value]); }
-        return original.call(this, key, value);
+    const seen = [], original = Map.prototype.METHOD;
+    Map.prototype.METHOD = function(key, value) {
+        const result = original.call(this, key, value);
+        if (ITEM instanceof Map) { seen.push([this, key, ITEM]); }
+        return result;
     };
     let ok = get(17) === 17 && get(-3) === -3;
-    Map.prototype.set = original;
+    Map.prototype.METHOD = original;
     const stride = STRIDE;
     ok = ok && seen.length === stride * 2 && seen[0][0] === seen[stride][0] &&
-         seen[0][2] !== seen[stride][2] && seen[0][2].get('value') === 17 &&
+         seen[0][2] IDENTITY seen[stride][2] && seen[0][2].get('value') === FIRST_VALUE &&
          seen[stride][2].get('value') === -3 && seen[0][0].size === OUTER_SIZE;
     DISTINCT
     for (let i = 0; i < 128; ++i) {
         const value = i % 2 === 0 ? -i : i + 0.5;
         const answer = get(value);
         if (typeof answer !== 'number' || answer !== value) { ok = false; }
+        REUSE_CHECK
     }
+    RECREATE
     trace = ok ? 1 : 0;
 })();
 '''
     distinct = '' if row['children'] == 1 else '''ok = ok && seen[0][2] !== seen[1][2] &&
         seen[1][2] === seen[2][2] && seen[stride + 1][2] === seen[stride + 2][2];'''
+    reused = row['reused']
+    recreate = '''const outer = seen[0][0], saved = seen[0][2];
+    outer.clear(); saved.set('value', 47);
+    ok = ok && get(19) === 19 && outer.size === 1 && outer.get(1) !== saved &&
+         saved.get('value') === 47;''' if reused else ''
     return observed.replace('STRIDE', str(1 if row['children'] == 1 else 3)).replace(
-        'OUTER_SIZE', '1' if row['retained'] else '0').replace('DISTINCT', distinct)
+        'OUTER_SIZE', '1' if row['retained'] else '0').replace('DISTINCT', distinct).replace(
+        'METHOD', 'get' if reused else 'set').replace('ITEM', 'result' if reused else 'value').replace(
+        'IDENTITY', '===' if reused else '!==').replace('FIRST_VALUE', '-3' if reused else '17').replace(
+        'REUSE_CHECK', "if (seen[0][2].get('value') !== value) { ok = false; }" if reused else '').replace(
+        'RECREATE', recreate)
 
 
 def nested_map_lifetime_cpp(cpp, row):
@@ -137,6 +169,7 @@ int main() {
     using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
     constexpr std::size_t children = CHILDREN;
     constexpr bool retained = RETAINED;
+    constexpr bool reused = REUSED;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 + children) { return 270; }
     auto owner = g_host;
     auto table = owner->slot;
@@ -159,25 +192,30 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         const auto before = ctn_test_maps.size();
         const js_num value = call % 2 == 0 ? -call : call + 0.5;
-        if (get(value) != value || ctn_test_maps.size() != before + children) { return 274; }
+        if (get(value) != value ||
+            ctn_test_maps.size() != before + (reused ? 0U : children)) { return 274; }
         for (std::size_t index = before; index < ctn_test_maps.size(); ++index) {
             if (ctn_test_maps[index].expired() == retained) { return 275; }
         }
         if constexpr (retained) {
             auto child = outer->at(js_num{1});
-            if (child == saved || child != ctn_test_maps.back().lock() ||
-                child->at("value") != value || saved->at("value") != 41) { return 276; }
+            if ((reused ? child != saved : child == saved) || child != ctn_test_maps.back().lock() ||
+                child->at("value") != value || saved->at("value") != (reused ? value : 41)) {
+                return 276;
+            }
         }
     }
     ctnative::map_clear(outer);
     if constexpr (retained) {
-        if (saved_lifetime.expired() || !ctn_test_maps.back().expired()) { return 277; }
+        if (outer->size() != 0U || saved_lifetime.expired() ||
+            (!reused && !ctn_test_maps.back().expired())) { return 277; }
         ctnative::map_set(saved, std::string{"value"}, js_num{47});
         if (ctnative::map_get_present(saved, std::string{"value"}) != 47) { return 278; }
         saved.reset();
         if (!saved_lifetime.expired()) { return 279; }
     }
-    if (get(19) != 19) { return 280; }
+    const auto cleared = ctn_test_maps.size();
+    if (get(19) != 19 || ctn_test_maps.size() != cleared + children) { return 280; }
     const auto next = ctn_test_maps.size();
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != next + children + 1 ||
         ctn_test_maps[0].lock() == ctn_test_maps[next].lock()) { return 281; }
@@ -193,7 +231,7 @@ int main() {
 }
 '''
     return changed.replace('CHILDREN', str(row['children'])).replace(
-        'RETAINED', str(row['retained']).lower())
+        'RETAINED', str(row['retained']).lower()).replace('REUSED', str(row['reused']).lower())
 
 
 def nested_map_census(args, ir, name, row):
@@ -247,6 +285,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
             replacements.append(('second = new Map;', 'second = first;'))
         if row['retained']:
             replacements.append(('return saved.get', 't.clear(); return saved.get'))
+        if row['reused']:
+            replacements.append(('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);'))
         for index, (old, replacement) in enumerate(replacements):
             assert row['source'].count(old) == 1, (name, old)
             blinded = args.work / f'{name}-blinded-{index}.js'
@@ -324,7 +364,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
             if result.returncode or result.stdout != 'trace=41\n' * 2 or result.stderr:
                 raise RuntimeError(f'{name}/{mode}: sanitized child lifetime failed\n'
                                    f'{result.returncode}: {result.stdout}{result.stderr}')
-        if name in {'nested_map_retained', 'nested_map_distinct_saved'}:
+        if name in {'nested_map_retained', 'nested_map_distinct_saved',
+                    'nested_map_conditional_initialize'}:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:

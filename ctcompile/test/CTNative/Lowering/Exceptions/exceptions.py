@@ -54,17 +54,18 @@ PROGRAMS = {
     "helper_depth_limit": (35, {"caught42": 42}),
     "helper_work_limit": (3, {"caught42": 42}),
 }
+# The historical computed_throw source now has the importer's complete catch snapshot.
 POSITIVES = ("guarded", "two_sites", "continuation", "normal_return",
              "unconditional", "boolean_state", "finally_override", "boolean_payload",
              "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits",
              "numeric_catch_helper", "boolean_catch_helper", "string_catch_helper",
              "protected_nothrow_callee", "protected_transitive_helper",
-             "protected_boolean_helper", "protected_string_helper")
+             "protected_boolean_helper", "protected_string_helper", "computed_throw")
 TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
 STRING_LIFETIMES = ("string_value", "string_sites", "string_catch_helper",
-                    "protected_string_helper")
+                    "protected_string_helper", "computed_throw")
 DEFAULT_OPTIMIZATIONS = ("guarded", "string_value", "numeric_catch_helper", "string_catch_helper",
-                         "protected_nothrow_callee", "protected_string_helper")
+                         "protected_nothrow_callee", "protected_string_helper", "computed_throw")
 CALLEE_EFFECT_REFUSALS = ("effectful_catch_helper", "property_catch_helper",
                          "recursive_catch_helper", "helper_depth_limit", "helper_work_limit",
                          "protected_effectful_helper")
@@ -79,12 +80,6 @@ CPP_HELPER_CALLS = {
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
-# Existing interpreter behavior for null property access differs from Node:
-# it returns undefined instead of entering the catch. Pin that difference on
-# this refusal-only control; never use it as an admitted native oracle.
-INTERPRETER_DIVERGENCES = {
-    "implicit_property": {"explicit42": 42, "implicit42": "undefined"},
-}
 NATIVE_PIPELINE = ("builtin.module(ctnative-lower-to-emitc{optimize=false},"
                    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
                    "canonicalize,ctnative-prune-dead-stores,canonicalize))")
@@ -483,8 +478,7 @@ def main():
     report = []
     for name, (denominator, expected) in PROGRAMS.items():
         source = args.fixtures / f"{name}.js"
-        interpreter_expected = INTERPRETER_DIVERGENCES.get(name, expected)
-        compare(run([str(reference), str(source)]).stdout, expected_text(interpreter_expected),
+        compare(run([str(reference), str(source)]).stdout, expected_text(expected),
                 f"{name}/interpreter")
         raw, imported = imported_program(args, source, name, denominator,
                                          skipped=name in IMPORT_REFUSALS)
@@ -516,8 +510,8 @@ def main():
         report.append({"name": name, "source_functions": denominator, "imported": imported,
                        "native": len(NATIVE_FUNCTION.findall(output.read_text())),
                        "refusals": REFUSAL.findall(output.read_text()), "observations": expected,
-                       "interpreter_agrees": interpreter_expected == expected,
-                       "interpreter_observations": interpreter_expected})
+                       "interpreter_agrees": True,
+                       "interpreter_observations": expected})
 
     # This altered source executes the specific wrong throw-site state that
     # restoring the try-entry registers would produce. Run its generated C++,
@@ -537,8 +531,7 @@ def main():
           "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
           f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "
           "refusals, callee mutation/rerun/depth/work controls, zero/tight recovery budget "
-          "refusals and executed wrong-state control; null-property refusal pins "
-          "the existing interpreter/Node divergence")
+          "refusals and executed wrong-state control; null-property refusal agrees with Node")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 // A generator's invocation differs even when its body never suspends. The
 // skipped rows retain all three source identities and the deferred global write.
-// An ordinary async return still imports its explicit promise wrapper.
+// Async generator returns await their value; ordinary async returns only wrap it.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s
 
 var touched = 0;
@@ -17,7 +17,8 @@ var iterator = constant();
 // CHECK-SAME: function = 2 : i32
 // CHECK-SAME: reason = "a generator invocation creates a deferred iterator
 // CHECK-SAME: function = 3 : i32
-// CHECK-SAME: reason = "a generator invocation creates a deferred iterator
+// CHECK-SAME: opcode = "await_value"
+// CHECK-SAME: reason = "a suspension point
 // CHECK-LABEL: ctjs.func @_script_$0
 // CHECK-NOT: ctjs.func @constant$
 // CHECK-NOT: ctjs.func @empty$

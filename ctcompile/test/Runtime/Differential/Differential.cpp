@@ -501,10 +501,9 @@ int main() {
         {15u,
          "property write",
          {{"put", 0u, &ctc_put}, {}},
-         "the numeric fast path against the named one - a STRING key on an array never reaches "
-         "items[0], and store_property's array arm DROPS it - so it reads back as nothing "
-         "at all",
-         "900/100"},
+         "numeric and canonical string keys address the same array element on both write "
+         "and read",
+         "909/909"},
         {12u,
          "negate",
          {{"neg", 0u, &ctc_neg}, {}},
