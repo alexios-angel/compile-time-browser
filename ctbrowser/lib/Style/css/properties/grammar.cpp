@@ -33,10 +33,11 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 25> math_functions{
-    "calc",  "min", "max", "clamp",     "round",    "mod",           "rem",          "abs", "sign",
-    "sin",   "cos", "tan", "asin",      "acos",     "atan",          "atan2",        "pow", "sqrt",
-    "hypot", "log", "exp", "calc-size", "progress", "sibling-index", "sibling-count"};
+constexpr std::array<std::string_view, 26> math_functions{
+    "calc",      "min",      "max",           "clamp",         "round", "mod",  "rem",
+    "abs",       "sign",     "sin",           "cos",           "tan",   "asin", "acos",
+    "atan",      "atan2",    "pow",           "sqrt",          "hypot", "log",  "exp",
+    "calc-size", "progress", "sibling-index", "sibling-count", "random"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
@@ -328,7 +329,12 @@ namespace detail {
         if (t.type == token_type::bad_string || t.type == token_type::bad_url) {
             out.malformed = true;
         }
-        if (t.type == token_type::delim && ts.text_of(t) == "!") { out.important = true; }
+        // A `!` AT THE TOP LEVEL ONLY. Inside a block it is a delim like any
+        // other - `if(style(--x!): a; else: b)` is a value whose condition is
+        // false, not a declaration with a priority (CSS Syntax 3 §5.4.6).
+        if (depth == 0 && t.type == token_type::delim && ts.text_of(t) == "!") {
+            out.important = true;
+        }
         if (t.type == token_type::function) {
             const std::string_view fn = function_name(ts, t);
             if (in_list(substitution_functions, fn)) { out.substituted = true; }
@@ -455,13 +461,21 @@ namespace detail {
 // syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
 // same reason `rotate: 1s` is.
 //
-// AN UNRESOLVED ANSWER IS ACCEPTED, always. `min(10px, 5%)` and `calc(1px +
-// 1cqw)` are well formed and have no answer until layout; §10.11 says their
-// computed value is the function as written, and refusing them here would delete
-// declarations that work today.
-[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer) {
-    if (answer.outcome != math_outcome::resolved) { return true; }
-    const calc_result & v = answer.value;
+// AN UNRESOLVED ANSWER IS ACCEPTED unless its TYPE is already known and wrong.
+// `min(10px, 5%)` and `calc(1px + 1cqw)` are well formed and have no answer
+// until layout; §10.11 says their computed value is the function as written, and
+// refusing them here would delete declarations that work today. But `rotate:
+// calc(1px * sibling-index())` has no answer AND is a length, and §10.2 types it
+// before anything is measured - `math_type_of` is that reading.
+[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
+                                  std::string_view text) {
+    if (answer.outcome == math_outcome::invalid) { return true; }
+    std::optional<calc_result> typed;
+    if (answer.outcome == math_outcome::unresolved) {
+        typed = math_type_of(text);
+        if (!typed) { return true; }
+    }
+    const calc_result & v = typed ? *typed : answer.value;
     // A PERCENTAGE travels as a length carrying an unresolved part, so "this
     // answer is a bare percentage" is the pair below rather than a type tag.
     const bool bare_percentage = v.has_percent && v.px == 0;

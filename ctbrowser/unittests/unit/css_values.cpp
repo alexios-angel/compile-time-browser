@@ -318,6 +318,13 @@ void test_the_rest_of_the_math_functions() {
     // is `test_valid_value` in the corpus, and calling them invalid deleted 34
     // declarations across `css/css-values/tree-counting/`.
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
+    // ...BUT ITS TYPE IS KNOWN BEFORE ITS VALUE IS (§10.2), and a length is no
+    // more a rotation for being unresolved (calc-sibling-function-parsing).
+    bad("left", "calc(10 * sibling-index())");
+    bad("rotate", "calc(1px * sibling-index())");
+    bad("rotate", "calc(1s * sibling-index())");
+    bad("opacity", "calc(1ms * sibling-index())");
+    bad("animation-duration", "calc(1deg * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
@@ -596,6 +603,16 @@ void test_important_and_the_empty_value() {
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
+    // `random()` is a math function (CSS Values 5 §random), and random-computed
+    // guards a hundred and forty assertions on this answer.
+    CHECK(supports_declaration("width", "random(0px, 100px)"));
+    CHECK(supports_declaration("scale", "random(--foo element-scoped, 2, 12)"));
+    // A `!` INSIDE A BLOCK IS A DELIM, not a priority: `if(style(--x!): a; else:
+    // b)` is a value whose condition is false (if-conditionals 39, 117, 118).
+    CHECK(check_declaration("--p", "if(style(--x!): 1px; else: 2px)").valid);
+    CHECK(check_declaration("width", "calc(1px * var(--x!))").valid);
+    CHECK(!check_declaration("--p", "1px !").valid);
+    CHECK(!check_declaration("width", "1px !").valid);
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
     CHECK(check_declaration("content", "attr(data-foo)").valid);

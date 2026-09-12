@@ -183,6 +183,15 @@ enum class math_context : std::uint8_t {
 // `min(...)`, `max(...)` or `clamp(...)`. The three outcomes are above.
 [[nodiscard]] math_answer evaluate_math(std::string_view expression, const length_context & ctx);
 
+// THE TYPE OF A WELL-FORMED MATH FUNCTION THAT HAS NO ANSWER YET. `calc(1px *
+// sibling-index())` is unresolved everywhere but in the cascade, and is a
+// <length> all the same: CSS Values 4 §10.2 types the expression before anything
+// is measured, which is what lets `rotate` refuse it on sight. The answer is a
+// `calc_result` whose magnitudes are left at zero - only `type`, `is_number` and
+// `has_percent` mean anything - and `nullopt` for an expression whose type
+// cannot be settled without a basis, such as `min(10px, 5%)`.
+[[nodiscard]] std::optional<calc_result> math_type_of(std::string_view expression);
+
 // A folded value, and whether every calc() in it actually evaluated.
 //
 // The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a

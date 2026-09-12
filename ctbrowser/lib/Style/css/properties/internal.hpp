@@ -35,7 +35,7 @@ using k = value_kind;
 struct scan {
     std::vector<std::size_t> significant; // indices of the non-whitespace tokens
     bool malformed = false;               // a bad string/url, or unbalanced brackets
-    bool important = false;               // a `!` delim; `!important` is not a value
+    bool important = false;               // a top-level `!`; `!important` is not a value
     bool substituted = false;             // holds a var()/env()
     // A function whose NAME this engine does not implement. Only `CSS.supports`
     // reads it: `el.style` still stores such a value, because CSSOM says a page
@@ -83,7 +83,8 @@ struct scan {
 [[nodiscard]] scan scan_tokens(const token_stream & ts);
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts);
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found);
-[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer);
+[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
+                                  std::string_view text);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,

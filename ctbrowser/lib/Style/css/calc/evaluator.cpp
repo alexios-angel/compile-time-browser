@@ -1170,4 +1170,14 @@ math_answer evaluate_math(std::string_view expression, const length_context & ct
     return run.run();
 }
 
+std::optional<calc_result> math_type_of(std::string_view expression) {
+    const auto [outcome, sum] = detail::evaluate_symbolic(expression);
+    if (outcome != math_outcome::resolved || !sum.simple()) { return std::nullopt; }
+    calc_result out;
+    out.type = sum.type();
+    out.is_number = sum.is_number();
+    out.has_percent = sum.has_percent;
+    return out;
+}
+
 } // namespace ctbrowser::style::css

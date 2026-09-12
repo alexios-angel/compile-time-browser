@@ -258,7 +258,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // number is the cascade's job, one layer up.
     if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
         const math_answer answer = evaluate_math(text, length_context{});
-        if (!math_type_fits(*p, answer)) { return {}; }
+        if (!math_type_fits(*p, answer, text)) { return {}; }
         return yes(simplified);
     }
     return {};
