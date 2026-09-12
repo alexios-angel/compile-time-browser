@@ -25,8 +25,7 @@
 // NO SDL TYPE APPEARS IN THIS INTERFACE, and <SDL3/SDL.h> is not included here:
 // it is included by lib/App/app/internal.hpp and by nothing else, behind
 // `#if CTBROWSER_WITH_SDL3`, so the library BUILDS EITHER WAY - with a window
-// when SDL3 was found, headless when it was not. An application that wants to
-// talk to SDL still can, through `app_options::on_native_window`.
+// when SDL3 was found, headless when it was not.
 
 namespace ctbrowser {
 
@@ -70,16 +69,13 @@ struct app_options {
     int max_fps = 60;
     double fixed_dt = 0; // >0: pretend every frame took exactly this long
 
-    bool fullscreen = false;
-
     // Half the caret's blink period, in milliseconds; 0 holds it solid.
     // Chrome's 500 by default, which is what a person wants and what a
     // SCREENSHOT does not: a caret that is present in one run and absent in
     // the next is the difference between two otherwise identical images.
     double caret_blink_ms = 500;
 
-    std::string screenshot_path; // "" = never
-    int screenshot_frame = -1;   // -1 = the last frame
+    std::string screenshot_path; // "" = never; written on the last frame
 
     std::vector<asset> assets;
     // PRECOMPILED SCRIPTS, baked in the same way assets are. Each entry is one
@@ -137,12 +133,6 @@ struct app_options {
     // On by default - it is a browser - and CTBROWSER_NETWORK=0 turns it off,
     // which is what makes an example's ctest hermetic.
     bool network = true;
-
-    // THE ESCAPE HATCH. Called once with the native window handle - an
-    // SDL_Window* - for callers who want to drive SDL themselves. Null on the
-    // headless backend. Nothing else here mentions SDL, and a caller who does
-    // not set this never learns it exists.
-    std::function<void(void *)> on_native_window;
 
     // Called once before the first frame with the live browser, for
     // applications that want to inspect the document or drive it themselves.

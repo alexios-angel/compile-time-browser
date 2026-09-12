@@ -164,7 +164,6 @@ int run_app(std::string_view html, app_options options) {
     apply_environment(options);
 
     std::unique_ptr<detail::host> host = detail::make_host(options);
-    if (options.on_native_window) { options.on_native_window(host->native_window()); }
 
     shell::browser_options browser_options;
     browser_options.width = options.logical_width > 0 ? options.logical_width : options.width;
@@ -395,8 +394,7 @@ int run_app(std::string_view html, app_options options) {
 
         ++frame;
         const bool last = options.max_frames > 0 && frame >= options.max_frames;
-        if (!options.screenshot_path.empty() &&
-            (frame - 1 == options.screenshot_frame || (options.screenshot_frame < 0 && last))) {
+        if (last && !options.screenshot_path.empty()) {
             if (const auto image = page.read_pixels()) {
                 (void)write_ppm(options.screenshot_path, *image);
             }

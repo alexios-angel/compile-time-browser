@@ -95,10 +95,8 @@ public:
     }
 
     [[nodiscard]] bool start(const app_options & options) override {
-        SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-        if (options.fullscreen) { flags |= SDL_WINDOW_FULLSCREEN; }
-        window_.reset(
-            SDL_CreateWindow(options.title.c_str(), options.width, options.height, flags));
+        window_.reset(SDL_CreateWindow(options.title.c_str(), options.width, options.height,
+                                       SDL_WINDOW_RESIZABLE));
         if (!window_) { return false; }
 
         renderer_ = SDL_CreateRenderer(window_.get(), nullptr);
