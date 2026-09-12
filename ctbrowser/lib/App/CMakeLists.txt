@@ -12,13 +12,12 @@ target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrow
 if(SDL3_FOUND)
   target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=1)
   target_link_libraries(ctbrowser-app PUBLIC ${CTBROWSER_SDL3_TARGET})
-  # PNG/JPEG/WebP, if the satellite library is there. BMP is decoded by the
-  # engine itself, so a build without this still shows images.
-  find_package(SDL3_image QUIET)
+  # PNG/JPEG/WebP, if the satellite library is there (found by the root
+  # CMakeLists). BMP is decoded by the engine itself, so a build without this
+  # still shows images.
   if(SDL3_image_FOUND)
     target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=1)
-    ctbrowser_pick_sdl_target(image_target image_static SDL3_image::SDL3_image)
-    target_link_libraries(ctbrowser-app PUBLIC ${image_target})
+    target_link_libraries(ctbrowser-app PUBLIC ${CTBROWSER_SDL3_IMAGE_TARGET})
     message(STATUS "ctbrowser: SDL3_image found - <img> reads PNG/JPEG too")
   else()
     target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=0)
