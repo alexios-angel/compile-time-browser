@@ -168,45 +168,19 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     }
     if (dirty_ >= dirty::raster) { renderer_.discard(); }
     renderer_.set_clear_color(options_.background);
-    // TIMED PER STAGE, because the four of them are what the dirty level exists
-    // to choose between and the profiler could only see their sum. A stage that
-    // is skipped reports 0, which is the number worth looking at: an idle page
-    // or a scroll SHOULD leave three of these at zero, and "it didn't" is the
-    // regression this cannot otherwise catch.
-    //
-    // Four clock reads on a path that then rasterises the viewport. The clock
-    // is not the cost here; guessing which stage was has been, three times.
-    using clock = std::chrono::steady_clock;
-    const auto ms_since = [](clock::time_point from) {
-        return std::chrono::duration<double, std::milli>(clock::now() - from).count();
-    };
-    timing_ = frame_timing{};
-    auto at = clock::now();
-    if (dirty_ >= dirty::styles) {
-        resolve_styles();
-        timing_.styles_ms = ms_since(at);
-        at = clock::now();
-    }
-    if (dirty_ >= dirty::layout) {
-        run_layout();
-        timing_.layout_ms = ms_since(at);
-        at = clock::now();
-    }
-    if (dirty_ >= dirty::paint) {
-        record();
-        timing_.record_ms = ms_since(at);
-        at = clock::now();
-    }
+    // The four stages the dirty level chooses between. What each costs is
+    // benchmarks/' job; that a scroll skips three of them is layout_count()'s.
+    if (dirty_ >= dirty::styles) { resolve_styles(); }
+    if (dirty_ >= dirty::layout) { run_layout(); }
+    if (dirty_ >= dirty::paint) { record(); }
     dirty_ = dirty::nothing;
     ++frames_;
     // Paint Timing's first-paint: the first rendering update this document
     // has had. Idempotent, and the bindings are rebuilt per document, so a
     // navigation gets its own.
     if (bindings_) { bindings_->record_first_paint(); }
-    auto drawn = ctbrowser::raster::draw(renderer_, layers_, pool,
-                                         ctbrowser::raster::default_tile_extent, viewport());
-    timing_.raster_ms = ms_since(at);
-    return drawn;
+    return ctbrowser::raster::draw(renderer_, layers_, pool, ctbrowser::raster::default_tile_extent,
+                                   viewport());
 }
 
 void browser::resolve_styles() {

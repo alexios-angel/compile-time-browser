@@ -1,6 +1,5 @@
 #pragma once
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -327,19 +326,6 @@ public:
     // design exists to keep this number down: a caret blink or a scroll must
     // not increment it.
     [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
-
-    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds, per stage.
-    //
-    // Zero for a stage the frame SKIPPED, which is the interesting half: the
-    // dirty-level design is about not running these, so a zero is the design
-    // working rather than missing data.
-    struct frame_timing {
-        double styles_ms = 0;
-        double layout_ms = 0;
-        double record_ms = 0;
-        double raster_ms = 0;
-    };
-    [[nodiscard]] const frame_timing & last_frame_timing() const noexcept { return timing_; }
 
     // Collect the script heap now, and how many objects it has. Exposed
     // because "does a collection free what the page is still using" is only
@@ -1583,7 +1569,6 @@ private:
     source_kind source_kind_ = source_kind::html;
     std::string xml_error_;
     std::size_t layouts_ = 0;
-    frame_timing timing_;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;
