@@ -242,6 +242,12 @@ void test_calc_mix() {
              std::string{"calc-mix(10px 25%, 3em 25%, 5em 25%, 7em 25%)"});
     CHECK_EQ(specified("text-indent", "calc(10px + calc-mix(1% 0%, 3px 0%))"),
              std::string{"calc(0% + 10px)"});
+    // ...and the zero length beside a percentage is kept the same way; only
+    // two zeros of one unit add up to nothing to keep.
+    CHECK_EQ(specified("text-indent", "calc(10% + calc-mix(1px 0%, 3% 0%))"),
+             std::string{"calc(10% + 0px)"});
+    CHECK_EQ(specified("text-indent", "calc(10% + calc-mix(1% 0%, 3px 0%))"),
+             std::string{"calc(10%)"});
     CHECK_EQ(specified("text-indent", "calc-mix(1% 0%, 3% 0%, 5% * sibling-index() 0%)"),
              std::string{"calc(0%)"});
     CHECK_EQ(specified("scale", "calc-mix(1 * sibling-index() 50%, 3 50%, 5, 7)"),

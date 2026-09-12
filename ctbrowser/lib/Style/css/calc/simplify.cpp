@@ -380,6 +380,21 @@ std::string simplify_math(std::string_view value) {
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {
+            // A PERCENTAGE BESIDE A LENGTH KEEPS THE LENGTH'S TERM EVEN AT
+            // ZERO: `calc(10% + calc-mix(1px 0%, 3% 0%))` is `calc(10% + 0px)`
+            // (§10.12 adds the terms of one unit and drops nothing), which
+            // the magnitude-and-percentage answer cannot say and the symbolic
+            // sum can (calc-mix-serialize).
+            if (answer.value.has_percent && answer.value.px == 0.0 &&
+                !ascii_iequals(name, "calc-mix(")) {
+                if (const auto [outcome, sum] = evaluate_symbolic(body);
+                    outcome == math_outcome::resolved && !sum.symbols.empty()) {
+                    if (const std::string text = serialize_symbolic(sum); !text.empty()) {
+                        out.append("calc(").append(text).append(")");
+                        continue;
+                    }
+                }
+            }
             out.append(specified_math(answer.value));
             continue;
         }
