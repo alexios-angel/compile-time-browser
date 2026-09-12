@@ -608,8 +608,8 @@ private:
     // keeping the union of their options per node.
     struct mutation_node_state {
         std::vector<node_id> children;
-        std::vector<std::pair<atom, std::string>> attributes;
-        std::string text; // text and comment nodes only
+        std::vector<attribute> attributes;
+        std::string text; // CharacterData nodes only
     };
 
     void install_mutation_observer(context & cx);

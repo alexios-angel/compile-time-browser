@@ -454,10 +454,17 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                 return value::undefined();
             });
     }
+    // NULL ON A DOCTYPE, both ways - DOM 4.4's table, and the four subtests
+    // of `Node-textContent.html` that a doctype gets.
+    const bool doctype =
+        doc_->read().kind(id).value_or(node_kind::element) == node_kind::document_type;
     tree_property(
         "textContent",
-        [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
-        [this, id](context & c, std::span<value> a) {
+        [this, id, doctype](context & c, std::span<value>) {
+            return doctype ? value::null() : c.string(text_content(id));
+        },
+        [this, id, doctype](context & c, std::span<value> a) {
+            if (doctype) { return value::undefined(); }
             // Text, never markup: that is the whole point of the property, and
             // the reason a page reaches for it instead of innerHTML. A nullish
             // value is the empty string (DOM 4.4: `[LegacyNullToEmptyString]`
@@ -817,21 +824,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING CHANGES: "" is a
         // SyntaxError, a token with whitespace in it an InvalidCharacterError,
         // and `add("a", "")` must leave the attribute alone.
+        //
+        // `add` and `remove` check each token in turn; `replace` checks BOTH
+        // for emptiness before either for whitespace (DOM 7.1, steps 1-2),
+        // so `replace(" ", "")` is a SyntaxError - hence `all_empty_first`.
         const auto valid_tokens = [this](context & c, std::span<value> args,
-                                         std::vector<std::string> & out) {
-            for (const value & v : args) {
-                const std::string token = c.to_string(v);
+                                         std::vector<std::string> & out,
+                                         bool all_empty_first = false) {
+            for (const value & v : args) { out.push_back(c.to_string(v)); }
+            for (std::size_t i = 0; i < out.size(); ++i) {
+                const std::string & token = out[i];
                 if (token.empty()) {
                     throw_dom_exception(c, "SyntaxError",
                                         "DOMTokenList: the empty string is not a token");
                     return false;
                 }
+                if (!all_empty_first && token.find_first_of("\t\n\f\r ") != std::string::npos) {
+                    throw_dom_exception(c, "InvalidCharacterError",
+                                        "DOMTokenList: '" + token + "' contains whitespace");
+                    return false;
+                }
+            }
+            for (const std::string & token : out) {
                 if (token.find_first_of("\t\n\f\r ") != std::string::npos) {
                     throw_dom_exception(c, "InvalidCharacterError",
                                         "DOMTokenList: '" + token + "' contains whitespace");
                     return false;
                 }
-                out.push_back(token);
             }
             return true;
         };
@@ -898,7 +917,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             return value::undefined();
                         }
                         std::vector<std::string> given;
-                        if (!valid_tokens(c, args.subspan(0, 2), given)) {
+                        if (!valid_tokens(c, args.subspan(0, 2), given, true)) {
                             return value::undefined();
                         }
                         std::vector<std::string> tokens = tokens_now();

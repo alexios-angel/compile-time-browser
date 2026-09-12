@@ -339,6 +339,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     }
     publish(n->attributes, static_cast<const attr_list *>(fresh));
     bump_version();
+    note_write(id, name, false);
     return {};
 }
 
@@ -364,6 +365,7 @@ std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, a
     }
     publish(n->attributes, static_cast<const attr_list *>(fresh));
     bump_version();
+    note_write(id, name, false);
     return {};
 }
 
@@ -415,7 +417,27 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
     publish(n->text, static_cast<const text_block *>(new text_block{std::string{value}}));
     bump_version();
+    note_write(id, atom{}, true);
     return {};
+}
+
+void document::log_writes(bool on) {
+    log_writes_.store(on, std::memory_order_release);
+    if (!on) {
+        const std::lock_guard lock{writes_};
+        writes_log_.clear();
+    }
+}
+
+std::vector<document::write_note> document::take_writes() {
+    const std::lock_guard lock{writes_};
+    return std::exchange(writes_log_, {});
+}
+
+void document::note_write(node_id id, atom name, bool text) {
+    if (!log_writes_.load(std::memory_order_acquire)) { return; }
+    const std::lock_guard lock{writes_};
+    writes_log_.push_back(write_note{id, name, text});
 }
 
 node_id document::template_content(node_id element) const {

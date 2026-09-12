@@ -362,6 +362,29 @@ private:
     // attribute of an HTML document, which is where it returns.
     [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
 
+    // --- the write log, for the MutationObserver diff ---------------------
+    //
+    // A write that changes nothing - `setAttribute("x", theSameValue)`,
+    // `appendData("")`, `classList.remove(aMissingToken)` - still queues a
+    // mutation record, and a diff of before against after cannot see it. So
+    // while a reader has asked (`log_writes(true)`), every set_attribute* and
+    // set_text notes what it wrote, and `take_writes` drains the notes. Off,
+    // it costs one load per write.
+public:
+    struct write_note {
+        node_id node;
+        atom name; // the attribute's qualified name; unused for a text write
+        bool text = false;
+    };
+    void log_writes(bool on);
+    [[nodiscard]] std::vector<write_note> take_writes();
+
+private:
+    void note_write(node_id id, atom name, bool text);
+    std::atomic<bool> log_writes_{false};
+    std::mutex writes_;
+    std::vector<write_note> writes_log_;
+
     atom_table * atoms_;
     mutable epoch_domain domain_;
     mutable slab<node, node_tag> nodes_{domain_};
