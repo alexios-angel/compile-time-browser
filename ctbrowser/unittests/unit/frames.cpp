@@ -105,7 +105,7 @@ void test_a_frame_has_a_document_of_its_own() {
     is(one_frame, "document.getElementById('f').contentWindow.DOMException.name", "DOMException");
     is(one_frame,
        "(function () { var d = document.getElementById('f').contentDocument;"
-       " try { d.querySelector('[foo'); } catch (e) {"
+       " try { d.querySelector(''); } catch (e) {"
        " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
        "true");
     is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
