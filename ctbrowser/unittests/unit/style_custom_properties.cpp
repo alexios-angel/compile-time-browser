@@ -98,7 +98,7 @@ void test_var_substitution() {
         // substitution is a token-stream operation: one argument becomes three.
         fixture f;
         f.load("<p id=a></p>", ":root { --rgb: 33, 37, 41 } p { color: rgba(var(--rgb), .5) }");
-        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, .5)", "a var() comma list");
+        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, 0.5)", "a var() comma list");
     }
     {
         // THE FALLBACK is everything after the FIRST comma, commas included - because a
@@ -172,7 +172,7 @@ void test_var_substitution() {
                                "color: rgba(var(--c), .5) }");
         CHECK(f.value_of(f.find_id("a"), "width").empty());
         expect_value(f, f.find_id("a"), "height", "10px", "a length from a var()");
-        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, .5)", "a colour from a var()");
+        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, 0.5)", "a colour from a var()");
     }
     {
         // `!important` ON A CUSTOM PROPERTY is the DECLARATION's importance, not part
@@ -198,6 +198,17 @@ void test_var_substitution() {
         fixture f;
         f.load("<html><body id=a></body></html>", ":root { --a: var(--b); --b: #010101 }");
         expect_value(f, f.find_id("a"), "--a", "var(--b)", "stored verbatim");
+    }
+    {
+        // A SUBSTITUTED VALUE IS SPELLED AS `el.style` WOULD SPELL IT: the same
+        // grammar that validates it serialises it, so a 25-digit `<integer>`
+        // is the double it became (cssom/serialize-custom-props), and a
+        // keyword is lowercased.
+        fixture f;
+        f.load("<p id=a></p>", ":root { --n: 1111111111111111111111111; --k: BLOCK }"
+                               "p { z-index: var(--n); display: var(--k) }");
+        expect_value(f, f.find_id("a"), "z-index", "1111111111111111092469760", "an integer");
+        expect_value(f, f.find_id("a"), "display", "block", "a keyword");
     }
 }
 

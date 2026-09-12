@@ -1164,9 +1164,18 @@ public:
                 // makes that invalid at computed-value time - `unset`, not
                 // ten pixels (attr-all-types). Asked of the property table,
                 // which refuses nothing for a property it does not model.
-                if (!css::may_have_math(value) && !css::check_declaration(property, value).valid) {
-                    unset();
-                    return;
+                //
+                // ...AND WHAT IT ACCEPTS IT SPELLS, as `el.style` would have:
+                // `z-index: var(--n)` with a 25-digit `--n` is the same
+                // integer, through the same double, as `el.style.zIndex = n`
+                // (serialize-custom-props).
+                if (!css::may_have_math(value)) {
+                    css::value_check checked = css::check_declaration(property, value);
+                    if (!checked.valid) {
+                        unset();
+                        return;
+                    }
+                    value = std::move(checked.serialized);
                 }
             }
             // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
