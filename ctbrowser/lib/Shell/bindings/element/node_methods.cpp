@@ -296,7 +296,15 @@ void dom_bindings::install_node_methods(context & cx) {
     method(child_node, "remove", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (self) {
-            (void)doc_->remove_child(self);
+            // THE DOCUMENT ELEMENT OF A MADE DOCUMENT may go - see the top of
+            // document/as_node.cpp; `remove_child` refuses the root, and
+            // `parent.firstChild.remove()` on a created document is how
+            // pre-insertion-validation-notfound.js empties one.
+            if (self == doc_->root() && secondary_) {
+                doc_->remove_document_element();
+            } else {
+                (void)doc_->remove_child(self);
+            }
             mutated();
         }
         return value::undefined();
