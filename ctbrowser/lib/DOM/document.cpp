@@ -1,5 +1,9 @@
 #include <ctbrowser/dom/document.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
+#include <optional>
+
 // document: the function bodies.
 // The header says what these compute; this says how.
 
@@ -21,6 +25,141 @@ constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 [[nodiscard]] bool attribute_is(const atom_table & atoms, const attribute & a, std::string_view ns,
                                 std::string_view local) {
     return atoms.text(a.ns) == ns && attribute_local_name(atoms, a) == local;
+}
+
+// --- A PROCESSING INSTRUCTION'S ATTRIBUTES ---------------------------------
+//
+// DOM §4.13 gives a ProcessingInstruction an attribute map beside its data, and
+// the two are kept in step in BOTH directions: writing `data` re-parses it into
+// the map ("update attributes from data"), and the attribute operations
+// re-serialise the map into `data` ("update data from attributes"). The map is
+// STORED - on the node's ordinary attribute list, which every kind carries -
+// rather than derived on each read, because the two directions are not
+// inverses: `setAttribute("$", v)` is legal (a valid attribute local name) and
+// writes `$="v"`, which the parser then REFUSES (`$` is no XML Name) - so a map
+// derived from the data would lose the attribute the page just set.
+//
+// THE PARSE is xml-stylesheet §3, "rules for parsing pseudo-attributes from a
+// string": `Name S? '=' S? quoted`, separated by S, with the five predefined
+// entities and character references decoded and nothing else allowed after an
+// `&`; an unquoted value, a `<`, a duplicate name or a stray character is an
+// ERROR and the whole result is empty - the spec's "if result is an error,
+// return" after clearing the map. Name is checked the way lib/DOM/xml.cpp
+// checks it: the ASCII half exactly, everything above 0x7F accepted.
+
+[[nodiscard]] bool pi_name_start(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 0x80;
+}
+[[nodiscard]] bool pi_name_char(unsigned char c) {
+    return pi_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
+}
+// XML's S production: space, tab, CR, LF - not form feed, which HTML's set has.
+[[nodiscard]] bool pi_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+[[nodiscard]] std::optional<std::vector<attribute>> parse_pseudo_attributes(atom_table & atoms,
+                                                                            std::string_view data) {
+    std::vector<attribute> out;
+    std::size_t at = 0;
+    const auto skip_space = [&] {
+        const std::size_t before = at;
+        while (at < data.size() && pi_space(data[at])) { ++at; }
+        return at != before;
+    };
+    // `&#...;`, `&#x...;` or one of the five names, with `at` on the `&`.
+    const auto reference = [&](std::string & into) {
+        const std::size_t end = data.find(';', at);
+        if (end == std::string_view::npos) { return false; }
+        const std::string_view body = data.substr(at + 1, end - at - 1);
+        at = end + 1;
+        for (const auto & [name, text] :
+             {std::pair{"amp", '&'}, std::pair{"lt", '<'}, std::pair{"gt", '>'},
+              std::pair{"quot", '"'}, std::pair{"apos", '\''}}) {
+            if (body == name) {
+                into += text;
+                return true;
+            }
+        }
+        if (body.size() < 2 || body[0] != '#') { return false; }
+        const bool hex = body[1] == 'x';
+        const std::string_view digits = body.substr(hex ? 2 : 1);
+        if (digits.empty()) { return false; }
+        std::uint32_t code = 0;
+        for (const char d : digits) {
+            const int v = hex ? hex_value(d) : (d >= '0' && d <= '9' ? d - '0' : -1);
+            if (v < 0 || code > 0x10FFFF) { return false; }
+            code = code * (hex ? 16u : 10u) + static_cast<std::uint32_t>(v);
+        }
+        // XML's Char production - the well-formedness constraint on a CharRef.
+        const bool legal = code == 0x9 || code == 0xA || code == 0xD ||
+                           (code >= 0x20 && code <= 0xD7FF) || (code >= 0xE000 && code <= 0xFFFD) ||
+                           (code >= 0x10000 && code <= 0x10FFFF);
+        if (!legal) { return false; }
+        append_utf8(into, static_cast<char32_t>(code));
+        return true;
+    };
+    while (true) {
+        const bool spaced = skip_space();
+        if (at == data.size()) { return out; }
+        // PseudoAtts ::= PseudoAtt? (S PseudoAtt)* S? - one S between two.
+        if (!out.empty() && !spaced) { return std::nullopt; }
+        const std::size_t name_begin = at;
+        if (!pi_name_start(static_cast<unsigned char>(data[at]))) { return std::nullopt; }
+        while (at < data.size() && pi_name_char(static_cast<unsigned char>(data[at]))) { ++at; }
+        const std::string_view name = data.substr(name_begin, at - name_begin);
+        (void)skip_space();
+        if (at >= data.size() || data[at] != '=') { return std::nullopt; }
+        ++at;
+        (void)skip_space();
+        if (at >= data.size() || (data[at] != '"' && data[at] != '\'')) { return std::nullopt; }
+        const char quote = data[at++];
+        std::string value;
+        while (true) {
+            if (at >= data.size()) { return std::nullopt; }
+            const char c = data[at];
+            if (c == quote) {
+                ++at;
+                break;
+            }
+            if (c == '<') { return std::nullopt; }
+            if (c == '&') {
+                if (!reference(value)) { return std::nullopt; }
+                continue;
+            }
+            value += c;
+            ++at;
+        }
+        const atom key = atoms.intern(name);
+        if (std::ranges::any_of(out, [key](const attribute & a) { return a.name == key; })) {
+            return std::nullopt;
+        }
+        out.emplace_back(key, std::move(value));
+    }
+}
+
+// "Update data from attributes": `name="value"` pairs one space apart, the
+// value with `&`, `<`, `>` and `"` as their entities - which is what makes
+// every serialisation parse back to the map it came from.
+[[nodiscard]] std::string serialize_pseudo_attributes(const atom_table & atoms,
+                                                      std::span<const attribute> attributes) {
+    std::string data;
+    for (const attribute & a : attributes) {
+        if (!data.empty()) { data += ' '; }
+        data += atoms.text(a.name);
+        data += "=\"";
+        for (const char c : a.value) {
+            switch (c) {
+            case '&': data += "&amp;"; break;
+            case '<': data += "&lt;"; break;
+            case '>': data += "&gt;"; break;
+            case '"': data += "&quot;"; break;
+            default: data += c; break;
+            }
+        }
+        data += '"';
+    }
+    return data;
 }
 
 } // namespace
@@ -224,8 +363,32 @@ node_id document::create_document_type(atom name, std::string_view public_id,
 
 node_id document::create_processing_instruction(atom target, std::string_view data) {
     const node_id id = nodes_.insert(node_kind::processing_instruction, target);
-    find(id)->text.store(new text_block{std::string{data}}, std::memory_order_release);
+    node * n = find(id);
+    n->text.store(new text_block{std::string{data}}, std::memory_order_release);
+    update_pi_attributes(*n, data);
     return id;
+}
+
+// "Update attributes from data" - the map is cleared first, so a data string
+// the parser refuses leaves NO attributes rather than the previous ones.
+void document::update_pi_attributes(node & n, std::string_view data) {
+    auto * fresh = new attr_list{};
+    if (std::optional<std::vector<attribute>> parsed = parse_pseudo_attributes(*atoms_, data)) {
+        fresh->items.assign(parsed->begin(), parsed->end());
+    }
+    publish(n.attributes, static_cast<const attr_list *>(fresh));
+}
+
+// "Update data from attributes", after an attribute write on a PI. Straight
+// into the text block - NOT through set_text, which would re-parse the data
+// and drop an attribute whose name the parser refuses - and noted as a text
+// write, because the record a MutationObserver gets for it is characterData.
+void document::update_pi_data(node_id id, node & n) {
+    if (n.kind != node_kind::processing_instruction) { return; }
+    const attr_list * held = n.attributes.load(std::memory_order_acquire);
+    publish(n.text, static_cast<const text_block *>(
+                        new text_block{serialize_pseudo_attributes(*atoms_, held->items)}));
+    note_write(id, atom{}, true);
 }
 
 node_id document::create_cdata_section(std::string_view value) {
@@ -357,7 +520,11 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     const std::lock_guard lock{stripe_of(id)};
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
-    if (n->kind != node_kind::element) { return std::unexpected{dom_error::not_an_element}; }
+    // An element, or a ProcessingInstruction - whose attribute map lives on
+    // the same list and is written back into its data below.
+    if (n->kind != node_kind::element && n->kind != node_kind::processing_instruction) {
+        return std::unexpected{dom_error::not_an_element};
+    }
 
     const attr_list * stale = n->attributes.load(std::memory_order_acquire);
     auto * fresh = new attr_list{stale->items};
@@ -371,6 +538,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
         fresh->items.push_back(attribute{name, std::string{value}});
     }
     publish(n->attributes, static_cast<const attr_list *>(fresh));
+    update_pi_data(id, *n);
     bump_version();
     note_write(id, name, false);
     return {};
@@ -424,6 +592,7 @@ std::expected<void, dom_error> document::remove_attribute(node_id id, atom name)
     // subtests check, in both orders.
     fresh->items.erase(fresh->items.begin() + std::distance(stale->items.begin(), gone));
     publish(n->attributes, static_cast<const attr_list *>(fresh));
+    update_pi_data(id, *n);
     bump_version();
     return {};
 }
@@ -449,6 +618,7 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
     publish(n->text, static_cast<const text_block *>(new text_block{std::string{value}}));
+    if (n->kind == node_kind::processing_instruction) { update_pi_attributes(*n, value); }
     bump_version();
     note_write(id, atom{}, true);
     return {};

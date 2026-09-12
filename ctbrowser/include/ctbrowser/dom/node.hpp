@@ -57,9 +57,11 @@ enum class node_kind : std::uint8_t {
     // Document node, ahead of the document element.
     document_type,
     // A ProcessingInstruction, `<?target data?>`: `tag` is the target and
-    // `text` the data. XML syntax that HTML merely tolerates, so the HTML
-    // tokenizer still makes a bogus comment of one and only the XML front end
-    // and `createProcessingInstruction` produce it.
+    // `text` the data, and its attribute map (DOM 4.13) on the attribute list
+    // beside them - see document::update_pi_attributes. The XML front end,
+    // `createProcessingInstruction` and, since HTML grew the processing
+    // instruction states, the HTML tokenizer produce it; `<?xml ...?>` in HTML
+    // is still a bogus comment.
     processing_instruction,
     // A CDATASection, `<![CDATA[ data ]]>`: a Text node by inheritance, so
     // everything that reads text through `text()` reads it too - a `<script>`

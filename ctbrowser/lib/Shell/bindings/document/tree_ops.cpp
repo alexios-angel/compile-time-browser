@@ -228,8 +228,9 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
 // the truth, and a page that appended a node after setting innerHTML expects to
 // see it.
 // HTML 13.2, "serializing HTML fragments". Text is escaped except inside the
-// raw-text elements, attribute values escape `&`, `"` and U+00A0, and a comment
-// is `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
+// raw-text elements, attribute values escape `&`, `"`, U+00A0 and - since the
+// 2025 change every engine shipped - `<` and `>` too, and a comment is
+// `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
 namespace {
 [[nodiscard]] std::string escape_html(std::string_view text, bool attribute) {
     std::string out;
@@ -243,9 +244,9 @@ namespace {
             ++i;
         } else if (attribute && c == '"') {
             out += "&quot;";
-        } else if (!attribute && c == '<') {
+        } else if (c == '<') {
             out += "&lt;";
-        } else if (!attribute && c == '>') {
+        } else if (c == '>') {
             out += "&gt;";
         } else {
             out += c;
