@@ -174,15 +174,10 @@ public:
         if (!clipped.empty()) { hit_regions_.push_back(hit_region{clipped, source}); }
     }
 
+    // A square fill is the rounded one with no radius: the recorded command is
+    // identical, and the rasterizer's fast path keys on the command.
     void fill(const rect & where, color c, node_id source = {}) {
-        if (where.empty() || c.transparent()) { return; } // nothing to draw, nothing to record
-        paint_command cmd;
-        cmd.op = paint_op::fill_rect;
-        cmd.bounds = where;
-        cmd.fill = c;
-        cmd.source = source;
-        commands_.push_back(std::move(cmd));
-        bounds_ = bounds_.united(where);
+        fill_rounded(where, c, {}, 0, source);
     }
 
     // The rounded form, and optionally a RING rather than a solid: a rounded
