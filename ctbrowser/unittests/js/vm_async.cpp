@@ -132,6 +132,45 @@ void test_yield_delegation() {
                   "TypeError");
 }
 
+// `.return(v)` AT A YIELD RUNS THE FINALLY BLOCKS ON THE WAY OUT (27.5.3.4):
+// the return completion travels through the body, a catch clause does not
+// see it, a `yield` inside a finally suspends again, and a finally that
+// returns overrides the value. It used to finish the generator on the spot.
+void test_generator_return_runs_finally() {
+    expect_result("var log = []; function* g() { try { yield 1; } finally { log.push('f'); } }"
+                  "const it = g(); it.next(); const r = it.return(9);"
+                  "return log.join('') + ',' + r.value + ',' + r.done + ',' + it.next().done;",
+                  "f,9,true,true");
+    expect_result("var caught = 0; function* g() { try { yield 1; } catch (e) { caught++; } }"
+                  "const it = g(); it.next(); const r = it.return(2);"
+                  "return caught + ',' + r.value + ',' + r.done;",
+                  "0,2,true");
+    expect_result("function* g() { try { yield 1; } finally { yield 'cleanup'; } }"
+                  "const it = g(); it.next(); const a = it.return(3); const b = it.next();"
+                  "return a.value + ',' + a.done + ',' + b.value + ',' + b.done;",
+                  "cleanup,false,3,true");
+    expect_result(
+        "function* g() { try { yield 1; } finally { return 'override'; } }"
+        "const it = g(); it.next(); const r = it.return(3); return r.value + ',' + r.done;",
+        "override,true");
+    // Nested try/finally: both run, innermost first.
+    expect_result(
+        "var log = []; function* g() { try { try { yield 1; } finally { log.push('in'); } }"
+        " finally { log.push('out'); } }"
+        "const it = g(); it.next(); it.return(); return log.join(',');",
+        "in,out");
+    // A throw from a finally during return is the throw, not the return.
+    expect_result("function* g() { try { yield 1; } finally { throw new Error('fin'); } }"
+                  "const it = g(); it.next(); try { it.return(3); return 'no'; }"
+                  " catch (e) { return e.message + ',' + it.next().done; }",
+                  "fin,true");
+    // Before the first next() nothing runs; after the end nothing runs either.
+    expect_result(
+        "var ran = 0; function* g() { try { ran++; yield 1; } finally { ran += 10; } }"
+        "const it = g(); const r = it.return(5); return ran + ',' + r.value + ',' + r.done;",
+        "0,5,true");
+}
+
 void test_generators() {
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
@@ -477,6 +516,7 @@ int main() {
     test_pending_promises();
     test_generators();
     test_yield_delegation();
+    test_generator_return_runs_finally();
     test_async_and_promises();
     test_promise_handlers_are_microtasks();
     test_async_rejection();

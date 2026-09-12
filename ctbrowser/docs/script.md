@@ -573,12 +573,21 @@ which is precisely what a pawl that records the blocker is for:
 
 ### What is NOT implemented, by name
 
-* **`yield*`** - delegation. Zero uses across all three corpora; it would be a
-  loop over the inner iterator and is not written because nothing asks.
-* **`.return(v)` does not run `finally` blocks.** It marks the generator done
-  and answers `{value: v, done: true}`. The spec resumes the body to run any
-  pending `finally`, which needs the unwinder rather than the resumer. (The
-  same for an async generator's `.return()`.)
+* **`yield*` delegates since 2026-09-12** (14.4.14): a bytecode loop around
+  three hidden natives (`__ctbrowser_delegate_open/call/settle`); a sync
+  generator hands the inner result object out as it is, and `.throw()` /
+  `.return()` while delegating reach the inner iterator first
+  (`generator_resume` keeps the record on the coroutine). An ASYNC generator
+  delegates on the `next` path only; throw/return into one still take the old
+  path.
+* **`.return(v)` runs `finally` blocks since 2026-09-12** - for a SYNC
+  generator: the return completion is a marker object (`@#return`) thrown at
+  the yield under a fence `generator_resume` pushes beneath the frame, every
+  catch clause in a generator starts with `__ctbrowser_catch_filter` which
+  hands a marker on, and the marker escaping the frame is what answers
+  `{value: v, done: true}`. A `yield` inside the finally suspends again; a
+  finally that returns overrides. An async generator's `.return()` still
+  finishes on the spot.
 * **`for (x of gen())` MATERIALIZES.** `op::iterable` hands back an array by
   construction, so the generator is drained - up to 2^20 values - rather than
   pulled lazily. An INFINITE generator hangs there instead of looping for ever,
@@ -587,8 +596,11 @@ which is precisely what a pawl that records the blocker is for:
 * **Async generators and `for await` exist since 2026-09-12** — the request
   queue lives on `coroutine_object`, `yield`/`return` await their operands,
   and `for await` lowers to the real protocol (see `docs/test262.md`). Still
-  not done: `yield*`, and closing the iterator on `break`/throw in either
-  loop.
+  not done: closing the iterator on `break`/throw in the sync loop. Array
+  DESTRUCTURING runs the real protocol since 2026-09-12 (three natives,
+  `__ctbrowser_iter_open/next/close`, IteratorClose included), and a
+  page's own `[Symbol.iterator]()` iterates everywhere `iterable_values`
+  is asked - still eagerly.
 
 ## THE TWO INSTRUMENTS, AND WHY BOTH
 

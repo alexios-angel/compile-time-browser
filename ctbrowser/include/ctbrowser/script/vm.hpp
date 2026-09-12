@@ -1552,6 +1552,11 @@ public:
     // The generator whose frame is running - a native called from a
     // generator body sees that frame on top, since natives push none.
     [[nodiscard]] coroutine_object * current_generator() const noexcept;
+    // See return_marker_key: a `.return(v)` in flight through the body's
+    // finally blocks, and how to tell one from a page's own throw.
+    [[nodiscard]] value make_return_marker(value v);
+    [[nodiscard]] bool is_return_marker(value v) const;
+    [[nodiscard]] value return_marker_value(value marker) const;
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);

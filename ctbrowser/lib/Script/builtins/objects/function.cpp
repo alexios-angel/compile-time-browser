@@ -351,6 +351,10 @@ void install_destructuring_iteration(context & cx) {
         if (!done && !c.throw_pending()) { record->set("done", value::boolean(false)); }
         return item;
     });
+    cx.define_native(std::string{catch_filter_name}, [](context & c, std::span<value> a) {
+        if (!a.empty() && c.is_return_marker(a[0])) { c.throw_value(a[0]); }
+        return value::undefined();
+    });
     cx.define_native(std::string{require_object_name}, [](context & c, std::span<value> a) {
         const value v = a.empty() ? value::undefined() : a[0];
         if (v.is_nullish()) {

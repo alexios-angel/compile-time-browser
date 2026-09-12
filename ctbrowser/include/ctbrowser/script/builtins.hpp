@@ -72,6 +72,15 @@ inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close"
 inline constexpr std::string_view yield_delegate_open_name = "__ctbrowser_delegate_open";
 inline constexpr std::string_view yield_delegate_call_name = "__ctbrowser_delegate_call";
 inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_delegate_settle";
+// A GENERATOR'S RETURN COMPLETION, TRAVELLING AS A THROW. `.return(v)` at a
+// yield resumes the frame with a marker object - {@#return: v}, a key no
+// source can spell - thrown at the yield, so every `finally` on the way out
+// runs as 27.5.3.4 says and nothing else can catch it: the compiler starts
+// every catch clause with this native, which rethrows a marker and returns
+// for anything else, and generator_resume fences the frame and turns the
+// escaping marker back into {value: v, done: true}.
+inline constexpr std::string_view return_marker_key = "@#return";
+inline constexpr std::string_view catch_filter_name = "__ctbrowser_catch_filter";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";

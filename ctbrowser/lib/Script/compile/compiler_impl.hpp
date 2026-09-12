@@ -886,6 +886,8 @@ public:
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
+    // The start of a catch clause in a generator - see the definition.
+    void emit_catch_filter(std::uint16_t caught);
     // `get [key]() {}` / `set [key](v) {}` on `target` - see define_accessor_name.
     void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
                                 bool setter);
