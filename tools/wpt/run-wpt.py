@@ -25,6 +25,7 @@ names a feature rather than a number.
 
 import argparse
 import concurrent.futures
+import dataclasses
 import json
 import os
 import re
@@ -149,15 +150,15 @@ def read_head(path: Path, limit: int = 8192) -> bytes:
         return handle.read(limit)
 
 
+@dataclasses.dataclass
 class Plan:
     """What one candidate turns into: a page to open, or a reason to skip."""
 
-    def __init__(self, rel, page=None, timeout=TIMEOUT_NORMAL, skip=None, wrapper=None):
-        self.rel = rel  # the test's WPT path, and its key in expectations
-        self.page = page  # the file ctdrive actually opens
-        self.timeout = timeout
-        self.skip = skip  # a reason, naming a feature - never a number
-        self.wrapper = wrapper  # a generated .any.html to delete afterwards
+    rel: str  # the test's WPT path, and its key in expectations
+    page: Path | None = None  # the file ctdrive actually opens
+    timeout: float = TIMEOUT_NORMAL
+    skip: str | None = None  # a reason, naming a feature - never a number
+    wrapper: Path | None = None  # a generated .any.html to delete afterwards
 
 
 def plan_for(path: Path, wpt: Path) -> Plan:
@@ -254,14 +255,15 @@ def signal_name(code: int) -> str:
         return f"signal {-code}"
 
 
+@dataclasses.dataclass
 class DriverResult:
-    def __init__(self, status, message="", subtests=None, signal=None, log="", seconds=0.0):
-        self.status = status
-        self.message = message
-        self.subtests = subtests or []
-        self.signal = signal
-        self.log = log
-        self.seconds = seconds
+    status: str
+    message: str = ""
+    subtests: list = dataclasses.field(default_factory=list)
+    signal: int | None = None  # the exit code, when the driver died
+    log: str = ""
+    seconds: float = 0.0
+    rel: str = ""  # filled in by main(), once the result is filed under its test
 
 
 def send_command(sock, payload, deadline):
@@ -562,16 +564,6 @@ def gate(results, path: Path):
 # --- reporting --------------------------------------------------------------
 
 
-class Result:
-    def __init__(self, rel, status, message="", subtests=None, signal=None, seconds=0.0):
-        self.rel = rel
-        self.status = status
-        self.message = message
-        self.subtests = subtests or []
-        self.signal = signal
-        self.seconds = seconds
-
-
 def table(results, corpus, elapsed):
     by_dir = {}
     for result in results:
@@ -797,7 +789,7 @@ def main():
         f"{args.memory_mb} MB cap"
     )
 
-    results = [Result(p.rel, Outcome.SKIP, p.skip) for p in plans if p.skip]
+    results = [DriverResult(Outcome.SKIP, p.skip, rel=p.rel) for p in plans if p.skip]
     started = time.monotonic()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -812,16 +804,10 @@ def main():
                     outcome = future.result()
                 except Exception as bad:  # a bug in the runner is not a test result
                     outcome = DriverResult(Outcome.HARNESS_ERROR, f"runner error: {bad!r}")
-                results.append(
-                    Result(
-                        plan.rel,
-                        outcome.status,
-                        outcome.message,
-                        outcome.subtests,
-                        outcome.signal,
-                        outcome.seconds,
-                    )
-                )
+                # log="" drops the driver's stdout, which nothing reports
+                # after this point and which would otherwise sit in memory
+                # for every test until the run ends.
+                results.append(dataclasses.replace(outcome, rel=plan.rel, log=""))
                 done += 1
                 if done % 25 == 0 or done == len(runnable):
                     print(f"  {done}/{len(runnable)}", file=sys.stderr)
