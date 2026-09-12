@@ -34,10 +34,11 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
                       .arrays = "a:[zero] | a:[x]",
                       .exit = "a -> {a}; a -> {a,x}"},
          .discharged = ""},
-        {.contents = {.what = "the independent Plus carrier is not an original BigInt",
+        {.contents = {.what = "the independent Plus carrier feeds mixed Add retention",
                       .body =
                           values + produce + "  %next = ctjs.binary add %produced, %big\n" + done,
-                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+                      .arrays = "a:[x]",
+                      .exit = "zero -> {}"}},
         {.contents = {.what = "Plus cannot supply an exact Number index after its error",
                       .body =
                           values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
@@ -272,10 +273,11 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                       .arrays = "a:[zero] | a:[x]",
                       .exit = "a -> {a}; a -> {a,x}"},
          .discharged = ""},
-        {.contents = {.what = "the independent Undefined Sub carrier cannot authorize BigInt Add",
+        {.contents = {.what = "the independent Undefined Sub carrier feeds mixed Add retention",
                       .body =
                           values + produce + "  %next = ctjs.binary add %produced, %big\n" + done,
-                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+                      .arrays = "a:[x]",
+                      .exit = "zero -> {}"}},
         {.contents = {.what = "Sub cannot supply an exact Number index after its error",
                       .body =
                           values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
@@ -430,10 +432,11 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                           .arrays = "a:[x] | a:[x]",
                           .exit = "produced -> {}; produced -> {}"}});
         for (const std::string other : {"%big", "%zero"}) {
-            run({.contents = {.what = "neither Sub path category authorizes mixed later Add",
+            run({.contents = {.what = "each Sub path proves later mixed Add retention separately",
                               .body = paths + "  %next = ctjs.binary add %produced, " + other +
                                       "\n" + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .arrays = "a:[x] | a:[x]",
+                              .exit = "zero -> {}; zero -> {}"}});
         }
     }
     mixed_row wide = rows.front();
@@ -528,8 +531,9 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                                 ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow,
                                 ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
-            inspect(kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Div ||
-                            kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
+            inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Mul ||
+                            kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
+                            kind == ctjs::BinaryKind::Pow
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
@@ -594,10 +598,11 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                       .arrays = "a:[zero] | a:[x]",
                       .exit = "a -> {a}; a -> {a,x}"},
          .discharged = ""},
-        {.contents = {.what = "the independent Undefined Mul carrier cannot authorize BigInt Add",
+        {.contents = {.what = "the independent Undefined Mul carrier feeds mixed Add retention",
                       .body =
                           values + produce + "  %next = ctjs.binary add %produced, %big\n" + done,
-                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+                      .arrays = "a:[x]",
+                      .exit = "zero -> {}"}},
         {.contents = {.what = "Mul cannot supply an exact Number index after its error",
                       .body =
                           values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
@@ -631,7 +636,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             std::string{kPrologue} + expected.contents.body + "}\n", &context);
         // Preserve every historical Mul fixture; run the same independent
-        // operand/retention matrix for Div/Mod/Pow by changing only those operations.
+        // operand/retention matrix for Div/Mod/Pow/Add by changing only those operations.
         if (module && operation != ctjs::BinaryKind::Mul) {
             module->walk([&](ctjs::BinaryOp binary) {
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
@@ -762,10 +767,11 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                           .arrays = "a:[x] | a:[x]",
                           .exit = "produced -> {}; produced -> {}"}});
         for (const std::string other : {"%big", "%zero"}) {
-            run({.contents = {.what = "neither Mul path category authorizes mixed later Add",
+            run({.contents = {.what = "each Mul path proves later mixed Add retention separately",
                               .body = paths + "  %next = ctjs.binary add %produced, " + other +
                                       "\n" + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .arrays = "a:[x] | a:[x]",
+                              .exit = "zero -> {}; zero -> {}"}});
         }
     }
     mixed_row wide = rows.front();
@@ -860,8 +866,8 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
              {ctjs::BinaryKind::Add, ctjs::BinaryKind::Div, ctjs::BinaryKind::Mod,
               ctjs::BinaryKind::Pow, ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
-            inspect(kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
-                            kind == ctjs::BinaryKind::Pow
+            inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Div ||
+                            kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));
@@ -897,6 +903,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                 operation == ctjs::BinaryKind::Mul   ? "Mul"
                 : operation == ctjs::BinaryKind::Div ? "Div"
                 : operation == ctjs::BinaryKind::Mod ? "Mod"
+                : operation == ctjs::BinaryKind::Add ? "Add"
                                                      : "Pow",
                 rowCount, liveStates, budgets);
 }

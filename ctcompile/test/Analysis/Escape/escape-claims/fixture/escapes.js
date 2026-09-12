@@ -487,3 +487,45 @@ if (primitiveMixedStaticNormal[0] !== 4 || typeof primitiveMixedStaticNormal[0] 
     primitiveMixedStaticSavedError === primitiveMixedStaticUnknownError ||
     typeof primitiveMixedStaticError.message !== "string" ||
     typeof primitiveMixedStaticSavedError.stack !== "string") throw "mixed static BigInt independent TypeError witness";
+
+// --- MIXED DYNAMIC BIGINT ADD: independent TypeError, original dense operands ---
+function primitiveMixedAddEarly(choice) {
+    var child = {}, items = [child], value, shift;
+    if (choice) { value = 8n; shift = 1; }
+    else { value = 8; shift = 1; }
+    var result = value + shift;
+    items[0] = result;
+    return items;
+}
+function primitiveMixedAddRetained(choice) {
+    var child = {}, items = [child], saved = items[0], value, shift;
+    if (choice) { value = 8; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value + shift;
+    items[0] = result;
+    return saved;
+}
+function primitiveMixedAddOpaque(value, shift) {
+    var child = {}, items = [child];
+    var result = value + shift;
+    items[0] = result;
+    return items;
+}
+var primitiveMixedAddNormal = primitiveMixedAddEarly(false);
+var primitiveMixedAddSaved = primitiveMixedAddRetained(false);
+var primitiveMixedAddUnknown = primitiveMixedAddOpaque(8, 1);
+H.push(primitiveMixedAddNormal); H.push(primitiveMixedAddSaved); H.push(primitiveMixedAddUnknown);
+var primitiveMixedAddError = primitiveUShrCatch(primitiveMixedAddEarly, true);
+var primitiveMixedAddSavedError = primitiveUShrCatch(primitiveMixedAddRetained, true);
+var primitiveMixedAddUnknownError = primitiveUShrCatch(primitiveMixedAddOpaque, 8n, 1);
+if (primitiveMixedAddNormal[0] !== 9 || typeof primitiveMixedAddNormal[0] !== "number" ||
+    typeof primitiveMixedAddSaved !== "object" || Array.isArray(primitiveMixedAddSaved) ||
+    primitiveMixedAddUnknown[0] !== 9 || typeof primitiveMixedAddUnknown[0] !== "number" ||
+    !(primitiveMixedAddError instanceof TypeError) || primitiveMixedAddError.name !== "TypeError" ||
+    !(primitiveMixedAddSavedError instanceof TypeError) ||
+    !(primitiveMixedAddUnknownError instanceof TypeError) ||
+    primitiveMixedAddError === primitiveMixedAddSavedError ||
+    primitiveMixedAddError === primitiveMixedAddUnknownError ||
+    primitiveMixedAddSavedError === primitiveMixedAddUnknownError ||
+    typeof primitiveMixedAddError.message !== "string" ||
+    typeof primitiveMixedAddSavedError.stack !== "string") throw "mixed dynamic BigInt Add independent TypeError witness";

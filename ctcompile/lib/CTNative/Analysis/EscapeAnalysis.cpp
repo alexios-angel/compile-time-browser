@@ -1208,7 +1208,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     state.origins[binary.getResult()] = binary.getResult();
                     continue;
                 }
-                if ((binary.getKind() == ctjs::BinaryKind::Sub ||
+                if ((binary.getKind() == ctjs::BinaryKind::Add ||
+                     binary.getKind() == ctjs::BinaryKind::Sub ||
                      binary.getKind() == ctjs::BinaryKind::Mul ||
                      binary.getKind() == ctjs::BinaryKind::Div ||
                      binary.getKind() == ctjs::BinaryKind::Mod ||
@@ -1218,10 +1219,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                       primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
                      (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
                       bigIntOrigin(rhs, state.bigIntOrigins)))) {
-                    // bigint_binary rejects these mixed original primitive
-                    // categories before lookup, conversion or exponent checks. Its TypeError
-                    // has no input/local object edge; its VM result carrier is
-                    // independent Undefined, never a BigInt or a proved Number.
+                    // Mixed original primitives cannot retain local objects:
+                    // bigint_binary returns an independent TypeError/Undefined.
+                    // Add first makes both operands primitive and may concatenate
+                    // Strings instead; neither that result nor its depth-guard
+                    // Error aliases an input. Only the separate String proof
+                    // above supplies that category; this result is never BigInt.
                     // Calls, handlers and publication remain excluded across
                     // the whole frame. Check EVERY structural continuation:
                     // retention proves no successful completion or native effect.

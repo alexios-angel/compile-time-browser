@@ -129,19 +129,11 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
             for (const std::string & operation : kinds) {
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %big"}) {
-                    const bool supported =
-                        form == "binary_static" ||
-                        (form == "binary" &&
-                         (operation == "concat" || operation == "sub" || operation == "mul" ||
-                          operation == "div" || operation == "mod" || operation == "pow")) ||
-                        (operands == "%produced, %big" && operation == "add");
                     run({.contents = {
                              .what =
                                  "computed BigInt requires an independent binary category proof",
                              .body = values + produce + "  %next = ctjs." + form + " " + operation +
                                      " " + operands + "\n" + done,
-                             .failure = supported ? ArrayContentsFailure::None
-                                                  : ArrayContentsFailure::UnsupportedOperation,
                              .arrays = "a:[x]",
                              .exit = "produced -> {}"}});
                 }
@@ -186,10 +178,10 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                               .body = paths + done,
                               .arrays = "a:[x] | a:[x]",
                               .exit = "produced -> {}; produced -> {}"}});
-            run({.contents = {.what =
-                                  "either BigInt incoming path blocks a later non-BigInt operation",
+            run({.contents = {.what = "both path categories permit retention through later Add",
                               .body = paths + "  %next = ctjs.binary add %produced, %zero\n" + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .arrays = "a:[x] | a:[x]",
+                              .exit = "produced -> {}; produced -> {}"}});
         }
         for (const std::string effect :
              {"  ctjs.store_global \"held\", %a\n", "  %called = ctjs.call %p(%a)\n",
@@ -401,13 +393,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             for (const std::string input : {"%zero", "%p", "%x", "%a"}) {
                 run({.contents = {.what = "each BigInt binary operand needs independent provenance",
                                   .body = values + operate(input) + done,
-                                  .failure = (isStatic || kind == ctjs::BinaryKind::Sub ||
-                                              kind == ctjs::BinaryKind::Mul ||
-                                              kind == ctjs::BinaryKind::Div ||
-                                              kind == ctjs::BinaryKind::Mod ||
-                                              kind == ctjs::BinaryKind::Pow) &&
-                                                     input == "%zero"
-                                                 ? ArrayContentsFailure::None
+                                  .failure = input == "%zero" ? ArrayContentsFailure::None
                                              : isStatic && input == "%p"
                                                  ? ArrayContentsFailure::UnknownValue
                                                  : ArrayContentsFailure::UnsupportedOperation,
@@ -420,15 +406,6 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                          .what = "mixed primitive arithmetic needs an independent operation proof",
                          .body = values + "  %input = ctjs.constant " + attribute + "\n" +
                                  operate("%input") + done,
-                         .failure = isStatic || kind == ctjs::BinaryKind::Sub ||
-                                            kind == ctjs::BinaryKind::Mul ||
-                                            kind == ctjs::BinaryKind::Div ||
-                                            kind == ctjs::BinaryKind::Mod ||
-                                            kind == ctjs::BinaryKind::Pow ||
-                                            (kind == ctjs::BinaryKind::Add &&
-                                             attribute == "#ctjs.string<\"2\">")
-                                        ? ArrayContentsFailure::None
-                                        : ArrayContentsFailure::UnsupportedOperation,
                          .arrays = "a:[x]",
                          .exit = "produced -> {}"}});
             }
@@ -487,29 +464,13 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                     : std::vector<std::string>{"add", "bitand", "bitor", "bitxor",
                                                "shl", "shr",    "ushr"};
             for (const std::string & operation : operations) {
-                const bool supported =
-                    consumerForm == "binary"
-                        ? operation == "add" || operation == "sub" || operation == "mul" ||
-                              operation == "div" || operation == "mod" || operation == "pow"
-                        : operation == "add" || operation == "bitand" || operation == "bitor" ||
-                              operation == "bitxor" || operation == "shl" || operation == "shr" ||
-                              operation == "ushr";
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %rhs"}) {
                     run({.contents = {
-                             .what =
-                                 "binary BigInt categories cannot leak into Number-only consumers",
+                             .what = "binary BigInt consumers prove retention independently",
                              .body = values + produce + "  %next = ctjs." + consumerForm + " " +
                                      operation + " " + operands +
                                      " {storage_test_id = \"next\"}\n  ctjs.return %next\n",
-                             .failure = consumerForm == "binary_static" ||
-                                                (supported && operands == "%produced, %rhs") ||
-                                                (consumerForm == "binary" &&
-                                                 (operation == "concat" || operation == "sub" ||
-                                                  operation == "mul" || operation == "div" ||
-                                                  operation == "mod" || operation == "pow"))
-                                            ? ArrayContentsFailure::None
-                                            : ArrayContentsFailure::UnsupportedOperation,
                              .arrays = "a:[x]",
                              .exit = "next -> {}"}});
                 }
@@ -639,9 +600,10 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                      .body = paths + done,
                      .arrays = "a:[x] | a:[x]",
                      .exit = "produced -> {}; produced -> {}"}});
-            run({.contents = {.what = "neither path category can authorize mixed later arithmetic",
+            run({.contents = {.what = "each path independently proves later mixed Add retention",
                               .body = paths + "  %next = ctjs.binary add %produced, %zero\n" + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .arrays = "a:[x] | a:[x]",
+                              .exit = "produced -> {}; produced -> {}"}});
         }
         for (const std::string effect :
              {"  ctjs.store_global \"held\", %a\n", "  %called = ctjs.call %p(%a)\n",
@@ -745,11 +707,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 auto constant = saved.getDefiningOp<ctjs::ConstantOp>();
                 const auto oldValue = constant.getValue();
                 constant.setValueAttr(ctjs::NumberAttr::get(&context, 0));
-                inspect(isStatic || kind == ctjs::BinaryKind::Sub ||
-                                kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Div ||
-                                kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
-                            ? ArrayContentsFailure::None
-                            : ArrayContentsFailure::UnsupportedOperation);
+                inspect(ArrayContentsFailure::None);
                 constant.setValueAttr(oldValue);
                 inspect(ArrayContentsFailure::None);
             }

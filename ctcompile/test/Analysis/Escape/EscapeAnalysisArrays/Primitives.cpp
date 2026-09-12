@@ -126,10 +126,11 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .exit = "x -> {x}"},
              .discharged = ""});
         rows.push_back(
-            {.contents = {.what = "mixed static error carriers never acquire a BigInt category",
+            {.contents = {.what = "mixed static error carriers feed independent mixed Add",
                           .body =
                               values + mixed + "  %next = ctjs.binary add %produced, %big\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+                          .arrays = "a:[x]",
+                          .exit = "zero -> {}"}});
         rows.push_back(
             {.contents = {.what = "mixed static error carriers cannot supply literal indices",
                           .body =
@@ -175,10 +176,11 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                               .exit = "x -> {x}"},
                  .discharged = ""});
             rows.push_back(
-                {.contents = {.what = "UShr error carriers never acquire a BigInt category",
+                {.contents = {.what = "UShr error carriers feed independent mixed Add",
                               .body = values + error +
                                       "  %next = ctjs.binary add %produced, %big\n" + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .arrays = "a:[x]",
+                              .exit = "zero -> {}"}});
             rows.push_back(
                 {.contents = {.what = "UShr error carriers cannot supply literal indices",
                               .body = values + error +

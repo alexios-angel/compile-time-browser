@@ -653,7 +653,28 @@
       "primitiveMixedStaticRetained obj 1 0 1 0 0 thrown:1 pc29 unclaimed"
       "primitiveMixedStaticOpaque obj 1 0 1 0 0 thrown:1 pc11 unclaimed"
   )
-  foreach(_family IN ITEMS ushr mixedstatic)
+  set(_expected_primitive_mixedadd_literal_pcs
+      "primitiveMixedAddEarly 5 obj"
+      "primitiveMixedAddEarly 7 arr"
+      "primitiveMixedAddRetained 6 obj"
+      "primitiveMixedAddRetained 8 arr"
+      "primitiveMixedAddOpaque 3 obj"
+      "primitiveMixedAddOpaque 5 arr"
+  )
+  set(_expected_primitive_mixedadd_rows
+      "primitiveMixedAddEarly obj 2 2 0 0 0 - confined pc5"
+      "primitiveMixedAddEarly arr 2 1 1 0 0 temporaries:1 escapes:passed pc7"
+      "primitiveMixedAddRetained obj 2 1 1 0 0 temporaries:1 escapes:stored pc6"
+      "primitiveMixedAddRetained arr 2 2 0 0 0 - escapes:passed pc8"
+      "primitiveMixedAddOpaque obj 2 2 0 0 0 - escapes:stored pc3"
+      "primitiveMixedAddOpaque arr 2 1 1 0 0 temporaries:1 escapes:passed pc5"
+  )
+  set(_expected_primitive_mixedadd_error_rows
+      "primitiveMixedAddEarly obj 1 0 1 0 0 thrown:1 pc24 unclaimed"
+      "primitiveMixedAddRetained obj 1 0 1 0 0 thrown:1 pc29 unclaimed"
+      "primitiveMixedAddOpaque obj 1 0 1 0 0 thrown:1 pc11 unclaimed"
+  )
+  foreach(_family IN ITEMS ushr mixedstatic mixedadd)
     foreach(_table IN ITEMS literal_pcs rows error_rows)
       set(_expected "${_expected_primitive_${_family}_${_table}}")
       set(_observed_rows "${_primitive_${_family}_${_table}}")
