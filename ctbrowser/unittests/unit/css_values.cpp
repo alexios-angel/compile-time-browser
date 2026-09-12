@@ -320,6 +320,10 @@ void test_the_rest_of_the_math_functions() {
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     // A UNIT WITH NO BASIS KEEPS ITS TERM, AND ITS TERM KEEPS ITS PLACE. CSS
     // Values 4 §10.11 does not resolve `1em` or `5%` here, so both survive to
     // the specified value; §10.13 says what order they survive in.
@@ -388,9 +392,28 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // evaluate are all left exactly as written - which is where they were before
     // this rule existed, so nothing that works today can start failing.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
-    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(sibling-index())");
+    // calc-sibling-function-parsing: the function is a term of its own, and
+    // what multiplies it folds around it.
+    ok("rotate", "calc(1turn * sibling-count())", "calc(360deg * sibling-count())");
+    ok("rotate", "calc(sibling-index() * 2rad * pi)", "calc(360deg * sibling-index())");
+    ok("z-index", "calc(sibling-index())", "sibling-index()");
+    ok("animation-duration", "calc(100ms * sibling-count())", "calc(0.1s * sibling-count())");
+    ok("left", "calc(10px * sibling-index() + 10%)", "calc(10% + (10px * sibling-index()))");
+    // ...and a function OVER one is not applied to nought (hypot-pow-sqrt-computed),
+    // nor is a random() drawn before computed-value time (random-serialize).
+    ok("margin-left", "calc(1px * sqrt(sibling-index()))", "calc(1px * sqrt(sibling-index()))");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // A relative colour's channel keywords are values inside its math, and
+    // nowhere else (CSS Color 5 §relative-colors, random-serialize).
+    ok("color", "rgb(from red calc(r + 30) g b)", "rgb(from red calc(r + 30) g b)");
+    bad("color", "rgb(calc(r + 1) 0 0)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
 }
 
@@ -469,8 +492,9 @@ void test_the_angle_functions_take_an_angle() {
     ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
     ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
     ok("filter", "hue-rotate(90deg)", "hue-rotate(90deg)");
-    // ...and a function with no answer here is not a function with a wrong type.
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    // ...and a function with no answer here is not a function with a wrong type;
+    // `1deg + 1cqw` would be one, the container units resolving now.
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
     // Nothing outside the angle-only functions is touched by the rule.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
 }

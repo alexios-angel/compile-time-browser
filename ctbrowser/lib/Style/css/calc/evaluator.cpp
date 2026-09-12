@@ -89,11 +89,51 @@ struct arithmetic {
     return out;
 }
 
+// A SYMBOL THAT IS A FUNCTION rather than a unit - `sibling-index()` in a
+// specified value - and a term made only of those.
+[[nodiscard]] bool function_symbol(std::string_view key) noexcept {
+    return key.ends_with("()");
+}
+[[nodiscard]] bool function_only(const term & t) noexcept {
+    return !t.symbols.empty() && t.value == 0.0 && !t.has_percent &&
+           std::ranges::all_of(t.symbols, [](const auto & s) { return function_symbol(s.first); });
+}
+
 [[nodiscard]] arithmetic multiply(const term & a, const term & b) {
     // A NUMBER SCALES THE OTHER OPERAND, which is the product every stylesheet
     // writes.
-    if (a.is_number() && !a.has_percent) { return {scaled(b, a.value)}; }
-    if (b.is_number() && !b.has_percent) { return {scaled(a, b.value)}; }
+    if (a.is_number() && !a.has_percent && a.symbols.empty()) { return {scaled(b, a.value)}; }
+    if (b.is_number() && !b.has_percent && b.symbols.empty()) { return {scaled(a, b.value)}; }
+    // A FUNCTION TERM TIMES A DIMENSION is a product with nothing to fold:
+    // `1turn * sibling-count()` is the term `360deg * sibling-count()`, keyed
+    // on both so the canonical spelling is one entry. The other side is a
+    // plain magnitude in its canonical unit, or a unit term of its own.
+    if (function_only(a) != function_only(b)) {
+        const term & fn = function_only(a) ? a : b;
+        const term & other = function_only(a) ? b : a;
+        if (other.has_percent || std::ranges::any_of(other.symbols, [](const auto & s) {
+                return function_symbol(s.first);
+            })) {
+            return {std::nullopt, true};
+        }
+        term out;
+        for (std::size_t i = 0; i < out.dims.size(); ++i) {
+            out.dims[i] = static_cast<std::int8_t>(fn.dims[i] + other.dims[i]);
+        }
+        const std::string unit =
+            other.symbols.empty() ? std::string{canonical_unit(other.type())} : std::string{};
+        const double magnitude = other.symbols.empty() ? other.value : 0.0;
+        for (const auto & [key, coefficient] : fn.symbols) {
+            if (other.symbols.empty()) {
+                add_symbol(out, unit.empty() ? key : unit + '*' + key, coefficient * magnitude);
+            } else {
+                for (const auto & [other_unit, other_coefficient] : other.symbols) {
+                    add_symbol(out, other_unit + '*' + key, coefficient * other_coefficient);
+                }
+            }
+        }
+        return {out};
+    }
     // TWO DIMENSIONS MULTIPLY INTO A TYPE OF THEIR OWN - the exponents add, CSS
     // Values 4 §10.2 - and `2px * 3px` is an area on its way to being divided
     // back down, or a syntax error if it never is (`settle()` decides). A
@@ -118,6 +158,19 @@ struct arithmetic {
     // A divisor carrying a percentage has no magnitude until layout, and a
     // symbolic one has none at all.
     if (!b.is_number() || b.has_percent) {
+        // A PERCENTAGE OVER A PERCENTAGE IS A NUMBER: the basis cancels, so
+        // `calc(10% / 20%)` is 0.5 with nothing left to resolve
+        // (typed_arithmetic) - provided each side is nothing but its
+        // percentage, since `(10% + 1px) / 20%` needs the basis after all.
+        if (a.has_percent && b.has_percent && no_plain_part(a) && no_plain_part(b) &&
+            a.symbols.empty() && b.symbols.empty()) {
+            term out;
+            for (std::size_t i = 0; i < out.dims.size(); ++i) {
+                out.dims[i] = static_cast<std::int8_t>(a.dims[i] - b.dims[i]);
+            }
+            out.value = a.percent / b.percent;
+            return {out};
+        }
         if (b.has_percent || !b.symbols.empty() || !a.symbols.empty()) {
             return {std::nullopt, true};
         }
@@ -232,6 +285,26 @@ enum class round_to : std::uint8_t {
     const double how_far = (a - b) / (c - b);
     if (!clamped || std::isnan(how_far)) { return how_far; }
     return std::min(std::max(how_far, 0.0), 1.0);
+}
+
+// CSS Values 5 §random: the value between A and B the random base picks, on
+// a grid of `step` when there is one. The corners are the specification's
+// and `random-computed` reads every one of them: a NaN anywhere is a NaN, an
+// out-of-order range is A, an infinite A is that infinity, an infinite B (or
+// an infinite step) has no answer but A's side, and a step that is not
+// positive is no step at all.
+[[nodiscard]] double random_one(double base, double a, double b, std::optional<double> step) {
+    if (std::isnan(a) || std::isnan(b) || (step && std::isnan(*step))) { return std::nan(""); }
+    if (std::isinf(a)) { return a; }
+    if (std::isinf(b)) { return std::nan(""); }
+    if (b < a) { return a; }
+    if (step && *step > 0.0) {
+        if (std::isinf(*step)) { return a; }
+        const double count = std::floor((b - a) / *step) + 1.0; // the multiples that fit
+        const double pick = std::floor(base * count);
+        return std::min(b, a + pick * *step);
+    }
+    return a + base * (b - a);
 }
 
 // WHAT A DIMENSION IS MEASURED AGAINST. Two answers, and the second is what a
@@ -565,6 +638,7 @@ private:
         if (named("abs(")) { return sign_or_abs(false); }
         if (named("sign(")) { return sign_or_abs(true); }
         if (named("progress(")) { return progress_of(); }
+        if (named("random(")) { return random_of(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -615,11 +689,25 @@ private:
             if (!at_close()) { return fail(); }
             take_close();
             const std::uint32_t known = index ? ctx_.sibling_index : ctx_.sibling_count;
-            if (basis_ == basis::symbolic || known == 0) { return unresolvable(); }
+            // A SPECIFIED VALUE KEEPS THE FUNCTION AS A TERM OF ITS OWN, a
+            // <number> no basis can supply, so `calc(1turn * sibling-count())`
+            // simplifies to `calc(360deg * sibling-count())` around it
+            // (calc-sibling-function-parsing, CSS Values 4 §10.12).
+            if (basis_ == basis::symbolic) {
+                term out;
+                add_symbol(out, index ? "sibling-index()" : "sibling-count()", 1.0);
+                return out;
+            }
+            if (known == 0) { return unresolvable(); }
             term out;
             out.value = known;
             return out;
         }
+        // `calc-size()` IS A TOP-LEVEL FUNCTION ONLY, CSS Values 5 §calc-size:
+        // it may not sit inside another math function, and the only way one
+        // reaches this evaluator is nested - a top-level one is stepped over
+        // whole by every scan (calc-size-parsing).
+        if (named("calc-size(")) { return fail(); }
         // ANY OTHER FUNCTION IS UNRESOLVED, NOT INVALID, and the difference is
         // measured: `calc(inherit(--x) + 1px)` and `calc(attr(data-n px) * 2)`
         // are `test_valid_value` assertions and they are valid CSS this file
@@ -818,6 +906,90 @@ private:
         return out;
     }
 
+    // random( <random-value-sharing>? , A, B, [by]? step? ), CSS Values 5
+    // §random. The sharing options come first and end at the first comma:
+    // `fixed <number>` names the base outright, otherwise a `<dashed-ident>`,
+    // `element-scoped` and `property-index-scoped` say what the base is keyed
+    // on and `random_base` derives it. Then two values of one type, and an
+    // optional step of the same type.
+    [[nodiscard]] std::optional<term> random_of() {
+        ++at_; // the function token, `(` included
+        // A SPECIFIED VALUE KEEPS ITS random(): the draw happens at
+        // computed-value time and nowhere earlier (random-serialize).
+        if (basis_ == basis::symbolic) { return unresolvable(); }
+        // The options: everything before the first comma, read as tokens.
+        std::string options;
+        bool fixed = false;
+        double base = 0.0;
+        skip_whitespace();
+        for (;;) {
+            skip_whitespace();
+            const css_token & tok = peek();
+            if (tok.type == token_type::comma || at_close()) { break; }
+            if (tok.type == token_type::ident) {
+                const std::string_view word = t_.text_of(tok);
+                if (ascii_iequals(word, "fixed")) {
+                    ++at_;
+                    const std::optional<term> given = sum();
+                    if (!given || !given->is_number() || given->has_percent ||
+                        !given->symbols.empty()) {
+                        return fail();
+                    }
+                    fixed = true;
+                    // Clamped to [0, 1), so a base that overshoots picks the
+                    // top of the range without landing exactly on it.
+                    base = std::min(std::max(given->value, 0.0), 1.0 - 1e-9);
+                    continue;
+                }
+                if (word.starts_with("--") || ascii_iequals(word, "element-scoped") ||
+                    ascii_iequals(word, "property-index-scoped") || ascii_iequals(word, "auto")) {
+                    if (!options.empty()) { options += ' '; }
+                    options += word;
+                    ++at_;
+                    continue;
+                }
+                // `NaN`, `infinity`, `pi`: the first argument, with no options.
+                if (!options.empty()) { return fail(); }
+                break;
+            }
+            // A number or a dimension: the first argument, with no options.
+            if (!options.empty() || fixed) { return fail(); }
+            break;
+        }
+        if (!options.empty() || fixed) {
+            skip_whitespace();
+            if (peek().type != token_type::comma) { return fail(); }
+            ++at_;
+        }
+        if (!fixed) { base = random_base(options, ctx_); }
+        // A, B, and the optional step - which may be spelled `by <step>`.
+        std::vector<term> args;
+        for (;;) {
+            skip_whitespace();
+            if (args.size() == 2 && peek().type == token_type::ident &&
+                ascii_iequals(t_.text_of(peek()), "by")) {
+                ++at_;
+            }
+            const std::optional<term> one = sum();
+            if (!one) { return std::nullopt; }
+            args.push_back(*one);
+            skip_whitespace();
+            if (peek().type == token_type::comma) {
+                ++at_;
+                continue;
+            }
+            break;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        if (args.size() < 2 || args.size() > 3) { return fail(); }
+        if (!uniform(args)) { return std::nullopt; }
+        const std::optional<double> step =
+            args.size() == 3 ? std::optional<double>{scalar_of(args[2])} : std::nullopt;
+        return with_scalar(args.front(),
+                           random_one(base, scalar_of(args[0]), scalar_of(args[1]), step));
+    }
+
     [[nodiscard]] std::optional<term> hypot_of() {
         ++at_;
         const std::optional<std::vector<term>> args = arguments(1, ~std::size_t{0});
@@ -842,8 +1014,9 @@ private:
         for (const term & one : *args) {
             if (!one.is_number()) { return fail(); }
             // A number still carrying a percentage - `pow(50% / 1px, 1)` - has
-            // no magnitude until layout.
-            if (one.has_percent) { return unresolvable(); }
+            // no magnitude until layout, and neither has a symbolic one:
+            // `sqrt(sibling-index())` in a specified value is not `sqrt(0)`.
+            if (one.has_percent || !one.symbols.empty()) { return unresolvable(); }
         }
         const double b = args->size() > 1 ? (*args)[1].value : fallback;
         term out;
@@ -859,7 +1032,7 @@ private:
         const std::optional<std::vector<term>> args = arguments(1, 1);
         if (!args) { return std::nullopt; }
         const term & one = args->front();
-        if (one.has_percent) { return unresolvable(); }
+        if (one.has_percent || !one.symbols.empty()) { return unresolvable(); }
         double radians = 0.0;
         if (one.is_number()) {
             radians = one.value;
@@ -886,6 +1059,8 @@ private:
             if (!uniform(*args)) { return std::nullopt; }
         } else if (!args->front().is_number()) {
             return fail();
+        } else if (!args->front().symbols.empty()) {
+            return unresolvable();
         }
         const double a = arity == 2 ? scalar_of((*args)[0]) : args->front().value;
         const double b = arity == 2 ? scalar_of((*args)[1]) : 0.0;
@@ -929,6 +1104,51 @@ private:
 };
 
 } // namespace
+
+// THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
+// the same every time the same KEY asks for it, so a page reflows to the same
+// random layout it first had. The key is what the sharing options say -
+//
+//   nothing                 this element, this property, this position
+//   property-index-scoped   this property and position, on every element
+//   --name                  the name alone, everywhere
+//   --name element-scoped   the name, on this element
+//
+// - hashed (FNV-1a) into the mantissa of a double. Deterministic on purpose:
+// the render goldens are byte-compared and `Math.random` is seeded for the
+// same reason.
+[[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
+    std::string name;
+    bool element_scoped = false;
+    bool property_scoped = false;
+    for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
+        if (word.starts_with("--")) {
+            name = std::string{word};
+        } else if (ascii_iequals(word, "element-scoped")) {
+            element_scoped = true;
+        } else if (ascii_iequals(word, "property-index-scoped")) {
+            property_scoped = true;
+        }
+    }
+    std::string key;
+    if (!name.empty()) {
+        key = name;
+        if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    } else {
+        key = std::string{ctx.property} + '|' + std::to_string(ctx.random_index);
+        if (!property_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    }
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const char c : key) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 1099511628211ull;
+    }
+    // A final mix so a one-character difference reaches every bit.
+    hash ^= hash >> 29;
+    hash *= 0xbf58476d1ce4e5b9ull;
+    hash ^= hash >> 32;
+    return static_cast<double>(hash >> 11) / 9007199254740992.0; // 2^53
+}
 
 namespace detail {
 

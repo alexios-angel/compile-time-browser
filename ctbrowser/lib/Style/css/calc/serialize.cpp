@@ -74,7 +74,42 @@ namespace detail {
         out += unit;
     };
     if (value.has_percent) { append(value.percent, "%"); }
-    for (const auto & [unit, coefficient] : sorted) { append(coefficient, unit); }
+    for (const auto & [unit, coefficient] : sorted) {
+        // A FUNCTION TERM: `360deg * sibling-count()`, `2 * sibling-index()`,
+        // or the bare function when nothing multiplies it.
+        if (unit.ends_with("()")) {
+            const std::size_t star = unit.find('*');
+            const std::string_view dimension = star == std::string::npos
+                                                   ? std::string_view{}
+                                                   : std::string_view{unit}.substr(0, star);
+            const std::string_view function = star == std::string::npos
+                                                  ? std::string_view{unit}
+                                                  : std::string_view{unit}.substr(star + 1);
+            if (dimension.empty() && coefficient == 1.0) {
+                if (!out.empty()) { out += " + "; }
+                out += function;
+                continue;
+            }
+            // A product inside a sum is parenthesised, §10.13: `calc(10% +
+            // (10px * sibling-index()))`; alone it is the whole calc().
+            const bool in_sum = parts > 1;
+            if (in_sum) {
+                out += out.empty() ? "(" : " + (";
+                std::string one;
+                std::swap(one, out);
+                append(coefficient, dimension);
+                std::swap(one, out);
+                out += one;
+            } else {
+                append(coefficient, dimension);
+            }
+            out += " * ";
+            out += function;
+            if (in_sum) { out += ')'; }
+            continue;
+        }
+        append(coefficient, unit);
+    }
     return out;
 }
 

@@ -14,6 +14,7 @@
 // run in parallel.
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/boolean.hpp>
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>

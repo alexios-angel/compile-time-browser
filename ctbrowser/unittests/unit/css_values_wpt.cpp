@@ -67,6 +67,11 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
     CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
     CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
+    // Two infinities that cancel for any basis are a NaN, and so zero.
+    CHECK_EQ(fold_math("calc(infinity * 1px - infinity * 1%)", ctx, math_context::length).text,
+             std::string{"0%"});
+    CHECK_EQ(fold_math("calc(infinity * 1px + infinity * 1%)", ctx, math_context::length).text,
+             std::string{"calc(33554432% + 33554432px)"});
     // ...and only when computed: `el.style` reads the calc() back.
     CHECK_EQ(simplify_math("calc(NaN * 1px)"), std::string{"calc(NaN * 1px)"});
     CHECK_EQ(simplify_math("calc(1 / 0)"), std::string{"calc(infinity)"});
@@ -111,6 +116,19 @@ void test_a_clamp_with_an_absent_bound_is_a_comparison() {
              std::string{"clamp(1px, 2px, min(4px, 5em))"});
     CHECK_EQ(simplify_math("clamp(clamp(none, 2em, none), 4px, clamp(none, 6em, none))"),
              std::string{"clamp(2em, 4px, 6em)"});
+    // minmax-length-percent-serialize: a comparison that waits for a containing
+    // block still computes its arguments against the bases it has.
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.font_size = 16.0f;
+    CHECK_EQ(fold_math("min(1em, 10%)", ctx).text, std::string{"min(16px, 10%)"});
+    CHECK_EQ(fold_math("max(10% + 30px, 5em + 5%)", ctx).text,
+             std::string{"max(10% + 30px, 5% + 80px)"});
+    CHECK_EQ(fold_math("clamp(none, 1em, 10%)", ctx).text, std::string{"min(16px, 10%)"});
+    CHECK_EQ(fold_math("min(1em, max(10%, 2em))", ctx).text,
+             std::string{"min(16px, max(10%, 32px))"});
+    CHECK_EQ(fold_math("min(1em, 2em)", ctx).text, std::string{"16px"});
 }
 
 // calc-numbers and calc-rounds-to-integer: a math function's result is clamped
@@ -175,6 +193,19 @@ void test_typed_arithmetic() {
     CHECK(evaluate_math("10% * 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("52px * 1px / 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("10% / 1px", ctx).outcome == math_outcome::unresolved);
+    // A percentage over a percentage cancels its basis.
+    CHECK_EQ(number("10% / 20%"), 0.5);
+    CHECK(evaluate_math("(10% + 1px) / 20%", ctx).outcome == math_outcome::unresolved);
+    // The container units fall back to the small viewport without a container.
+    ctx.viewport_width = 1024.0f;
+    ctx.viewport_height = 768.0f;
+    CHECK_EQ(number("sign(0cqi / 1px)"), 0.0);
+    CHECK_EQ(number("10cqw"), 102.4);
+    CHECK_EQ(number("10cqmin"), 76.8);
+    // ...and the bases are applied in double: `mod(18vw, 5vw)` is exactly what
+    // `3vw` is, which single-precision bases put five millionths off
+    // (round-mod-rem-computed).
+    CHECK_EQ(static_cast<float>(number("mod(18vw, 5vw)")), static_cast<float>(number("3vw")));
     // calc-unit-analysis: an area and an inverse length are still invalid.
     CHECK(evaluate_math("calc(2px * 1px)", ctx).outcome == math_outcome::invalid);
     CHECK(evaluate_math("calc(20 / 0.75rem)", ctx).outcome == math_outcome::invalid);
@@ -182,6 +213,46 @@ void test_typed_arithmetic() {
     CHECK_EQ(check_declaration("margin-left", "calc(110px / 10px * 1px)").serialized,
              std::string{"calc(11px)"});
     CHECK(!check_declaration("width", "calc(2px * 1px)").valid);
+}
+
+// random-computed: random() picks between its bounds on a base that is fixed
+// per key, so the same declaration lands on the same value, and the corners
+// of its range are the specification's.
+void test_random() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.property = "width";
+    ctx.element_key = 7;
+    const auto fold = [&](std::string_view v) { return fold_math(v, ctx).text; };
+    CHECK_EQ(fold("random(fixed 0.5, 1px, 3px)"), std::string{"2px"});
+    CHECK_EQ(fold("random(fixed 0.5, 0, 10, 5)"), std::string{"5"});
+    CHECK_EQ(fold("random(fixed 0.99, 0, 10, by 5)"), std::string{"10"});
+    CHECK_EQ(fold("random(100, 10)"), std::string{"100"});
+    CHECK_EQ(fold("random(NaN, 100)"), std::string{"0"});
+    CHECK_EQ(fold("random(infinity, 100)"), std::string{"33554432"});
+    CHECK_EQ(fold("random(10, infinity)"), std::string{"0"});
+    CHECK_EQ(fold("random(10, 100, infinity)"), std::string{"10"});
+    CHECK_EQ(fold("random(fixed random(-2, -1), 10%, 100%)"),
+             std::string{"random(fixed 0, 10%, 100%)"});
+    // Deterministic per key: the same again is the same, another element or
+    // another position is not, and a shared name or scope is shared.
+    const std::string one = fold("random(0, 1000000)");
+    CHECK_EQ(fold("random(0, 1000000)"), one);
+    CHECK(fold("random(0, 1000000) random(0, 1000000)") != one + " " + one);
+    CHECK_EQ(fold("random(property-index-scoped, 0, 1000000)"),
+             fold("random(property-index-scoped, 0, 1000000)"));
+    ctx.element_key = 8;
+    CHECK(fold("random(0, 1000000)") != one);
+    CHECK_EQ(fold("random(--k, 0, 1000000)"), [&] {
+        length_context other = ctx;
+        other.element_key = 9;
+        other.property = "height";
+        return fold_math("random(--k, 0, 1000000)", other).text;
+    }());
+    const std::string waiting = fold("random(10%, 100%)");
+    CHECK(waiting.starts_with("random(fixed 0.") && waiting.ends_with(", 10%, 100%)"));
+    CHECK_EQ(fold(waiting), waiting);
 }
 
 // tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
@@ -339,6 +410,31 @@ void test_a_transform_computes_to_a_matrix() {
                          "matrix(0, 0, 0, 0, 0, 0)"});
 }
 
+// rem-unit-root-element and lh-rlh-on-root-001: the root element's own
+// font-size and line-height read back from the cascade, whose `rem` and `lh`
+// on the root resolve against the initial values, not from the viewport's box.
+void test_the_root_reads_its_own_font_size_back() {
+    using ctbrowser::shell::browser;
+    using ctbrowser::shell::browser_options;
+    using ctbrowser_test::logged;
+    browser page{browser_options{400, 200}};
+    page.load_html(R"html(<html><head><style>
+      :root { font-size: 50px; margin-left: 2rem; line-height: 2rem }
+    </style></head><body>
+    <script>
+        const r = document.documentElement;
+        const cs = () => getComputedStyle(r);
+        const a = [cs().fontSize, cs().marginLeft, cs().lineHeight];
+        r.style.fontSize = '3rem';
+        a.push(cs().fontSize);
+        r.style.cssText = 'font-size: 2lh; line-height: 142px';
+        a.push(cs().fontSize);
+        console.log('root=' + a.join('|'));
+    </script></body></html>)html");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "root="), std::string{"root=50px|100px|100px|48px|40px"});
+}
+
 // getComputedStyle-border-radius-001 and -003: a corner is a pair of radii and
 // the shorthand puts the horizontal four before a slash and the vertical four
 // after it - no slash when the two lists agree.
@@ -368,10 +464,12 @@ int main() {
     test_a_clamp_with_an_absent_bound_is_a_comparison();
     test_the_range_of_a_property_is_applied_when_computed();
     test_typed_arithmetic();
+    test_random();
     test_the_tree_counting_functions();
     test_attr_substitution();
     test_what_a_page_reads_back();
     test_a_transform_computes_to_a_matrix();
+    test_the_root_reads_its_own_font_size_back();
     test_border_radius_reassembles_its_corners();
     REPORT("css_values_wpt");
 }

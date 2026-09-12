@@ -153,6 +153,17 @@ public:
     // trade recorded rather than hidden.
     void clear_origin(std::uint8_t origin);
 
+    // A REGISTERED CUSTOM PROPERTY, from a sheet's `@property` rule or from
+    // `CSS.registerProperty()`. The first registration of a name wins, which
+    // is what both the at-rule and the API say; false when the name was
+    // already taken. Registrations outlive `clear_origin`: an `@property` is
+    // not a rule that matches, and the API's are not in any sheet at all.
+    bool register_property(std::string_view name, css::property_registration registration);
+    [[nodiscard]] const css::property_registration * registration_of(atom name) const {
+        const auto it = registrations_.find(name.id);
+        return it == registrations_.end() ? nullptr : &it->second;
+    }
+
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
     // the shell because a test needs to be able to pin the viewport and
     // `prefers-reduced-motion` without a browser, and because the cascade is the thing
@@ -605,8 +616,14 @@ public:
     // tree can produce a value for, plus custom properties, caught by the `--` prefix
     // rather than by name. `font-size` inherits as the px the pre-pass in resolve()
     // computed, so a relative unit never compounds down the tree.
-    [[nodiscard]] static bool inherits(std::string_view property) {
-        if (property.starts_with("--")) { return true; }
+    [[nodiscard]] bool inherits(std::string_view property) const {
+        if (property.starts_with("--")) {
+            // A registered custom property says whether it does (CSS Properties
+            // and Values API 1 §2.3); an unregistered one always inherits.
+            const css::property_registration * registered =
+                registration_of(atoms_->intern(property));
+            return registered == nullptr || registered->inherits;
+        }
         static constexpr std::string_view names[] = {
             "border-collapse", "border-spacing", "caption-side",    "color",
             "cursor",          "direction",      "empty-cells",     "font-family",
@@ -636,6 +653,7 @@ public:
         // `:nth-child`, handed to every math function this element folds.
         sibling_index_ = self.sibling_index;
         sibling_count_ = self.sibling_count;
+        element_key_ = key_of(node);
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
         collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -795,6 +813,44 @@ public:
             if (!txn.has_attribute(node, key)) { return std::nullopt; }
             return std::string{txn.attribute_value(node, key)};
         };
+        // ...AND WHAT `if()` MAY ASK (CSS Values 5 §if-notation): the parent's
+        // custom properties for `style(--x: inherit)`, substituted against the
+        // parent's own scope; any property folded so far for `style(color:
+        // green)`; and the window for `media()`. The bases are filled in below
+        // once the font size is known, and the property per declaration.
+        css::condition_environment conditions;
+        conditions.inherited = [&parent,
+                                this](std::string_view name) -> std::optional<std::string> {
+            if (!parent) { return std::nullopt; }
+            // `get` reads the parent's own half too, where a registered
+            // property that does not inherit lives.
+            const std::string_view held = parent->get(atoms_->intern(name));
+            if (held.empty() || held == guaranteed_invalid) { return std::nullopt; }
+            const css::custom_lookup above = [&parent](atom n) -> std::optional<std::string_view> {
+                const std::string_view v = parent->get(n);
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return v;
+            };
+            return css::substitute_var(held, above, *atoms_);
+        };
+        conditions.computed = [&out, &parent,
+                               this](std::string_view name) -> std::optional<std::string> {
+            const atom key = atoms_->intern(name);
+            for (const declaration & d : out) {
+                if (d.property == key) { return d.value; }
+            }
+            if (parent && parent->inherited) {
+                const std::string_view held = parent->inherited->get(key);
+                if (!held.empty()) { return std::string{held}; }
+            }
+            return std::nullopt;
+        };
+        conditions.media = [this](std::string_view text) {
+            return css::evaluate_media_condition(text, environment_);
+        };
+        conditions.registered = [this](std::string_view name) {
+            return registration_of(atoms_->intern(name));
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -836,6 +892,8 @@ public:
             root_line_height_ = parent_line_height;
         }
         float own_font_size = parent_font_size;
+        std::vector<atom> cyclic_registered;
+        std::vector<atom> read; // what the font-size's substitution looked at
         // Whether the WINNING font-size declaration actually resolved to a length.
         // `font-size: larger` and the other relative keywords are not modelled, and
         // rewriting one to a pixel value would be inventing an answer - so the text
@@ -851,12 +909,32 @@ public:
             // for a containing block it will never be measured against.
             css::length_context ctx = font_context(parent_font_size, parent_line_height);
             ctx.percent_basis = parent_font_size;
+            conditions.lengths = ctx;
+            conditions.property = "font-size";
+            // A REGISTERED PROPERTY IN FONT-RELATIVE UNITS DEPENDS ON THIS
+            // FONT SIZE, so a font-size reading it is a cycle (CSS Properties
+            // and Values API 1 §2.4): the font-size is invalid at computed-value
+            // time - inherited - and the property takes its initial value
+            // (typed_arithmetic_cycle).
+            read.clear();
+            conditions.on_read = [&read, this](std::string_view name) {
+                read.push_back(atoms_->intern(name));
+            };
             fold([&](const declaration & d) {
                 if (d.property != font_size_) { return; }
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
+                    read.clear();
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_, attributes);
+                        css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
+                    for (const atom name : read) {
+                        if (registration_of(name) == nullptr) { continue; }
+                        const std::optional<std::string_view> held = lookup(name);
+                        if (held && font_relative(*held, !parent)) {
+                            cyclic_registered.push_back(name);
+                            return;
+                        }
+                    }
                     if (!done) { return; }
                     value = *done;
                 }
@@ -887,6 +965,8 @@ public:
                     font_size_resolved = false; // a keyword: leave the text alone
                 }
             });
+            // Only the font-size cares what was read.
+            conditions.on_read = nullptr;
         }
         // The root's size is what every `rem` in the document resolves against, so it
         // is recorded as the tree is descended rather than looked up per element.
@@ -904,12 +984,14 @@ public:
         line_height_lengths.percent_basis = own_font_size;
         {
             const css::length_context & ctx = line_height_lengths;
+            conditions.lengths = ctx;
+            conditions.property = "line-height";
             fold([&](const declaration & d) {
                 if (d.property != line_height_) { return; }
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_, attributes);
+                        css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
                     if (!done) { return; }
                     value = *done;
                 }
@@ -950,6 +1032,74 @@ public:
             return atoms_->text(property).starts_with("font-") ? font_lengths : lengths;
         };
 
+        // PASS ONE AND SEVEN EIGHTHS: THE REGISTERED CUSTOM PROPERTIES, CSS
+        // Properties and Values API 1 §2.4. An unregistered custom property is
+        // a token stream stored verbatim and read lazily; a registered one has
+        // a computed value like any other property: its declaration is
+        // substituted, parsed against the syntax and computed like the type
+        // it names, and what does not parse - or `initial`, or nothing at all
+        // on a property that does not inherit - is the initial value. It sits
+        // here because a `<length>` computes against the element's own font
+        // size, which the passes above have just settled.
+        //
+        // A property that inherits and is not declared here is left to the
+        // parent's inherited half, which already holds its computed value:
+        // pushing a copy would give every element an inherited block of its
+        // own and undo the sharing the split below depends on.
+        for (const auto & [id, registration] : registrations_) {
+            const atom name{id};
+            declaration * own = nullptr;
+            for (declaration & d : out) {
+                if (d.property == name) { own = &d; }
+            }
+            std::optional<std::string> computed;
+            const bool cyclic =
+                std::ranges::find(cyclic_registered, name) != cyclic_registered.end();
+            if (cyclic) {
+                // Part of a cycle through font-size: the initial value.
+            } else if (own != nullptr && own->value != guaranteed_invalid) {
+                std::string text = own->value;
+                bool substituted = true;
+                if (css::may_have_var(text)) {
+                    conditions.lengths = lengths;
+                    conditions.property = std::string{atoms_->text(name)};
+                    std::optional<std::string> done =
+                        css::substitute_var(text, lookup, *atoms_, attributes, &conditions);
+                    substituted = done.has_value();
+                    if (done) { text = std::move(*done); }
+                }
+                // A SUBSTITUTED CSS-WIDE KEYWORD IS THAT KEYWORD (CSS Values 5
+                // §arbitrary-substitution): `attr(data-x type(*))` holding
+                // `inherit` is the parent's value, `unset` whichever the
+                // registration says (attr-css-wide-keywords).
+                const std::string_view word = trim(text, html_whitespace);
+                const bool from_parent = ascii_iequals(word, "inherit") ||
+                                         (registration.inherits && (ascii_iequals(word, "unset") ||
+                                                                    ascii_iequals(word, "revert")));
+                if (substituted && from_parent) {
+                    // `get` reads the parent's own half too, where a property
+                    // that does not inherit lives.
+                    const std::string_view held = parent ? parent->get(name) : "";
+                    if (!held.empty()) { computed = std::string{held}; }
+                } else if (substituted && !ascii_iequals(word, "initial") &&
+                           !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
+                    computed = css::compute_registered(text, registration.syntax, lengths);
+                }
+            } else if (own == nullptr && registration.inherits && parent) {
+                continue;
+            }
+            if (!computed) {
+                computed =
+                    css::compute_registered(registration.initial, registration.syntax, lengths)
+                        .value_or(registration.initial);
+            }
+            if (own != nullptr) {
+                own->value = std::move(*computed);
+            } else {
+                out.push_back(declaration{name, std::move(*computed)});
+            }
+        }
+
         // PASS TWO: everything else. Substitute, then expand, then put.
         fold([&](const declaration & d) {
             const std::string_view property = atoms_->text(d.property);
@@ -980,9 +1130,17 @@ public:
                 }
             };
             const bool had_var = css::may_have_var(value);
+            // The font-size that was found to be a cycle above is invalid at
+            // computed-value time here too.
+            if (d.property == font_size_ && !cyclic_registered.empty() && had_var) {
+                unset();
+                return;
+            }
             if (had_var) {
+                conditions.lengths = lengths_for(d.property);
+                conditions.property = std::string{property};
                 const std::optional<std::string> done =
-                    css::substitute_var(value, lookup, *atoms_, attributes);
+                    css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
                 // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
                 // property lets the inherited value through and otherwise means absent.
                 // NOT "drop it and let an earlier declaration win" - that is the classic
@@ -999,6 +1157,17 @@ public:
                     return;
                 }
                 value = *done;
+                // ...AND SO IS A RESULT THE PROPERTY'S GRAMMAR REFUSES. A value
+                // is validated when it is parsed, and a substituted one was not
+                // parsed until now: `width: attr(data-n type(<number>))` is the
+                // number `10`, which `width` cannot take, and CSS Variables 1 §3
+                // makes that invalid at computed-value time - `unset`, not
+                // ten pixels (attr-all-types). Asked of the property table,
+                // which refuses nothing for a property it does not model.
+                if (!css::may_have_math(value) && !css::check_declaration(property, value).valid) {
+                    unset();
+                    return;
+                }
             }
             // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
             // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
@@ -1009,8 +1178,10 @@ public:
                 // answers with numbers and only the cascade knows whether one is a
                 // value here: `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)`
                 // is a syntax error.
+                css::length_context math_bases = lengths_for(d.property);
+                math_bases.property = property;
                 css::folded_value done =
-                    css::fold_math(value, lengths_for(d.property), css::math_context_of(property));
+                    css::fold_math(value, math_bases, css::math_context_of(property));
                 if (!done.ok) {
                     // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
                     // declaration is invalid. WHICH KIND of invalid depends on where
@@ -1130,6 +1301,7 @@ public:
         ctx.viewport_height = environment_.viewport_height;
         ctx.sibling_index = sibling_index_;
         ctx.sibling_count = sibling_count_;
+        ctx.element_key = element_key_;
         return ctx;
     }
 
@@ -1322,6 +1494,29 @@ private:
     [[nodiscard]] static std::string_view unquoted(std::string_view text);
 
     std::vector<page_font> fonts_;
+    // The `@property` rules of one sheet's text, registered. Defined in engine.cpp.
+    void register_at_property_rules(std::string_view sheet_text);
+    // The registered custom properties, by atom id.
+    flat_map<std::uint32_t, css::property_registration> registrations_;
+
+    // Does this text carry a unit that resolves against the element's own font -
+    // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?
+    [[nodiscard]] static bool font_relative(std::string_view text, bool at_root) {
+        const css::token_stream s = css::tokenize(text);
+        for (const css::css_token & t : s.tokens) {
+            if (t.type != css::token_type::dimension) { continue; }
+            const std::string unit = ascii_lower_copy(s.unit_of(t));
+            for (const std::string_view own : {"em", "ex", "ch", "cap", "ic", "lh"}) {
+                if (unit == own) { return true; }
+            }
+            if (at_root) {
+                for (const std::string_view root : {"rem", "rex", "rch", "rcap", "ric", "rlh"}) {
+                    if (unit == root) { return true; }
+                }
+            }
+        }
+        return false;
+    }
 
     [[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
     [[nodiscard]] atom class_name() const { return atoms_->intern("class"); }
@@ -1669,6 +1864,8 @@ private:
     // functions. Zero outside a resolve, which leaves them unresolved.
     std::uint32_t sibling_index_ = 0;
     std::uint32_t sibling_count_ = 0;
+    // ...and which element it is, for what `random()` is random per.
+    std::uint64_t element_key_ = 0;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;

@@ -1,6 +1,7 @@
 #include <ctbrowser/style/engine.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/style/css/boolean.hpp>
 
 // engine: the method bodies.
 // The header says what these do; this says how.
@@ -39,6 +40,124 @@ void engine::clear_origin(std::uint8_t origin) {
     // The @font-face list is not indexed by origin and is not cleared: a face is
     // a resource the browser has already been asked to load, and unloading one
     // because a rule was edited is a different question from unsaying the rule.
+}
+
+bool engine::register_property(std::string_view name, css::property_registration registration) {
+    if (!name.starts_with("--")) { return false; }
+    const atom key = atoms_->intern(name);
+    if (registrations_.contains(key.id)) { return false; }
+    registrations_.emplace(key.id, std::move(registration));
+    return true;
+}
+
+// `@property --x { syntax: "<length>"; inherits: true; initial-value: 3px }`,
+// CSS Properties and Values API 1 §2. Read off the token stream here rather
+// than from the parsed sheet, which keeps only rules that match and
+// `@font-face`: the rule is three descriptors in a block, and a block is
+// what the tokenizer hands back with its nesting intact. A rule missing
+// `syntax` or `inherits`, or `initial-value` for a syntax that is not `*`,
+// registers nothing - §2.1 says it is invalid - and the first registration of
+// a name is the one that stands.
+void engine::register_at_property_rules(std::string_view sheet_text) {
+    if (sheet_text.find("@property") == std::string_view::npos) { return; }
+    const css::token_stream s = css::tokenize(sheet_text);
+    const std::size_t end = s.tokens.size() - 1;
+    int depth = 0;
+    for (std::size_t i = 0; i < end; ++i) {
+        const css::css_token & t = s.tokens[i];
+        if (t.type == css::token_type::open_curly || t.type == css::token_type::function ||
+            t.type == css::token_type::open_paren || t.type == css::token_type::open_square) {
+            ++depth;
+            continue;
+        }
+        if (t.type == css::token_type::close_curly || t.type == css::token_type::close_paren ||
+            t.type == css::token_type::close_square) {
+            --depth;
+            continue;
+        }
+        if (depth != 0 || t.type != css::token_type::at_keyword ||
+            !ascii_iequals(s.value_of(t), "property")) {
+            continue;
+        }
+        // The prelude: one `--name` ident, then the block.
+        std::size_t j = i + 1;
+        while (j < end && s.tokens[j].type == css::token_type::whitespace) { ++j; }
+        if (j >= end || s.tokens[j].type != css::token_type::ident) { continue; }
+        const std::string name{s.text_of(s.tokens[j])};
+        ++j;
+        while (j < end && s.tokens[j].type == css::token_type::whitespace) { ++j; }
+        if (j >= end || s.tokens[j].type != css::token_type::open_curly) { continue; }
+        const std::size_t block_end = css::end_of_block(s, j);
+        // The descriptors: `name : value ;` at the block's own depth.
+        css::property_registration made;
+        bool have_syntax = false;
+        bool have_inherits = false;
+        bool have_initial = false;
+        std::size_t k = j + 1;
+        const std::size_t last =
+            block_end > j + 1 && s.tokens[block_end - 1].type == css::token_type::close_curly
+                ? block_end - 1
+                : block_end;
+        while (k < last) {
+            while (k < last && (s.tokens[k].type == css::token_type::whitespace ||
+                                s.tokens[k].type == css::token_type::semicolon)) {
+                ++k;
+            }
+            if (k >= last) { break; }
+            const std::size_t name_at = k;
+            // To the next top-level `;` or the block's end.
+            std::size_t value_end = k;
+            int inner = 0;
+            for (; value_end < last; ++value_end) {
+                const css::css_token & v = s.tokens[value_end];
+                if (v.type == css::token_type::function || v.type == css::token_type::open_paren ||
+                    v.type == css::token_type::open_square ||
+                    v.type == css::token_type::open_curly) {
+                    ++inner;
+                } else if (v.type == css::token_type::close_paren ||
+                           v.type == css::token_type::close_square ||
+                           v.type == css::token_type::close_curly) {
+                    --inner;
+                } else if (inner == 0 && v.type == css::token_type::semicolon) {
+                    break;
+                }
+            }
+            k = value_end;
+            std::size_t colon = name_at;
+            while (colon < value_end && s.tokens[colon].type != css::token_type::colon) { ++colon; }
+            if (s.tokens[name_at].type != css::token_type::ident || colon >= value_end) {
+                continue;
+            }
+            const std::string_view descriptor = s.text_of(s.tokens[name_at]);
+            std::size_t from = colon + 1;
+            while (from < value_end && s.tokens[from].type == css::token_type::whitespace) {
+                ++from;
+            }
+            std::size_t to = value_end;
+            while (to > from && s.tokens[to - 1].type == css::token_type::whitespace) { --to; }
+            std::string value;
+            for (std::size_t v = from; v < to; ++v) { value += s.text_of(s.tokens[v]); }
+            if (ascii_iequals(descriptor, "syntax")) {
+                // A string, per §2.1; the quotes come off here.
+                if (to - from == 1 && s.tokens[from].type == css::token_type::string) {
+                    made.syntax = std::string{trim(s.value_of(s.tokens[from]), html_whitespace)};
+                    have_syntax = true;
+                }
+            } else if (ascii_iequals(descriptor, "inherits")) {
+                if (ascii_iequals(value, "true") || ascii_iequals(value, "false")) {
+                    made.inherits = ascii_iequals(value, "true");
+                    have_inherits = true;
+                }
+            } else if (ascii_iequals(descriptor, "initial-value")) {
+                made.initial = value;
+                have_initial = true;
+            }
+        }
+        i = block_end - 1;
+        if (!have_syntax || !have_inherits) { continue; }
+        if (made.syntax != "*" && !have_initial) { continue; }
+        (void)register_property(name, std::move(made));
+    }
 }
 
 void engine::add_sheet(std::string_view css, std::uint8_t origin) {
@@ -112,6 +231,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         entry.italic = style == "italic" || style == "oblique";
         if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
     }
+    register_at_property_rules(css);
 
     // THE SHEET'S CONDITIONS, remapped into the engine's table. A sheet numbers its
     // own `@media` blocks from 1; the engine holds every sheet's, so index 0 stays the

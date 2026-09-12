@@ -20,6 +20,8 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/properties.hpp>
+#include <ctbrowser/style/css/substitute.hpp>
+#include <ctbrowser/style/engine.hpp>
 
 #include <string>
 
@@ -54,6 +56,59 @@ void dom_bindings::install_css_interface(context & cx) {
         }
         return value::boolean(style::css::supports_declaration(
             ascii_lower_copy(c.to_string(args[0])), c.to_string(args[1])));
+    });
+    // `CSS.registerProperty({ name, syntax, inherits, initialValue })`, CSS
+    // Properties and Values API 1 §3. The same registration a sheet's
+    // `@property` makes, through the cascade's own engine, so the two cannot
+    // disagree about a name; the errors are the specification's: a name that
+    // is not a custom property or a syntax that does not parse is a
+    // SyntaxError, a name already taken an InvalidStateError, and a missing
+    // required member a TypeError.
+    method("registerProperty", 1, [this](context & c, std::span<value> args) {
+        if (args.empty() || !args[0].is_object()) {
+            c.throw_error("TypeError", "CSS.registerProperty requires a PropertyDefinition");
+            return value::undefined();
+        }
+        const value definition = args[0];
+        const value name = c.lookup_property(definition, "name");
+        const value inherits = c.lookup_property(definition, "inherits");
+        if (name.is_undefined() || inherits.is_undefined()) {
+            c.throw_error("TypeError", "PropertyDefinition needs a name and inherits");
+            return value::undefined();
+        }
+        style::css::property_registration made;
+        const std::string property = c.to_string(name);
+        if (!property.starts_with("--")) {
+            throw_dom_exception(c, "SyntaxError", "a custom property name starts with --");
+            return value::undefined();
+        }
+        const value syntax = c.lookup_property(definition, "syntax");
+        if (!syntax.is_undefined()) {
+            made.syntax = std::string{trim(c.to_string(syntax), html_whitespace)};
+        }
+        made.inherits = context::truthy(inherits);
+        const value initial = c.lookup_property(definition, "initialValue");
+        if (!initial.is_undefined()) { made.initial = c.to_string(initial); }
+        // The syntax must parse, and a value it takes must exist unless it takes
+        // anything.
+        if (made.syntax != "*") {
+            if (initial.is_undefined()) {
+                throw_dom_exception(c, "SyntaxError", "a typed property needs an initialValue");
+                return value::undefined();
+            }
+            if (!style::css::compute_registered(made.initial, made.syntax,
+                                                style::css::length_context{})) {
+                throw_dom_exception(c, "SyntaxError",
+                                    "the initialValue does not parse against the syntax");
+                return value::undefined();
+            }
+        }
+        if (!selector_engine().register_property(property, std::move(made))) {
+            throw_dom_exception(c, "InvalidStateError", property + " is already registered");
+            return value::undefined();
+        }
+        mutated();
+        return value::undefined();
     });
     method("escape", 1, [](context & c, std::span<value> args) {
         if (args.empty()) {

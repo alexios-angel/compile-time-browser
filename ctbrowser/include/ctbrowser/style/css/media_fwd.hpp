@@ -13,7 +13,11 @@ namespace ctbrowser::style::css {
 enum class media_type : std::uint8_t {
     all,
     screen,
-    print
+    print,
+    // `tv`, `aural`, a typo: a type nothing here is. It matches nothing, and
+    // `not tv` therefore matches everything - which is why it is a type rather
+    // than a parse error (Media Queries 4 §2.2).
+    other
 };
 
 struct media_environment {
@@ -51,12 +55,16 @@ struct media_feature {
         color,
     };
     // `min-` and `max-` are prefixes on a range feature rather than features of their
-    // own, which is why they are an operator here and not thirty more enumerators.
+    // own, which is why they are an operator here and not thirty more enumerators -
+    // and the range syntax's `<`, `<=`, `>`, `>=` and `=` are the same operators
+    // spelled out (Media Queries 4 §2.4.4), with the strict pair added.
     enum class compare : std::uint8_t {
         equal,
         at_least,
         at_most,
-        boolean
+        boolean,
+        less,
+        greater
     };
 
     name which = name::unknown;
@@ -66,12 +74,19 @@ struct media_feature {
     std::string keyword;
 };
 
-// One query: an optional media type, an optional `not`, and a conjunction of features.
+// One query: an optional media type, an optional `not`, and a condition.
+//
+// THE CONDITION IS KEPT AS TEXT and read again each time it is asked. Media
+// Queries 4's condition is a boolean expression - `not`, `and`, `or`,
+// parentheses, ranges, and `<general-enclosed>` for whatever it cannot read -
+// and the engine asks it only when the environment changes, so a few tokens
+// re-read on a resize cost nothing and a tree would be a second grammar to
+// keep in step with the parser's.
 struct media_query {
     media_type type = media_type::all;
     bool negated = false;
     bool malformed = false; // an unparseable query is `not all`: it never matches
-    std::vector<media_feature> features;
+    std::string condition;  // the `<media-condition>` after the type, or empty
 };
 
 // A comma-separated list, which is an OR, plus the ENCLOSING condition - so nesting is

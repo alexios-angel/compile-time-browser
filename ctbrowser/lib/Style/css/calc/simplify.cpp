@@ -30,6 +30,11 @@ namespace {
     const token_stream ts = tokenize(text);
     for (const css_token & t : ts.tokens) {
         if (t.type == token_type::dimension && !context_free_unit(ts.unit_of(t))) { return false; }
+        // A random() is drawn at computed-value time, so a specified value
+        // keeps it however plain its bounds are.
+        if (t.type == token_type::function && ascii_iequals(ts.text_of(t), "random(")) {
+            return false;
+        }
     }
     return true;
 }
@@ -92,26 +97,44 @@ namespace {
 constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
                                                 "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
 
-// Every comma-separated argument of `body`, at bracket depth zero and with
-// quoted runs skipped.
-[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body) {
-    std::vector<std::string_view> args;
-    std::size_t start = 0;
-    int depth = 0;
-    for (std::size_t i = 0; i < body.size(); ++i) {
-        if (const std::size_t quoted = end_of_string_at(body, i); quoted != i) {
-            i = quoted - 1;
+// Is position `at` inside a colour function whose first argument is `from` -
+// CSS Color 5's relative colour syntax, where `r`, `g`, `b`, `alpha` and the
+// rest are channel values a calc() may use?
+[[nodiscard]] bool inside_relative_color(std::string_view value, std::size_t at) {
+    constexpr std::string_view colours[] = {"rgb(", "rgba(", "hsl(",   "hsla(",  "hwb(",
+                                            "lab(", "lch(",  "oklab(", "oklch(", "color("};
+    std::vector<bool> relative; // one entry per open bracket: is it a relative colour?
+    std::size_t i = 0;
+    while (i < at) {
+        if (const std::size_t quoted = end_of_string_at(value, i); quoted != i) {
+            i = quoted;
             continue;
         }
-        if (body[i] == '(') { ++depth; }
-        if (body[i] == ')') { --depth; }
-        if (depth == 0 && body[i] == ',') {
-            args.push_back(body.substr(start, i - start));
-            start = i + 1;
+        if (value[i] == ')') {
+            if (!relative.empty()) { relative.pop_back(); }
+            ++i;
+            continue;
         }
+        if (value[i] == '(') {
+            relative.push_back(false);
+            ++i;
+            continue;
+        }
+        const std::string_view name = name_at(value, i, colours);
+        if (name.empty()) {
+            ++i;
+            continue;
+        }
+        std::size_t after = i + name.size();
+        while (after < value.size() &&
+               html_whitespace.find(value[after]) != std::string_view::npos) {
+            ++after;
+        }
+        relative.push_back(ascii_iequals(value.substr(after, 4), "from") &&
+                           (after + 4 >= value.size() || !is_name_char(value[after + 4])));
+        i += name.size();
     }
-    args.push_back(body.substr(start));
-    return args;
+    return std::ranges::any_of(relative, [](bool r) { return r; });
 }
 
 [[nodiscard]] bool angle_arguments_ok(std::string_view value) {
@@ -162,42 +185,12 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 // cannot answer for and closes what EOF closed. That recursion terminates
 // because `inner` is always shorter than the function it came out of.
 [[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
-    std::vector<std::string_view> arguments = top_level_arguments(inner);
-    std::string out{name};
-    // A clamp() WITH AN ABSENT BOUND IS THE COMPARISON THAT IS LEFT. `clamp(none,
-    // 2px, 3em)` bounds nothing below and is `min(2px, 3em)`; `clamp(1em, 2px,
-    // none)` is `max(1em, 2px)`; with neither bound it is its middle argument.
-    // The specification has not said how a clamp() serialises
-    // (w3c/csswg-drafts#13535) and `clamp-partial-serialize.tentative` is the
-    // corpus's reading of it, sixteen assertions, all nested.
-    if (ascii_iequals(name, "clamp(") && arguments.size() == 3) {
-        const auto absent = [&](std::size_t i) {
-            return ascii_iequals(trim(arguments[i], html_whitespace), "none");
-        };
-        const bool no_low = absent(0);
-        const bool no_high = absent(2);
-        if (no_low && no_high) { return simplify_math(trim(arguments[1], html_whitespace)); }
-        if (no_low) {
-            out = "min(";
-            arguments.erase(arguments.begin());
-        } else if (no_high) {
-            out = "max(";
-            arguments.pop_back();
-        }
-    }
-    bool first = true;
-    for (const std::string_view argument : arguments) {
-        if (!first) { out += ", "; }
-        first = false;
-        const std::string_view one = trim(argument, html_whitespace);
-        std::string text;
+    return rewritten_arguments(name, inner, [](std::string_view one) {
         if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
-            text = serialize_symbolic(sum);
+            if (std::string text = serialize_symbolic(sum); !text.empty()) { return text; }
         }
-        out += text.empty() ? simplify_math(one) : text;
-    }
-    out += ')';
-    return out;
+        return simplify_math(one);
+    });
 }
 
 } // namespace
@@ -281,7 +274,16 @@ std::string simplify_math(std::string_view value) {
         if (const auto [outcome, sum] = evaluate_symbolic(body);
             outcome == math_outcome::resolved) {
             if (const std::string text = serialize_symbolic(sum); !text.empty()) {
-                out.append("calc(").append(text).append(")");
+                // A lone function is the whole value: `calc(sibling-index())`
+                // is `sibling-index()`.
+                const bool lone_function = text.ends_with("()") &&
+                                           text.find(' ') == std::string::npos &&
+                                           sum.symbols.size() == 1 && !sum.has_percent;
+                if (lone_function) {
+                    out.append(text);
+                } else {
+                    out.append("calc(").append(text).append(")");
+                }
                 continue;
             }
         }
@@ -330,7 +332,12 @@ bool math_syntax_ok(std::string_view value) {
             continue;
         }
         const function_span span = span_of(value, at, name);
-        if (evaluate_math(body_of(value, at, name, span), ctx).outcome == math_outcome::invalid) {
+        // INSIDE A RELATIVE COLOUR the channel keywords are values - `rgb(from
+        // blue r g calc(b + 150))` - and this evaluator has no channels, so a
+        // math function there is left to the colour grammar rather than
+        // condemned for an ident it cannot read (random-serialize).
+        if (!inside_relative_color(value, at) &&
+            evaluate_math(body_of(value, at, name, span), ctx).outcome == math_outcome::invalid) {
             return false;
         }
         // Past the whole function, so a nested one is not checked twice - the

@@ -55,6 +55,14 @@ struct length_context {
     // can say so before the basis exists (round-mod-rem-computed,
     // signs-abs-computed, hypot-pow-sqrt-computed).
     std::optional<float> percent_basis;
+    // WHAT `random()` IS RANDOM PER (CSS Values 5 §random-caching): a value
+    // with no name is shared by nothing - it differs per element, per property
+    // and per position in the value - and the caller says which element and
+    // which property this is. `random_index` is the position, counted by the
+    // fold as it walks the value; zero everywhere else.
+    std::uint64_t element_key = 0;
+    std::string_view property;
+    std::uint32_t random_index = 0;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
@@ -271,6 +279,13 @@ struct folded_value {
 // is 24px" from "this is not a length at all" without a second parse.
 [[nodiscard]] std::optional<float> length_text_to_px(std::string_view text,
                                                      const length_context & ctx);
+
+// `random()`'S BASE for a set of sharing options against a context, CSS
+// Values 5 §random-caching: a number in [0, 1) that is the same every time the
+// same key asks. The key is the options' - a `--name`, `element-scoped`,
+// `property-index-scoped` - over the context's element, property and
+// position. Public because `random-item()` shares it.
+[[nodiscard]] double random_base(std::string_view options, const length_context & ctx);
 
 // A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)`, `90deg`,
 // `0.5s` - or, for a number answer, the bare number with no unit at all: `0.5`,
