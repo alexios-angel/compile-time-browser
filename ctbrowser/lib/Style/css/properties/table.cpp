@@ -289,6 +289,12 @@ constexpr property_syntax table[] = {
     // do. `1e1` is a <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
     {"orphans", k::integer, "", "2", true, true},
     {"widows", k::integer, "", "2", true, true},
+    // Three more `<integer>` properties nothing lays out, so that `1e1` and
+    // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
+    // ponytail: hyphenate-limit-chars takes one value here, not the spec's three.
+    {"max-lines", k::integer, "none", "none", false, true},
+    {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
+    {"hyphenate-limit-chars", k::integer, "auto", "auto", true, true},
     {"column-span", k::keyword_only, "none all", "none", false, false},
 
     // --- tables and lists ------------------------------------------------

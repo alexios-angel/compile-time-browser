@@ -923,6 +923,10 @@ void test_url_request_modifiers() {
 void test_steps_takes_an_integer() {
     ok("animation-timing-function", "steps(10)", "steps(10)");
     ok("transition-timing-function", "steps(calc(10.1))", "steps(calc(10.1))");
+    ok("max-lines", "10", "10");
+    ok("max-lines", "calc(10.1)", "calc(10.1)");
+    bad("max-lines", "1e1");
+    bad("hyphenate-limit-lines", "10.1");
     bad("animation-timing-function", "steps(1e1)");
     bad("animation-timing-function", "steps(10.1)");
     bad("transition-timing-function", "steps(1.1e1, start)");
