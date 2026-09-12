@@ -339,7 +339,12 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     }
     if (!connected) { return path; }
     if (at.on != listen_on::window) { path.push_back(path_step{node_id{}, listen_on::document}); }
-    path.push_back(path_step{node_id{}, listen_on::window});
+    // A DOCUMENT A PAGE MADE HAS NO WINDOW ABOVE IT: `new Document()`,
+    // `createHTMLDocument()` and a clone of the page's document have a null
+    // browsing context, so their path ends at the Document - the page's
+    // window is not an ancestor of another document's nodes.
+    // Event-dispatch-bubbles-{true,false}.html count exactly that.
+    if (!secondary_) { path.push_back(path_step{node_id{}, listen_on::window}); }
     return path;
 }
 

@@ -1890,6 +1890,10 @@ private:
     [[nodiscard]] node_id body_or_frameset_of(value self);
     void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
     flat_map<std::string, node_id> forwarded_from_;
+    // Which bindings an EventTarget receiver belongs to - `owner_of` for a
+    // node, the document's own for a Document, else this. The EventTarget
+    // methods route through it so a second document's nodes get a path.
+    [[nodiscard]] dom_bindings & target_owner(value self);
 };
 
 } // namespace ctbrowser::shell
