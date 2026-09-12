@@ -346,6 +346,29 @@ void test_for_await() {
                       "(async () => { try { for await (const v of g()) { result += v; } } "
                       "  catch (e) { result += e.message; } })();",
                       "1bad");
+    // AsyncIteratorClose: `break` and a throw out of the body call the
+    // iterator's return(); a normal end and a throw from next() do not.
+    expect_after_turn("var result = ''; var it = { i: 0, next() { return Promise.resolve({value: "
+                      "this.i++, done: this.i > 5}); },"
+                      "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+                      "[Symbol.asyncIterator]() { return this; } };"
+                      "(async () => { for await (const v of it) { result += v; if (v === 1) { "
+                      "break; } } result += '.'; })();",
+                      "01R.");
+    expect_after_turn("var result = ''; var it = { i: 0, next() { return Promise.resolve({value: "
+                      "this.i++, done: this.i > 2}); },"
+                      "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+                      "[Symbol.asyncIterator]() { return this; } };"
+                      "(async () => { try { for await (const v of it) { result += v; throw new "
+                      "Error('t'); } } catch (e) { result += e.message; } })();",
+                      "0Rt");
+    expect_after_turn(
+        "var result = ''; var it = { i: 0, next() { return Promise.resolve({value: this.i++, done: "
+        "this.i > 2}); },"
+        "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+        "[Symbol.asyncIterator]() { return this; } };"
+        "(async () => { for await (const v of it) { result += v; } result += '.'; })();",
+        "01.");
     expect_after_turn("var result = ''; var x;"
                       "(async () => { for await (x of [1, 2]) { result += x; } })();",
                       "12");

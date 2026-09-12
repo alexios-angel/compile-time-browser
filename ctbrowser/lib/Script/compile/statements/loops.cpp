@@ -205,8 +205,11 @@ void compiler_impl::compile_for(const vp::node & n) {
 // generator is pulled lazily and a promise in a sync iterator's `value` is
 // awaited. Only the statement form; `for await` at a module's top level is
 // refused with the same message as an `await` there would be.
-// NOT DONE: AsyncIteratorClose on `break`/`throw` (the sync loop has no
-// IteratorClose either).
+// AsyncIteratorClose (7.4.13) runs on `break` and on a throw out of the body:
+// the iterator's `return()`, if it has one, is called and awaited. A `return`
+// statement inside the body and a throw from `next()` itself do not close
+// (the first is a known gap; the second is the specification). The sync
+// for-of still has no IteratorClose at all.
 void compiler_impl::compile_for_await(const vp::node & n) {
     if (!fn().is_async) {
         fail("`for await` outside an async function");
@@ -246,12 +249,39 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     } else if (const local * l = find_local_entry(fn(), target.text); l != nullptr && l->boxed) {
         proto().emit(instruction{op::new_cell, item});
     }
+    // The body is protected so a throw closes the iterator; `continue` and the
+    // fall-through pop the handler, `break` pops it on its way out (it counts
+    // in handler_depth_).
+    const std::uint16_t caught = alloc_reg();
+    const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
+    ++handler_depth_;
     compile_stmt(n.c);
-
+    --handler_depth_;
     patch_continues(loops_.back(), proto().code.size());
+    proto().emit(instruction{op::pop_handler});
     patch_jump(proto().emit(instruction{op::jump}), top);
-    patch_here(exit);
+
+    // `return()` on the iterator, awaited, when it has one.
+    const auto close = [&] {
+        const std::uint16_t back = alloc_reg();
+        proto().emit(instruction{op::get_prop, back, iterator, name_operand("return")});
+        const std::size_t has = proto().emit(instruction{op::jump_if_defined, back});
+        const std::size_t none = proto().emit(instruction{op::jump});
+        patch_here(has);
+        proto().emit(instruction{op::call_receiver, back, 0, iterator});
+        proto().emit(instruction{op::await_value, back, back});
+        patch_here(none);
+    };
+    // break: close, then leave.
     patch_breaks(loops_.back());
+    close();
+    const std::size_t leave = proto().emit(instruction{op::jump});
+    // throw: close, then rethrow.
+    patch_here(guard);
+    close();
+    proto().emit(instruction{op::throw_value, caught});
+    patch_here(exit);
+    patch_here(leave);
     loops_.pop_back();
     release_to(mark);
     pop_scope();
