@@ -135,6 +135,17 @@ void test_reads_and_all() {
     CHECK_EQ(declaration_value(block, "margin-top"), std::string{});
     CHECK(longhands_of("background").empty());
     CHECK_EQ(longhands_of("border").size(), std::size_t{17});
+
+    // variable-names.html: a custom property's name is decoded by the
+    // tokenizer and written back escaped, so cssText survives a re-parse.
+    block.clear();
+    parse_declaration_block(block, "--a\\;b: value");
+    CHECK_EQ(block.size(), std::size_t{1});
+    CHECK_EQ(block.front().name, std::string{"--a;b"});
+    CHECK_EQ(serialize_declaration_block(block), std::string{"--a\\;b: value;"});
+    block.clear();
+    parse_declaration_block(block, "--\\61 b: value; --\\30 : x");
+    CHECK_EQ(serialize_declaration_block(block), std::string{"--ab: value; --0: x;"});
 }
 
 } // namespace

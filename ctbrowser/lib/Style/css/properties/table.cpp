@@ -312,6 +312,50 @@ std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{table, std::size(table)};
 }
 
+// CSSOM §2.1 "serialize an identifier".
+std::string serialize_identifier(std::string_view text) {
+    std::string out;
+    const auto hex_escape = [&out](unsigned char c) {
+        static constexpr char digits[] = "0123456789abcdef";
+        out += '\\';
+        if (c >= 16) { out += digits[c >> 4]; }
+        out += digits[c & 0xF];
+        out += ' ';
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same U+FFFD
+        // substitution the CSS tokenizer does to its input.
+        if (c == 0) {
+            out += "\xEF\xBF\xBD";
+            continue;
+        }
+        if (c <= 0x1F || c == 0x7F) {
+            hex_escape(c);
+            continue;
+        }
+        // A LEADING DIGIT, or a digit after a leading `-`, would make the
+        // identifier a number: both are escaped numerically rather than with a
+        // backslash, because `\1` is not a valid identifier start either.
+        if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
+            hex_escape(c);
+            continue;
+        }
+        if (c == '-' && text.size() == 1) {
+            out += "\\-";
+            continue;
+        }
+        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z')) {
+            out += static_cast<char>(c);
+            continue;
+        }
+        out += '\\';
+        out += static_cast<char>(c);
+    }
+    return out;
+}
+
 std::string css_name_of(std::string_view idl) {
     // A CUSTOM PROPERTY has no IDL name and passes through untouched, capitals
     // and all: `--myVar` and `--myvar` are two different properties.

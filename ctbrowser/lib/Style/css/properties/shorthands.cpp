@@ -584,7 +584,9 @@ std::string serialize_declaration_block(const declaration_block & block) {
     std::vector<bool> done(block.size(), false);
     const auto emit = [&](std::string_view name, std::string_view value, bool important) {
         if (!out.empty()) { out += ' '; }
-        out += name;
+        // A custom property's name is an identifier the tokenizer decoded, so
+        // `--a\;b` has to be written back escaped to survive a re-parse.
+        out += name.starts_with("--") ? serialize_identifier(name) : std::string{name};
         out += ": ";
         out += value;
         if (important) { out += " !important"; }

@@ -175,6 +175,10 @@ struct value_check {
 [[nodiscard]] std::string css_name_of(std::string_view idl);
 [[nodiscard]] std::string idl_name_of(std::string_view css);
 
+// CSSOM §2.1 "serialize an identifier" - `CSS.escape`, and what a selector's
+// names and a custom property's name are written with.
+[[nodiscard]] std::string serialize_identifier(std::string_view text);
+
 // --- THE CSSOM DECLARATION BLOCK -------------------------------------------
 //
 // CSSOM §6.6 over a list of declarations, in one place for the two blocks the
