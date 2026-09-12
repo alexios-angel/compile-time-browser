@@ -6,39 +6,56 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Retained child entries, 2026-09-12 (gate pending)
+## Retained child Maps across calls, 2026-09-12
 
-Continued clean **d5b9d767** and the **07:03:38 UTC** journal: the previous
-conditional/UShr recovery was fully gated; the interrupted boundary was the
-unchanged cross-invocation source **369d7cea/bdf9931e**. Three agents split
+Continued clean **d5b9d767** and the **07:03:38 UTC** journal, whose next
+boundary was unchanged cross-invocation **369d7cea/bdf9931e**. Three agents split
 body/frame validation, independent presence, and ownership/execution controls;
-root owns all devbox gates and commits. Two agents hit rate limits after their
-patches were complete; root integrated and reviewed them.
+root integrated their patches and serialized every devbox gate and commit.
+Two agents hit rate limits after completing their patches.
 
 **836ed8ed** proves one constant String entry and scalar category before every
 fresh child's publication, independently of family invocation results. Every
-child mutation must preserve it. The owner separately checks all seeds/writes;
+child mutation must preserve it. Ownership separately rechecks all seeds/writes;
 returned identity, cardinality and other keys stay independent. Original frame
-exits in scalar return branches now receive full lifecycle/token/use validation.
-Source/prepared checks retain unsafe mutations, forged reports and budget limits.
+exits in scalar return branches receive full lifecycle/token/use validation,
+including malformed, foreign, duplicate and missing exits and forged reports.
 
-The corrected **321-step rebuild** passes. **Eight focused CTests pass**, including
-ownership **198.18s** and seeded Host **40.31s**. Stable clang-format22 passes
-**800 files**; bundled23 retains the same **nine baseline files/28 diagnostics**.
-The new type test's membership results matched, but twenty preservation assertions
-incorrectly included deliberately added Map reports. Its **test-only correction**
-excludes those reports from cloned-source comparisons; production fingerprinting
-and proof rules are unchanged. Independent NativeMap presence and the preserved
-execution workflow are still uncommitted and await their corrected gate.
+**0362b690** independently reconstructs NativeMap membership from the closed
+owner's complete call census. A first pass proves initialization before each
+publication and checks all preserving writes; a second supplies only the proved
+entry on definite outer reads. It never uses Host entry summaries or native
+annotations as membership authority. Same-key repeated reads keep the actual
+returned alias until a possible replacement. Twelve new presence/alias rows run
+on reused/fresh modules with forged reports and absent/present owner evidence.
 
-**Resume first if interrupted:** finish `/tmp/ctcompile-inner-test-fix-gate.sh`
-(log `/tmp/ctcompile-inner-test-fix-focused.log`), then its chained standard gate
-(`/tmp/ctcompile-inner-full.log`). Keep all **20 historical JS bodies** unchanged.
-The expanded cohort has **28 sources**, with **50 local Node observations /
-27 distinguishing mutations**; **6 native / 22 refusals are expectations only**
-until measured. Do not claim a cross-invocation or Bootstrap admission increase.
-Frozen inputs: `/tmp/ctcompile-inner-frozen.json`; next audit:
-`/tmp/ctcompile-inner-next.md`. Full Bootstrap/Data remain unfinished.
+**837f0c5f** promotes the original cross-invocation source to **5/5 native
+functions in both modes**, retaining **nine calls / trace=41**. All **20 historical
+JS bodies** stay byte-identical. The expanded cohort passes **6 native programs /
+22 refusals**, **50 typed Node/interpreter observations / 27 distinguishing
+mutations**, in **13.39s**. Both C++ layouts pass GCC/Clang, no-Script checks and
+ASan/UBSan/leaks through **128 future calls**, saved children after replacement
+and clear, host/table release, entry reexecution and final destruction. Complete
+proof budget: cross-invocation **4443 / 31 cutoffs**; other positives **1794/30**,
+**3084/32**, **2016/32**. Source/prepared owner tests preserve budget and hostile
+mutation checks.
+
+The corrected **321-step rebuild** passes; eight focused CTests pass, including
+owner **198.18s** and seeded Host **40.31s**. A test-only Map-report fingerprint
+correction then passes the rebuilt type CTest in **0.21s**; production fingerprinting
+and proof rules are unchanged. Stable clang-format22 passes **800 files**;
+bundled23 retains the same **nine baseline files/28 diagnostics**. No browser,
+runtime, carrier or emitter source changed.
+
+**Full gate pending:** `/tmp/ctcompile-inner-full.log` is the standard 534-test
+run on **1367 frozen inputs**, currently identical to committed code. It follows
+`/tmp/ctcompile-inner-test-fix-focused.log`; resume that full gate first if
+interrupted. Fresh full Bootstrap/Data admission counts are not yet measured.
+The exact ordinary Data source **8359592c** still requires dynamic-key/nullable
+and mixed/field-bearing payload proofs, object returns and its recorder callback;
+component/DOM ownership follow. Do not generalize this single-entry invariant
+to Data's empty child publication and deletion. Next audit:
+`/tmp/ctcompile-inner-next.md`. Full native Bootstrap remains unfinished.
 
 ## Conditional child Maps and recovered UShr, 2026-09-12
 
