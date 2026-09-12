@@ -71,7 +71,7 @@ WRITERS = 68
 
 KINDS = ["obj", "arr", "fn", "cell"]
 
-# One per row of ctcompile's GCRoots.def, in `context::each_root` order.
+# One per CTBROWSER_ROOT_LABELS row (script/type_record.hpp), in `context::each_root` order.
 ROOT_LABELS = [
     "globals",
     "registers",
@@ -217,7 +217,9 @@ def read_recording(path: str) -> Recording:
                 function = None
             elif tag == "fn":
                 assert program is not None, "an `fn` line before any `program` line"
-                function = Function(int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7]), parts[9])
+                function = Function(
+                    int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7]), parts[9]
+                )
                 if function.index in program.functions:
                     raise SystemExit(f"{path}: duplicate function {function.index}")
                 program.functions[function.index] = function
@@ -232,38 +234,58 @@ def read_recording(path: str) -> Recording:
                     raise SystemExit(f"{path}: unknown kind `{kind}` in an alloc line")
                 allocation = (int(parts[1]), kind)
                 if allocation in function.allocs:
-                    raise SystemExit(f"{path}: duplicate allocation {allocation} in {function.name}")
+                    raise SystemExit(
+                        f"{path}: duplicate allocation {allocation} in {function.name}"
+                    )
                 function.allocs.add(allocation)
             elif tag == "site":
                 assert function is not None, "a `site` line before any `fn` line"
                 # site <pc> kind <k> made <m> confined <c> escaped <e> unresolved <u>
                 #      unchecked <x> routes <label>:<n>[,...]|-
-                if (len(parts) != 16 or parts[2:15:2] !=
-                        ["kind", "made", "confined", "escaped", "unresolved", "unchecked", "routes"] or
-                        not all(n.isdigit() for n in parts[5:14:2]) or
-                        (parts[1] != "prologue" and not parts[1].isdigit())):
+                if (
+                    len(parts) != 16
+                    or parts[2:15:2]
+                    != ["kind", "made", "confined", "escaped", "unresolved", "unchecked", "routes"]
+                    or not all(n.isdigit() for n in parts[5:14:2])
+                    or (parts[1] != "prologue" and not parts[1].isdigit())
+                ):
                     raise SystemExit(f"{path}: malformed site line: {line.strip()}")
-                site = Site(parse_pc(parts[1]), parts[3], int(parts[5]), int(parts[7]), int(parts[9]),
-                            int(parts[11]), int(parts[13]))
+                site = Site(
+                    parse_pc(parts[1]),
+                    parts[3],
+                    int(parts[5]),
+                    int(parts[7]),
+                    int(parts[9]),
+                    int(parts[11]),
+                    int(parts[13]),
+                )
                 if site.kind not in KINDS:
                     raise SystemExit(f"{path}: unknown kind `{site.kind}` in a site line")
                 if parts[15] != "-":
                     for item in parts[15].split(","):
                         label, count = item.split(":")
                         if label not in ROOT_LABELS:
-                            raise SystemExit(f"{path}: unknown root label `{label}` - GCRoots.def moved?")
+                            raise SystemExit(
+                                f"{path}: unknown root label `{label}` - CTBROWSER_ROOT_LABELS moved?"
+                            )
                         if label in site.routes or not count.isdigit():
                             raise SystemExit(f"{path}: malformed or duplicate root route `{item}`")
                         site.routes[label] = int(count)
                 # THE LINE MUST ACCOUNT FOR ITSELF.
                 if site.made != site.confined + site.escaped + site.unresolved + site.unchecked:
-                    raise SystemExit(f"{path}: site {site.pc} {site.kind} of {function.name}: made != sum")
+                    raise SystemExit(
+                        f"{path}: site {site.pc} {site.kind} of {function.name}: made != sum"
+                    )
                 if sum(site.routes.values()) != site.escaped:
-                    raise SystemExit(f"{path}: site {site.pc} {site.kind} of {function.name}: routes != escaped")
+                    raise SystemExit(
+                        f"{path}: site {site.pc} {site.kind} of {function.name}: routes != escaped"
+                    )
                 if site.made == 0:
                     raise SystemExit(f"{path}: a site line with made 0 (they are not written)")
                 if (site.pc, site.kind) in function.sites:
-                    raise SystemExit(f"{path}: duplicate site {site.pc} {site.kind} in {function.name}")
+                    raise SystemExit(
+                        f"{path}: duplicate site {site.pc} {site.kind} in {function.name}"
+                    )
                 function.sites[(site.pc, site.kind)] = site
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
@@ -322,7 +344,9 @@ def read_claims(path: str):
                 flags[(parts[1], int(parts[2]))] = parts[3]
                 continue
             if len(parts) != 6 or parts[0] != "escape":
-                raise SystemExit(f"{path}:{number}: expected `escape <hash> <fn> <pc> <kind> <verdict>`")
+                raise SystemExit(
+                    f"{path}:{number}: expected `escape <hash> <fn> <pc> <kind> <verdict>`"
+                )
             kind, verdict = parts[4], parts[5]
             if kind not in KINDS:
                 raise SystemExit(f"{path}:{number}: unknown kind `{kind}`")
@@ -356,8 +380,10 @@ def dump_recording(rec: Recording, claims: dict) -> str:
                 observation = "unobserved"
                 if site:
                     routes = ",".join(f"{k}:{n}" for k, n in sorted(site.routes.items())) or "-"
-                    observation = (f"{site.made} {site.confined} {site.escaped} "
-                                   f"{site.unresolved} {site.unchecked} {routes}")
+                    observation = (
+                        f"{site.made} {site.confined} {site.escaped} "
+                        f"{site.unresolved} {site.unchecked} {routes}"
+                    )
                 coordinate = "prologue" if pc == PROLOGUE else str(pc)
                 verdict = claimed.get((pc, kind), "unclaimed")
                 rows.append(f"{tag} {coordinate} {kind} {observation} {verdict}")
@@ -369,15 +395,30 @@ def dump_recording(rec: Recording, claims: dict) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--recording", required=True)
     ap.add_argument("--infer", choices=sorted(STUBS), help="use a built-in stub inference")
     ap.add_argument("--claims", help="a claims file from a real inference")
-    ap.add_argument("--dump", metavar="FILE", help="write a deterministic allocation/observation/claim join")
+    ap.add_argument(
+        "--dump", metavar="FILE", help="write a deterministic allocation/observation/claim join"
+    )
     ap.add_argument("--name", default="", help="what to call this corpus in the report")
     ap.add_argument("--max-report", type=int, default=10, help="violations to name (0 = all)")
-    for what in ("violations", "observed", "unobserved", "sound", "partial", "pending",
-                 "imprecise", "exact", "unclaimed", "inconclusive", "claimed"):
+    for what in (
+        "violations",
+        "observed",
+        "unobserved",
+        "sound",
+        "partial",
+        "pending",
+        "imprecise",
+        "exact",
+        "unclaimed",
+        "inconclusive",
+        "claimed",
+    ):
         ap.add_argument(f"--expect-{what}", type=int, help="fail unless the count is exactly this")
     args = ap.parse_args()
 
@@ -401,8 +442,21 @@ def main() -> int:
             handle.write(dump_recording(rec, claims))
 
     observed = sum(len(fn.sites) for p in rec.programs.values() for fn in p.functions.values())
-    counts = {k: 0 for k in ("unobserved", "violations", "sound", "partial", "pending",
-                             "imprecise", "exact", "unclaimed", "inconclusive", "mismatch")}
+    counts = {
+        k: 0
+        for k in (
+            "unobserved",
+            "violations",
+            "sound",
+            "partial",
+            "pending",
+            "imprecise",
+            "exact",
+            "unclaimed",
+            "inconclusive",
+            "mismatch",
+        )
+    }
     reasons: dict[str, int] = {}
     violations = []
     mismatches = []
@@ -434,7 +488,7 @@ def main() -> int:
             else:
                 counts["pending"] += 1
         else:
-            reason = verdict[len("escapes:"):]
+            reason = verdict[len("escapes:") :]
             if site.escaped > 0:
                 counts["exact"] += 1
             elif site.confined > 0 and site.clean():
@@ -445,24 +499,34 @@ def main() -> int:
 
     for phash, prog in rec.programs.items():
         for index, fn in prog.functions.items():
-            for (pc, kind) in fn.sites:
+            for pc, kind in fn.sites:
                 if (phash, index, pc, kind) not in seen_keys:
                     counts["unclaimed"] += 1
 
     label = args.name or args.recording
     which = args.infer or args.claims
     print(f"== escape oracle: {label} vs `{which}`")
-    print(f"   programs {len(rec.programs)}  functions "
-          f"{sum(len(p.functions) for p in rec.programs.values())}")
-    print(f"   budget {rec.budget}  pops {rec.pops}  unwinds {rec.unwinds}  checks {rec.checks}  "
-          f"unframed {rec.unframed}  unresolved {rec.unresolved}")
-    print(f"   claims {len(claims)}   observed sites {observed}   unobserved claims {counts['unobserved']}")
+    print(
+        f"   programs {len(rec.programs)}  functions "
+        f"{sum(len(p.functions) for p in rec.programs.values())}"
+    )
+    print(
+        f"   budget {rec.budget}  pops {rec.pops}  unwinds {rec.unwinds}  checks {rec.checks}  "
+        f"unframed {rec.unframed}  unresolved {rec.unresolved}"
+    )
+    print(
+        f"   claims {len(claims)}   observed sites {observed}   unobserved claims {counts['unobserved']}"
+    )
     if flags:
         print(f"   function flags {len(flags)}: " + ", ".join(sorted(set(flags.values()))))
-    print(f"   SOUNDNESS violations {counts['violations']}   sound {counts['sound']}   "
-          f"partial {counts['partial']}   pending {counts['pending']}")
-    print(f"   escapes claims: exact {counts['exact']}   imprecise {counts['imprecise']}   "
-          f"inconclusive {counts['inconclusive']}")
+    print(
+        f"   SOUNDNESS violations {counts['violations']}   sound {counts['sound']}   "
+        f"partial {counts['partial']}   pending {counts['pending']}"
+    )
+    print(
+        f"   escapes claims: exact {counts['exact']}   imprecise {counts['imprecise']}   "
+        f"inconclusive {counts['inconclusive']}"
+    )
     print(f"   UNCLAIMED observed sites {counts['unclaimed']}")
     denominator = counts["sound"] + counts["imprecise"]
     pct = (100.0 * counts["sound"] / denominator) if denominator else 0.0
@@ -472,21 +536,32 @@ def main() -> int:
     shown = violations if args.max_report == 0 else violations[: args.max_report]
     for phash, fn, site in shown:
         pc = "prologue" if site.pc == PROLOGUE else str(site.pc)
-        print(f"   VIOLATION program {phash} function {fn.index} ({fn.name}) pc {pc} kind {site.kind}: "
-              f"claimed confined, observed escaped {site.escaped}/made {site.made} via {site.via()}")
+        print(
+            f"   VIOLATION program {phash} function {fn.index} ({fn.name}) pc {pc} kind {site.kind}: "
+            f"claimed confined, observed escaped {site.escaped}/made {site.made} via {site.via()}"
+        )
     if len(violations) > len(shown):
         print(f"   ... and {len(violations) - len(shown)} more")
 
     failed = False
     for phash, fn, pc, kind in mismatches[: args.max_report or None]:
-        print(f"   KIND MISMATCH program {phash} function {fn.index} ({fn.name}) pc {pc}: claimed {kind}, "
-              f"observed " + ",".join(k for (p, k) in fn.sites if p == pc), file=sys.stderr)
+        print(
+            f"   KIND MISMATCH program {phash} function {fn.index} ({fn.name}) pc {pc}: claimed {kind}, "
+            f"observed " + ",".join(k for (p, k) in fn.sites if p == pc),
+            file=sys.stderr,
+        )
     if counts["mismatch"]:
-        print(f"   FAIL {counts['mismatch']} kind mismatch(es) - the coordinate is wrong", file=sys.stderr)
+        print(
+            f"   FAIL {counts['mismatch']} kind mismatch(es) - the coordinate is wrong",
+            file=sys.stderr,
+        )
         failed = True
     if uncheckable:
-        print(f"   FAIL {uncheckable} UNCHECKABLE claim(s) of owned/shared - no recording carries "
-              "reference counts yet", file=sys.stderr)
+        print(
+            f"   FAIL {uncheckable} UNCHECKABLE claim(s) of owned/shared - no recording carries "
+            "reference counts yet",
+            file=sys.stderr,
+        )
         failed = True
 
     # --- the asserted counters -------------------------------------------

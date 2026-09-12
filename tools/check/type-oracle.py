@@ -202,9 +202,7 @@ def read_recording(path: str) -> Recording:
                 program.functions[function.index] = function
             elif tag == "r":
                 assert function is not None, "an `r` line before any `fn` line"
-                reg = Register(
-                    int(parts[1]), int(parts[3]), int(parts[5], 16), int(parts[7], 16)
-                )
+                reg = Register(int(parts[1]), int(parts[3]), int(parts[5], 16), int(parts[7], 16))
                 function.regs[reg.reg] = reg
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
@@ -331,32 +329,41 @@ def main() -> int:
     label = args.name or args.recording
     which = args.infer or args.claims
     print(f"== type oracle: {label} vs `{which}`")
-    print(f"   programs {len(rec.programs)}  functions "
-          f"{sum(len(p.functions) for p in rec.programs.values())}")
-    print(f"   defs recorded {rec.recorded}  dropped {rec.dropped}  "
-          f"orphan-frames {rec.orphans}")
+    print(
+        f"   programs {len(rec.programs)}  functions "
+        f"{sum(len(p.functions) for p in rec.programs.values())}"
+    )
+    print(
+        f"   defs recorded {rec.recorded}  dropped {rec.dropped}  " f"orphan-frames {rec.orphans}"
+    )
     print(f"   observed registers   {observed}")
-    print(f"   unobserved registers {unobserved}   "
-          "(never executed - NOT `any type`)")
+    print(f"   unobserved registers {unobserved}   " "(never executed - NOT `any type`)")
     if unclaimed:
         print(f"   observed but unclaimed {unclaimed}")
     if unverifiable:
         print(f"   claims on unobserved registers {unverifiable}   (unverifiable, not counted)")
 
     denominator = observed - unclaimed
-    print(f"   SOUNDNESS violations {len(violations)}"
-          + (f" of {denominator} checked" if denominator else ""))
+    print(
+        f"   SOUNDNESS violations {len(violations)}"
+        + (f" of {denominator} checked" if denominator else "")
+    )
     pct = (100.0 * beat_boxed / denominator) if denominator else 0.0
     epct = (100.0 * exact / denominator) if denominator else 0.0
-    print(f"   PRECISION beat-boxed {beat_boxed}/{denominator} = {pct:.1f}%   "
-          f"exact {exact}/{denominator} = {epct:.1f}%")
+    print(
+        f"   PRECISION beat-boxed {beat_boxed}/{denominator} = {pct:.1f}%   "
+        f"exact {exact}/{denominator} = {epct:.1f}%"
+    )
 
     shown = violations if args.max_report == 0 else violations[: args.max_report]
     for phash, fn, seen, claim, want in shown:
         print(
             f"   VIOLATION program {phash} function {fn.index} "
             f"({fn.name}) register {seen.reg}: claimed "
-            "{" + ",".join(sorted(claim)) + "}, observed " + seen.why()
+            "{"
+            + ",".join(sorted(claim))
+            + "}, observed "
+            + seen.why()
             + f" over {seen.defs} def(s)"
         )
     if len(violations) > len(shown):

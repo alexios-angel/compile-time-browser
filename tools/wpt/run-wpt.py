@@ -25,6 +25,7 @@ names a feature rather than a number.
 
 import argparse
 import concurrent.futures
+import dataclasses
 import json
 import os
 import re
@@ -69,8 +70,14 @@ class Outcome:
     SKIP = "SKIP"
 
 
-ORDER = [Outcome.PASS, Outcome.FAIL, Outcome.TIMEOUT, Outcome.CRASH,
-         Outcome.HARNESS_ERROR, Outcome.SKIP]
+ORDER = [
+    Outcome.PASS,
+    Outcome.FAIL,
+    Outcome.TIMEOUT,
+    Outcome.CRASH,
+    Outcome.HARNESS_ERROR,
+    Outcome.SKIP,
+]
 
 
 # --- choosing what to run ---------------------------------------------------
@@ -143,15 +150,15 @@ def read_head(path: Path, limit: int = 8192) -> bytes:
         return handle.read(limit)
 
 
+@dataclasses.dataclass
 class Plan:
     """What one candidate turns into: a page to open, or a reason to skip."""
 
-    def __init__(self, rel, page=None, timeout=TIMEOUT_NORMAL, skip=None, wrapper=None):
-        self.rel = rel            # the test's WPT path, and its key in expectations
-        self.page = page          # the file ctdrive actually opens
-        self.timeout = timeout
-        self.skip = skip          # a reason, naming a feature - never a number
-        self.wrapper = wrapper    # a generated .any.html to delete afterwards
+    rel: str  # the test's WPT path, and its key in expectations
+    page: Path | None = None  # the file ctdrive actually opens
+    timeout: float = TIMEOUT_NORMAL
+    skip: str | None = None  # a reason, naming a feature - never a number
+    wrapper: Path | None = None  # a generated .any.html to delete afterwards
 
 
 def plan_for(path: Path, wpt: Path) -> Plan:
@@ -178,8 +185,7 @@ def plan_for(path: Path, wpt: Path) -> Plan:
         # request time - so the runner has to build the same page, beside the
         # script so that its relative <script src> resolves.
         long_timeout = "long" in meta.get("timeout", [""])[0]
-        extra = "".join(
-            f'<script src="{src}"></script>\n' for src in meta.get("script", []))
+        extra = "".join(f'<script src="{src}"></script>\n' for src in meta.get("script", []))
         wrapper_name = path.name.rsplit(".js", 1)[0] + WRAPPER_SUFFIX
         wrapper = path.parent / wrapper_name
         wrapper.write_text(
@@ -187,13 +193,15 @@ def plan_for(path: Path, wpt: Path) -> Plan:
             + ('<meta name="timeout" content="long">\n' if long_timeout else "")
             + '<script src="/resources/testharness.js"></script>\n'
             '<script src="/resources/testharnessreport.js"></script>\n'
-            "<div id=log></div>\n"
-            + extra
-            + f'<script src="{path.name}"></script>\n',
-            encoding="utf-8")
-        return Plan(rel, page=wrapper,
-                    timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL,
-                    wrapper=wrapper)
+            "<div id=log></div>\n" + extra + f'<script src="{path.name}"></script>\n',
+            encoding="utf-8",
+        )
+        return Plan(
+            rel,
+            page=wrapper,
+            timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL,
+            wrapper=wrapper,
+        )
 
     # A REFERENCE TEST IS NOT A TESTHARNESS TEST. It is a render comparison, and
     # this runner has no reference rendering to compare against - the render
@@ -206,8 +214,7 @@ def plan_for(path: Path, wpt: Path) -> Plan:
         return Plan(rel, skip="variant: the driver opens a file and has no query string")
     if b"testdriver.js" in head:
         return Plan(rel, skip="testdriver: needs WebDriver input injection")
-    long_timeout = (b'name="timeout" content="long"' in head
-                    or b"name=timeout content=long" in head)
+    long_timeout = b'name="timeout" content="long"' in head or b"name=timeout content=long" in head
     return Plan(rel, page=path, timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL)
 
 
@@ -218,8 +225,10 @@ PORT_RE = re.compile(r"listening on 127\.0\.0\.1:(\d+)")
 # The probe. `D` and the payload once the harness has published; otherwise `W`
 # and whether the harness is even there - which is the whole difference between
 # "never finished" (TIMEOUT) and "never loaded" (HARNESS_ERROR).
-PROBE = ('console.log(window.__wpt_done ? ("D" + window.__wpt_state) '
-         ': ("W" + (typeof add_completion_callback)))')
+PROBE = (
+    'console.log(window.__wpt_done ? ("D" + window.__wpt_state) '
+    ': ("W" + (typeof add_completion_callback)))'
+)
 
 # RLIMIT_AS, APPLIED BY THE SHELL RATHER THAN BY preexec_fn.
 #
@@ -246,14 +255,15 @@ def signal_name(code: int) -> str:
         return f"signal {-code}"
 
 
+@dataclasses.dataclass
 class DriverResult:
-    def __init__(self, status, message="", subtests=None, signal=None, log="", seconds=0.0):
-        self.status = status
-        self.message = message
-        self.subtests = subtests or []
-        self.signal = signal
-        self.log = log
-        self.seconds = seconds
+    status: str
+    message: str = ""
+    subtests: list = dataclasses.field(default_factory=list)
+    signal: int | None = None  # the exit code, when the driver died
+    log: str = ""
+    seconds: float = 0.0
+    rel: str = ""  # filled in by main(), once the result is filed under its test
 
 
 def send_command(sock, payload, deadline):
@@ -275,31 +285,46 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
     started = time.monotonic()
     deadline = started + plan.timeout + DRIVER_MARGIN
     env = dict(os.environ)
-    env.update({
-        # WHAT A LEADING `/` MEANS. Every WPT test asks for
-        # /resources/testharness.js, which without this is read off the root of
-        # the disk and missed - see shell::asset_registry::set_document_root.
-        "CTBROWSER_DOC_ROOT": str(wpt),
-        # DETERMINISTIC AND HEADLESS. The box has no GPU: a Linux binary here
-        # sees lavapipe and SwiftShader only, so the driver is pinned the same
-        # way tools/check/check-render.cmake pins it rather than left to
-        # whatever the Vulkan loader picks.
-        "CTBROWSER_GL_DRIVER": "deterministic",
-        "SDL_VIDEODRIVER": "offscreen",
-        "SDL_AUDIODRIVER": "dummy",
-        # A test that reaches the network fails for reasons that are not about
-        # this engine, and hangs for as long as a DNS timeout while it does.
-        "CTBROWSER_NETWORK": "0",
-        "CTBROWSER_FONTS": "font8x8",
-    })
+    env.update(
+        {
+            # WHAT A LEADING `/` MEANS. Every WPT test asks for
+            # /resources/testharness.js, which without this is read off the root of
+            # the disk and missed - see shell::asset_registry::set_document_root.
+            "CTBROWSER_DOC_ROOT": str(wpt),
+            # DETERMINISTIC AND HEADLESS. The box has no GPU: a Linux binary here
+            # sees lavapipe and SwiftShader only, so the driver is pinned the same
+            # way tools/check/check-render.cmake pins it rather than left to
+            # whatever the Vulkan loader picks.
+            "CTBROWSER_GL_DRIVER": "deterministic",
+            "SDL_VIDEODRIVER": "offscreen",
+            "SDL_AUDIODRIVER": "dummy",
+            # A test that reaches the network fails for reasons that are not about
+            # this engine, and hangs for as long as a DNS timeout while it does.
+            "CTBROWSER_NETWORK": "0",
+            "CTBROWSER_FONTS": "font8x8",
+        }
+    )
     log = tempfile.TemporaryFile(mode="w+b")
     process = subprocess.Popen(
-        ["/bin/sh", "-c", LIMIT_WRAPPER, "ctwpt", str(memory_mb * 1024),
-         # ABSOLUTE: the driver runs from the page's directory, so a relative
-         # `--driver build/tools/ctdrive` would be looked for beside the test.
-         str(driver.resolve()), str(plan.page), "--port", "0"],
-        cwd=str(plan.page.parent), env=env, stdout=log, stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL)
+        [
+            "/bin/sh",
+            "-c",
+            LIMIT_WRAPPER,
+            "ctwpt",
+            str(memory_mb * 1024),
+            # ABSOLUTE: the driver runs from the page's directory, so a relative
+            # `--driver build/tools/ctdrive` would be looked for beside the test.
+            str(driver.resolve()),
+            str(plan.page),
+            "--port",
+            "0",
+        ],
+        cwd=str(plan.page.parent),
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+    )
 
     def output():
         log.seek(0)
@@ -321,11 +346,19 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
     def ended(where: str) -> DriverResult:
         code = process.returncode
         if code == 0:
-            return DriverResult(Outcome.HARNESS_ERROR,
-                                f"driver exited 0 {where} without publishing a result",
-                                log=output(), seconds=time.monotonic() - started)
-        return DriverResult(Outcome.CRASH, f"driver died {where}: {signal_name(code)}",
-                            signal=code, log=output(), seconds=time.monotonic() - started)
+            return DriverResult(
+                Outcome.HARNESS_ERROR,
+                f"driver exited 0 {where} without publishing a result",
+                log=output(),
+                seconds=time.monotonic() - started,
+            )
+        return DriverResult(
+            Outcome.CRASH,
+            f"driver died {where}: {signal_name(code)}",
+            signal=code,
+            log=output(),
+            seconds=time.monotonic() - started,
+        )
 
     try:
         port = None
@@ -337,8 +370,12 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
             if gone():
                 return ended("before listening")
             if time.monotonic() > deadline:
-                return DriverResult(Outcome.HARNESS_ERROR, "driver never printed a port",
-                                    log=output(), seconds=time.monotonic() - started)
+                return DriverResult(
+                    Outcome.HARNESS_ERROR,
+                    "driver never printed a port",
+                    log=output(),
+                    seconds=time.monotonic() - started,
+                )
             time.sleep(0.01)
 
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
@@ -365,16 +402,18 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
                 logged = reply.get("console") or []
                 last_probe = logged[-1] if logged else ""
                 if last_probe.startswith("D"):
-                    return classify(last_probe[1:], output(),
-                                    time.monotonic() - started)
+                    return classify(last_probe[1:], output(), time.monotonic() - started)
                 # A SCRIPT ERROR THE HARNESS NEVER SAW. testharness.js installs
                 # its own error handler, so a page that reaches this has thrown
                 # somewhere the harness could not catch - during load, most
                 # often, which is the case where nothing will ever be published.
                 if not reply.get("ok", True) and reply.get("error"):
-                    return DriverResult(Outcome.HARNESS_ERROR,
-                                        f"eval failed: {reply['error']}", log=output(),
-                                        seconds=time.monotonic() - started)
+                    return DriverResult(
+                        Outcome.HARNESS_ERROR,
+                        f"eval failed: {reply['error']}",
+                        log=output(),
+                        seconds=time.monotonic() - started,
+                    )
                 time.sleep(0.05)
 
             # The deadline passed with nothing published.
@@ -388,23 +427,32 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
                 # The driver listened and then never ran another frame. It is a
                 # TIMEOUT rather than a harness error: the page is what stopped,
                 # and the harness was never given a chance to say anything.
-                return DriverResult(Outcome.TIMEOUT,
-                                    script_error or
-                                    "driver listened but answered no command - the page "
-                                    "never yielded (an infinite loop during load)",
-                                    log=output(), seconds=time.monotonic() - started)
+                return DriverResult(
+                    Outcome.TIMEOUT,
+                    script_error
+                    or "driver listened but answered no command - the page "
+                    "never yielded (an infinite loop during load)",
+                    log=output(),
+                    seconds=time.monotonic() - started,
+                )
             if last_probe.startswith("W") and "function" in last_probe:
                 # The harness was there and never finished: a test that never
                 # calls done, or one waiting on something this engine will not
                 # deliver. That is a TIMEOUT and is not a harness error.
-                return DriverResult(Outcome.TIMEOUT,
-                                    script_error or "harness loaded, never completed",
-                                    log=output(), seconds=time.monotonic() - started)
-            return DriverResult(Outcome.HARNESS_ERROR,
-                                script_error or
-                                "testharness.js never defined add_completion_callback "
-                                f"(probe {last_probe!r})",
-                                log=output(), seconds=time.monotonic() - started)
+                return DriverResult(
+                    Outcome.TIMEOUT,
+                    script_error or "harness loaded, never completed",
+                    log=output(),
+                    seconds=time.monotonic() - started,
+                )
+            return DriverResult(
+                Outcome.HARNESS_ERROR,
+                script_error
+                or "testharness.js never defined add_completion_callback "
+                f"(probe {last_probe!r})",
+                log=output(),
+                seconds=time.monotonic() - started,
+            )
         finally:
             sock.close()
     finally:
@@ -421,8 +469,9 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
     try:
         state = json.loads(payload)
     except json.JSONDecodeError as bad:
-        return DriverResult(Outcome.HARNESS_ERROR,
-                            f"unreadable report payload: {bad}", log=log, seconds=seconds)
+        return DriverResult(
+            Outcome.HARNESS_ERROR, f"unreadable report payload: {bad}", log=log, seconds=seconds
+        )
     harness = state.get("harness", "UNKNOWN")
     subtests = state.get("subtests", [])
     message = state.get("message", "")
@@ -431,13 +480,19 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
     if harness == "TIMEOUT":
         return DriverResult(Outcome.TIMEOUT, message, subtests, log=log, seconds=seconds)
     if harness != "OK":
-        return DriverResult(Outcome.HARNESS_ERROR, f"harness status {harness}: {message}",
-                            subtests, log=log, seconds=seconds)
+        return DriverResult(
+            Outcome.HARNESS_ERROR,
+            f"harness status {harness}: {message}",
+            subtests,
+            log=log,
+            seconds=seconds,
+        )
     # A harness that finished with no subtests at all ran nothing. Calling that
     # a PASS is exactly the mistake this whole file exists to avoid.
     if not subtests:
-        return DriverResult(Outcome.HARNESS_ERROR, "harness OK but reported no subtests",
-                            log=log, seconds=seconds)
+        return DriverResult(
+            Outcome.HARNESS_ERROR, "harness OK but reported no subtests", log=log, seconds=seconds
+        )
     worst = Outcome.PASS
     for one in subtests:
         if one.get("status") != "PASS":
@@ -446,6 +501,7 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
 
 
 # --- expectations -----------------------------------------------------------
+
 
 def expectation_lines(results):
     """Every deviation from `everything passes`, as sorted TSV.
@@ -469,16 +525,20 @@ def expectation_lines(results):
             lines.append(f"{result.rel}\t{result.status}")
         for one in result.subtests:
             if one.get("status") != "PASS":
-                lines.append(f"{result.rel}\tSUBTEST\t{one['status']}\t"
-                             f"{json.dumps(one.get('name', ''))}")
+                lines.append(
+                    f"{result.rel}\tSUBTEST\t{one['status']}\t" f"{json.dumps(one.get('name', ''))}"
+                )
     return lines
 
 
 def parse_expectations(path: Path):
     if not path.exists():
         return set()
-    return {line for line in path.read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")}
+    return {
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
 
 
 def gate(results, path: Path):
@@ -496,22 +556,12 @@ def gate(results, path: Path):
     green tree, which is a gate that gets switched off.
     """
     ran = {result.rel for result in results}
-    expected = {line for line in parse_expectations(path)
-                if line.split("\t", 1)[0] in ran}
+    expected = {line for line in parse_expectations(path) if line.split("\t", 1)[0] in ran}
     actual = set(expectation_lines(results))
     return sorted(actual - expected), sorted(expected - actual)
 
 
 # --- reporting --------------------------------------------------------------
-
-class Result:
-    def __init__(self, rel, status, message="", subtests=None, signal=None, seconds=0.0):
-        self.rel = rel
-        self.status = status
-        self.message = message
-        self.subtests = subtests or []
-        self.signal = signal
-        self.seconds = seconds
 
 
 def table(results, corpus, elapsed):
@@ -581,8 +631,9 @@ def pinned_commit():
     """The pin fetch-wpt.sh names, read from the script rather than repeated."""
     if not FETCH_SCRIPT.exists():
         return None
-    found = re.search(r'WPT_COMMIT="\$\{WPT_COMMIT:-([0-9a-f]{40})\}"',
-                      FETCH_SCRIPT.read_text(encoding="utf-8"))
+    found = re.search(
+        r'WPT_COMMIT="\$\{WPT_COMMIT:-([0-9a-f]{40})\}"', FETCH_SCRIPT.read_text(encoding="utf-8")
+    )
     return found.group(1) if found else None
 
 
@@ -619,67 +670,90 @@ def selftest(driver: Path, wpt: Path, memory_mb: int) -> int:
             ok = False
         if want_status is not None and seen != want_status:
             ok = False
-        print(f"{Path(rel).name:<34}{want:>15}{got.status:>15}   "
-              f"{len(got.subtests)} {seen or ''}  {'ok' if ok else 'WRONG'}")
+        print(
+            f"{Path(rel).name:<34}{want:>15}{got.status:>15}   "
+            f"{len(got.subtests)} {seen or ''}  {'ok' if ok else 'WRONG'}"
+        )
         if not ok:
             bad += 1
             print(f"    message: {got.message[:200]}")
             print(f"    driver log: {got.log.strip()[-400:]}")
     print("-" * 86)
     if bad:
-        print(f"\n{bad} of {len(SELFTESTS)} self-tests reported the wrong outcome. "
-              "The harness is NOT load-bearing until they all pass.")
+        print(
+            f"\n{bad} of {len(SELFTESTS)} self-tests reported the wrong outcome. "
+            "The harness is NOT load-bearing until they all pass."
+        )
         return 1
-    print(f"\nall {len(SELFTESTS)} self-tests reported the outcome they must: a failing "
-          "test fails, a page that never finishes times out, and neither a page that "
-          "threw during load nor one with no harness at all is called a pass.")
+    print(
+        f"\nall {len(SELFTESTS)} self-tests reported the outcome they must: a failing "
+        "test fails, a page that never finishes times out, and neither a page that "
+        "threw during load nor one with no harness at all is called a pass."
+    )
     return 0
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dir", action="append", default=[],
-                        help="a WPT directory, e.g. dom/nodes (repeatable)")
-    parser.add_argument("--gate", action="store_true",
-                        help="run the fixed ctest subset and check it against "
-                             "the expectations")
-    parser.add_argument("--selftest", action="store_true",
-                        help="run tools/wpt/selftest/ and assert each outcome")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--dir", action="append", default=[], help="a WPT directory, e.g. dom/nodes (repeatable)"
+    )
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="run the fixed ctest subset and check it against " "the expectations",
+    )
+    parser.add_argument(
+        "--selftest", action="store_true", help="run tools/wpt/selftest/ and assert each outcome"
+    )
     parser.add_argument("--filter", help="only tests whose path contains this")
     parser.add_argument("--limit", type=int, help="stop after this many tests")
-    parser.add_argument("--jobs", type=int, default=4,
-                        help="parallel drivers (default 4: the box has 8 vCPUs "
-                             "and shares them)")
-    parser.add_argument("--memory-mb", type=int, default=4096,
-                        help="per-driver address-space cap (ulimit -v)")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=4,
+        help="parallel drivers (default 4: the box has 8 vCPUs " "and shares them)",
+    )
+    parser.add_argument(
+        "--memory-mb", type=int, default=4096, help="per-driver address-space cap (ulimit -v)"
+    )
     parser.add_argument("--wpt-dir", type=Path, default=DEFAULT_WPT)
-    parser.add_argument("--driver", type=Path,
-                        default=ROOT / "build" / "tools" / "ctdrive")
+    parser.add_argument("--driver", type=Path, default=ROOT / "build" / "tools" / "ctdrive")
     parser.add_argument("--json", type=Path, help="write the full results here")
     parser.add_argument("--tsv", type=Path, help="write one line per test here")
     parser.add_argument("--expectations", type=Path, default=EXPECTATIONS)
-    parser.add_argument("--update-expectations", action="store_true",
-                        help="rewrite the expectations file from this run")
-    parser.add_argument("--check", action="store_true",
-                        help="fail on any difference from the expectations")
+    parser.add_argument(
+        "--update-expectations",
+        action="store_true",
+        help="rewrite the expectations file from this run",
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="fail on any difference from the expectations"
+    )
     args = parser.parse_args()
 
     wpt = args.wpt_dir.expanduser()
     if not (wpt / "resources" / "testharness.js").exists():
         sys.exit(f"no WPT harness at {wpt} - run tools/wpt/fetch-wpt.sh")
     if not args.driver.exists():
-        sys.exit(f"{args.driver} not built - "
-                 "cmake --build --preset default --target ctbrowser-tool-ctdrive")
-    corpus = subprocess.run(["git", "-C", str(wpt), "rev-parse", "HEAD"],
-                            capture_output=True, text=True).stdout.strip()
+        sys.exit(
+            f"{args.driver} not built - "
+            "cmake --build --preset default --target ctbrowser-tool-ctdrive"
+        )
+    corpus = subprocess.run(
+        ["git", "-C", str(wpt), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
     # A TABLE READ AGAINST THE WRONG CORPUS IS WORSE THAN NO TABLE. The pin is
     # in fetch-wpt.sh and is not repeated here; this is the one place the two
     # are compared, and it refuses rather than warns.
     pinned = pinned_commit()
     if pinned and corpus and corpus != pinned:
-        sys.exit(f"{wpt} is at {corpus}, but tools/wpt/fetch-wpt.sh pins {pinned}.\n"
-                 "Re-run tools/wpt/fetch-wpt.sh, or move the pin deliberately.")
+        sys.exit(
+            f"{wpt} is at {corpus}, but tools/wpt/fetch-wpt.sh pins {pinned}.\n"
+            "Re-run tools/wpt/fetch-wpt.sh, or move the pin deliberately."
+        )
 
     # OUR REPORT HOOK, INSTALLED. WPT ships a do-nothing testharnessreport.js
     # and expects the vendor to replace it; this is that replacement, copied in
@@ -704,21 +778,25 @@ def main():
     if swept:
         print(f"swept {swept} generated wrapper(s) an interrupted run left behind")
     if args.limit:
-        candidates = candidates[:args.limit]
+        candidates = candidates[: args.limit]
 
     plans = [plan_for(path, wpt) for path in candidates]
     runnable = [p for p in plans if p.skip is None]
     directories = [where for where, _ in pairs]
-    print(f"wpt {corpus[:10]}: {len(plans)} candidates, {len(runnable)} to run, "
-          f"{len(plans) - len(runnable)} skipped, {args.jobs} workers, "
-          f"{args.memory_mb} MB cap")
+    print(
+        f"wpt {corpus[:10]}: {len(plans)} candidates, {len(runnable)} to run, "
+        f"{len(plans) - len(runnable)} skipped, {args.jobs} workers, "
+        f"{args.memory_mb} MB cap"
+    )
 
-    results = [Result(p.rel, Outcome.SKIP, p.skip) for p in plans if p.skip]
+    results = [DriverResult(Outcome.SKIP, p.skip, rel=p.rel) for p in plans if p.skip]
     started = time.monotonic()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = {pool.submit(run_one, plan, args.driver, wpt, args.memory_mb): plan
-                       for plan in runnable}
+            futures = {
+                pool.submit(run_one, plan, args.driver, wpt, args.memory_mb): plan
+                for plan in runnable
+            }
             done = 0
             for future in concurrent.futures.as_completed(futures):
                 plan = futures[future]
@@ -726,8 +804,10 @@ def main():
                     outcome = future.result()
                 except Exception as bad:  # a bug in the runner is not a test result
                     outcome = DriverResult(Outcome.HARNESS_ERROR, f"runner error: {bad!r}")
-                results.append(Result(plan.rel, outcome.status, outcome.message,
-                                      outcome.subtests, outcome.signal, outcome.seconds))
+                # log="" drops the driver's stdout, which nothing reports
+                # after this point and which would otherwise sit in memory
+                # for every test until the run ends.
+                results.append(dataclasses.replace(outcome, rel=plan.rel, log=""))
                 done += 1
                 if done % 25 == 0 or done == len(runnable):
                     print(f"  {done}/{len(runnable)}", file=sys.stderr)
@@ -745,36 +825,60 @@ def main():
         for one in sorted(crashes, key=lambda r: r.rel)[:20]:
             print(f"  {one.rel}: {one.message}")
     causes([r.message for r in crashes], "crash sites")
-    causes([r.message for r in results if r.status == Outcome.HARNESS_ERROR],
-           "harness errors")
-    causes([one.get("message", "") for r in results for one in r.subtests
-            if one.get("status") == "FAIL"], "failing subtests")
+    causes([r.message for r in results if r.status == Outcome.HARNESS_ERROR], "harness errors")
+    causes(
+        [
+            one.get("message", "")
+            for r in results
+            for one in r.subtests
+            if one.get("status") == "FAIL"
+        ],
+        "failing subtests",
+    )
     causes([r.message for r in results if r.status == Outcome.SKIP], "skips", limit=20)
 
-    slowest = sorted((r for r in results if r.status != Outcome.SKIP),
-                     key=lambda r: -r.seconds)[:5]
+    slowest = sorted((r for r in results if r.status != Outcome.SKIP), key=lambda r: -r.seconds)[:5]
     if slowest:
-        print("\nslowest: " + ", ".join(f"{r.rel.rsplit('/', 1)[-1]} {r.seconds:.1f}s"
-                                        for r in slowest))
+        print(
+            "\nslowest: "
+            + ", ".join(f"{r.rel.rsplit('/', 1)[-1]} {r.seconds:.1f}s" for r in slowest)
+        )
 
     if args.json:
-        args.json.write_text(json.dumps({
-            "wpt_commit": corpus,
-            "date": time.strftime("%Y-%m-%d"),
-            "directories": directories,
-            "seconds": round(elapsed, 1),
-            "totals": totals,
-            "subtest_totals": sub_total,
-            "tests": [{"test": r.rel, "status": r.status, "message": r.message,
-                       "subtests": r.subtests, "seconds": round(r.seconds, 2)}
-                      for r in sorted(results, key=lambda r: r.rel)],
-        }, indent=1), encoding="utf-8")
+        args.json.write_text(
+            json.dumps(
+                {
+                    "wpt_commit": corpus,
+                    "date": time.strftime("%Y-%m-%d"),
+                    "directories": directories,
+                    "seconds": round(elapsed, 1),
+                    "totals": totals,
+                    "subtest_totals": sub_total,
+                    "tests": [
+                        {
+                            "test": r.rel,
+                            "status": r.status,
+                            "message": r.message,
+                            "subtests": r.subtests,
+                            "seconds": round(r.seconds, 2),
+                        }
+                        for r in sorted(results, key=lambda r: r.rel)
+                    ],
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
         print(f"\nwrote {args.json}")
     if args.tsv:
-        args.tsv.write_text("".join(
-            f"{r.rel}\t{r.status}\t{len(r.subtests)}\t"
-            f"{r.message.splitlines()[0] if r.message else ''}\n"
-            for r in sorted(results, key=lambda r: r.rel)), encoding="utf-8")
+        args.tsv.write_text(
+            "".join(
+                f"{r.rel}\t{r.status}\t{len(r.subtests)}\t"
+                f"{r.message.splitlines()[0] if r.message else ''}\n"
+                for r in sorted(results, key=lambda r: r.rel)
+            ),
+            encoding="utf-8",
+        )
         print(f"wrote {args.tsv}")
 
     if args.update_expectations:
@@ -784,8 +888,11 @@ def main():
         # recorded failures because one directory was re-run, and the next gate
         # would then pass on a file that had lost its contents.
         ran = {result.rel for result in results}
-        kept = [line for line in parse_expectations(args.expectations)
-                if line.split("\t", 1)[0] not in ran]
+        kept = [
+            line
+            for line in parse_expectations(args.expectations)
+            if line.split("\t", 1)[0] not in ran
+        ]
         lines = sorted(kept + expectation_lines(results))
         header = [
             "# ctbrowser's known web-platform-test results. Written by",

@@ -199,10 +199,6 @@ target_link_libraries(ctcompile-ctnative-lowering
     MLIRRewritePDL
     MLIRTransforms)
 
-target_include_directories(ctcompile-ctnative-lowering SYSTEM
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
-
 # WHERE mlir-pdll PUT THE HEADER. PRIVATE and not SYSTEM: it is this library's
 # own generated file, included by its own name from PruneDeadStores.cpp, and no
 # consumer should be able to reach it.

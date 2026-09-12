@@ -171,10 +171,4 @@ if(NOT TARGET PkgConfig::CTB_TURBOJPEG)
   endif()
 endif()
 
-# PNG/JPEG/WebP for <img> through SDL3's satellite, when SDL3 itself was found.
-# Asked here rather than inside lib/App/ because CTBROWSER_CONFIG_DEPS at the
-# bottom of lib/CMakeLists.txt has to know the answer too.
-if(SDL3_FOUND)
-  find_package(SDL3_image QUIET)
-endif()
 

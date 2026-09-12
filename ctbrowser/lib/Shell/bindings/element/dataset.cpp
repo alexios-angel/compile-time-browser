@@ -63,7 +63,7 @@ enum class dataset_fault : std::uint8_t {
         }
         out.push_back(idl[i]);
     }
-    return valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
+    return is_valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
 }
 
 } // namespace
@@ -76,8 +76,8 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
     // falls through to the builtin Object.prototype tables anyway, so
     // `dataset-prototype.html`'s "Properties on Object.prototype should shine
     // through" still holds.
-    auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * store = cx.allocate<script::object_object>();
+    auto * handler = cx.allocate<script::object_object>();
     const auto trap = [&](std::string name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };

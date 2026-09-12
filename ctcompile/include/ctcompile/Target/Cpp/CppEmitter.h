@@ -44,7 +44,8 @@ mlir::LogicalResult translateToCpp(mlir::Operation * op, mlir::raw_ostream & os,
 ///
 /// The name is deliberate and it is what makes Stage 47A's gate cheap:
 /// upstream's 35 EmitC lit tests spell `mlir-translate -mlir-to-cpp` in their
-/// RUN lines, and they are vendored unmodified. Changing the flag would mean
+/// RUN lines, and they are vendored as upstream wrote them (which tag each is
+/// from: lib/Target/Cpp/TranslateToCpp.cpp's header). Changing the flag would mean
 /// editing 35 vendored files, which is precisely the thing that makes a fork
 /// stop being comparable to what it forked.
 void registerToCppTranslation();

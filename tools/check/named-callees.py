@@ -16,6 +16,7 @@ A function can be LIFTED and still REFUSED: a lifted capture is a parameter that
 still needs a native carrier, and most module-scope bindings in a bundle are
 objects and functions. The two counts are reported separately for that reason.
 """
+
 import argparse
 import collections
 import re

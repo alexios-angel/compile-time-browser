@@ -132,7 +132,6 @@ private:
     void collect_context_contents(const paint_ref & parent, std::span<const rect> clips,
                                   std::size_t & order, context_contents & out) const;
     void emit_stacking_context(const paint_ref & root, display_list & into) const;
-    void emit_positioned(const paint_ref & root, display_list & into) const;
     void emit_normal_backgrounds(const paint_ref & parent, display_list & into) const;
     void emit_normal_contents(const paint_ref & parent, display_list & into) const;
     void emit_normal_atomic(const paint_ref & ref, display_list & into) const;
@@ -151,9 +150,9 @@ private:
         if (!f.text.empty()) { return; }
 
         // THE BACKGROUND AND THE BORDER SHARE A SHAPE, so the radius is resolved
-        // once and both are drawn against it. A square box takes the same two
-        // calls it always did - `radii.empty()` is the fast path all the way down
-        // to the rasterizer - so nothing that has no radius moves.
+        // once and both are drawn against it. A square box records the same
+        // command it always did - `radii.empty()` is the fast path all the way
+        // down to the rasterizer - so nothing that has no radius moves.
         const corner_radii radii = radii_of(style, box);
         // CSS PAINT ORDER: an OUTER shadow is behind everything the box draws, an
         // INSET one is in front of the background and behind the border. Bootstrap
@@ -166,11 +165,7 @@ private:
             emit_shadow(box, radii, shadow, f.source, into);
         }
         if (const auto bg = parse_color(prop(style, background_))) {
-            if (radii.empty()) {
-                into.fill(box, *bg, f.source);
-            } else {
-                into.fill_rounded(box, *bg, radii, 0, f.source);
-            }
+            into.fill_rounded(box, *bg, radii, 0, f.source);
         }
         for (const box_shadow & shadow : shadows) {
             if (!shadow.inset || !shadow.sharp()) { continue; }
@@ -205,9 +200,7 @@ private:
             float size = 16;
             if (f.box != nullptr) {
                 size = f.box->font_size;
-                face.family = f.box->face.family;
-                face.bold = f.box->face.bold;
-                face.italic = f.box->face.italic;
+                face = f.box->face;
                 // Underline wins when a page asks for both, which is what a
                 // browser does and what `text-decoration: underline
                 // line-through` most often means in practice.
@@ -326,11 +319,7 @@ private:
         // spread, drawn behind everything else the box paints.
         const rect where{box.x + shadow.dx - shadow.spread, box.y + shadow.dy - shadow.spread,
                          box.width + 2 * shadow.spread, box.height + 2 * shadow.spread};
-        if (radii.empty()) {
-            into.fill(where, shadow.paint, source);
-        } else {
-            into.fill_rounded(where, shadow.paint, radii, 0, source);
-        }
+        into.fill_rounded(where, shadow.paint, radii, 0, source);
     }
 
     // One edge's used width and colour, per side and falling back to the uniform

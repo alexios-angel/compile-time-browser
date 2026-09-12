@@ -136,6 +136,10 @@ mlir::LogicalResult FuncOp::verify() {
 // ctjs.call_direct
 //===----------------------------------------------------------------------===//
 
+FuncOp CallDirectOp::getTarget() {
+    return mlir::SymbolTable::lookupNearestSymbolFrom<FuncOp>(*this, getCalleeAttr());
+}
+
 mlir::LogicalResult CallDirectOp::verifySymbolUses(mlir::SymbolTableCollection & symbols) {
     // THE SYMBOL MUST BE A ctjs.func WITH A BODY, and its entry block must
     // take exactly what this call passes - which is the closed-world claim

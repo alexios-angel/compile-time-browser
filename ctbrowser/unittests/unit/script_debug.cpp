@@ -37,8 +37,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -230,14 +228,6 @@ void the_image_round_trips_them() {
 }
 
 // --- the measurement ------------------------------------------------------
-
-[[nodiscard]] std::string read_file(const char * path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream all;
-    all << in.rdbuf();
-    return all.str();
-}
 
 // What the tables cost in an image, for one corpus. Reported rather than
 // asserted: a size is a fact about the corpus, and a ratchet on it would fail

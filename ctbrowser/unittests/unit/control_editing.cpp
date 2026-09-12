@@ -29,7 +29,6 @@ using ctbrowser::shell::input_event;
 using ctbrowser_test::box_of;
 using ctbrowser_test::caret_bars;
 using ctbrowser_test::caret_of;
-using ctbrowser_test::check;
 using ctbrowser_test::click;
 using ctbrowser_test::commands;
 using ctbrowser_test::draws_text;
@@ -78,11 +77,11 @@ void test_a_control_draws_in_the_face_it_measures() {
     browser page{browser_options{500, 300}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><textarea id=t rows=3 cols=20></textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
     click(page, box.x + 6, box.y + 6);
     check(page.text_input("Hello world"), "typed");
-    check(page.frame().has_value(), "redraws");
+    page.frame();
 
     std::string drawn;
     float text_x = 0;
@@ -91,7 +90,7 @@ void test_a_control_draws_in_the_face_it_measures() {
         if (c.op == paint::paint_op::text_run && c.source == find_id(page, "t")) {
             drawn = c.text;
             text_x = c.bounds.x;
-            drawn_face = layout::text_face{c.face.family, c.face.bold, c.face.italic};
+            drawn_face = c.face;
         }
     }
     check(drawn == "Hello world", "the value is drawn");
@@ -107,7 +106,7 @@ void test_a_control_draws_in_the_face_it_measures() {
 void test_clicking_in_a_textarea_places_the_caret() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><textarea id=t rows=3 cols=20>abcdef\nghijkl</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
 
     // The start of the FIRST line.
@@ -126,7 +125,7 @@ void test_clicking_in_a_textarea_places_the_caret() {
 void test_arrows_move_by_visual_line_in_a_textarea() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><textarea id=t rows=3 cols=20>abcdef\nghijkl</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
     click(page, box.x + 7, box.y + 6); // caret at 0
 
@@ -152,7 +151,7 @@ void test_arrows_move_by_visual_line_in_a_textarea() {
 void test_dragging_selects_inside_a_field() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><input type=text id=f value=abcdefgh size=20></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "f");
 
     (void)page.handle(input_event::mouse_down_at(field.x + 7, field.y + 10));
@@ -178,7 +177,7 @@ void test_escape_and_blur_drop_a_field_selection() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><input type=text id=f value=abcdef size=20>"
                    "<p id=elsewhere>not a field</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "f");
     click(page, field.x + 6, field.y + 10);
 
@@ -211,7 +210,7 @@ void test_a_password_shows_bullets() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><input type=password id=p value=hunter2 size=20>"
                    "<input type=text id=t value=hunter2 size=20></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     std::string password_run;
     std::string text_run;
@@ -236,11 +235,11 @@ void test_a_password_caret_is_measured_on_the_bullets() {
     browser page{browser_options{500, 300}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><input type=password id=p size=20></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "p");
     click(page, field.x + 6, field.y + 10);
     check(page.text_input("abcd"), "typed");
-    check(page.frame().has_value(), "redraws");
+    page.frame();
 
     float text_x = 0;
     std::string drawn;
@@ -265,7 +264,7 @@ void test_a_disabled_control_looks_and_acts_disabled() {
     browser page{browser_options{500, 300}};
     page.load_html("<body><button id=on>Live</button><button id=off disabled>Dead</button>"
                    "<input type=text id=f disabled value=x size=10></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     color live{};
     color dead{};
@@ -299,16 +298,15 @@ void test_a_disabled_control_looks_and_acts_disabled() {
 void test_a_checked_checkbox_draws_a_tick() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=checkbox id=on checked><input type=checkbox id=off></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const auto mark_pixels = [&page](std::string_view id) {
         const rect box = box_of(page, id);
-        const auto image = page.read_pixels();
+        const raster::surface & image = page.read_pixels();
         std::size_t marks = 0;
-        if (!image) { return marks; }
         // White INSIDE the box's border - the tick, or nothing.
         for (int y = static_cast<int>(box.y) + 2; y < static_cast<int>(box.bottom()) - 2; ++y) {
-            const auto row = image->row(y);
+            const auto row = image.row(y);
             for (int x = static_cast<int>(box.x) + 2; x < static_cast<int>(box.right()) - 2; ++x) {
                 if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x00FFFFFFU) { ++marks; }
             }
@@ -334,7 +332,7 @@ void test_a_radio_is_round_and_a_checkbox_is_not() {
     browser page{browser_options{400, 200}};
     page.load_html(
         "<body><input type=radio id=r checked><input type=checkbox id=c checked></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     std::size_t radio_ellipses = 0;
     std::size_t checkbox_ellipses = 0;
@@ -359,7 +357,7 @@ void test_a_button_shows_its_label() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><button id=b>Send it</button><select id=s><option>red</option></select>"
                    "</body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A BUTTON IS NOT A SELECT. They shared one painter arm, so a button was
     // asked for its selected <option> - it has none, so the label came out
@@ -373,7 +371,7 @@ void test_a_button_shows_its_label() {
 void test_a_submit_button_has_a_default_label() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=submit id=s><input type=reset id=r></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // <input type=submit> has no children to take a label from, so the UA
     // supplies one - an unlabelled grey box is not a submit button.
     check(draws_text(page, "Submit"), "submit is labelled");
@@ -391,14 +389,14 @@ void test_the_caret_is_measured_with_the_drawing_font() {
     browser page{browser_options{400, 200}};
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><input type=text id=f style='font-family:serif'></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "f");
     (void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
     (void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
     check(page.focused() == find_id(page, "f"), "the field is focused");
 
     check(page.text_input("abcd"), "typed");
-    check(page.frame().has_value(), "and it redraws");
+    page.frame();
     const std::vector<rect> bars = caret_bars(page, "f");
     check(bars.size() == 1, "there is one caret");
     if (bars.size() != 1) { return; }
@@ -417,14 +415,14 @@ void test_the_caret_is_measured_with_the_drawing_font() {
 void test_a_textarea_shows_a_caret_on_the_right_line() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
     // Clicked on the SECOND line, which is also the click-to-position test:
     // the caret goes where the pointer was, not where it happened to be.
     (void)page.handle(input_event::mouse_down_at(box.x + 6, box.y + 28));
     (void)page.handle(input_event::mouse_up_at(box.x + 6, box.y + 28));
     check(page.focused() == find_id(page, "t"), "the textarea is focused");
-    check(page.frame().has_value(), "it redraws");
+    page.frame();
 
     // Measured as one run the caret landed the width of "one\ntwo" past the
     // left edge - past the right edge of the box, where the clip threw it
@@ -439,7 +437,7 @@ void test_a_textarea_shows_a_caret_on_the_right_line() {
 void test_a_textarea_draws_its_lines_separately() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // Drawn as one run, the newline reaches the rasterizer as a glyph - a box,
     // with a real font - and both words end up on one line.
     check(draws_text(page, "one"), "the first line is drawn");
@@ -469,7 +467,7 @@ void test_a_textarea_draws_its_lines_separately() {
 void test_a_textarea_soft_wraps_a_long_line() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // The whole value cannot fit: cols=10 at 16px gives an inner width of
     // about nine glyphs, and the value is 21.
@@ -502,7 +500,7 @@ void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
     // helper cannot tell it from the outline.)
     page.load_html(
         "<body><textarea id=t rows=4 cols=20>aaaa bbbb cccc dddd eeee</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
     click(page, box.x + 4, box.y + 8); // into the first visual line
     check(page.focused() == find_id(page, "t"), "the textarea is focused");
@@ -511,7 +509,7 @@ void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
     // Walk the caret across the whole value. At no position may there be two
     // carets - and the wrap boundary is one of the positions visited.
     for (std::size_t step = 0; step <= 24; ++step) {
-        (void)page.frame(); // the display list is what caret_bars reads
+        page.frame(); // the display list is what caret_bars reads
         const std::size_t bars = caret_bars(page, "t").size();
         check(bars == 1, "exactly one caret is drawn at every offset");
         if (bars != 1) { break; }
@@ -524,7 +522,7 @@ void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
 void test_clicking_the_second_visual_line_of_a_wrapped_textarea() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
 
     // Find where the painter actually put the second line, and click there
@@ -552,7 +550,7 @@ void test_clicking_the_second_visual_line_of_a_wrapped_textarea() {
 void test_a_textarea_scrolls_to_keep_the_caret_visible() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=2 cols=10></textarea></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "t");
     click(page, box.x + 4, box.y + 8);
     check(page.focused() == find_id(page, "t"), "the textarea is focused");
@@ -565,7 +563,7 @@ void test_a_textarea_scrolls_to_keep_the_caret_visible() {
 
     // Six words at ~9 glyphs a line is well past two visible rows.
     check(page.text_input("aaaa bbbb cccc dddd eeee ffff"), "typing is accepted");
-    (void)page.frame();
+    page.frame();
     check(scroll_of() > 0, "typing past the last visible row scrolls the textarea");
 
     // The caret's line is still inside the visible window - which is the point
@@ -574,7 +572,7 @@ void test_a_textarea_scrolls_to_keep_the_caret_visible() {
 
     // Home to the top of the value brings it back.
     for (int i = 0; i < 40; ++i) { (void)page.handle(input_event::key_press("ArrowUp")); }
-    (void)page.frame();
+    page.frame();
     check(scroll_of() == 0, "and moving back up scrolls it home again");
 }
 
@@ -590,7 +588,7 @@ void test_script_reads_a_live_control_value() {
     function report() { console.log(f.value + '/' + s.value); }
     </script></body>)");
     check(page.script_error().empty(), "the script ran");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A wrapper's properties were a SNAPSHOT taken when it was made, so a page
     // that kept the element in a variable - which every page does - read the
@@ -617,7 +615,7 @@ void test_an_input_listener_sees_the_new_value() {
     var f = document.getElementById('f');
     f.addEventListener('input', function () { console.log('now:' + f.value); });
     </script></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "f");
     (void)page.handle(input_event::mouse_down_at(field.x + 4, field.y + 6));
     (void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
@@ -637,13 +635,13 @@ void test_script_writes_a_control_value() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<body><input type=text id=f value=old>
     <input type=checkbox id=c></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(draws_text(page, "old"), "the field shows its attribute value");
 
     check(page.run_script("document.getElementById('f').value = 'new';"
                           "document.getElementById('c').checked = true;"),
           "the script runs");
-    check(page.frame().has_value(), "the page redraws");
+    page.frame();
     // The VM has no property accessors, so a write is a sync rather than a
     // setter - without the write-back this sets a property nothing reads and
     // the field keeps showing the old text.

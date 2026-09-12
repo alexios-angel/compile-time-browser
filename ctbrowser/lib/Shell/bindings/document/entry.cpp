@@ -52,18 +52,7 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
         const std::string_view fragment = std::string_view{location_hash_}.substr(1);
         fresh = find_by_id(std::string{fragment});
         if (!fresh && fragment.find('%') != std::string_view::npos) {
-            std::string decoded;
-            for (std::size_t i = 0; i < fragment.size(); ++i) {
-                if (fragment[i] == '%' && i + 2 < fragment.size() &&
-                    hex_value(fragment[i + 1]) >= 0 && hex_value(fragment[i + 2]) >= 0) {
-                    decoded += static_cast<char>(hex_value(fragment[i + 1]) * 16 +
-                                                 hex_value(fragment[i + 2]));
-                    i += 2;
-                } else {
-                    decoded += fragment[i];
-                }
-            }
-            fresh = find_by_id(decoded);
+            fresh = find_by_id(percent_decode(fragment));
         }
     }
     if (fresh == target_element_) { return; }
@@ -273,23 +262,6 @@ void dom_bindings::set_text(node_id id, std::string text) {
     mutated();
 }
 
-void dom_bindings::edit_classes(node_id id, const std::string & name, bool add) {
-    if (!id || name.empty()) { return; }
-    const auto txn = doc_->read();
-    std::vector<std::string> classes;
-    for (const std::string_view cls : split(txn.attribute_value(id, atoms_->intern("class")))) {
-        if (cls != name) { classes.emplace_back(cls); }
-    }
-    if (add) { classes.push_back(name); }
-    std::string joined;
-    for (const std::string & cls : classes) {
-        if (!joined.empty()) { joined += ' '; }
-        joined += cls;
-    }
-    (void)doc_->set_attribute(id, atoms_->intern("class"), joined);
-    mutated();
-}
-
 std::vector<std::string_view> dom_bindings::split(std::string_view text) {
     std::vector<std::string_view> out;
     std::size_t at = 0;
@@ -487,7 +459,7 @@ void dom_bindings::install_navigation(context & cx) {
 }
 
 value dom_bindings::make_location(context & cx) {
-    auto * loc = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * loc = cx.allocate<script::object_object>();
     const auto method = [&](std::string name, script::native_fn fn) {
         loc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };

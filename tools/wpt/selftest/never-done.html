@@ -5,16 +5,19 @@
 <script src="/resources/testharnessreport.js"></script>
 <div id=log></div>
 <script>
-// EXPLICIT DONE, AND DONE IS NEVER CALLED. The harness loads, the subtest below
-// passes, and the page still never completes - which must be reported as
-// TIMEOUT and NOT as the pass its one subtest would suggest.
-//
-// It is the difference between "the engine answered" and "the engine stopped",
-// and a runner that reads the subtest and calls it a day cannot tell them
-// apart.
-setup({explicit_done: true});
+    // EXPLICIT DONE, AND DONE IS NEVER CALLED. The harness loads, the subtest below
+    // passes, and the page still never completes - which must be reported as
+    // TIMEOUT and NOT as the pass its one subtest would suggest.
+    //
+    // It is the difference between "the engine answered" and "the engine stopped",
+    // and a runner that reads the subtest and calls it a day cannot tell them
+    // apart.
+    setup({
+        explicit_done: true
+    });
 
-test(function () {
-    assert_true(true);
-}, "a subtest that passes, on a page that never finishes");
+    test(function () {
+        assert_true(true);
+    }, "a subtest that passes, on a page that never finishes");
+
 </script>

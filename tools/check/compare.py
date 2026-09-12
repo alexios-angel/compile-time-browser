@@ -67,66 +67,15 @@ ALIASES = {
 
 
 # --- images ----------------------------------------------------------------
-#
-# ctbrowser writes P6 PPM and has no PNG encoder - deliberately, since a golden
-# a test byte-compares gains nothing from compression. But a PNG is what an AI
-# or a browser can actually look at, so the conversion happens here, in about
-# twenty lines of zlib rather than a dependency.
-
-
-def read_ppm(path: Path) -> tuple[int, int, bytes]:
-    """A binary P6 as (width, height, RGB bytes). ctbrowser writes no other kind."""
-    data = path.read_bytes()
-    fields: list[bytes] = []
-    at = 0
-    while len(fields) < 4:
-        while at < len(data) and data[at : at + 1].isspace():
-            at += 1
-        if data[at : at + 1] == b"#":  # ctbrowser writes none, but P6 allows them
-            while at < len(data) and data[at] != 0x0A:
-                at += 1
-            continue
-        start = at
-        while at < len(data) and not data[at : at + 1].isspace():
-            at += 1
-        fields.append(data[start:at])
-    if fields[0] != b"P6":
-        raise ValueError(f"{path}: not a binary PPM")
-    width, height = int(fields[1]), int(fields[2])
-    return width, height, data[at + 1 :]
-
-
-def write_png(path: Path, width: int, height: int, rgb: bytes) -> None:
-    """8-bit RGB, no interlacing. Enough for a screenshot and nothing more."""
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(body))
-            + kind
-            + body
-            + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
-        )
-
-    stride = width * 3
-    # Filter byte 0 (None) per scanline: the images are screenshots, and a
-    # smarter filter would trade readability here for bytes nobody counts.
-    raw = b"".join(b"\0" + rgb[y * stride : (y + 1) * stride] for y in range(height))
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 6))
-        + chunk(b"IEND", b"")
-    )
 
 
 def read_png(path: Path) -> tuple[int, int, bytes]:
     """An 8-bit RGB or RGBA PNG as (width, height, RGB bytes).
 
-    The symmetric half of write_png, and it exists because the parity harness has
-    to compare what the two engines DREW, not only what they said - and Playwright
-    writes PNG while ctbrowser writes PPM, so something has to read one of them.
-    Twenty lines of zlib rather than a dependency, for the same reason write_png
-    is.
+    It exists because the parity harness has to compare what the two engines
+    DREW, not only what they said - Playwright's screenshots and ctdrive's are
+    both PNG, and the alpha ctdrive's carries is always 255. Twenty lines of
+    zlib rather than a dependency.
 
     Only the two colour types a screenshot can be, and no interlacing: a file
     outside that is a bug in whoever wrote it, not an input to support.
@@ -193,11 +142,6 @@ def read_png(path: Path) -> tuple[int, int, bytes]:
     return width, height, bytes(out)
 
 
-def ppm_to_png(ppm: Path, png: Path) -> None:
-    width, height, rgb = read_ppm(ppm)
-    write_png(png, width, height, rgb)
-
-
 # --- fonts -----------------------------------------------------------------
 
 
@@ -227,14 +171,11 @@ def font_conf(path: Path) -> Path:
         ("Courier New", "Cousine"),
         ("Courier", "Cousine"),
     ]
-    rules = "".join(
-        f"""  <match target="pattern">
+    rules = "".join(f"""  <match target="pattern">
     <test qual="any" name="family"><string>{asked}</string></test>
     <edit name="family" mode="assign" binding="strong"><string>{real}</string></edit>
   </match>
-"""
-        for asked, real in families
-    )
+""" for asked, real in families)
     path.write_text(
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
@@ -259,8 +200,11 @@ class Ctbrowse:
 
     def __init__(self, page: Path, size: tuple[int, int], headed: bool, remote: str = ""):
         self.remote = remote
-        self.proc = (self._spawn_remote(page, size, remote) if remote
-                     else self._spawn_local(page, size, headed))
+        self.proc = (
+            self._spawn_remote(page, size, remote)
+            if remote
+            else self._spawn_local(page, size, headed)
+        )
         # It prints the port it got before doing anything else; asking for 0
         # means the OS chose one and this is the only way to learn it.
         assert self.proc.stdout is not None
@@ -279,14 +223,17 @@ class Ctbrowse:
         # because a build directory configured before a reorg still has the
         # layout of its day, and "not built" is a much worse thing to say to
         # someone whose binary is sitting right there.
-        candidates = [ROOT / "build" / "tools" / "ctdrive",
-                      ROOT / "build" / "examples" / "ctdrive",
-                      ROOT / "build" / "src" / "examples" / "ctdrive"]
+        candidates = [
+            ROOT / "build" / "tools" / "ctdrive",
+            ROOT / "build" / "examples" / "ctdrive",
+            ROOT / "build" / "src" / "examples" / "ctdrive",
+        ]
         exe = next((p for p in candidates if p.exists()), None)
         if exe is None:
             raise FileNotFoundError(
                 f"{candidates[0]} not built; cmake --build --preset default --target ctdrive"
-                " - or pass --remote to drive the one on the build box")
+                " - or pass --remote to drive the one on the build box"
+            )
         env = dict(os.environ)
         env.setdefault("CTBROWSER_FONT_PATH", str(ROOT / "ctbrowser" / "resources" / "fonts"))
         if not headed:
@@ -326,10 +273,18 @@ class Ctbrowse:
         rel = page.resolve().relative_to(ROOT)
         remote_cmd = (
             f"cd {REMOTE_DIR} && exec ./build/tools/ctdrive {shlex.quote(str(rel))}"
-            f" --port {self.port} --size {size[0]} {size[1]}")
+            f" --port {self.port} --size {size[0]} {size[1]}"
+        )
         return subprocess.Popen(
-            ["ssh", "-o", "BatchMode=yes", "-L",
-             f"127.0.0.1:{self.port}:127.0.0.1:{self.port}", host, remote_cmd],
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-L",
+                f"127.0.0.1:{self.port}:127.0.0.1:{self.port}",
+                host,
+                remote_cmd,
+            ],
             stdout=subprocess.PIPE,
             text=True,
         )
@@ -366,9 +321,8 @@ class Ctbrowse:
         return self.send(cmd="eval", script=script)
 
     def shot(self, path: Path) -> dict:
-        # ctbrowser writes PPM and has no PNG encoder; convert here and report
-        # the file that actually exists, so a caller can open what it is told.
-        ppm = path.with_suffix(".ppm")
+        # ctdrive writes PNG when the name ends in .png, so the file lands as
+        # asked and a caller can open what it is told.
         if self.remote:
             # A REMOTE ENGINE WRITES TO A REMOTE DISK. Handing ctdrive this
             # machine's absolute path asked the build box to write to a directory
@@ -383,27 +337,27 @@ class Ctbrowse:
             # cds there so the fixtures' `../../vendor/bootstrap/bootstrap.css`
             # resolves - so a relative path lands in the right place and the fetch
             # below runs through a shell that can expand the rest.
-            there = f"build/compare/{ppm.name}"
+            there = f"build/compare/{path.name}"
             answer = self.send(cmd="shot", path=there)
             if answer.get("ok"):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 fetched = subprocess.run(
-                    ["ssh", "-o", "BatchMode=yes", self.remote,
-                     f"cd {REMOTE_DIR} && cat {shlex.quote(there)} && rm -f {shlex.quote(there)}"],
-                    stdout=subprocess.PIPE, check=False)
+                    [
+                        "ssh",
+                        "-o",
+                        "BatchMode=yes",
+                        self.remote,
+                        f"cd {REMOTE_DIR} && cat {shlex.quote(there)} && rm -f {shlex.quote(there)}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    check=False,
+                )
                 if fetched.returncode != 0 or not fetched.stdout:
                     return {"ok": False, "error": f"could not fetch {there} from {self.remote}"}
-                ppm.write_bytes(fetched.stdout)
-                ppm_to_png(ppm, path)
-                ppm.unlink()
+                path.write_bytes(fetched.stdout)
                 answer["path"] = str(path)
             return answer
-        answer = self.send(cmd="shot", path=str(ppm))
-        if answer.get("ok"):
-            ppm_to_png(ppm, path)
-            ppm.unlink()
-            answer["path"] = str(path)
-        return answer
+        return self.send(cmd="shot", path=str(path))
 
     def close(self):
         try:
@@ -439,10 +393,12 @@ def serve_repo() -> str:
     # encoding as well; this makes the server right regardless.
     http.server.SimpleHTTPRequestHandler.extensions_map = dict(
         http.server.SimpleHTTPRequestHandler.extensions_map,
-        **{".js": "text/javascript; charset=utf-8",
-           ".html": "text/html; charset=utf-8",
-           ".css": "text/css; charset=utf-8",
-           ".json": "application/json; charset=utf-8"},
+        **{
+            ".js": "text/javascript; charset=utf-8",
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+        },
     )
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT))
     # Quiet: one request line per asset is noise in a tool whose whole output is
@@ -564,8 +520,9 @@ class Session:
 
         wanted = args.engines
         if "ctbrowse" in wanted:
-            self.engines.append(Ctbrowse(page, size, args.headed,
-                                         getattr(args, "remote", "") or ""))
+            self.engines.append(
+                Ctbrowse(page, size, args.headed, getattr(args, "remote", "") or "")
+            )
         real = [e for e in wanted if e != "ctbrowse"]
         if real:
             from playwright.sync_api import sync_playwright
@@ -752,7 +709,10 @@ def reexec_in_venv() -> None:
     """Re-run under the venv when a real browser is wanted and Playwright is not here."""
     python = VENV / "bin" / "python3"
     if not python.exists():
-        print("compare.py: playwright not installed; run `tools/check/compare.py setup`", file=sys.stderr)
+        print(
+            "compare.py: playwright not installed; run `tools/check/compare.py setup`",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
@@ -779,10 +739,15 @@ def main() -> int:
     start.add_argument("page")
     start.add_argument("--engine", action="append", dest="engine_values", metavar="NAME")
     start.add_argument("--headed", action="store_true", help="real windows, so a human can watch")
-    start.add_argument("--remote", nargs="?", const="devbox", default="",
-                       metavar="HOST",
-                       help="run ctdrive on HOST (default devbox) over an ssh-forwarded "
-                            "port, because this machine cannot build the engine")
+    start.add_argument(
+        "--remote",
+        nargs="?",
+        const="devbox",
+        default="",
+        metavar="HOST",
+        help="run ctdrive on HOST (default devbox) over an ssh-forwarded "
+        "port, because this machine cannot build the engine",
+    )
     start.add_argument("--delay", type=float, default=0, metavar="MS", help="pause before an input")
     start.add_argument("--size", type=int, nargs=2, default=[800, 600], metavar=("W", "H"))
     start.add_argument("--system-fonts", action="store_true", help="do not force ctbrowser's faces")

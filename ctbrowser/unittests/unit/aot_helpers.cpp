@@ -31,13 +31,6 @@ using ctbrowser::script::value;
 
 namespace {
 
-void check(bool ok, const std::string & what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", what.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // THE SEVEN HANDLERS AS THEY WERE, minus the BigInt arm - which is a private
 // member the extraction did not touch and this cannot call. Every operand below
 // is chosen so that arm does not fire, which leaves exactly the part that MOVED:

@@ -91,7 +91,7 @@ aot::ct_aot_frame * aot_bridge::enter(aot::ct_aot_ctx * c, const aot::ct_aot_sit
     // PUSHED BEFORE THE CLEAR, not after. Between copying
     // pending_new_target_ into a C++ local and clearing the root, the
     // constructor a super() is handing on is reachable from nothing - which
-    // is the precise window GCRoots.def warns about, reproduced here.
+    // is the precise window aot.hpp warns about, reproduced here.
     // Nothing collects in that gap today; ordering it correctly costs a
     // line and removes the question.
     cx.frames_.push_back(entered);

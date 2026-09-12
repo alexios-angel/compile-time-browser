@@ -1,5 +1,7 @@
 #include "Candidates.h"
 
+#include "ctcompile/CTNative/Analysis/HostContract.h"
+
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
@@ -20,8 +22,7 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
         });
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target) { callers[target].push_back(call); }
         });
         struct candidate {
@@ -84,15 +85,8 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
                 specialized = llvm::cast<ctjs::FuncOp>(candidate.function->clone());
                 // Never use incoming proof/provenance annotations to authorize
                 // a clone or its later native representation.
-                specialized.walk([](mlir::Operation * op) {
-                    llvm::SmallVector<mlir::StringAttr> remove;
-                    for (auto attr : op->getAttrs()) {
-                        if (attr.getName().strref().starts_with("ctnative.")) {
-                            remove.push_back(attr.getName());
-                        }
-                    }
-                    for (auto name : remove) { op->removeAttr(name); }
-                });
+                specialized.walk(
+                    [](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
                 specialized.setSymName((candidate.function.getSymName() + "__specialized").str());
                 symbols.insert(specialized);
                 auto & entry = specialized.getBody().front();

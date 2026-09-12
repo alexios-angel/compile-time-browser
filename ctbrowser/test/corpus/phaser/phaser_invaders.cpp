@@ -24,8 +24,6 @@
 
 #include <cmath>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,43 +31,15 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "ratchet.hpp"
+
+using ctbrowser_test::ask;
 
 namespace {
 
 using ctbrowser::input_event;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
-
-// The same one-line helper the other page-driving tests keep locally: check.hpp
-// gives CHECK(expr), and these assertions want a sentence rather than an
-// expression printed back.
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
-
-[[nodiscard]] std::string ask(browser & page, const char * expression) {
-    const std::size_t before = page.bindings().console_output().size();
-    (void)page.run_script(std::string{"try { console.log('=' + String("} + expression +
-                          ")); } catch (e) { console.log('=threw: "
-                          "' + (e && e.message ? "
-                          "e.message : e)); }");
-    const auto & said = page.bindings().console_output();
-    for (std::size_t i = said.size(); i-- > before;) {
-        if (said[i].starts_with("=")) { return said[i].substr(1); }
-    }
-    return "<no answer>";
-}
 
 // One run of the page: boot it, then tick `frames` times with `hold` held down
 // the whole way (or nothing held when it is empty). Answers the ship's x.

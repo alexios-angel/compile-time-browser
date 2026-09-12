@@ -29,9 +29,9 @@
 // Style resolution. An element is resolved ONCE, producing its whole computed style,
 // and layout then reads properties out of a small vector.
 //
-// Matching is a pure function of (document snapshot, element) - it writes
-// nothing shared except the intern table - which is what lets it run across
-// the scheduler with no synchronisation on the hot path.
+// Matching is a function of (document snapshot, element): it takes a read
+// transaction, so it observes a stable view of the tree, and it runs on the
+// frame thread - the engine keeps per-element match state between calls.
 
 namespace ctbrowser::style {
 
@@ -237,23 +237,17 @@ public:
     // what they are rather than by where they sit - unlike the side lists, which are
     // positional.
     [[nodiscard]] static bool is_border_style(std::string_view part) {
-        for (const std::string_view name : {"none", "hidden", "dotted", "dashed", "solid", "double",
-                                            "groove", "ridge", "inset", "outset"}) {
-            if (ascii_iequals(part, name)) { return true; }
-        }
-        return false;
+        return ascii_iequals_any(part, {"none", "hidden", "dotted", "dashed", "solid", "double",
+                                        "groove", "ridge", "inset", "outset"});
     }
     // A `background` component that names a longhand OTHER than the colour or
     // the image: repeat, attachment, position, size, clip/origin boxes.
     [[nodiscard]] static bool is_background_keyword(std::string_view part) {
-        for (const std::string_view name :
-             {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
-              "round",      "scroll",      "fixed",       "local",    "center",    "top",
-              "bottom",     "left",        "right",       "cover",    "contain",   "auto",
-              "border-box", "padding-box", "content-box", "text"}) {
-            if (ascii_iequals(part, name)) { return true; }
-        }
-        return false;
+        return ascii_iequals_any(
+            part, {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
+                   "round",      "scroll",      "fixed",       "local",    "center",    "top",
+                   "bottom",     "left",        "right",       "cover",    "contain",   "auto",
+                   "border-box", "padding-box", "content-box", "text"});
     }
     [[nodiscard]] static bool is_border_width(std::string_view part) {
         if (ascii_iequals(part, "thin") || ascii_iequals(part, "medium") ||
@@ -463,12 +457,9 @@ public:
             const std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
             if (parts.empty() || parts.size() > 2) { return {}; }
             const auto valid = [](std::string_view part) {
-                for (const std::string_view keyword :
-                     {"visible", "hidden", "clip", "scroll", "auto", "overlay", "inherit",
-                      "initial", "unset", "revert"}) {
-                    if (ascii_iequals(part, keyword)) { return true; }
-                }
-                return false;
+                return ascii_iequals_any(part,
+                                         {"visible", "hidden", "clip", "scroll", "auto", "overlay",
+                                          "inherit", "initial", "unset", "revert"});
             };
             if (!valid(parts[0]) || (parts.size() == 2 && !valid(parts[1]))) { return {}; }
             // CSS-wide keywords apply to the whole shorthand and cannot be
@@ -1657,13 +1648,13 @@ private:
     [[nodiscard]] static std::string_view unquoted(std::string_view text);
 
     std::vector<page_font> fonts_;
-    // The `@property` rules of one sheet's text, registered. Defined in engine.cpp.
-    void register_at_property_rules(std::string_view sheet_text);
+    // The `@property` rules a parsed sheet collected, registered. Defined in engine.cpp.
+    void register_at_property_rules(const css::stylesheet & sheet);
     // The registered custom properties, by atom id.
     flat_map<std::uint32_t, css::property_registration> registrations_;
-    // The `@function` rules of one sheet's text, likewise; and the functions,
-    // by the atom id of their `--name`.
-    void register_at_function_rules(std::string_view sheet_text, std::uint8_t origin);
+    // The `@function` rules, likewise; and the functions, by the atom id of
+    // their `--name`.
+    void register_at_function_rules(const css::stylesheet & sheet, std::uint8_t origin);
     // ...with the origin of the sheet that declared each, because a function
     // lives in its sheet: clear_origin drops it with the sheet's rules, where
     // an @property registration outlives them.
@@ -1840,29 +1831,12 @@ private:
         return false;
     }
 
-    // The same question of one run of UTF-8. Decoding is by lead byte: only the
-    // code point's VALUE matters, and the right-to-left scripts sit in blocks that
-    // a range test answers exactly.
+    // The same question of one run of UTF-8: only the code point's VALUE
+    // matters, and the right-to-left scripts sit in blocks that a range test
+    // answers exactly.
     [[nodiscard]] static bool first_strong_in(std::string_view text, bool & rtl) {
         for (std::size_t i = 0; i < text.size();) {
-            const auto lead = static_cast<unsigned char>(text[i]);
-            std::size_t width = 1;
-            std::uint32_t cp = lead;
-            if (lead >= 0xF0) {
-                width = 4;
-                cp = lead & 0x07u;
-            } else if (lead >= 0xE0) {
-                width = 3;
-                cp = lead & 0x0Fu;
-            } else if (lead >= 0xC0) {
-                width = 2;
-                cp = lead & 0x1Fu;
-            }
-            if (i + width > text.size()) { return false; } // truncated: nothing strong left
-            for (std::size_t k = 1; k < width; ++k) {
-                cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3Fu);
-            }
-            i += width;
+            const char32_t cp = decode_utf8(text, i);
             // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan and Mandaic; then the
             // Arabic Extended, presentation and supplement blocks; then the RTL
             // planes - Cypriot through Adlam - in the SMP.

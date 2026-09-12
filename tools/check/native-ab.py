@@ -281,8 +281,10 @@ def render(rows, floor, versions, args, provenance):
     # fixed /tmp path. A timing table with no provenance line is a table that
     # could be about somebody else's tree, so the host, the build directory
     # and the tool that emitted the C++ are printed INSIDE the artefact.
-    w("**Provenance.** host `%s`, build tree `%s`, emitter `%s`, %s UTC."
-      % (provenance["host"], provenance["build"], provenance["translate"], provenance["when"]))
+    w(
+        "**Provenance.** host `%s`, build tree `%s`, emitter `%s`, %s UTC."
+        % (provenance["host"], provenance["build"], provenance["translate"], provenance["when"])
+    )
     w("")
     w(
         "| program | spelling | toolchain | emitted B | compile s (median [min-max]) "

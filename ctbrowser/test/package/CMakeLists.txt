@@ -4,7 +4,7 @@
 # by tools/check/check-package.sh. That indirection is the point: building it from the
 # source tree would prove nothing, because the source tree is exactly what the
 # install is supposed to make unnecessary.
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.20)
 project(ctbrowser-package-check CXX)
 
 find_package(ctbrowser REQUIRED CONFIG)

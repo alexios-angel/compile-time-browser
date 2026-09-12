@@ -35,7 +35,7 @@
 //
 //   * A JavaScript string here is BYTES, not text. `\uD800` with no low
 //     surrogate after it is encoded as a code point in its own right
-//     (compile/strings.cpp encode_code_point), which is the three bytes
+//     (core/algorithms.hpp append_utf8), which is the three bytes
 //     ED A0 80 - WTF-8, and NOT valid UTF-8. Any escaping that decodes to
 //     code points first would have to agree with the other side about how to
 //     repair those bytes. Percent-encoding is per byte, so ED A0 80 is

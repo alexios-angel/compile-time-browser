@@ -64,10 +64,7 @@ using ctbrowser::color;
 // than silently painting black - `background-color: <garbage>` must leave the
 // element unpainted, not fill it.
 [[nodiscard]] inline std::optional<color> parse_color(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
-        text.remove_prefix(1);
-    }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) { text.remove_suffix(1); }
+    text = trim(text, " \t");
     if (text.empty()) { return std::nullopt; }
 
     if (text.front() == '#') {

@@ -27,7 +27,6 @@ using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
 // Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
 using ctbrowser_test::box_of;
-using ctbrowser_test::check;
 using ctbrowser_test::find_id;
 using ctbrowser_test::log_of;
 
@@ -70,7 +69,7 @@ namespace {
 void test_a_scroll_blocking_listener_is_passive_by_default() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // Register, cancel from inside the listener, dispatch a CANCELABLE event,
     // and report both halves of the answer: whether the flag took, and what
@@ -118,7 +117,7 @@ void test_a_scroll_blocking_listener_is_passive_by_default() {
 void test_the_listener_list_is_copied_before_it_runs() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // `first` removes `third` and adds `late`; `second` must still run, `third`
     // must not, and `late` must not run until the NEXT dispatch.
@@ -179,7 +178,7 @@ void test_the_listener_list_is_copied_before_it_runs() {
 void test_a_throwing_listener_is_reported_and_the_rest_still_run() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     check(one_log(page, R"((function () {
             var t = new EventTarget(), ran = [], errors = 0;
@@ -216,7 +215,7 @@ void test_a_throwing_listener_is_reported_and_the_rest_still_run() {
 void test_a_listener_object_needs_a_callable_handle_event() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A FUNCTION IS NEVER ASKED FOR ONE: `handleEvent` on a callable listener
     // is an ordinary property and nothing looks at it.
@@ -249,7 +248,7 @@ void test_a_listener_object_needs_a_callable_handle_event() {
 void test_the_event_target_methods_are_bare_globals() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     check(one_log(page, R"((function () {
             var seen = 0;
@@ -272,7 +271,7 @@ void test_the_event_target_methods_are_bare_globals() {
 void test_window_event_is_set_and_restored() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     check(one_log(page, "console.log('event' in window)") == "true",
           "window.event EXISTS outside a dispatch, which is not the same as being undefined");

@@ -14,11 +14,6 @@ namespace ctbrowser::script::detail {
 // key_filter and own_property_names are declared in ../internal.hpp: the JSON
 // reviver walk needs OwnPropertyKeys too.
 
-// A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
-// FromPropertyDescriptor).
-[[nodiscard]] object_object * descriptor_object(context & cx,
-                                                const context::property_descriptor & from);
-
 // A property key as the value it names: a string, or the symbol rebuilt from it.
 [[nodiscard]] value key_value(context & cx, const std::string & key);
 

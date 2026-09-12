@@ -1,9 +1,8 @@
 # ctbrowser.raster - display list -> pixels, in tiles across the pool.
 #
 # Turns display lists into pixels. Knows nothing about the DOM, style or
-# layout - only about paint's recorded commands, which is what lets a second
-# backend (SDL3 GPU, stage 6) drop in beside the software one. gl/ is the GL
-# device: an ANGLE branch and a stub branch of one #if, both always compiled.
+# layout - only about paint's recorded commands. gl/ is the GL device: an
+# ANGLE branch and a stub branch of one #if, both always compiled.
 add_library(ctbrowser-raster)
 ctbrowser_subsystem_sources(ctbrowser-raster raster)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
@@ -49,9 +48,8 @@ endif()
 # and still draws font8x8, which keeps the goldens reproducible on a machine
 # with no font libraries at all.
 if(SDL3_FOUND AND SDL3_ttf_FOUND)
-  ctbrowser_pick_sdl_target(ttf_target ttf_static SDL3_ttf::SDL3_ttf)
-  ctbrowser_pick_sdl_target(sdl_target sdl_static SDL3::SDL3)
-  target_link_libraries(ctbrowser-raster PUBLIC ${ttf_target} ${sdl_target})
+  target_link_libraries(ctbrowser-raster PUBLIC ${CTBROWSER_SDL3_TTF_TARGET}
+                                                ${CTBROWSER_SDL3_TARGET})
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=1)
   message(STATUS "ctbrowser: SDL3_ttf - real fonts available")
 else()

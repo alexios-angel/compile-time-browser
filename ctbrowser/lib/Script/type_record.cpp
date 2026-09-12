@@ -23,16 +23,6 @@
 #include <ctbrowser/script/type_record.hpp>
 #include <ctbrowser/script/vm.hpp>
 
-// ON UNLESS THE BUILD SAYS OTHERWISE, and the default has to be spelled out in
-// every translation unit that reads it: the option is a PRIVATE definition and
-// is only passed when it is OFF, so an `#if` on an undefined macro would read
-// as 0 and `type_recording_enabled()` would answer false in the build where it
-// is on. That is exactly how this file's first run reported "built with
-// CTBROWSER_SCRIPT_RECORD_TYPES=0" from a build that had it ON.
-#ifndef CTBROWSER_SCRIPT_RECORD_TYPES
-#define CTBROWSER_SCRIPT_RECORD_TYPES 1
-#endif
-
 namespace ctbrowser::script {
 
 namespace {
@@ -59,14 +49,6 @@ void set_active_type_recorder(type_recorder * recorder) noexcept {
 }
 type_recorder * active_type_recorder() noexcept {
     return g_active;
-}
-
-bool type_recording_enabled() noexcept {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
-    return true;
-#else
-    return false;
-#endif
 }
 
 std::uint64_t program_source_hash(const program & prog) noexcept {
@@ -500,13 +482,10 @@ std::vector<std::vector<site_observation>> type_recorder::all_sites() const {
 
 // --- the context's side: the hooks and the bounded mark ------------------------
 //
-// UNCONDITIONAL DEFINITIONS, like record_step, for the reason its comment
-// gives; the #if here empties the bodies in a build that turned recording off,
-// so that build records nothing on either half, as type_recording_enabled()
-// says.
+// Every hook is a definition in every build, like record_step: `context` is
+// a public type and its shape cannot depend on a flag (see record_step).
 
 void context::note_allocation(heap_object * p) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     if (!escape_tracked(p->kind)) { return; }
     if (frames_.empty()) {
         // install_builtins, a microtask's own machinery, the DOM building a
@@ -530,21 +509,13 @@ void context::note_allocation(heap_object * p) {
                              : frame.ip == 0 ? prologue_pc
                                              : static_cast<std::uint32_t>(frame.ip - 1);
     recorder_->allocated(p, owner, frame.proto, pc, frame.serial);
-#else
-    (void)p;
-#endif
 }
 
 void context::note_freed(heap_object * o) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     recorder_->freed(o);
-#else
-    (void)o;
-#endif
 }
 
 void context::record_frame_pop(const call_frame & popped, value carried, bool compiled_return) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     if (popped.serial == 0) { return; } // it allocated nothing
     recorder_->note_pop();
     std::vector<type_recorder::escape_record> records;
@@ -556,15 +527,9 @@ void context::record_frame_pop(const call_frame & popped, value carried, bool co
     // `construct` uses, and `return {}` reads `escaped via temporaries`.
     const rooted keep{*this, carried};
     adjudicate(popped.base, frames_.size(), records);
-#else
-    (void)popped;
-    (void)carried;
-    (void)compiled_return;
-#endif
 }
 
 void context::record_frames_unwound(std::size_t first) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     std::vector<type_recorder::escape_record> records;
     for (std::size_t k = first; k < frames_.size(); ++k) {
         if (frames_[k].serial == 0) { continue; }
@@ -577,9 +542,6 @@ void context::record_frames_unwound(std::size_t first) {
     // `thrown_` is still set - the unwinder clears it after this - so the
     // value in flight is a root, as it should be.
     adjudicate(frames_[first].base, first, records);
-#else
-    (void)first;
-#endif
 }
 
 // THE BOUNDED MARK. The collector's own root walk with the dead window
@@ -602,7 +564,6 @@ void context::record_frames_unwound(std::size_t first) {
 // and it is the number that goes red if the allocator ever changes shape.
 void context::adjudicate(std::size_t register_limit, std::size_t frame_limit,
                          std::vector<type_recorder::escape_record> & records) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     if (recorder_->unbounded()) {
         register_limit = registers_.size();
         frame_limit = frames_.size();
@@ -634,22 +595,17 @@ void context::adjudicate(std::size_t register_limit, std::size_t frame_limit,
     // NO SWEEP. The oracle observes and does not collect; the one thing it
     // touched is the mark bit, and it puts that back.
     unmark_all();
-#else
-    (void)register_limit;
-    (void)frame_limit;
-    (void)records;
-#endif
 }
 
-// UNCONDITIONAL, and the #if is in run_loop.cpp alone.
+// UNCONDITIONAL, like the hooks above.
 //
 // `context` is declared in a PUBLIC header, so anything that changes its shape
 // with a build flag compiles this library against one layout and every consumer
 // against another - one ODR violation per translation unit, and the kind that
 // links cleanly. That is the bargain CTBROWSER_SCRIPT_DEBUG_NAMES already
 // struck for the debug side tables, and the reason `recorder_` is a member of
-// `context` in every build while only the CALL from the dispatch loop is
-// conditional.
+// `context` in every build; whether the dispatch loop CALLS these is decided
+// at run time by whether a recorder is installed, and by nothing else.
 void context::record_step(instruction in) {
     const call_frame & frame = frames_.back();
     // WHICH PROGRAM'S FUNCTION TABLE THIS BODY LIVES IN. The closure knows,

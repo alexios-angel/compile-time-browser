@@ -56,6 +56,52 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# THE PYTHON HALF: black (tools/Brewfile pins it, pyproject.toml configures it)
+# over the same tracked-or-untracked list, for the same reason there is one
+# script - a second gate is a second one to forget. Missing black is an error
+# rather than a skip: a formatter that silently does nothing when it is not
+# installed is the tracked-only hole above in a different coat.
+black=$(command -v black || true)
+if [[ -z $black ]]; then
+    echo "format.sh: no black found - brew install black (tools/Brewfile)" >&2
+    exit 127
+fi
+mapfile -t pyfiles < <({ git ls-files '*.py'
+                         git ls-files --others --exclude-standard '*.py'; }                        | grep -v '^third-party/' | grep -v '^build')
+
+# THE WEB HALF: js-beautify (the npm package - `npm install -g js-beautify`;
+# brew's is the Python port, which has no html-beautify) over the hand-written
+# JavaScript, HTML and CSS, .jsbeautifyrc at the root being its configuration.
+# Sources only: vendor/ is someone else's, and the test DATA stays byte-exact
+# - ctcompile/test/**'s fixtures are hashed by its drivers, ctbrowser/test/'s
+# corpus and goldens are what the engine is compared against. The example
+# pages ARE formatted: three of them render to goldens, and block-level
+# indentation is whitespace the engine collapses, which the gate proves.
+html_beautify=$(command -v html-beautify || true)
+if [[ -z $html_beautify ]]; then
+    echo "format.sh: no html-beautify found - npm install -g js-beautify" >&2
+    exit 127
+fi
+beautify_bin=$(dirname "$html_beautify")
+mapfile -t webfiles < <({ git ls-files '*.js' '*.html' '*.css'
+                          git ls-files --others --exclude-standard '*.js' '*.html' '*.css'; } \
+                        | grep -v '^third-party/' | grep -v '^build' | grep -v '/vendor/' \
+                        | grep -v '^ctbrowser/test/' | grep -v '^ctcompile/test/')
+# One process per file: the CLI has no --check, so a check is "does the
+# output equal the input", and --replace is the same run writing back.
+beautify() {  # beautify <check|replace> <file>...
+    local mode=$1 rc=0 f tool; shift
+    for f in "$@"; do
+        case $f in *.js) tool=js-beautify;; *.css) tool=css-beautify;; *) tool=html-beautify;; esac
+        if [[ $mode == check ]]; then
+            "$beautify_bin/$tool" --config .jsbeautifyrc "$f" | cmp -s - "$f" || { echo "$f: not formatted" >&2; rc=1; }
+        else
+            "$beautify_bin/$tool" --config .jsbeautifyrc --quiet --replace "$f"
+        fi
+    done
+    return $rc
+}
+
 if [[ ${1:-} == "--check" ]]; then
     # One invocation; clang-format skips what .clang-format-ignore names and
     # reports each unformatted line as an error.
@@ -64,9 +110,21 @@ if [[ ${1:-} == "--check" ]]; then
         echo "format.sh: the files above are not formatted. Run tools/format.sh" >&2
         exit 1
     fi
-    echo "format.sh: ${#files[@]} files are formatted"
+    if ! "$black" --check --quiet "${pyfiles[@]}"; then
+        echo >&2
+        echo "format.sh: the python files above are not formatted. Run tools/format.sh" >&2
+        exit 1
+    fi
+    if ! beautify check "${webfiles[@]}"; then
+        echo >&2
+        echo "format.sh: the web files above are not formatted. Run tools/format.sh" >&2
+        exit 1
+    fi
+    echo "format.sh: ${#files[@]} files, ${#pyfiles[@]} python and ${#webfiles[@]} web files are formatted"
     exit 0
 fi
 
 "$format" -i "${files[@]}"
-echo "format.sh: formatted ${#files[@]} files"
+"$black" --quiet "${pyfiles[@]}"
+beautify replace "${webfiles[@]}"
+echo "format.sh: formatted ${#files[@]} files, ${#pyfiles[@]} python and ${#webfiles[@]} web files"

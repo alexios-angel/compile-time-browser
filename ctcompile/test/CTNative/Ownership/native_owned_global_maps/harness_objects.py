@@ -11,6 +11,7 @@ from .harness_scalar_maps import (
     subprocess,
 )
 
+
 def leaf_object_observer_source(source, name):
     # Only this independent reference observer replaces Map.set. The compiled
     # source and its standard intrinsic contract retain their original bytes.
@@ -31,12 +32,20 @@ def leaf_object_observer_source(source, name):
     checks = ["seen.length === 2", "first !== second", "host.slot.size() === before + 1"]
     style = LEAF_OBJECT_FIELDS.get(name)
     if style:
-        checks.extend(["first.value === " + ("before" if style == "scalar" else "1"),
-                       "second.value === " + ("before + 1" if style == "scalar" else "1")])
+        checks.extend(
+            [
+                "first.value === " + ("before" if style == "scalar" else "1"),
+                "second.value === " + ("before + 1" if style == "scalar" else "1"),
+            ]
+        )
     if style == "scalar":
-        checks.extend(["first.flag === false && second.flag === false",
-                       "first.empty === null && second.empty === null",
-                       "first.absent === undefined && second.absent === undefined"])
+        checks.extend(
+            [
+                "first.flag === false && second.flag === false",
+                "first.empty === null && second.empty === null",
+                "first.absent === undefined && second.absent === undefined",
+            ]
+        )
     for index, check in enumerate(checks):
         observed += f"    if ({check}) {{ trace = trace + {1 << index}; }}\n"
     return observed + "})();\n", (1 << len(checks)) - 1
@@ -46,38 +55,51 @@ def instrument_leaf_objects(cpp, allocations=1):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("leaf object observer needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
-               "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {\n"
-               "    auto made = std::make_shared<T>();\n"
-               "    ctn_test_objects.emplace_back(made); return made;\n}\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {\n"
+        "    auto made = std::make_shared<T>();\n"
+        "    ctn_test_objects.emplace_back(made); return made;\n}\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2 or changed.count("std::make_shared<ctnative::identity_object>()") != allocations:
         raise RuntimeError("leaf object observer lost its Map and setter-local allocation sites")
-    return changed.replace("std::make_shared<ctnative::identity_object>()",
-                           "ctn_test_make_leaf<ctnative::identity_object>()")
+    return changed.replace(
+        "std::make_shared<ctnative::identity_object>()",
+        "ctn_test_make_leaf<ctnative::identity_object>()",
+    )
 
 
 def leaf_field_failures(variable, style, expected):
     if not style:
         return []
     scalar = "ctnative::nullable_scalar::kind::"
-    checks = [f"{variable}->field_76616c7565.tag != {scalar}number",
-              f"{variable}->field_76616c7565.value != {expected}"]
+    checks = [
+        f"{variable}->field_76616c7565.tag != {scalar}number",
+        f"{variable}->field_76616c7565.value != {expected}",
+    ]
     if style == "scalar":
-        checks.extend([f"{variable}->field_666c6167.tag != {scalar}boolean",
-                       f"{variable}->field_666c6167.value != 0",
-                       f"{variable}->field_656d707479.tag != {scalar}null",
-                       f"{variable}->field_616273656e74.tag != {scalar}undefined"])
+        checks.extend(
+            [
+                f"{variable}->field_666c6167.tag != {scalar}boolean",
+                f"{variable}->field_666c6167.value != 0",
+                f"{variable}->field_656d707479.tag != {scalar}null",
+                f"{variable}->field_616273656e74.tag != {scalar}undefined",
+            ]
+        )
     return checks
 
 
 def leaf_object_identity_cpp(cpp, name):
     changed = instrument_leaf_objects(cpp)
-    changed += r'''
+    changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
     const auto before = g_host->slot->m_size();
@@ -91,13 +113,13 @@ int main() {
     g_host.reset();
     if (!ctn_test_maps[0].expired() || ctn_test_objects[count].expired() ||
         ctn_test_objects[count + 1].expired()) { return 92; }
-'''
+"""
     style = LEAF_OBJECT_FIELDS.get(name)
     checks = leaf_field_failures("first", style, "before" if style == "scalar" else "1")
     checks += leaf_field_failures("second", style, "before + 1" if style == "scalar" else "1")
     if checks:
         changed += "    if (" + " ||\n        ".join(checks) + ") { return 93; }\n"
-    return changed + r'''
+    return changed + r"""
     first.reset();
     second.reset();
     for (const auto & object : ctn_test_objects) {
@@ -105,7 +127,7 @@ int main() {
     }
     return 0;
 }
-'''
+"""
 
 
 def check_leaf_object_calls(cpp, name, mode):
@@ -113,8 +135,9 @@ def check_leaf_object_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry or "std::function<js_num(std::string)>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: missing numeric leaf setter ABI")
-    methods_by_value = dict(re.findall(
-        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
     calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     sequence = [methods_by_value.get(callee) for callee, _ in calls]
     expected = ["set", "set", "set", "size"]
@@ -133,20 +156,28 @@ def check_leaf_object_calls(cpp, name, mode):
         return
     style = LEAF_OBJECT_FIELDS.get(name)
     writes = 6 if style == "scalar" else 1 if style else 0
-    if ("std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
-            or cpp.count("std::make_shared<ctnative::identity_object>()") != 1
-            or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes):
-        raise RuntimeError(f"{name}/{mode}: lost the leaf owner, exact payload schema or field writes")
+    if (
+        "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
+        or cpp.count("std::make_shared<ctnative::identity_object>()") != 1
+        or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: lost the leaf owner, exact payload schema or field writes"
+        )
 
 
 def check_leaf_readback_calls(cpp, name, mode):
     source = leaf_readback_sources()[name][0]
     body = source.split("set(key", 1)[1].split("\n", 1)[0]
     allocations = body.count("{") - 1
-    params = "std::string, js_num" if name.startswith("local_field_readback_lifetime") else "std::string"
-    if (f"std::function<js_num({params})>" not in cpp
-            or "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
-            or cpp.count("std::make_shared<ctnative::identity_object>()") != allocations):
+    params = (
+        "std::string, js_num" if name.startswith("local_field_readback_lifetime") else "std::string"
+    )
+    if (
+        f"std::function<js_num({params})>" not in cpp
+        or "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
+        or cpp.count("std::make_shared<ctnative::identity_object>()") != allocations
+    ):
         raise RuntimeError(f"{name}/{mode}: lost fresh leaf allocations or numeric published ABI")
     for method in ("set", "get", "has", "delete"):
         original = len(re.findall(rf"\bstate\.{method}\(", source))
@@ -154,19 +185,26 @@ def check_leaf_readback_calls(cpp, name, mode):
         if lowered != original:
             raise RuntimeError(f"{name}/{mode}: changed the {original} live Map.{method} calls")
     fields = list(re.finditer(r"\b(?:item|saved)\.\w+\b", body))
-    reads = sum(not re.match(r"\s*=(?!=)", body[match.end():]) for match in fields)
-    writes = sum(bool(re.match(r"\s*=(?!=)", body[match.end():])) for match in fields)
+    reads = sum(not re.match(r"\s*=(?!=)", body[match.end() :]) for match in fields)
+    writes = sum(bool(re.match(r"\s*=(?!=)", body[match.end() :])) for match in fields)
     writes += len(re.findall(r"\bvalue:", body))
-    if (len(re.findall(r"ctnative::object_get_field_[0-9a-f]+\(", cpp)) != reads
-            or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes):
-        raise RuntimeError(f"{name}/{mode}: changed the {reads} live field reads or {writes} writes")
+    if (
+        len(re.findall(r"ctnative::object_get_field_[0-9a-f]+\(", cpp)) != reads
+        or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: changed the {reads} live field reads or {writes} writes"
+        )
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing native readback entry")
-    methods_by_value = dict(re.findall(
-        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
     calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
-    expected = ["size", "set", "set", "set"] if name == "local_identity_repeated_keys" else ["size", "set"]
+    expected = (
+        ["size", "set", "set", "set"] if name == "local_identity_repeated_keys" else ["size", "set"]
+    )
     if name == "local_field_export_repair":
         expected += ["size"]
     if [methods_by_value.get(callee) for callee, _ in calls] != expected:
@@ -175,10 +213,16 @@ def check_leaf_readback_calls(cpp, name, mode):
         comparisons = re.findall(r"ctnative::object_strict_equal\((\w+), (\w+)\)", cpp)
         reads = re.findall(r"\b(\w+)\s*=\s*ctnative::map_get_present_identity\(", cpp)
         created = re.findall(r"\b(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)", cpp)
-        if (len(comparisons) != 1 or len(reads) != 1
-                or comparisons[0][0] != reads[0] or comparisons[0][1] not in created
-                or ("distinct" in name and comparisons[0][1] != created[-1])):
-            raise RuntimeError(f"{name}/{mode}: strict comparison lost its live saved/fresh operands")
+        if (
+            len(comparisons) != 1
+            or len(reads) != 1
+            or comparisons[0][0] != reads[0]
+            or comparisons[0][1] not in created
+            or ("distinct" in name and comparisons[0][1] != created[-1])
+        ):
+            raise RuntimeError(
+                f"{name}/{mode}: strict comparison lost its live saved/fresh operands"
+            )
 
 
 def comparison_identity_observer_source(source, name):
@@ -203,9 +247,11 @@ def comparison_identity_observer_source(source, name):
     Map.prototype.set = original;
     trace = 0;
 """
-    checks = [f"seen.length === {4 * writes}",
-              f"results.length === 4 && results.every(value => value === {result})",
-              f"size() === {0 if historical else 3}"]
+    checks = [
+        f"seen.length === {4 * writes}",
+        f"results.length === 4 && results.every(value => value === {result})",
+        f"size() === {0 if historical else 3}",
+    ]
     for left in range(4 * writes):
         for right in range(left + 1, 4 * writes):
             checks.append(f"seen[{left}] !== seen[{right}]")
@@ -224,14 +270,18 @@ def comparison_identity_cpp(cpp, name):
     allocations = 1 + historical + distinct
     result = leaf_readback_sources()[name][2]
     changed = instrument_leaf_objects(cpp, allocations=allocations)
-    changed = changed.replace("template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+    changed = changed.replace(
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
         "static bool ctn_test_capture = false;\n"
         "static std::vector<std::shared_ptr<const void>> ctn_test_retained;\n"
-        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {")
-    changed = changed.replace("ctn_test_objects.emplace_back(made); return made;",
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+    )
+    changed = changed.replace(
+        "ctn_test_objects.emplace_back(made); return made;",
         "ctn_test_objects.emplace_back(made); "
-        "if (ctn_test_capture) { ctn_test_retained.emplace_back(made); } return made;")
-    changed += r'''
+        "if (ctn_test_capture) { ctn_test_retained.emplace_back(made); } return made;",
+    )
+    changed += r"""
 int main() {
     constexpr std::size_t allocations = CTN_ALLOCATIONS;
     constexpr bool deleted = CTN_DELETED;
@@ -295,45 +345,75 @@ int main() {
     }
     return 0;
 }
-'''
+"""
     fields = ""
     if historical:
-        fields = ("const auto leaf = std::static_pointer_cast<const ctnative::identity_object>"
-                  "(ctn_test_retained[left]);\n"
-                  "        if (leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||\n"
-                  "            leaf->field_76616c7565.value != 1) { return 133; }")
-    return changed.replace("CTN_ALLOCATIONS", str(allocations)).replace(
-        "CTN_DELETED", "true" if historical else "false").replace(
-        "CTN_RESULT", str(result)).replace("CTN_FIELD_CHECK", fields)
+        fields = (
+            "const auto leaf = std::static_pointer_cast<const ctnative::identity_object>"
+            "(ctn_test_retained[left]);\n"
+            "        if (leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||\n"
+            "            leaf->field_76616c7565.value != 1) { return 133; }"
+        )
+    return (
+        changed.replace("CTN_ALLOCATIONS", str(allocations))
+        .replace("CTN_DELETED", "true" if historical else "false")
+        .replace("CTN_RESULT", str(result))
+        .replace("CTN_FIELD_CHECK", fields)
+    )
 
 
 def comparison_identity_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(comparison_identity_cpp(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     expected = f"trace={leaf_readback_sources()[name][2]}\n" * 2
     if result.returncode or result.stdout != expected:
-        raise RuntimeError(f"{name}/{mode}: comparison identity lifetime failure (exit {result.returncode})\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: comparison identity lifetime failure (exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def leaf_readback_lifetime(args, cpp, name, mode, compiler):
     changed = instrument_leaf_objects(cpp, allocations=2)
-    changed = changed.replace("template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+    changed = changed.replace(
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
         "static bool ctn_test_capture_next = false;\n"
         "static std::shared_ptr<const void> ctn_test_retained;\n"
-        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {")
-    changed = changed.replace("ctn_test_objects.emplace_back(made); return made;",
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+    )
+    changed = changed.replace(
+        "ctn_test_objects.emplace_back(made); return made;",
         "ctn_test_objects.emplace_back(made); "
         "if (ctn_test_capture_next) { ctn_test_capture_next = false; ctn_test_retained = made; } "
-        "return made;")
-    changed += r'''
+        "return made;",
+    )
+    changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 || ctn_test_objects.size() != 2 ||
         !ctn_test_objects[0].expired() || !ctn_test_objects[1].expired()) { return 110; }
@@ -383,24 +463,45 @@ int main() {
     }
     return 0;
 }
-'''
+"""
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: saved leaf readback lifetime failure (exit {result.returncode})\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: saved leaf readback lifetime failure (exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def leaf_object_lifetime(args, cpp, name, mode, compiler):
     changed = instrument_leaf_objects(cpp)
-    changed += r'''
+    changed += r"""
 int main() {
     const auto fields_match = [](const std::shared_ptr<const void> & value, double expected) {
         const auto object = std::static_pointer_cast<const ctnative::identity_object>(value);
@@ -471,26 +572,47 @@ int main() {
     }
     return 0;
 }
-'''
+"""
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: leaf Map/callable/object lifetime failure "
-                           f"(exit {result.returncode})\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: leaf Map/callable/object lifetime failure "
+            f"(exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def object_argument_observer_source(source, global_key=False, global_alias=False, global_chain=()):
     # Capture the actual Map in a separate interpreter observer. The native
     # source and its standard intrinsic contract remain untouched.
-    observed = source + '''
+    observed = source + """
 (function() {
     const get = host.slot.get;
     const original = Map.prototype.has;
@@ -524,111 +646,177 @@ def object_argument_observer_source(source, global_key=False, global_alias=False
             (typeof f === 'number' && f === 0 ? 32 : 0) |
             (typeof g === 'number' && g === 0 ? 64 : 0) | (future ? 128 : 0);
 })();
-'''
+"""
     if not global_key and not global_alias:
         return observed, 255
-    observed = observed.replace('const first = {}, alias = first, other = {};',
-        'const first = key, alias = first, other = {};').replace(
-        '    trace = (typeof a', '''    const startup = key === first;
+    observed = (
+        observed.replace(
+            "const first = {}, alias = first, other = {};",
+            "const first = key, alias = first, other = {};",
+        )
+        .replace(
+            "    trace = (typeof a",
+            """    const startup = key === first;
     captured.set(key, 17);
     key = {};
     const distinct = key !== first && get(first) === 1 && get(key) === 0;
     captured.clear();
     const cleared = get(first) === 0;
-    trace = (typeof a''').replace('(future ? 128 : 0);',
-        '(future ? 128 : 0) | (startup ? 256 : 0) | (distinct ? 512 : 0) | (cleared ? 1024 : 0);')
+    trace = (typeof a""",
+        )
+        .replace(
+            "(future ? 128 : 0);",
+            "(future ? 128 : 0) | (startup ? 256 : 0) | (distinct ? 512 : 0) | (cleared ? 1024 : 0);",
+        )
+    )
     if global_alias:
-        observed = observed.replace('(function() {', '(function(globalAlias) {').replace(
-            'const first = key, alias = first, other = {};',
-            'const first = key, alias = globalAlias, other = {};').replace(
-            'const startup = key === first;',
-            'const startup = key === first && first === globalAlias;').replace(
-            'key !== first && get(first) === 1',
-            'key !== first && get(globalAlias) === 1 && get(first) === 1').replace(
-            '})();', '})(alias);')
+        observed = (
+            observed.replace("(function() {", "(function(globalAlias) {")
+            .replace(
+                "const first = key, alias = first, other = {};",
+                "const first = key, alias = globalAlias, other = {};",
+            )
+            .replace(
+                "const startup = key === first;",
+                "const startup = key === first && first === globalAlias;",
+            )
+            .replace(
+                "key !== first && get(first) === 1",
+                "key !== first && get(globalAlias) === 1 && get(first) === 1",
+            )
+            .replace("})();", "})(alias);")
+        )
         if global_chain:
-            parameters = ', '.join('chain_' + binding for binding in global_chain)
-            observed = observed.replace('(function(globalAlias)',
-                '(function(globalAlias, ' + parameters + ')').replace(
-                'first === globalAlias;', 'first === globalAlias' + ''.join(
-                    ' && first === chain_' + binding for binding in global_chain) + ';').replace(
-                '})(alias);', '})(alias, ' + ', '.join(global_chain) + ');')
+            parameters = ", ".join("chain_" + binding for binding in global_chain)
+            observed = (
+                observed.replace(
+                    "(function(globalAlias)", "(function(globalAlias, " + parameters + ")"
+                )
+                .replace(
+                    "first === globalAlias;",
+                    "first === globalAlias"
+                    + "".join(" && first === chain_" + binding for binding in global_chain)
+                    + ";",
+                )
+                .replace("})(alias);", "})(alias, " + ", ".join(global_chain) + ");")
+            )
     return observed, 2047
 
 
 def check_object_argument_calls(cpp, name, mode):
-    source = object_argument_cases()[name]['source']
-    receiver = 'state' if name == 'parameter_object' else 't'
-    entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
-    arity = 2 if name == 'object_argument_two_formals' else 1
-    signature = 'std::function<js_num(' + ', '.join(
-        ['std::shared_ptr<ctnative::identity_object>'] * arity) + ')>'
-    fields = name in {'object_argument_field', 'object_argument_global_field_write',
-                      'object_argument_payload_field'}
-    identity = ('struct identity_object {\n    nullable_scalar field_76616c7565;\n};'
-                if fields else 'struct identity_object {};')
-    field_literal = name in {'object_argument_field', 'object_argument_payload_field'}
-    if (not entry or signature not in cpp or identity not in cpp
-            or entry[1].count('ctnative::invoke_callable(')
-            != len(re.findall(r'host\.slot\.\w+\(', source))
-            or entry[1].count('std::make_shared<ctnative::identity_object>()')
-            != source.count('{}') - 1 + int(field_literal)
-            or fields and entry[1].count('ctnative::object_set_field_76616c7565(') != 1):
-        raise RuntimeError(f'{name}/{mode}: changed live object allocations or callable actuals')
-    for method in ('has', 'set', 'get', 'delete', 'clear'):
-        emitted = len(re.findall(rf'ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
-        if emitted != len(re.findall(rf'\b{receiver}\.{method}\(', source)):
-            raise RuntimeError(f'{name}/{mode}: changed live Map.{method} calls')
-    if name == 'parameter_object' and cpp.count('ctnative::map_size(') != 2:
-        raise RuntimeError(f'{name}/{mode}: lost the historical setter/getter size reads')
-    if name == 'object_argument_seeded' and (
-            'std::variant<double, std::shared_ptr<ctnative::identity_object>>' not in cpp):
-        raise RuntimeError(f'{name}/{mode}: lost independent Number/Object key alternatives')
+    source = object_argument_cases()[name]["source"]
+    receiver = "state" if name == "parameter_object" else "t"
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    arity = 2 if name == "object_argument_two_formals" else 1
+    signature = (
+        "std::function<js_num("
+        + ", ".join(["std::shared_ptr<ctnative::identity_object>"] * arity)
+        + ")>"
+    )
+    fields = name in {
+        "object_argument_field",
+        "object_argument_global_field_write",
+        "object_argument_payload_field",
+    }
+    identity = (
+        "struct identity_object {\n    nullable_scalar field_76616c7565;\n};"
+        if fields
+        else "struct identity_object {};"
+    )
+    field_literal = name in {"object_argument_field", "object_argument_payload_field"}
+    if (
+        not entry
+        or signature not in cpp
+        or identity not in cpp
+        or entry[1].count("ctnative::invoke_callable(")
+        != len(re.findall(r"host\.slot\.\w+\(", source))
+        or entry[1].count("std::make_shared<ctnative::identity_object>()")
+        != source.count("{}") - 1 + int(field_literal)
+        or fields
+        and entry[1].count("ctnative::object_set_field_76616c7565(") != 1
+    ):
+        raise RuntimeError(f"{name}/{mode}: changed live object allocations or callable actuals")
+    for method in ("has", "set", "get", "delete", "clear"):
+        emitted = len(re.findall(rf"ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
+        if emitted != len(re.findall(rf"\b{receiver}\.{method}\(", source)):
+            raise RuntimeError(f"{name}/{mode}: changed live Map.{method} calls")
+    if name == "parameter_object" and cpp.count("ctnative::map_size(") != 2:
+        raise RuntimeError(f"{name}/{mode}: lost the historical setter/getter size reads")
+    if name == "object_argument_seeded" and (
+        "std::variant<double, std::shared_ptr<ctnative::identity_object>>" not in cpp
+    ):
+        raise RuntimeError(f"{name}/{mode}: lost independent Number/Object key alternatives")
     row = object_argument_cases()[name]
-    if row.get('object_payload'):
-        keys = ('double', 'js_num') if row.get('payload_only') else (
-            'std::shared_ptr<ctnative::identity_object>',)
-        if not any('map_storage<' + key + ', ctnative::object_value>' in cpp for key in keys):
-            raise RuntimeError(f'{name}/{mode}: lost the owning object payload carrier')
-    if object_argument_cases()[name].get('global_key'):
-        created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
-        stores = re.findall(r'\bg_key = (\w+);', entry[1])
-        loads = re.findall(r'\b(\w+) = g_key;', entry[1])
-        actuals = re.findall(r'ctnative::invoke_callable\(\w+, (\w+)\);', entry[1])
-        if (not re.search(r'std::shared_ptr<ctnative::identity_object>\s+g_key\s*;', cpp)
-                or len(created) != 1 or stores != created
-                or len(loads) != source.count('host.slot.get(key)') or actuals != loads):
-            raise RuntimeError(f'{name}/{mode}: lost the sole global allocation/store/load/call identity')
-    if object_argument_cases()[name].get('global_alias'):
+    if row.get("object_payload"):
+        keys = (
+            ("double", "js_num")
+            if row.get("payload_only")
+            else ("std::shared_ptr<ctnative::identity_object>",)
+        )
+        if not any("map_storage<" + key + ", ctnative::object_value>" in cpp for key in keys):
+            raise RuntimeError(f"{name}/{mode}: lost the owning object payload carrier")
+    if object_argument_cases()[name].get("global_key"):
+        created = re.findall(
+            r"(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)", entry[1]
+        )
+        stores = re.findall(r"\bg_key = (\w+);", entry[1])
+        loads = re.findall(r"\b(\w+) = g_key;", entry[1])
+        actuals = re.findall(r"ctnative::invoke_callable\(\w+, (\w+)\);", entry[1])
+        if (
+            not re.search(r"std::shared_ptr<ctnative::identity_object>\s+g_key\s*;", cpp)
+            or len(created) != 1
+            or stores != created
+            or len(loads) != source.count("host.slot.get(key)")
+            or actuals != loads
+        ):
+            raise RuntimeError(
+                f"{name}/{mode}: lost the sole global allocation/store/load/call identity"
+            )
+    if object_argument_cases()[name].get("global_alias"):
         row = object_argument_cases()[name]
-        bindings = '|'.join(('key', 'alias', *row.get('global_chain', ()), 'other'))
-        initializers = re.findall(r'\b(' + bindings + r') = (\{\}|\w+)(?=[,;])', source)
-        predecessors = [value for _, value in initializers if value != '{}']
-        created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
-        loads = re.findall(r'\b(\w+) = g_(' + bindings + r');', entry[1])
-        stores = re.findall(r'\bg_(' + bindings + r') = (\w+);', entry[1])
-        actuals = re.findall(r'ctnative::invoke_callable\(\w+, (\w+)(?:, \w+)?\);', entry[1])
-        arguments = re.findall(r'host\.slot\.\w+\((' + bindings + r')[,)]', source)
+        bindings = "|".join(("key", "alias", *row.get("global_chain", ()), "other"))
+        initializers = re.findall(r"\b(" + bindings + r") = (\{\}|\w+)(?=[,;])", source)
+        predecessors = [value for _, value in initializers if value != "{}"]
+        created = re.findall(
+            r"(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)", entry[1]
+        )
+        loads = re.findall(r"\b(\w+) = g_(" + bindings + r");", entry[1])
+        stores = re.findall(r"\bg_(" + bindings + r") = (\w+);", entry[1])
+        actuals = re.findall(r"ctnative::invoke_callable\(\w+, (\w+)(?:, \w+)?\);", entry[1])
+        arguments = re.findall(r"host\.slot\.\w+\((" + bindings + r")[,)]", source)
         allocations, reads = iter(created), iter(value for value, _ in loads)
-        expected_stores = [(binding, next(allocations) if value == '{}' else next(reads))
-                           for binding, value in initializers]
-        if (stores != expected_stores
-                or [binding for _, binding in loads] != [*predecessors, *arguments]
-                or actuals != [value for value, _ in loads[len(predecessors):]]
-                or any(not re.search(r'std::shared_ptr<ctnative::identity_object>\s+g_'
-                                     + binding + r'\s*;', cpp) for binding, _ in initializers)):
-            raise RuntimeError(f'{name}/{mode}: lost the original global alias/store/load/call edges')
+        expected_stores = [
+            (binding, next(allocations) if value == "{}" else next(reads))
+            for binding, value in initializers
+        ]
+        if (
+            stores != expected_stores
+            or [binding for _, binding in loads] != [*predecessors, *arguments]
+            or actuals != [value for value, _ in loads[len(predecessors) :]]
+            or any(
+                not re.search(
+                    r"std::shared_ptr<ctnative::identity_object>\s+g_" + binding + r"\s*;", cpp
+                )
+                for binding, _ in initializers
+            )
+        ):
+            raise RuntimeError(
+                f"{name}/{mode}: lost the original global alias/store/load/call edges"
+            )
         for (binding, predecessor), (value, _) in zip(
-                ((binding, value) for binding, value in initializers if value != '{}'), loads):
-            if not (entry[1].index('g_' + predecessor + ' = ')
-                    < entry[1].index(value + ' = g_' + predecessor + ';')
-                    < entry[1].index('g_' + binding + ' = ')
-                    < entry[1].index('ctnative::invoke_callable(')):
-                raise RuntimeError(f'{name}/{mode}: reordered a global alias initializer')
+            ((binding, value) for binding, value in initializers if value != "{}"), loads
+        ):
+            if not (
+                entry[1].index("g_" + predecessor + " = ")
+                < entry[1].index(value + " = g_" + predecessor + ";")
+                < entry[1].index("g_" + binding + " = ")
+                < entry[1].index("ctnative::invoke_callable(")
+            ):
+                raise RuntimeError(f"{name}/{mode}: reordered a global alias initializer")
 
 
 def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False, global_chain=()):
-    changed = instrument_leaf_objects(cpp) + r'''
+    changed = instrument_leaf_objects(cpp) + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     using Map = ctnative::number_map<Key>;
@@ -673,92 +861,177 @@ int main() {
     if (!ctn_test_maps[1].expired()) { return 209; }
     return 0;
 }
-'''
+"""
     if not global_key and not global_alias:
         return changed
-    changed = changed.replace('!ctn_test_objects[0].expired()',
-        'ctn_test_objects[0].expired() || !g_key || g_key != ctn_test_objects[0].lock()').replace(
-        '    auto other = std::make_shared<ctnative::identity_object>();', '''    std::weak_ptr original_key = g_key;
+    changed = (
+        changed.replace(
+            "!ctn_test_objects[0].expired()",
+            "ctn_test_objects[0].expired() || !g_key || g_key != ctn_test_objects[0].lock()",
+        )
+        .replace(
+            "    auto other = std::make_shared<ctnative::identity_object>();",
+            """    std::weak_ptr original_key = g_key;
     ctnative::map_set(map, g_key, js_num{9});
     if (get(g_key) != 1) { return 240; }
     g_key = std::make_shared<ctnative::identity_object>();
     if (original_key.expired() || get(g_key) != 0) { return 241; }
-    auto other = std::make_shared<ctnative::identity_object>();''').replace(
-        '    std::weak_ptr key_lifetime = other;',
-        '    std::weak_ptr overwritten_key = g_key;\n    std::weak_ptr key_lifetime = other;').replace(
-        '!ctn_test_objects[1].expired()',
-        'ctn_test_objects[1].expired() || !overwritten_key.expired() || '
-        'g_key != ctn_test_objects[1].lock() || g_key == original_key.lock()').replace(
-        'if (!key_lifetime.expired() || !ctn_test_maps[0].expired() ||',
-        'if (!key_lifetime.expired() || !original_key.expired() || !ctn_test_maps[0].expired() ||').replace(
-        '    if (!ctn_test_maps[1].expired()) { return 209; }',
-        '''    if (!ctn_test_maps[1].expired() || ctn_test_objects[1].expired()) { return 209; }
+    auto other = std::make_shared<ctnative::identity_object>();""",
+        )
+        .replace(
+            "    std::weak_ptr key_lifetime = other;",
+            "    std::weak_ptr overwritten_key = g_key;\n    std::weak_ptr key_lifetime = other;",
+        )
+        .replace(
+            "!ctn_test_objects[1].expired()",
+            "ctn_test_objects[1].expired() || !overwritten_key.expired() || "
+            "g_key != ctn_test_objects[1].lock() || g_key == original_key.lock()",
+        )
+        .replace(
+            "if (!key_lifetime.expired() || !ctn_test_maps[0].expired() ||",
+            "if (!key_lifetime.expired() || !original_key.expired() || !ctn_test_maps[0].expired() ||",
+        )
+        .replace(
+            "    if (!ctn_test_maps[1].expired()) { return 209; }",
+            """    if (!ctn_test_maps[1].expired() || ctn_test_objects[1].expired()) { return 209; }
     g_key.reset();
-    if (!ctn_test_objects[1].expired()) { return 242; }''')
+    if (!ctn_test_objects[1].expired()) { return 242; }""",
+        )
+    )
     if global_alias:
-        changed = changed.replace('g_key != ctn_test_objects[0].lock()',
-            'g_key != ctn_test_objects[0].lock() || g_alias != g_key').replace(
-            '    ctnative::map_set(map, g_key, js_num{9});', '''    g_key.reset();
+        changed = (
+            changed.replace(
+                "g_key != ctn_test_objects[0].lock()",
+                "g_key != ctn_test_objects[0].lock() || g_alias != g_key",
+            )
+            .replace(
+                "    ctnative::map_set(map, g_key, js_num{9});",
+                """    g_key.reset();
     if (original_key.expired() || !g_alias || g_alias != original_key.lock()) { return 243; }
     g_key = g_alias;
-    ctnative::map_set(map, g_key, js_num{9});''').replace(
-            '    if (original_key.expired() || get(g_key) != 0)',
-            '    g_alias.reset();\n    if (original_key.expired() || get(g_key) != 0)').replace(
-            'g_key != ctn_test_objects[1].lock()',
-            'g_key != ctn_test_objects[1].lock() || g_alias != g_key').replace(
-            '    g_key.reset();\n    if (!ctn_test_objects[1].expired())',
-            '    g_alias.reset();\n    g_key.reset();\n    if (!ctn_test_objects[1].expired())')
+    ctnative::map_set(map, g_key, js_num{9});""",
+            )
+            .replace(
+                "    if (original_key.expired() || get(g_key) != 0)",
+                "    g_alias.reset();\n    if (original_key.expired() || get(g_key) != 0)",
+            )
+            .replace(
+                "g_key != ctn_test_objects[1].lock()",
+                "g_key != ctn_test_objects[1].lock() || g_alias != g_key",
+            )
+            .replace(
+                "    g_key.reset();\n    if (!ctn_test_objects[1].expired())",
+                "    g_alias.reset();\n    g_key.reset();\n    if (!ctn_test_objects[1].expired())",
+            )
+        )
         if global_chain:
-            assert global_chain == ('copy',)
-            changed = changed.replace('g_alias != g_key',
-                'g_alias != g_key || g_copy != g_key').replace(
-                '    g_key = g_alias;', '''    g_alias.reset();
+            assert global_chain == ("copy",)
+            changed = (
+                changed.replace("g_alias != g_key", "g_alias != g_key || g_copy != g_key")
+                .replace(
+                    "    g_key = g_alias;",
+                    """    g_alias.reset();
     if (original_key.expired() || !g_copy || g_copy != original_key.lock()) { return 249; }
     g_alias = g_copy;
-    g_key = g_alias;''').replace(
-                '    g_alias.reset();\n    if (original_key.expired() || get(g_key)',
-                '    g_alias.reset(); g_copy.reset();\n    if (original_key.expired() || get(g_key)').replace(
-                '    g_key.reset();\n    if (!ctn_test_objects[1].expired())',
-                '''    g_key.reset();
+    g_key = g_alias;""",
+                )
+                .replace(
+                    "    g_alias.reset();\n    if (original_key.expired() || get(g_key)",
+                    "    g_alias.reset(); g_copy.reset();\n    if (original_key.expired() || get(g_key)",
+                )
+                .replace(
+                    "    g_key.reset();\n    if (!ctn_test_objects[1].expired())",
+                    """    g_key.reset();
     if (ctn_test_objects[1].expired() || !g_copy ||
         g_copy != ctn_test_objects[1].lock()) { return 250; }
     g_copy.reset();
-    if (!ctn_test_objects[1].expired())''')
+    if (!ctn_test_objects[1].expired())""",
+                )
+            )
     return changed
 
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f'{name}.{mode}.lifetime.cpp'
-    observer = (retained_key_lifetime_cpp if name in {
-                    'object_argument_siblings', 'object_argument_siblings_named',
-                    'object_argument_siblings_global', 'object_argument_siblings_global_chain'}
-                else parameter_object_lifetime_cpp if name == 'parameter_object'
-                else object_argument_lifetime_cpp)
-    source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
-                      else observer(cpp, global_alias=True) if name == 'object_argument_global_alias'
-                      else observer(cpp, global_alias=True, global_chain=('copy',))
-                          if name == 'object_argument_global_alias_chain'
-                      else observer(cpp, 2, 0, global_alias=True) if name == 'object_argument_siblings_global'
-                      else observer(cpp, 2, 0, global_alias=True, global_chain=('copy', 'tail', 'branch'))
-                          if name == 'object_argument_siblings_global_chain'
-                      else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
-                      else object_payload_lifetime_cpp(cpp, name)
-                          if object_argument_cases()[name].get('object_payload')
-                      else observer(cpp))
-    binary = source.with_suffix('.sanitized').resolve()
-    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
-              str(source), '-o', str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
-             'UBSAN_OPTIONS': 'halt_on_error=1'})
-    expected = object_argument_cases()[name]['expected_trace']
-    if result.returncode or result.stdout != f'trace={expected}\n' * 2 or result.stderr:
-        raise RuntimeError(f'{name}/{mode}: object key lifetime failed\n'
-                           f'{result.returncode}: {result.stdout}{result.stderr}')
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    observer = (
+        retained_key_lifetime_cpp
+        if name
+        in {
+            "object_argument_siblings",
+            "object_argument_siblings_named",
+            "object_argument_siblings_global",
+            "object_argument_siblings_global_chain",
+        }
+        else (
+            parameter_object_lifetime_cpp
+            if name == "parameter_object"
+            else object_argument_lifetime_cpp
+        )
+    )
+    source.write_text(
+        observer(cpp, global_key=True)
+        if name == "object_argument_global"
+        else (
+            observer(cpp, global_alias=True)
+            if name == "object_argument_global_alias"
+            else (
+                observer(cpp, global_alias=True, global_chain=("copy",))
+                if name == "object_argument_global_alias_chain"
+                else (
+                    observer(cpp, 2, 0, global_alias=True)
+                    if name == "object_argument_siblings_global"
+                    else (
+                        observer(
+                            cpp, 2, 0, global_alias=True, global_chain=("copy", "tail", "branch")
+                        )
+                        if name == "object_argument_siblings_global_chain"
+                        else (
+                            observer(cpp, 2, 0)
+                            if name == "object_argument_siblings_named"
+                            else (
+                                object_payload_lifetime_cpp(cpp, name)
+                                if object_argument_cases()[name].get("object_payload")
+                                else observer(cpp)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+    binary = source.with_suffix(".sanitized").resolve()
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "halt_on_error=1",
+        },
+    )
+    expected = object_argument_cases()[name]["expected_trace"]
+    if result.returncode or result.stdout != f"trace={expected}\n" * 2 or result.stderr:
+        raise RuntimeError(
+            f"{name}/{mode}: object key lifetime failed\n"
+            f"{result.returncode}: {result.stdout}{result.stderr}"
+        )
 
 
 def retained_key_observer_source(source, global_alias=False, global_chain=()):
-    observed = source + '''
+    observed = source + """
 (function() {
     const get = host.slot.get, set = host.slot.set;
     const erase = host.slot.erase, clear = host.slot.clear;
@@ -783,26 +1056,40 @@ def retained_key_observer_source(source, global_alias=False, global_chain=()):
     trace = (a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) |
             (d ? 8 : 0) | (e ? 16 : 0) | (future ? 32 : 0);
 })();
-'''
+"""
     if not global_alias:
         return observed, 63
-    observed = observed.replace('(function() {', '(function(first, alias, other) {').replace(
-        'const first = {}, alias = first, other = {};',
-        'const startup = first === alias && first !== other;').replace(
-        '(future ? 32 : 0);', '(future ? 32 : 0) | (startup ? 64 : 0);').replace(
-        '})();', '})(key, alias, other);')
+    observed = (
+        observed.replace("(function() {", "(function(first, alias, other) {")
+        .replace(
+            "const first = {}, alias = first, other = {};",
+            "const startup = first === alias && first !== other;",
+        )
+        .replace("(future ? 32 : 0);", "(future ? 32 : 0) | (startup ? 64 : 0);")
+        .replace("})();", "})(key, alias, other);")
+    )
     if global_chain:
-        parameters = ', '.join('chain_' + binding for binding in global_chain)
-        observed = observed.replace('(function(first, alias, other)',
-            '(function(first, alias, other, ' + parameters + ')').replace(
-            'first !== other;', 'first !== other' + ''.join(
-                ' && first === chain_' + binding for binding in global_chain) + ';').replace(
-            '})(key, alias, other);', '})(key, alias, other, ' + ', '.join(global_chain) + ');')
+        parameters = ", ".join("chain_" + binding for binding in global_chain)
+        observed = (
+            observed.replace(
+                "(function(first, alias, other)",
+                "(function(first, alias, other, " + parameters + ")",
+            )
+            .replace(
+                "first !== other;",
+                "first !== other"
+                + "".join(" && first === chain_" + binding for binding in global_chain)
+                + ";",
+            )
+            .replace(
+                "})(key, alias, other);", "})(key, alias, other, " + ", ".join(global_chain) + ");"
+            )
+        )
     return observed, 127
 
 
 def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False, global_chain=()):
-    changed = (instrument_leaf_objects(cpp, allocations=allocations) + r'''
+    changed = (instrument_leaf_objects(cpp, allocations=allocations) + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -866,17 +1153,21 @@ int main() {
     }
     return 0;
 }
-''').replace('CTN_ALLOCATIONS', str(allocations)).replace('CTN_RETAINED', str(retained))
+""").replace("CTN_ALLOCATIONS", str(allocations)).replace("CTN_RETAINED", str(retained))
     if not global_alias:
         return changed
     assert (allocations, retained) == (2, 0)
-    changed = changed.replace('    for (std::size_t index = 0; index < 2; ++index)', '''    if (!g_key || g_key != g_alias || g_key != ctn_test_objects[0].lock() ||
+    changed = changed.replace(
+        "    for (std::size_t index = 0; index < 2; ++index)",
+        """    if (!g_key || g_key != g_alias || g_key != ctn_test_objects[0].lock() ||
         !g_other || g_other != ctn_test_objects[1].lock() || g_key == g_other) { return 244; }
     g_key.reset();
     if (ctn_test_objects[0].expired() || !g_alias) { return 245; }
     g_alias.reset(); g_other.reset();
-    for (std::size_t index = 0; index < 2; ++index)''').replace(
-        '    other.reset();\n    set = {};', '''    if (ctn_test_objects.size() != 4 || !g_key || g_key != g_alias ||
+    for (std::size_t index = 0; index < 2; ++index)""",
+    ).replace(
+        "    other.reset();\n    set = {};",
+        """    if (ctn_test_objects.size() != 4 || !g_key || g_key != g_alias ||
         g_key != ctn_test_objects[2].lock() || !g_other ||
         g_other != ctn_test_objects[3].lock() || g_key == g_other) { return 246; }
     g_key.reset();
@@ -884,18 +1175,22 @@ int main() {
     g_alias.reset(); g_other.reset();
     if (ctn_test_objects[2].expired() || !ctn_test_objects[3].expired()) { return 248; }
     other.reset();
-    set = {};''')
+    set = {};""",
+    )
     if global_chain:
-        changed = changed.replace('g_key != g_alias', 'g_key != g_alias' + ''.join(
-            ' || g_key != g_' + binding for binding in global_chain)).replace(
-            'g_alias.reset(); g_other.reset();',
-            'g_alias.reset(); g_other.reset(); ' + ' '.join(
-                'g_' + binding + '.reset();' for binding in global_chain))
+        changed = changed.replace(
+            "g_key != g_alias",
+            "g_key != g_alias" + "".join(" || g_key != g_" + binding for binding in global_chain),
+        ).replace(
+            "g_alias.reset(); g_other.reset();",
+            "g_alias.reset(); g_other.reset(); "
+            + " ".join("g_" + binding + ".reset();" for binding in global_chain),
+        )
     return changed
 
 
 def parameter_object_lifetime_cpp(cpp):
-    return instrument_leaf_objects(cpp) + r'''
+    return instrument_leaf_objects(cpp) + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -939,13 +1234,13 @@ int main() {
     if (!ctn_test_maps[1].expired() || !ctn_test_objects.back().expired()) { return 239; }
     return 0;
 }
-'''
+"""
 
 
 def object_payload_observer_source(source, name):
     row = object_argument_cases()[name]
-    scalar = row.get('payload_only')
-    observed = source + '''
+    scalar = row.get("payload_only")
+    observed = source + """
 (function() {
     const get = host.slot.get;
     SAVED_CALLABLES
@@ -978,17 +1273,23 @@ def object_payload_observer_source(source, name):
             (typeof c === 'number' && c === 1 && otherStored ? 4 : 0) |
             (distinct ? 8 : 0) | (deleted ? 16 : 0) | (cleared ? 32 : 0) | (future ? 64 : 0);
 })();
-'''
-    replacements = dict(SAVED_CALLABLES='const erase = host.slot.erase, clear = host.slot.clear;' if scalar else '',
-        GLOBAL_IDENTITY='first === key' if row.get('global_key') else 'true',
-        FIRST_OBJECT='key' if row.get('global_key') else '{}',
-        FIRST_KEY='1' if scalar else 'first', OTHER_KEY='1' if scalar else 'other',
-        ITEM_KEY='1' if scalar else 'item', REPLACEMENT_KEY='1' if scalar else 'replacement',
-        DISTINCT='captured.get(1) !== first' if scalar else 'captured.get(first) === first',
-        DELETE_OTHER='erase()' if scalar else 'captured.delete(other)',
-        DELETE_REPLACEMENT='erase()' if scalar else 'captured.delete(replacement)',
-        ABSENT_DELETE_RESULT='0' if scalar else 'false', DELETE_RESULT='1' if scalar else 'true',
-        CLEAR_MAP='clear()' if scalar else 'captured.clear()', CLEAR_RESULT='0' if scalar else 'undefined')
+"""
+    replacements = dict(
+        SAVED_CALLABLES="const erase = host.slot.erase, clear = host.slot.clear;" if scalar else "",
+        GLOBAL_IDENTITY="first === key" if row.get("global_key") else "true",
+        FIRST_OBJECT="key" if row.get("global_key") else "{}",
+        FIRST_KEY="1" if scalar else "first",
+        OTHER_KEY="1" if scalar else "other",
+        ITEM_KEY="1" if scalar else "item",
+        REPLACEMENT_KEY="1" if scalar else "replacement",
+        DISTINCT="captured.get(1) !== first" if scalar else "captured.get(first) === first",
+        DELETE_OTHER="erase()" if scalar else "captured.delete(other)",
+        DELETE_REPLACEMENT="erase()" if scalar else "captured.delete(replacement)",
+        ABSENT_DELETE_RESULT="0" if scalar else "false",
+        DELETE_RESULT="1" if scalar else "true",
+        CLEAR_MAP="clear()" if scalar else "captured.clear()",
+        CLEAR_RESULT="0" if scalar else "undefined",
+    )
     for before, after in replacements.items():
         observed = observed.replace(before, after)
     return observed, 127
@@ -996,8 +1297,8 @@ def object_payload_observer_source(source, name):
 
 def object_payload_lifetime_cpp(cpp, name):
     row = object_argument_cases()[name]
-    scalar = row.get('payload_only')
-    changed = instrument_leaf_objects(cpp) + r'''
+    scalar = row.get("payload_only")
+    changed = instrument_leaf_objects(cpp) + r"""
 int main() {
     using Object = std::shared_ptr<ctnative::identity_object>;
     using Map = ctnative::map_storage<KEY_TYPE, ctnative::object_value>;
@@ -1056,25 +1357,39 @@ int main() {
     if (!ctn_test_maps[1].expired() || !ctn_test_objects[1].expired()) { return 264; }
     return 0;
 }
-'''
-    replacements = dict(KEY_TYPE='js_num' if scalar else 'Object',
-        FIRST_KEY='js_num{1}' if scalar else 'first',
-        OTHER_KEY='js_num{1}' if scalar else 'other',
-        SAVED_CALLABLES='auto erase = table->m_erase; auto clear = table->m_clear;' if scalar else '',
-        DROP_CALLABLES='erase = {}; clear = {};' if scalar else '',
-        CLEAR='if (clear() != 0) { return 265; }' if scalar else 'ctnative::map_clear(map)',
-        DROP_GLOBAL=('if (g_key != ctn_test_objects[0].lock()) { return 266; } g_key.reset();'
-                     if row.get('global_key') else ''),
-        DROP_NEW_GLOBAL=('if (g_key != ctn_test_objects[1].lock()) { return 267; } g_key.reset();'
-                         if row.get('global_key') else ''),
-        OVERWRITE_DELETE=(r'''if (!first_lifetime.expired() || erase() != 1 ||
+"""
+    replacements = dict(
+        KEY_TYPE="js_num" if scalar else "Object",
+        FIRST_KEY="js_num{1}" if scalar else "first",
+        OTHER_KEY="js_num{1}" if scalar else "other",
+        SAVED_CALLABLES=(
+            "auto erase = table->m_erase; auto clear = table->m_clear;" if scalar else ""
+        ),
+        DROP_CALLABLES="erase = {}; clear = {};" if scalar else "",
+        CLEAR="if (clear() != 0) { return 265; }" if scalar else "ctnative::map_clear(map)",
+        DROP_GLOBAL=(
+            "if (g_key != ctn_test_objects[0].lock()) { return 266; } g_key.reset();"
+            if row.get("global_key")
+            else ""
+        ),
+        DROP_NEW_GLOBAL=(
+            "if (g_key != ctn_test_objects[1].lock()) { return 267; } g_key.reset();"
+            if row.get("global_key")
+            else ""
+        ),
+        OVERWRITE_DELETE=(
+            r"""if (!first_lifetime.expired() || erase() != 1 ||
             !other_lifetime.expired() || erase() != 0 || !map->empty()) { return 268; }
         other = std::make_shared<ctnative::identity_object>();
         other_lifetime = other;
         if (get(other) != 1 || map->at(js_num{1}).object != other) { return 269; }
-        other.reset();''' if scalar else r'''auto key = first_lifetime.lock();
+        other.reset();"""
+            if scalar
+            else r"""auto key = first_lifetime.lock();
         if (!key || map->at(key).object != key || !ctnative::map_delete(map, key)) { return 268; }
-        key.reset();'''))
+        key.reset();"""
+        ),
+    )
     for before, after in replacements.items():
         changed = changed.replace(before, after)
     return changed

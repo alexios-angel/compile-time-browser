@@ -22,6 +22,7 @@ and reads promptly - would probably never have found this. It is a latent bug
 fixed on its own terms. Keep both cases: deleting `stall` would leave a test
 that cannot fail, and deleting `drain` would lose the reason the bug hid.
 """
+
 import argparse
 import json
 import re
@@ -43,7 +44,10 @@ def start(repo: Path, page: Path):
         sys.exit(f"ctdrive-reply: {exe} not built - cmake --build build --target ctdrive")
     proc = subprocess.Popen(
         [str(exe), str(page), "--port", "0", "--size", "1024", "768"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=repo,
         env={"CTBROWSER_FONTS": "font8x8", "CTBROWSER_NETWORK": "0", "PATH": "/usr/bin:/bin"},
     )
     deadline = time.time() + 30
@@ -73,10 +77,10 @@ def run_case(port: int, want: int, read_delay: float, rcvbuf: int | None):
         while not buf.endswith(b"\n"):
             got = s.recv(65536)
             if not got:
-                break              # peer closed before a newline: the tail was lost
+                break  # peer closed before a newline: the tail was lost
             buf += got
     except socket.timeout:
-        pass                       # never completed a line: the tail was never sent
+        pass  # never completed a line: the tail was never sent
     s.close()
 
     if not buf.endswith(b"\n"):

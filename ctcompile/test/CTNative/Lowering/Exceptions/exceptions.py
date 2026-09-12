@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 
+from CTNative.harness import find_compilers, run
 
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
@@ -55,20 +55,54 @@ PROGRAMS = {
     "helper_work_limit": (3, {"caught42": 42}),
 }
 # The historical computed_throw source now has the importer's complete catch snapshot.
-POSITIVES = ("guarded", "two_sites", "continuation", "normal_return",
-             "unconditional", "boolean_state", "finally_override", "boolean_payload",
-             "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits",
-             "numeric_catch_helper", "boolean_catch_helper", "string_catch_helper",
-             "protected_nothrow_callee", "protected_transitive_helper",
-             "protected_boolean_helper", "protected_string_helper", "computed_throw")
+POSITIVES = (
+    "guarded",
+    "two_sites",
+    "continuation",
+    "normal_return",
+    "unconditional",
+    "boolean_state",
+    "finally_override",
+    "boolean_payload",
+    "string_payload",
+    "boolean_value",
+    "string_value",
+    "string_sites",
+    "numeric_bits",
+    "numeric_catch_helper",
+    "boolean_catch_helper",
+    "string_catch_helper",
+    "protected_nothrow_callee",
+    "protected_transitive_helper",
+    "protected_boolean_helper",
+    "protected_string_helper",
+    "computed_throw",
+)
 TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
-STRING_LIFETIMES = ("string_value", "string_sites", "string_catch_helper",
-                    "protected_string_helper", "computed_throw")
-DEFAULT_OPTIMIZATIONS = ("guarded", "string_value", "numeric_catch_helper", "string_catch_helper",
-                         "protected_nothrow_callee", "protected_string_helper", "computed_throw")
-CALLEE_EFFECT_REFUSALS = ("effectful_catch_helper", "property_catch_helper",
-                         "recursive_catch_helper", "helper_depth_limit", "helper_work_limit",
-                         "protected_effectful_helper")
+STRING_LIFETIMES = (
+    "string_value",
+    "string_sites",
+    "string_catch_helper",
+    "protected_string_helper",
+    "computed_throw",
+)
+DEFAULT_OPTIMIZATIONS = (
+    "guarded",
+    "string_value",
+    "numeric_catch_helper",
+    "string_catch_helper",
+    "protected_nothrow_callee",
+    "protected_string_helper",
+    "computed_throw",
+)
+CALLEE_EFFECT_REFUSALS = (
+    "effectful_catch_helper",
+    "property_catch_helper",
+    "recursive_catch_helper",
+    "helper_depth_limit",
+    "helper_work_limit",
+    "protected_effectful_helper",
+)
 CPP_HELPER_CALLS = {
     "numeric_catch_helper": {"increment_1": 2, "addTwo_2": 1},
     "boolean_catch_helper": {"invert_1": 1},
@@ -80,44 +114,17 @@ CPP_HELPER_CALLS = {
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
-NATIVE_PIPELINE = ("builtin.module(ctnative-lower-to-emitc{optimize=false},"
-                   "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-                   "canonicalize,ctnative-prune-dead-stores,canonicalize))")
+NATIVE_PIPELINE = (
+    "builtin.module(ctnative-lower-to-emitc{optimize=false},"
+    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
+    "canonicalize,ctnative-prune-dead-stores,canonicalize))"
+)
 DEFAULT_NATIVE_PIPELINE = NATIVE_PIPELINE.replace("{optimize=false}", "")
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
 REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
-
-
-def run(command, *, environment=None, input_text=None):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120,
-                            env=environment, input=input_text)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result
-
-
-def build_path(opt, relative):
-    executable = Path(shutil.which(opt) or opt).resolve()
-    for parent in executable.parents:
-        candidate = parent / relative
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(f"cannot locate {relative} beside {opt}")
-
-
-def node_executable(args):
-    node = args.node or os.environ.get("CTCOMPILE_NODE") or shutil.which("node")
-    if node:
-        return node
-    if args.opt:
-        cache = build_path(args.opt, "CMakeCache.txt").read_text()
-        match = re.search(r"^CTCOMPILE_BOOTSTRAP_NODE:FILEPATH=(.+)$", cache, re.M)
-        if match and Path(match[1]).is_file():
-            return match[1]
-    raise RuntimeError("native exception regression requires independent Node; pass --node")
 
 
 NODE_ORACLE = r"""
@@ -148,8 +155,10 @@ def compare(observed, expected, label):
 
 
 def node_oracle(node, source, expected, label):
-    result = run([node, "-e", NODE_ORACLE], input_text=json.dumps(
-        {"source": source, "names": sorted(expected)}))
+    result = run(
+        [node, "-e", NODE_ORACLE],
+        input_text=json.dumps({"source": source, "names": sorted(expected)}),
+    )
     observed = json.loads(result.stdout)
     compare(observed, expected, label)
     return observed
@@ -158,34 +167,63 @@ def node_oracle(node, source, expected, label):
 def imported_program(args, source, name, denominator, *, skipped=False):
     raw = args.work / f"{name}.raw.mlir"
     raw.unlink(missing_ok=True)
-    imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source),
-                    "--mlir-print-debuginfo", "-o", str(raw)])
+    imported = run(
+        [
+            args.translate,
+            "--ctbrowser-js-to-ctjs",
+            str(source),
+            "--mlir-print-debuginfo",
+            "-o",
+            str(raw),
+        ]
+    )
     text = raw.read_text()
     count = len(CTJS_FUNCTION.findall(text))
     if skipped:
-        if (count != denominator - 1 or "ctjs.skipped" not in text or
-                "function = 1 : i32" not in text or IMPORT_REASON not in text or
-                "function 1 is not compiled: " + IMPORT_REASON not in imported.stderr):
-            raise RuntimeError(f"{name}: missing explicit unsupported source function\n"
-                               f"{text}\n{imported.stderr}")
+        if (
+            count != denominator - 1
+            or "ctjs.skipped" not in text
+            or "function = 1 : i32" not in text
+            or IMPORT_REASON not in text
+            or "function 1 is not compiled: " + IMPORT_REASON not in imported.stderr
+        ):
+            raise RuntimeError(
+                f"{name}: missing explicit unsupported source function\n"
+                f"{text}\n{imported.stderr}"
+            )
     elif count != denominator or "ctjs.skipped" in text or "is not compiled:" in imported.stderr:
-        raise RuntimeError(f"{name}: expected {denominator} complete source functions\n"
-                           f"{text}\n{imported.stderr}")
+        raise RuntimeError(
+            f"{name}: expected {denominator} complete source functions\n"
+            f"{text}\n{imported.stderr}"
+        )
     return raw, count
 
 
 def native_functions(module, denominator, label):
     text = module.read_text()
-    if (CTJS_FUNCTION.search(text) or REFUSAL.search(text) or "ctjs.skipped" in text or
-            len(NATIVE_FUNCTION.findall(text)) != denominator):
+    if (
+        CTJS_FUNCTION.search(text)
+        or REFUSAL.search(text)
+        or "ctjs.skipped" in text
+        or len(NATIVE_FUNCTION.findall(text)) != denominator
+    ):
         raise RuntimeError(f"{label}: expected native {denominator}/{denominator}\n{text}")
 
 
 def prepare(args, raw, name):
     prepared = args.work / f"{name}.prepared.mlir"
     prepared.unlink(missing_ok=True)
-    run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf",
-         "--mlir-print-debuginfo", "-o", str(prepared)])
+    run(
+        [
+            args.opt,
+            str(raw),
+            "--ctjs-resolve-globals",
+            "--ctjs-lift-to-scf",
+            "--mlir-print-debuginfo",
+            "-o",
+            str(prepared),
+        ]
+    )
     return prepared
 
 
@@ -193,8 +231,16 @@ def lower(args, prepared, name, *, default_options=False):
     output = args.work / f"{name}.emitc.mlir"
     output.unlink(missing_ok=True)
     pipeline = DEFAULT_NATIVE_PIPELINE if default_options else NATIVE_PIPELINE
-    run([args.opt, str(prepared), "--pass-pipeline=" + pipeline,
-         "--mlir-print-debuginfo", "-o", str(output)])
+    run(
+        [
+            args.opt,
+            str(prepared),
+            "--pass-pipeline=" + pipeline,
+            "--mlir-print-debuginfo",
+            "-o",
+            str(output),
+        ]
+    )
     return output
 
 
@@ -205,9 +251,12 @@ def operation_count(text, operation):
 def refused(prepared, output, imported, label):
     source, text = prepared.read_text(), output.read_text()
     remaining = len(CTJS_FUNCTION.findall(text))
-    if (not remaining or len(REFUSAL.findall(text)) != remaining or
-            remaining + len(NATIVE_FUNCTION.findall(text)) != imported or
-            re.search(r"\bemitc\.func @main\(", text)):
+    if (
+        not remaining
+        or len(REFUSAL.findall(text)) != remaining
+        or remaining + len(NATIVE_FUNCTION.findall(text)) != imported
+        or re.search(r"\bemitc\.func @main\(", text)
+    ):
         raise RuntimeError(f"{label}: missing named refusal or changed denominator\n{text}")
     # Failed recovery must keep the boxed backend's original handler/throw path.
     # The explicitly skipped nested/finally functions have no imported body;
@@ -230,12 +279,18 @@ def budget_controls(args, prepared):
         name = f"budget-{limit}"
         output = args.work / f"{name}.refused.mlir"
         output.unlink(missing_ok=True)
-        run([args.opt, str(prepared),
-             f"--ctnative-lower-to-emitc=optimize=false exception-max-steps={limit}",
-             "--mlir-print-debuginfo", "-o", str(output)])
+        run(
+            [
+                args.opt,
+                str(prepared),
+                f"--ctnative-lower-to-emitc=optimize=false exception-max-steps={limit}",
+                "--mlir-print-debuginfo",
+                "-o",
+                str(output),
+            ]
+        )
         refused(prepared, output, 2, name)
-        reason = ('ctnative.exception_refusal = '
-                  '"native exception recovery work budget exhausted"')
+        reason = "ctnative.exception_refusal = " '"native exception recovery work budget exhausted"'
         if reason not in output.read_text():
             raise RuntimeError(f"{name}: refusal did not exercise the exception work budget")
 
@@ -245,14 +300,19 @@ def callee_mutation_controls(args, prepared, name, helper_name, denominator):
     # A late helper body change revokes the proof even while the resolver's
     # old report and a forged nonthrowing marker remain attached.
     text = prepared.read_text()
-    helper = re.search(r"ctjs\.func private @" + re.escape(helper_name) + r"\$1\b[\s\S]*?"
-                       r"(?P<returned>^\s*ctjs\.return (?P<value>%\w+))", text, re.M)
+    helper = re.search(
+        r"ctjs\.func private @" + re.escape(helper_name) + r"\$1\b[\s\S]*?"
+        r"(?P<returned>^\s*ctjs\.return (?P<value>%\w+))",
+        text,
+        re.M,
+    )
     if not helper:
         raise RuntimeError("callee mutation control lost its increment helper")
     insertion = f'    ctjs.store_global "lateMutation", {helper["value"]}\n'
-    text = text[:helper.start("returned")] + insertion + text[helper.start("returned"):]
-    text = text.replace("upvalue_count = 0 : i32",
-                        "ctnative.nothrow = true, upvalue_count = 0 : i32")
+    text = text[: helper.start("returned")] + insertion + text[helper.start("returned") :]
+    text = text.replace(
+        "upvalue_count = 0 : i32", "ctnative.nothrow = true, upvalue_count = 0 : i32"
+    )
     changed = args.work / f"{name}.callee-mutated.prepared.mlir"
     changed.write_text(text)
     for label in (f"{name}.callee-mutated", f"{name}.callee-mutated-rerun"):
@@ -269,15 +329,15 @@ def register_flow_controls(args):
     # from the same terminator to the same successor, and an exhausted bounded
     # query. Keep the indirect call and change only its incoming value; stale
     # resolver reports and forged effect markers cannot name the changed call.
-    prefix = '''module {
+    prefix = """module {
   ctjs.func @_script_$0(%this: !ctjs.value, %target: !ctjs.value, %enclosing: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %undefined = ctjs.constant #ctjs.undefined
     %closure = ctjs.create_closure %enclosing[1] this %undefined
     ctjs.store_global "checkedHelper", %closure
     %loaded = ctjs.load_global "checkedHelper"
     %condition = ctjs.truthy %undefined
-'''
-    suffix = '''    %result = ctjs.call %forwarded(%undefined)
+"""
+    suffix = """    %result = ctjs.call %forwarded(%undefined)
     ctjs.return %result
   }
   ctjs.func @checkedHelper$1(%this: !ctjs.value, %target: !ctjs.value, %enclosing: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -285,47 +345,61 @@ def register_flow_controls(args):
     ctjs.return %value
   }
 }
-'''
-    branch = ("    cf.cond_br %condition, ^join(%loaded : !ctjs.value), "
-              "^join(%loaded : !ctjs.value)\n"
-              "  ^join(%forwarded: !ctjs.value):\n")
+"""
+    branch = (
+        "    cf.cond_br %condition, ^join(%loaded : !ctjs.value), "
+        "^join(%loaded : !ctjs.value)\n"
+        "  ^join(%forwarded: !ctjs.value):\n"
+    )
     source = args.work / "register-flow-same.mlir"
     source.write_text(prefix + branch + suffix)
     result = args.work / "register-flow-same.resolved.mlir"
     run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
     positive = result.read_text()
-    if (operation_count(positive, "call_direct") != 1 or operation_count(positive, "call") or
-            "ctjs.func private @checkedHelper$1" not in positive):
+    if (
+        operation_count(positive, "call_direct") != 1
+        or operation_count(positive, "call")
+        or "ctjs.func private @checkedHelper$1" not in positive
+    ):
         raise RuntimeError("same-successor register flow did not prove its common origin")
     report = positive.splitlines()[0]
     if not report.startswith("module attributes {ctjs.globals = "):
         raise RuntimeError("register-flow control lost its resolver report")
     changed = prefix + branch.replace("^join(%loaded", "^join(%undefined", 1) + suffix
     changed = changed.replace("module {", report, 1).replace(
-        "upvalue_count = 0 : i32", "ctnative.nothrow = true, upvalue_count = 0 : i32")
+        "upvalue_count = 0 : i32", "ctnative.nothrow = true, upvalue_count = 0 : i32"
+    )
     for name in ("register-flow-mixed", "register-flow-mixed-rerun"):
         source = args.work / f"{name}.mlir"
         source.write_text(changed)
         result = args.work / f"{name}.resolved.mlir"
         run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
         changed = result.read_text()
-        if (operation_count(changed, "call_direct") or operation_count(changed, "call") != 1 or
-                "ctjs.func private @checkedHelper$1" in changed or
-                "another or unproved incoming value" not in changed):
+        if (
+            operation_count(changed, "call_direct")
+            or operation_count(changed, "call") != 1
+            or "ctjs.func private @checkedHelper$1" in changed
+            or "another or unproved incoming value" not in changed
+        ):
             raise RuntimeError(f"{name}: mixed incoming register retained a callee proof")
     chain = "    cf.br ^chain0(%loaded : !ctjs.value)\n"
     for index in range(2100):
-        chain += (f"  ^chain{index}(%v{index}: !ctjs.value):\n"
-                  f"    cf.br ^chain{index + 1}(%v{index} : !ctjs.value)\n")
+        chain += (
+            f"  ^chain{index}(%v{index}: !ctjs.value):\n"
+            f"    cf.br ^chain{index + 1}(%v{index} : !ctjs.value)\n"
+        )
     chain += "  ^chain2100(%forwarded: !ctjs.value):\n"
     source = args.work / "register-flow-budget.mlir"
     source.write_text(prefix + chain + suffix)
     result = args.work / "register-flow-budget.resolved.mlir"
     run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
     text = result.read_text()
-    if (operation_count(text, "call_direct") or operation_count(text, "call") != 1 or
-            "ctjs.func private @checkedHelper$1" in text or
-            "register-flow work budget was exhausted" not in text):
+    if (
+        operation_count(text, "call_direct")
+        or operation_count(text, "call") != 1
+        or "ctjs.func private @checkedHelper$1" in text
+        or "register-flow work budget was exhausted" not in text
+    ):
         raise RuntimeError("register-flow work exhaustion retained a partial callee proof")
 
 
@@ -340,13 +414,17 @@ def checked_callee_source_flow(raw, prepared, name):
         if operation_count(after, "call"):
             raise RuntimeError(f"{name}: protected helper retained an unresolved call")
     if name == "protected_mixed_callee":
-        if (not operation_count(after, "call") or
-                re.search(r"ctjs\.call_direct @(?:increment|decrement)Protected\$", after) or
-                "another or unproved incoming value" not in after):
+        if (
+            not operation_count(after, "call")
+            or re.search(r"ctjs\.call_direct @(?:increment|decrement)Protected\$", after)
+            or "another or unproved incoming value" not in after
+        ):
             raise RuntimeError("mixed protected callee was named from one incoming edge")
     if name == "protected_escaping_callee":
-        if ("ctjs.func private @identityProtected$1" in after or
-                "the binding is used by ctjs.store_global" not in after):
+        if (
+            "ctjs.func private @identityProtected$1" in after
+            or "the binding is used by ctjs.store_global" not in after
+        ):
             raise RuntimeError("handler-only callee escape retained a closed helper")
 
 
@@ -354,26 +432,24 @@ def generated_helper_limits(fixtures):
     # Both programs really execute and retain exact importer denominators;
     # neither recursion nor unsupported JavaScript supplies the refusal.
     depth = "\n".join(
-        f"function helper{index}(value) {{ return " +
-        (f"helper{index + 1}(value)" if index < 32 else "value") + "; }"
-        for index in range(33))
-    suffix = ("\nfunction helperLimit() { try { throw 42; } "
-              "catch (value) { return helper0(value); } }\n"
-              "var caught42 = helperLimit();\n")
+        f"function helper{index}(value) {{ return "
+        + (f"helper{index + 1}(value)" if index < 32 else "value")
+        + "; }"
+        for index in range(33)
+    )
+    suffix = (
+        "\nfunction helperLimit() { try { throw 42; } "
+        "catch (value) { return helper0(value); } }\n"
+        "var caught42 = helperLimit();\n"
+    )
     (fixtures / "helper_depth_limit.js").write_text(depth + suffix)
-    work = ("function helper0(value) {\n" + "value = value + 0;\n" * 2050 +
-            "return value;\n}")
+    work = "function helper0(value) {\n" + "value = value + 0;\n" * 2050 + "return value;\n}"
     (fixtures / "helper_work_limit.js").write_text(work + suffix)
 
 
 def execution_tools(args):
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("native exception regression requires " + " or ".join(choices))
-        compilers.append(compiler)
-    reference = args.reference or build_path(args.opt, "test/ctcompile-test-native-reference")
+    compilers = find_compilers()
+    reference = args.reference
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("VM symbol detector failed its interpreter positive control")
@@ -383,10 +459,26 @@ def execution_tools(args):
 def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False):
     deduced = args.work / f"{name}.deduced.mlir"
     deduced.unlink(missing_ok=True)
-    run([args.opt, str(module), "--ctnative-print-deduced", "--mlir-print-debuginfo",
-         "-o", str(deduced)])
-    flags = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-Wconversion",
-             "-pedantic", "-ffp-contract=off"]
+    run(
+        [
+            args.opt,
+            str(module),
+            "--ctnative-print-deduced",
+            "--mlir-print-debuginfo",
+            "-o",
+            str(deduced),
+        ]
+    )
+    flags = [
+        "-std=c++23",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wconversion",
+        "-pedantic",
+        "-ffp-contract=off",
+    ]
     for mode, ir in [("explicit", module), ("deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM_SYMBOL.search(cpp) or re.search(r"#include [<\"]ctbrowser/", cpp):
@@ -401,9 +493,13 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             if len(re.findall(calls, cpp, re.M)) != count:
                 raise RuntimeError(f"{name}/{mode}: native output lost its calls to {helper}")
         catches = re.findall(r"\bcatch\s*\(([^)]*)\)", cpp)
-        if any("..." in caught or "std::exception" in caught or
-               not re.search(r"\bconst\b.*&", caught) for caught in catches):
-            raise RuntimeError(f"{name}/{mode}: catch does not preserve the typed JS boundary: {catches}")
+        if any(
+            "..." in caught or "std::exception" in caught or not re.search(r"\bconst\b.*&", caught)
+            for caught in catches
+        ):
+            raise RuntimeError(
+                f"{name}/{mode}: catch does not preserve the typed JS boundary: {catches}"
+            )
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -416,8 +512,11 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             compare(observed, expected_text(expected), f"{name}/{mode}/{compiler}")
             if wrong_state:
                 try:
-                    compare(observed, expected_text(PROGRAMS["guarded"][1]),
-                            "compiled wrong-state control")
+                    compare(
+                        observed,
+                        expected_text(PROGRAMS["guarded"][1]),
+                        "compiled wrong-state control",
+                    )
                 except RuntimeError as error:
                     if "caught42=32" not in str(error):
                         raise
@@ -425,14 +524,30 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
                     raise RuntimeError("executed wrong-state binary escaped result checking")
         if name in STRING_LIFETIMES:
             sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
-            environment = dict(os.environ,
-                               ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                               UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-            run([compilers[1], *flags, "-O1", "-g", "-fno-omit-frame-pointer",
-                 "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-                 str(source), "-o", str(sanitized)])
-            compare(run([str(sanitized)], environment=environment).stdout,
-                    expected_text(expected), f"{name}/{mode}/ASan-UBSan")
+            environment = dict(
+                os.environ,
+                ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+            )
+            run(
+                [
+                    compilers[1],
+                    *flags,
+                    "-O1",
+                    "-g",
+                    "-fno-omit-frame-pointer",
+                    "-fsanitize=address,undefined",
+                    "-fsanitize-address-use-after-scope",
+                    str(source),
+                    "-o",
+                    str(sanitized),
+                ]
+            )
+            compare(
+                run([str(sanitized)], environment=environment).stdout,
+                expected_text(expected),
+                f"{name}/{mode}/ASan-UBSan",
+            )
 
 
 def main():
@@ -440,14 +555,14 @@ def main():
     parser.add_argument("--translate")
     parser.add_argument("--opt")
     parser.add_argument("--reference")
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     generated_helper_limits(args.fixtures)
-    node = node_executable(args)
+    node = args.node
     oracles = {}
     for name, (_, expected) in PROGRAMS.items():
         source = (args.fixtures / f"{name}.js").read_text()
@@ -468,20 +583,26 @@ def main():
     (args.work / "node.json").write_text(json.dumps(oracles, indent=2) + "\n")
     (args.work / "wrong-state.js").write_text(wrong)
     if args.oracle_only:
-        print(f"native exceptions: {len(PROGRAMS)} independent Node programs and "
-              "executed wrong-state control agree")
+        print(
+            f"native exceptions: {len(PROGRAMS)} independent Node programs and "
+            "executed wrong-state control agree"
+        )
         return
-    if not args.translate or not args.opt:
-        parser.error("--translate and --opt are required unless --oracle-only")
+    if not (args.translate and args.opt and args.reference):
+        parser.error("--translate, --opt and --reference are required unless --oracle-only")
     reference, compilers, nm = execution_tools(args)
     register_flow_controls(args)
     report = []
     for name, (denominator, expected) in PROGRAMS.items():
         source = args.fixtures / f"{name}.js"
-        compare(run([str(reference), str(source)]).stdout, expected_text(expected),
-                f"{name}/interpreter")
-        raw, imported = imported_program(args, source, name, denominator,
-                                         skipped=name in IMPORT_REFUSALS)
+        compare(
+            run([str(reference), str(source)]).stdout,
+            expected_text(expected),
+            f"{name}/interpreter",
+        )
+        raw, imported = imported_program(
+            args, source, name, denominator, skipped=name in IMPORT_REFUSALS
+        )
         prepared = prepare(args, raw, name)
         checked_callee_source_flow(raw, prepared, name)
         output = lower(args, prepared, name)
@@ -489,8 +610,10 @@ def main():
             # The overriding finally also leaves an unreachable synthetic
             # rethrow in raw bytecode; recovery must prove that tail dead.
             throw_sites = 2 if name in TWO_THROW_SITES else 1
-            if (operation_count(prepared.read_text(), "push_handler") != 1 or
-                    operation_count(prepared.read_text(), "throw") != throw_sites):
+            if (
+                operation_count(prepared.read_text(), "push_handler") != 1
+                or operation_count(prepared.read_text(), "throw") != throw_sites
+            ):
                 raise RuntimeError(f"{name}: source exception paths disappeared before recovery")
             native_functions(output, denominator, name)
             standalone(args, output, name, expected, compilers, nm)
@@ -507,31 +630,43 @@ def main():
                 standalone(args, defaults, default_name, expected, compilers, nm)
         else:
             refused(prepared, output, imported, name)
-        report.append({"name": name, "source_functions": denominator, "imported": imported,
-                       "native": len(NATIVE_FUNCTION.findall(output.read_text())),
-                       "refusals": REFUSAL.findall(output.read_text()), "observations": expected,
-                       "interpreter_agrees": True,
-                       "interpreter_observations": expected})
+        report.append(
+            {
+                "name": name,
+                "source_functions": denominator,
+                "imported": imported,
+                "native": len(NATIVE_FUNCTION.findall(output.read_text())),
+                "refusals": REFUSAL.findall(output.read_text()),
+                "observations": expected,
+                "interpreter_agrees": True,
+                "interpreter_observations": expected,
+            }
+        )
 
     # This altered source executes the specific wrong throw-site state that
     # restoring the try-entry registers would produce. Run its generated C++,
     # too; the same observation checker must reject it against guarded's oracle.
     wrong_source = args.work / "wrong-state.js"
-    compare(run([str(reference), str(wrong_source)]).stdout, expected_text(wrong_expected),
-            "wrong-state/interpreter")
+    compare(
+        run([str(reference), str(wrong_source)]).stdout,
+        expected_text(wrong_expected),
+        "wrong-state/interpreter",
+    )
     raw, _ = imported_program(args, wrong_source, "wrong-state", 2)
     output = lower(args, prepare(args, raw, "wrong-state"), "wrong-state")
     native_functions(output, 2, "wrong-state")
     standalone(args, output, "wrong-state", wrong_expected, compilers, nm, wrong_state=True)
     (args.work / "native.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(f"native exceptions: {len(POSITIVES)} complete native programs plus numeric/string defaults, "
-          "throw-site state/two throws/catch continuation/normal return/unconditional "
-          "throw/boolean and owning string payloads/state/closed catch and protected helpers/"
-          "finally override/NaN/negative zero; "
-          "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
-          f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "
-          "refusals, callee mutation/rerun/depth/work controls, zero/tight recovery budget "
-          "refusals and executed wrong-state control; null-property refusal agrees with Node")
+    print(
+        f"native exceptions: {len(POSITIVES)} complete native programs plus numeric/string defaults, "
+        "throw-site state/two throws/catch continuation/normal return/unconditional "
+        "throw/boolean and owning string payloads/state/closed catch and protected helpers/"
+        "finally override/NaN/negative zero; "
+        "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
+        f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "
+        "refusals, callee mutation/rerun/depth/work controls, zero/tight recovery budget "
+        "refusals and executed wrong-state control; null-property refusal agrees with Node"
+    )
 
 
 if __name__ == "__main__":

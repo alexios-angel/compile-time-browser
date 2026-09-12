@@ -1,1 +1,1 @@
-# RUN: python3 %S/objects.py --translate ctjs-translate --opt ctjs-opt --work %t
+# RUN: python3 %S/objects.py --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference

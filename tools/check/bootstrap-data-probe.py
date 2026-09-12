@@ -18,7 +18,6 @@ import re
 import subprocess
 import sys
 
-
 FACTORY = '}(this, function() {\n    "use strict";\n    const t = new Map,\n        e = {\n'
 BOUNDARY = '\n        },\n        i = "transitionend",'
 ENVIRONMENTS = {
@@ -84,7 +83,7 @@ def extract(source: str) -> tuple[str, dict]:
         unique_position(wrapper, marker, "UMD publication branch")
     if boundary <= factory + len(FACTORY):
         raise ProbeError("source structure changed: Data must follow the UMD factory")
-    data = source[factory + len(FACTORY):boundary]
+    data = source[factory + len(FACTORY) : boundary]
     for marker in ("set(e, i, n) {", "get: (e, i) =>", "remove(e, i) {"):
         unique_position(data, marker, "Data method")
     # Keep everything through Data's closing brace. Its declaration separator
@@ -103,7 +102,8 @@ def generate(fragment: str, mode: str) -> str:
     prelude, api = ENVIRONMENTS[mode]
     delayed = (
         'var traceDelayed = typeof pending === "function" ? 1 : 0; var published = pending();\n'
-        if mode == "amd" else ""
+        if mode == "amd"
+        else ""
     )
     # The reference installs no console. Supply only the host's error sink;
     # Bootstrap itself still decides when to reject and formats the message.
@@ -113,7 +113,12 @@ var console = { error: function(message) {
     traceErrorMessage = message === "Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert." ? 1 : 0;
 } };
 """
-    return prelude + console + fragment + delayed + f"""var element = {{}}; var other = {{}}; var absent = {{}};
+    return (
+        prelude
+        + console
+        + fragment
+        + delayed
+        + f"""var element = {{}}; var other = {{}}; var absent = {{}};
 var traceAbsentGet = {api}.get(absent, "bs.alert") === null ? 1 : 0;
 var traceAbsentRemove = {api}.remove(absent, "bs.alert") === undefined ? 1 : 0;
 {api}.set(element, "bs.alert", 42);
@@ -139,12 +144,15 @@ var traceReinsertedIdentity = {api}.get(element, "bs.collapse") === instance ? 1
 var traceOldKeyAfterReinsert = {api}.get(element, "bs.alert") === null ? 1 : 0;
 var traceOtherAfterReinsert = {api}.get(other, "bs.alert");
 """
+    )
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess:
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
-        raise ProbeError(f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}")
+        raise ProbeError(
+            f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"
+        )
     return result
 
 
@@ -163,12 +171,14 @@ def check(args: argparse.Namespace) -> None:
     stem = args.work / f"bootstrap-data-{args.mode}"
     program = stem.with_suffix(".js")
     program.write_bytes(generated.encode("utf-8"))
-    provenance.update({
-        "mode": args.mode,
-        "vendor": str(args.bootstrap),
-        "program": str(program),
-        "program_sha256": sha256(generated),
-    })
+    provenance.update(
+        {
+            "mode": args.mode,
+            "vendor": str(args.bootstrap),
+            "program": str(program),
+            "program_sha256": sha256(generated),
+        }
+    )
     stem.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     if args.generate_only:
         print(f"bootstrap-data ({args.mode}): generated {program}")
@@ -188,15 +198,31 @@ def check(args: argparse.Namespace) -> None:
         if observed.get(name) != value:
             raise ProbeError(f"observation {name}: expected {value}, got {observed.get(name)!r}")
     if observed.keys() != expected.keys():
-        raise ProbeError(f"unexpected reference observations: {sorted(observed.keys() - expected.keys())}")
+        raise ProbeError(
+            f"unexpected reference observations: {sorted(observed.keys() - expected.keys())}"
+        )
 
     claims_path = stem.with_suffix(".claims.json")
-    claims = run([
-        sys.executable, str(Path(__file__).with_name("native-claims.py")),
-        "--translate", args.translate, "--opt", args.opt,
-        "--corpus", str(program), "--name", f"bootstrap-data-{args.mode}",
-        "--json", str(claims_path), "--min-claimed", "0", "--timeout", "120",
-    ])
+    claims = run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("native-claims.py")),
+            "--translate",
+            args.translate,
+            "--opt",
+            args.opt,
+            "--corpus",
+            str(program),
+            "--name",
+            f"bootstrap-data-{args.mode}",
+            "--json",
+            str(claims_path),
+            "--min-claimed",
+            "0",
+            "--timeout",
+            "120",
+        ]
+    )
     stem.with_suffix(".claims.log").write_text(claims.stdout + claims.stderr)
     census = json.loads(claims_path.read_text())
     # Script entry + UMD wrapper + factory + three Data methods + the host

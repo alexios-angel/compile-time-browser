@@ -96,7 +96,6 @@ void lowering::declareGlobals() {
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
-    module->setAttr("ctnative.constexpr_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
     needsString |= needsBooleanString;
     needsNullableString |= needsStringVector || needsNullableMapKeys;

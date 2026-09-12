@@ -308,18 +308,8 @@ struct item {
 }
 
 [[nodiscard]] bool is_wide_keyword(std::string_view word) {
-    for (const std::string_view k :
-         {"initial", "inherit", "unset", "revert", "revert-layer", "default"}) {
-        if (ascii_iequals(word, k)) { return true; }
-    }
-    return false;
-}
-
-[[nodiscard]] bool in_names(std::string_view name, std::initializer_list<std::string_view> list) {
-    for (const std::string_view one : list) {
-        if (ascii_iequals(name, one)) { return true; }
-    }
-    return false;
+    return ascii_iequals_any(word,
+                             {"initial", "inherit", "unset", "revert", "revert-layer", "default"});
 }
 
 // One item against one type, serialised on a match: a dimension with its unit
@@ -400,8 +390,8 @@ struct item {
         if (t.type == token_type::function) {
             std::string_view name = s.text_of(t);
             name.remove_suffix(1);
-            if (in_names(name, {"rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch",
-                                "color", "color-mix", "light-dark"})) {
+            if (ascii_iequals_any(name, {"rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab",
+                                         "oklch", "color", "color-mix", "light-dark"})) {
                 return text;
             }
         }
@@ -411,10 +401,10 @@ struct item {
         if (t.type != token_type::function) { return std::nullopt; }
         std::string_view name = s.text_of(t);
         name.remove_suffix(1);
-        if (in_names(name, {"linear-gradient", "radial-gradient", "conic-gradient",
-                            "repeating-linear-gradient", "repeating-radial-gradient",
-                            "repeating-conic-gradient", "image-set", "image", "cross-fade",
-                            "element", "paint"})) {
+        if (ascii_iequals_any(name, {"linear-gradient", "radial-gradient", "conic-gradient",
+                                     "repeating-linear-gradient", "repeating-radial-gradient",
+                                     "repeating-conic-gradient", "image-set", "image", "cross-fade",
+                                     "element", "paint"})) {
             // ...with no url() anywhere inside it.
             for (std::size_t i = it.first; i <= it.last; ++i) {
                 const css_token & inner = s.tokens[i];
@@ -431,11 +421,12 @@ struct item {
         if (t.type != token_type::function) { return std::nullopt; }
         std::string_view name = s.text_of(t);
         name.remove_suffix(1);
-        if (in_names(name, {"matrix",     "translate", "translatex",  "translatey", "scale",
-                            "scalex",     "scaley",    "rotate",      "skew",       "skewx",
-                            "skewy",      "matrix3d",  "translate3d", "translatez", "scale3d",
-                            "scalez",     "rotate3d",  "rotatex",     "rotatey",    "rotatez",
-                            "perspective"})) {
+        if (ascii_iequals_any(name,
+                              {"matrix",     "translate", "translatex",  "translatey", "scale",
+                               "scalex",     "scaley",    "rotate",      "skew",       "skewx",
+                               "skewy",      "matrix3d",  "translate3d", "translatez", "scale3d",
+                               "scalez",     "rotate3d",  "rotatex",     "rotatey",    "rotatez",
+                               "perspective"})) {
             return text;
         }
         return std::nullopt;

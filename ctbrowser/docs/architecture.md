@@ -66,7 +66,7 @@ script --------- bindings ------------------------------ shell drives all of it
 
 | subsystem | target | owns | start in |
 |---|---|---|---|
-| `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, epochs, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `epoch.hpp` |
+| `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `handle.hpp` |
 | `dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.hpp` 318, `document.hpp` 213 |
 | `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 333 |
 | `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `algorithm.hpp` 561, `box.hpp` 530 |
@@ -118,9 +118,11 @@ its header, and the header did not change:
   three-line lambda, which each new function re-creates.
 - `ctbrowser/lib/Shell/bindings/document/` — eight, from a 3,071-line `document.cpp`
   (2026-09-08), with `internal.hpp` beside them holding the name productions
-  (namespace URIs, qualified names, the element/doctype/attribute/XML Name
-  rules) every file needs, inline. No function was split and the public header
-  did not change.
+  (the element/doctype/XML Name rules) every file needs, inline; the rules
+  `element/` applies too (qualified names, attribute names, namespace
+  prefixes) are in `bindings/names.hpp`, the one header both directories'
+  `internal.hpp` include, and the namespace URIs are `dom/xml.hpp`'s. No
+  function was split and the public header did not change.
 - `ctbrowser/lib/Shell/bindings/stylesheets/` — six, from a 2,814-line
   `stylesheets.cpp` (2026-09-08). Its 890-line anonymous namespace was the hard
   part: the helpers more than one file needs have external linkage in
@@ -190,7 +192,8 @@ its header, and the header did not change:
   before the callback-taking methods, the halves share only the constructor and
   the prototype passed across it, and every property lands in the order it did.
   `list_iterator` gained external linkage in `ctbrowser::script::detail` so Map
-  and Set can share it; the directory's own `internal.hpp` declares both.
+  and Set can share it; `../internal.hpp` declares both (the directory's own
+  header went on 2026-09-12 once that was all it held).
 - `ctbrowser/lib/Script/builtins/objects/` — five, from 1,429. The four abstract
   operations Object and Reflect both answer through (OwnPropertyKeys,
   [[GetPrototypeOf]], FromPropertyDescriptor, the descriptor refusals) are

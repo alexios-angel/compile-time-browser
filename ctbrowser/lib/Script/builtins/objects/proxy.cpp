@@ -10,7 +10,6 @@
 
 namespace ctbrowser::script::builtins_detail {
 
-using detail::descriptor_object;
 using detail::key_filter;
 using detail::own_property_names;
 using detail::prototype_of;
@@ -61,7 +60,7 @@ void install_proxy(context & cx) {
         const value proxy = proxy_create(c, a);
         if (!proxy.is_kind(heap_kind::proxy)) { return value::undefined(); }
         const context::rooted keep{c, proxy};
-        native_object * revoke = detail::cx_native(c, "", native_fn{});
+        native_object * revoke = c.allocate<native_object>("", native_fn{});
         revoke->is_constructor = false;
         revoke->fn = [revoke](context &, std::span<value>) {
             // `revoke` is alive for the duration of its own call; the pointer
@@ -184,7 +183,7 @@ void install_proxy(context & cx) {
         if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
             return value::undefined();
         }
-        return value::object(descriptor_object(c, found));
+        return c.from_property_descriptor(found);
     });
     method(cx, reflect, "deleteProperty", 2, [](context & c, std::span<value> a) {
         return value::boolean(c.delete_own_property(arg_at(a, 0), c.to_string(arg_at(a, 1))));

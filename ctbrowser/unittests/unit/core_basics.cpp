@@ -1,5 +1,4 @@
-// ctbrowser.core: the single-threaded contracts. The concurrent ones live in
-// stress_slab.cpp, which runs under TSan.
+// ctbrowser.core: handles, the slab, atoms, geometry, the scheduler.
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -73,8 +72,7 @@ void test_handle() {
 }
 
 void test_slab_basics() {
-    epoch_domain domain;
-    slab<std::string, thing_tag> s{domain};
+    slab<std::string, thing_tag> s;
 
     CHECK_EQ(s.size(), 0u);
     const thing_id a = s.insert("alpha");
@@ -85,7 +83,6 @@ void test_slab_basics() {
     CHECK_EQ(*s.get(b), std::string{"beta"});
     CHECK(s.get(thing_id{}) == nullptr);
 
-    // erase is IMMEDIATE for readers even though destruction is deferred
     CHECK(s.erase(a));
     CHECK(s.get(a) == nullptr);
     CHECK_EQ(s.size(), 1u);
@@ -96,13 +93,11 @@ void test_slab_basics() {
 // The whole point of generations: a recycled slot must not answer to the
 // handle that used to name it.
 void test_stale_handle_does_not_resolve() {
-    epoch_domain domain;
-    slab<std::string, thing_tag> s{domain};
+    slab<std::string, thing_tag> s;
 
     const thing_id first = s.insert("first");
     const std::uint32_t slot = first.slot;
-    CHECK(s.erase(first));
-    CHECK_EQ(s.collect(), 1u); // no readers pinned, so it recycles at once
+    CHECK(s.erase(first)); // destroys and recycles the slot at once
 
     const thing_id second = s.insert("second");
     CHECK_EQ(second.slot, slot);                  // the slot really was reused...
@@ -111,25 +106,8 @@ void test_stale_handle_does_not_resolve() {
     CHECK_EQ(*s.get(second), std::string{"second"});
 }
 
-// A pinned reader must hold off recycling, or its pointer dangles.
-void test_pin_defers_recycling() {
-    epoch_domain domain;
-    slab<std::string, thing_tag> s{domain};
-
-    const thing_id id = s.insert("pinned");
-    {
-        const auto guard = domain.pin();
-        CHECK(s.erase(id));
-        CHECK_EQ(s.collect(), 0u); // a reader from before the erase is live
-        CHECK_EQ(s.pending(), 1u);
-    }
-    CHECK_EQ(s.collect(), 1u); // it left; now it recycles
-    CHECK_EQ(s.pending(), 0u);
-}
-
 void test_slab_grows_past_a_chunk() {
-    epoch_domain domain;
-    slab<int, thing_tag> s{domain};
+    slab<int, thing_tag> s;
     constexpr int n = 2 * static_cast<int>(decltype(s)::chunk_size) + 1; // spans three chunks
     std::vector<thing_id> ids;
     for (int i = 0; i < n; ++i) { ids.push_back(s.insert(i)); }
@@ -138,27 +116,6 @@ void test_slab_grows_past_a_chunk() {
         const int * v = s.get(ids[static_cast<std::size_t>(i)]);
         CHECK(v != nullptr && *v == i); // every handle still resolves after growth
     }
-}
-
-void test_epoch_retire() {
-    epoch_domain domain;
-    int destroyed = 0;
-    static int * counter = nullptr;
-    counter = &destroyed;
-
-    auto * payload = new int{7};
-    domain.retire(payload, [](void * p) {
-        ++(*counter);
-        delete static_cast<int *>(p);
-    });
-    CHECK_EQ(domain.pending(), 1u);
-    {
-        const auto guard = domain.pin();
-        CHECK_EQ(domain.reclaim(), 0u); // pinned: nothing may be destroyed
-    }
-    CHECK_EQ(domain.reclaim(), 1u);
-    CHECK_EQ(destroyed, 1);
-    CHECK_EQ(domain.pending(), 0u);
 }
 
 void test_atoms() {
@@ -299,6 +256,31 @@ void test_base64_leniency() {
     CHECK_EQ(ctbrowser::base64_decode("a@G#V$s%b&G*8"), std::string{"hello"});
 }
 
+// decode_utf8 is the one decoder behind the font walk, dir=auto, XML names and
+// CharacterData's UTF-16 offsets. It checks continuation FORM, not range: a
+// WTF-8 lone surrogate must come back as the surrogate (CharacterData splits
+// pairs), and a truncated sequence is the lead byte, one byte wide.
+void test_decode_utf8() {
+    std::size_t at = 0;
+    const auto next = [&](std::string_view text) {
+        return static_cast<std::uint32_t>(ctbrowser::decode_utf8(text, at));
+    };
+    const std::string_view mixed = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x8C\xA0";
+    CHECK_EQ(next(mixed), 0x61u); // 'a'
+    CHECK_EQ(next(mixed), 0xE9u);
+    CHECK_EQ(next(mixed), 0x20ACu);
+    CHECK_EQ(next(mixed), 0x1F320u);
+    CHECK_EQ(at, std::size_t{10});
+    at = 0;
+    CHECK_EQ(next("\xED\xA0\x80"), 0xD800u); // a lone surrogate passes
+    at = 0;
+    CHECK_EQ(next("\xE2\x82"), 0xE2u); // truncated: the lead byte, one wide
+    CHECK_EQ(at, std::size_t{1});
+    at = 0;
+    CHECK_EQ(next("\xC3\x41"), 0xC3u); // bad continuation: likewise
+    CHECK_EQ(at, std::size_t{1});
+}
+
 void test_allocator_is_mimalloc() {
     // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
     // supported configuration and says "system" honestly rather than being
@@ -315,13 +297,12 @@ void test_allocator_is_mimalloc() {
 
 int main() {
     test_base64_leniency();
+    test_decode_utf8();
     test_allocator_is_mimalloc();
     test_handle();
     test_slab_basics();
     test_stale_handle_does_not_resolve();
-    test_pin_defers_recycling();
     test_slab_grows_past_a_chunk();
-    test_epoch_retire();
     test_atoms();
     test_geometry();
     test_scheduler();

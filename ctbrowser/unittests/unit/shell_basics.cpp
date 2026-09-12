@@ -41,13 +41,6 @@ using ctbrowser_test::find_id;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 constexpr std::string_view demo_page = R"(
 <!doctype html><html><head><title>A Title</title><style>
 .card { background-color: #ffffff; padding: 8px }
@@ -62,10 +55,8 @@ constexpr std::string_view demo_page = R"(
 
 // How many tiles the renderer has drawn. The evidence for "this frame did no
 // raster" has to come from the backend, not from a stopwatch.
-[[nodiscard]] std::size_t raster_calls(browser & page) {
-    const raster::software_backend * backend =
-        const_cast<raster::renderer &>(page.rendering_with()).get_if<raster::software_backend>();
-    return backend == nullptr ? 0 : backend->raster_calls();
+[[nodiscard]] std::size_t raster_calls(const browser & page) {
+    return page.rendering_with().raster_calls();
 }
 
 // --- the UA stylesheet ----------------------------------------------------
@@ -73,7 +64,7 @@ constexpr std::string_view demo_page = R"(
 void test_ua_stylesheet_applies() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><h1>Big</h1><p>Small</p><script>var x = 1;</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // An <h1> is 32px and a <p> is 16px because the UA sheet says so, not
     // because anything in the document does. Without it every document is one
@@ -94,7 +85,7 @@ void test_script_and_style_render_nothing() {
     page.load_html("<html><head><style>p { color: red }</style></head>"
                    "<body><script>var secret = 'do not render me';</script>"
                    "<p>visible</p></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     std::string all_text;
     const auto walk = [&](auto && self, const layout::fragment & f) -> void {
@@ -120,11 +111,11 @@ void test_title_is_extracted() {
 void test_an_idle_frame_does_nothing() {
     browser page{browser_options{400, 300}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the first frame renders");
+    page.frame();
     const std::size_t after_first = raster_calls(page);
     check(after_first > 0, "and it rastered something");
 
-    check(page.frame().has_value(), "an idle frame renders");
+    page.frame();
     // A browser that repaints when nothing changed is a browser that never
     // idles. This is the cheapest possible check that it does.
     check(raster_calls(page) == after_first, "an idle frame rasters NOTHING");
@@ -133,13 +124,13 @@ void test_an_idle_frame_does_nothing() {
 void test_a_scroll_only_recomposites() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the first frame renders");
+    page.frame();
     const std::size_t after_first = raster_calls(page);
     check(page.max_scroll() > 0, "the page is taller than the viewport");
 
     page.scroll_by(20);
     check(page.scroll_y() == 20, "the scroll took effect");
-    check(page.frame().has_value(), "the scrolled frame renders");
+    page.frame();
     // THE claim of the whole architecture: the PAGE's tiles are in content
     // space and survive a scroll. the previous engine re-ran layout here.
     //
@@ -160,17 +151,17 @@ void test_a_scroll_only_recomposites() {
     no_chrome.scrollbar_width = 0;
     browser bare{no_chrome};
     bare.load_html(demo_page);
-    check(bare.frame().has_value(), "the bare page renders");
+    bare.frame();
     const std::size_t bare_first = raster_calls(bare);
     bare.scroll_by(20);
-    check(bare.frame().has_value(), "the bare scrolled frame renders");
+    bare.frame();
     check(raster_calls(bare) == bare_first, "a scroll with no scrollbar rasters NOTHING");
 }
 
 void test_scroll_clamps_to_the_document() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the frame renders");
+    page.frame();
     page.scroll_to(-100);
     check(page.scroll_y() == 0, "scrolling above the top clamps");
     page.scroll_to(1e9f);
@@ -182,11 +173,11 @@ void test_scroll_clamps_to_the_document() {
 void test_a_resize_relayouts() {
     browser page{browser_options{600, 300}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the wide frame renders");
+    page.frame();
     const float wide_height = page.content_height();
 
     page.resize(200, 300);
-    check(page.frame().has_value(), "the narrow frame renders");
+    page.frame();
     // Narrower means more wrapping means taller. If the resize had not
     // re-laid-out, this would be unchanged - which is the bug a resize test
     // exists to catch.
@@ -198,10 +189,10 @@ void test_a_new_document_starts_clean() {
     browser page{browser_options{300, 300}};
     page.load_html("<html><head><style>p { background-color: #ff0000 }</style></head>"
                    "<body><p>first</p></body></html>");
-    check(page.frame().has_value(), "the first document renders");
+    page.frame();
 
     page.load_html("<html><body><p>second</p></body></html>");
-    check(page.frame().has_value(), "the second document renders");
+    page.frame();
     check(page.title().empty(), "the old title is gone");
 
     // The first page's author rules must not survive. They would, if the style
@@ -222,7 +213,7 @@ void test_a_new_document_starts_clean() {
 void test_hit_testing_follows_the_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the frame renders");
+    page.frame();
 
     const node_id top = page.hit_test(10, 10);
     check(static_cast<bool>(top), "something is under the top-left corner");
@@ -248,7 +239,7 @@ void test_transparent_boxes_are_hit_regions() {
         body { margin: 0 }
         #target { width: 40px; height: 40px }
         </style></head><body><div id=target></div></body></html>)");
-    check(page.frame().has_value(), "the transparent hit-test frame renders");
+    page.frame();
 
     // A transparent box emits no fill command. It remains an event target:
     // hit regions describe layout participation, independently of visible ink.
@@ -267,7 +258,7 @@ void test_hit_testing_follows_stacking_order() {
         </style></head><body><div id=stage>
         <div id=high></div><div id=low></div>
         </div></body></html>)");
-    check(page.frame().has_value(), "the stacked hit-test frame renders");
+    page.frame();
 
     // `low` is later in source order but `high` is later in paint order. A
     // reverse fragment-tree walk therefore gives the wrong event target.
@@ -286,7 +277,7 @@ void test_hit_testing_respects_escaped_context_clips() {
         </style></head><body>
         <div id=clip><div id=high></div></div><div id=one></div>
         </body></html>)");
-    check(page.frame().has_value(), "the clipped hit-test frame renders");
+    page.frame();
 
     // The z=2 child escapes its ordinary ancestor into the root stacking
     // context, but its ancestor's overflow clip still applies. It wins inside
@@ -795,7 +786,7 @@ void test_each_classic_script_is_its_own_program() {
 void test_wheel_and_keys_scroll() {
     browser page{browser_options{400, 200}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the frame renders");
+    page.frame();
 
     check(page.handle(input_event::wheel_by(-1)), "a wheel notch is handled");
     check(page.scroll_y() > 0, "and scrolls down");
@@ -815,7 +806,7 @@ void test_hover_restyles() {
     page.load_html("<html><head><style>#a { background-color: #00ff00; padding: 20px } "
                    "#a:hover { background-color: #ff0000 } </style></head>"
                    "<body><div id=a>hover me</div></body></html>");
-    check(page.frame().has_value(), "the frame renders");
+    page.frame();
 
     const auto count_fill = [&](color want) {
         std::size_t n = 0;
@@ -830,34 +821,28 @@ void test_hover_restyles() {
     check(count_fill(color::rgba(0, 255, 0)) == 1, "the element paints its normal background");
 
     check(page.handle(input_event::mouse_move_to(10, 30)), "moving onto it is a change");
-    check(page.frame().has_value(), "the hovered frame renders");
+    page.frame();
     check(count_fill(color::rgba(255, 0, 0)) == 1, ":hover applied");
     check(count_fill(color::rgba(0, 255, 0)) == 0, "and the normal background is gone");
 
     check(page.handle(input_event::mouse_move_to(390, 290)), "moving off it is a change");
-    check(page.frame().has_value(), "the unhovered frame renders");
+    page.frame();
     check(count_fill(color::rgba(0, 255, 0)) == 1, ":hover unapplied when the pointer leaves");
 }
 
 void test_resize_keeps_the_renderer() {
     browser page{browser_options{400, 300}};
     page.load_html(demo_page);
-    check(page.frame().has_value(), "the page renders");
-
-    // Stand in for "the app chose the GPU": adopt a *named* renderer and check
-    // the name survives. resize() used to build a fresh software backend, so an
-    // app that picked hardware dropped to software on its first window resize
-    // and never came back.
-    page.use_renderer(raster::renderer::software(400, 300));
-    const std::string before{page.rendering_with().name()};
+    page.frame();
+    // resize() RESIZES the backend rather than building a fresh one, so the
+    // fonts and the raster counter it was given survive a window resize.
+    const std::size_t drawn = raster_calls(page);
     page.resize(700, 500);
-    check(page.frame().has_value(), "the resized frame renders");
-    check(page.rendering_with().name() == before, "resize keeps the renderer it was given");
+    page.frame();
+    check(raster_calls(page) > drawn, "resize keeps the renderer, and its counter, it was given");
     check(page.width() == 700 && page.height() == 500, "and the viewport followed");
-
-    const auto image = page.read_pixels();
-    check(image.has_value() && image->width() == 700 && image->height() == 500,
-          "and the target really is the new size");
+    const raster::surface & image = page.read_pixels();
+    check(image.width() == 700 && image.height() == 500, "and the target really is the new size");
 }
 
 void test_background_is_honoured() {
@@ -867,11 +852,9 @@ void test_background_is_honoured() {
     // A page with no body background shows the canvas colour. browser_options
     // carried this field and nothing read it.
     page.load_html("<html><body></body></html>");
-    check(page.frame().has_value(), "the page renders");
-    const auto image = page.read_pixels();
-    check(image.has_value(), "the frame reads back");
-    if (!image) { return; }
-    check(image->row(30)[40] == 0xFF0000FFu, "browser_options::background is the page canvas");
+    page.frame();
+    check(page.read_pixels().row(30)[40] == 0xFF0000FFu,
+          "browser_options::background is the page canvas");
 }
 
 // A browser holds three `this`-capturing lambdas; moving one would leave them
@@ -886,10 +869,9 @@ void test_rendering_is_reproducible() {
     const auto render = [](std::vector<std::uint32_t> & into) {
         browser page{browser_options{320, 240}};
         page.load_html(demo_page);
-        (void)page.frame();
-        const auto image = page.read_pixels();
-        if (!image) { return false; }
-        into.assign(image->pixels().begin(), image->pixels().end());
+        page.frame();
+        const raster::surface & image = page.read_pixels();
+        into.assign(image.pixels().begin(), image.pixels().end());
         return true;
     };
     std::vector<std::uint32_t> first, second;

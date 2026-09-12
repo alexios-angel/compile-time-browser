@@ -26,11 +26,10 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "ratchet.hpp"
 
 #include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,34 +67,9 @@ enum rung {
     }
 }
 
-struct measurement {
-    int level = rung_unread;
-    std::string blocker;
+struct measurement : ctbrowser_test::measurement {
     double lex_ms = 0, parse_ms = 0, compile_ms = 0, page_ms = 0;
-    bool stopped = false;
-
-    void fail_at(int at, std::string why) {
-        if (stopped) { return; }
-        level = at - 1;
-        // The first line is the blocker; a stack below it is CONTEXT that moves
-        // with edits having nothing to do with the cause, so it is printed and
-        // not compared. Same rule as the p5 ratchet.
-        const std::size_t newline = why.find('\n');
-        blocker = newline == std::string::npos ? std::move(why) : why.substr(0, newline);
-        stopped = true;
-    }
-    void reached(int at) {
-        if (!stopped) { level = at; }
-    }
 };
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 class stopwatch {
 public:
@@ -153,19 +127,9 @@ private:
     m.reached(rung_page);
 
     // Everything past here is asked THROUGH the page, because the answers only
-    // it has. A throw is caught and reported rather than left to unwind.
-    // The console is append-only, so the answer is whatever was added - not
-    // `back()`, which would pick up anything Phaser logged in between.
-    const auto ask = [&page](const char * expression) -> std::string {
-        const std::size_t before = page.bindings().console_output().size();
-        (void)page.run_script(std::string{"try { console.log('=' + String("} + expression +
-                              ")); } catch (e) { console.log('=threw: ' + (e && e.message ? "
-                              "e.message : e)); }");
-        const auto & said = page.bindings().console_output();
-        for (std::size_t i = said.size(); i-- > before;) {
-            if (said[i].starts_with("=")) { return said[i].substr(1); }
-        }
-        return "<no answer>";
+    // it has.
+    const auto ask = [&page](std::string_view expression) {
+        return ctbrowser_test::ask(page, expression);
     };
 
     const std::string defines = ask("typeof Phaser !== 'undefined' && !!Phaser.Game");
@@ -310,23 +274,6 @@ private:
     return "<no answer>";
 }
 
-// The recorded floor: `key=value` lines, the same shape test/corpus/p5/p5-ratchet.txt
-// uses. A missing file is not an error - it is the state this test shipped in
-// for one day, and it reports the number rather than inventing a floor.
-[[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
-    for (std::size_t at = 0; at < text.size();) {
-        const std::size_t end = text.find('\n', at);
-        const std::string_view line{text.data() + at,
-                                    (end == std::string::npos ? text.size() : end) - at};
-        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') {
-            return std::string{line.substr(key.size() + 1)};
-        }
-        if (end == std::string::npos) { break; }
-        at = end + 1;
-    }
-    return {};
-}
-
 } // namespace
 
 int main() {
@@ -349,40 +296,7 @@ int main() {
         ++ctbrowser_test_failures;
     }
 
-    // THE PAWL. It turns one way: the level may not go down, and at the same
-    // level the blocker may not change. That second half is the one that
-    // matters - a fix that trades one wall for another leaves the number alone
-    // and reads as "no change" without it.
-    //
-    // Only tools/corpus/phaser-ratchet.py --advance writes the record, because a test
-    // that edits its own expectations cannot fail.
-    const std::string record = read_file("test/corpus/phaser/phaser-ratchet.txt");
-    if (record.empty()) {
-        std::printf("     (no test/corpus/phaser/phaser-ratchet.txt yet - run "
-                    "tools/corpus/phaser-ratchet.py --advance to record this)\n");
-        REPORT("phaser_ratchet");
-    }
-    const std::string want_level = recorded(record, "level");
-    const std::string want_blocker = recorded(record, "blocker");
-    if (!want_level.empty()) {
-        const int floor_level = std::stoi(want_level);
-        if (m.level < floor_level) {
-            std::printf("FAIL phaser went BACKWARDS: %d, recorded %d (%s)\n", m.level, floor_level,
-                        rung_name(floor_level));
-            ++ctbrowser_test_failures;
-        } else if (m.level == floor_level && m.blocker != want_blocker) {
-            // Progress at the same rung is still progress, but it has to be
-            // recorded deliberately - a blocker that changes silently is a fix
-            // that swapped one wall for another and told nobody.
-            std::printf("FAIL phaser is stuck at %d but the blocker CHANGED\n"
-                        "  was: %s\n  now: %s\n",
-                        m.level, want_blocker.c_str(), m.blocker.c_str());
-            ++ctbrowser_test_failures;
-        } else if (m.level > floor_level) {
-            std::printf("     AHEAD of the record (%d > %d) - run "
-                        "tools/corpus/phaser-ratchet.py --advance\n",
-                        m.level, floor_level);
-        }
-    }
+    ctbrowser_test::ratchet_pawl("phaser", "test/corpus/phaser/phaser-ratchet.txt",
+                                 "tools/corpus/phaser-ratchet.py", m, rung_name);
     REPORT("phaser_ratchet");
 }

@@ -1,27 +1,8 @@
 #include "Analysis.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "llvm/ADT/StringSwitch.h"
 
 namespace ctcompile::ctnative::host_detail {
-
-llvm::StringRef keyOf(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    return key ? key.getValue() : llvm::StringRef{};
-}
-
-bool ordinaryKey(llvm::StringRef key) {
-    return !key.empty() &&
-           !llvm::StringSwitch<bool>(key)
-                .Cases({"__proto__", "prototype", "constructor"}, true)
-                .Cases({"toString", "valueOf", "toLocaleString"}, true)
-                .Cases({"hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"}, true)
-                .Cases({"__defineGetter__", "__defineSetter__"}, true)
-                .Cases({"__lookupGetter__", "__lookupSetter__"}, true)
-                .Default(false);
-}
 
 bool analyzer::active(mlir::Operation * operation) {
     for (auto * child = operation; child->getParentOp() != nullptr; child = child->getParentOp()) {
@@ -104,7 +85,9 @@ HostSlotReport analyzer::slot(const HostRootRequest & request, llvm::StringRef k
         reject("root must be a fresh object initialized unconditionally by the script entry");
         return result;
     }
-    if (!ordinaryKey(key)) { reject("publication requires an ordinary constant own-data key"); }
+    if (!ctjs::ordinaryKey(key)) {
+        reject("publication requires an ordinary constant own-data key");
+    }
 
     llvm::SmallVector<mlir::Value> aliases;
     module.walk([&](mlir::Operation * operation) {
@@ -133,20 +116,20 @@ HostSlotReport analyzer::slot(const HostRootRequest & request, llvm::StringRef k
             if (!active(operation)) { continue; }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                 read && use.getOperandNumber() == 0) {
-                if (!ordinaryKey(keyOf(read.getKey()))) {
+                if (!ctjs::ordinaryKey(ctjs::constantKey(read.getKey()))) {
                     reject("dynamic or prototype root read");
                 }
-                if (keyOf(read.getKey()) == key && seenReads.insert(read).second) {
+                if (ctjs::constantKey(read.getKey()) == key && seenReads.insert(read).second) {
                     result.reads.push_back(read);
                 }
                 continue;
             }
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
                 write && use.getOperandNumber() == 0) {
-                if (!ordinaryKey(keyOf(write.getKey()))) {
+                if (!ctjs::ordinaryKey(ctjs::constantKey(write.getKey()))) {
                     reject("dynamic or prototype root write");
                 }
-                if (keyOf(write.getKey()) == key && seenWrites.insert(write).second) {
+                if (ctjs::constantKey(write.getKey()) == key && seenWrites.insert(write).second) {
                     result.writes.push_back(write);
                 }
                 continue;

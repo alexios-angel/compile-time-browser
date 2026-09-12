@@ -13,8 +13,8 @@ using namespace detail;
 //
 // THE STRUCTURAL FACT EVERYTHING BELOW IS BUILT AROUND: `txn.root()` IS THE
 // DOCUMENT ELEMENT, not a Document node. `tree_builder` makes `<html>` and
-// calls `set_root` with it, every walk in the style, layout and paint engines
-// starts there, and `document` is a plain script object carrying no handle at
+// calls `set_document_element` with it, every walk in the style, layout and
+// paint engines starts there, and `document` is a plain script object carrying no handle at
 // all - `handle_of(document)` is the same empty handle it answers for a number.
 // That is why none of this could be shared with the element bindings: those
 // all start from `receiver(cx)`, and the document has nothing for `receiver`

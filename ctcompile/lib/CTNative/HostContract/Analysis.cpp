@@ -395,7 +395,7 @@ std::string analyzer::environmentProblem() {
             return;
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            if (!ordinaryKey(keyOf(get.getKey()))) {
+            if (!ctjs::ordinaryKey(ctjs::constantKey(get.getKey()))) {
                 reject("dynamic/prototype property read is unsupported");
             }
             if (!object(get.getObject())) {
@@ -404,7 +404,7 @@ std::string analyzer::environmentProblem() {
             return;
         }
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            if (!ordinaryKey(keyOf(set.getKey()))) {
+            if (!ctjs::ordinaryKey(ctjs::constantKey(set.getKey()))) {
                 reject("dynamic/prototype property write is unsupported");
             }
             if (!object(set.getObject())) {

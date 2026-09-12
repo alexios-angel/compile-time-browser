@@ -171,6 +171,73 @@ constexpr std::string_view slot_flags = "@#RegExpFlags";
     return out;
 }
 
+// The six helpers below are RegExpExec and its neighbours as this file spells
+// them; string.cpp reaches RegExp only through is_regexp, regexp_create and
+// get_substitution (internal.hpp), so these are file-local.
+bool has_regexp_matcher(value v) {
+    return regexp_table(v) != nullptr;
+}
+
+bool regexp_slots(value v, std::string & source, std::string & flags) {
+    object_object * o = regexp_table(v);
+    if (o == nullptr) { return false; }
+    const value * src = o->find(slot_source);
+    const value * fl = o->find(slot_flags);
+    source = static_cast<string_object *>(src->as_heap())->text;
+    flags = fl == nullptr ? std::string{} : static_cast<string_object *>(fl->as_heap())->text;
+    return true;
+}
+
+std::size_t advance_string_index(const std::string & s, std::size_t index, bool full_unicode) {
+    if (!full_unicode || index + 1 >= s.size()) { return index + 1; }
+    std::size_t next = index + 1;
+    while (next < s.size() && (static_cast<unsigned char>(s[next]) & 0xC0u) == 0x80u) { ++next; }
+    return next;
+}
+
+bool get_last_index(context & cx, value rx, double & out) {
+    const detail::unwind_watch watch{cx};
+    const value raw = cx.lookup_property(rx, "lastIndex");
+    if (watch.threw() || !numeric_arg(cx, raw)) { return false; }
+    out = to_length(cx.to_number_value(raw));
+    return !watch.threw();
+}
+
+bool set_last_index(context & cx, value rx, double v) {
+    const detail::unwind_watch watch{cx};
+    cx.clear_store_rejected();
+    cx.store_property(rx, "lastIndex", value::number(v));
+    if (watch.threw()) { return false; }
+    cx.strict_store_check("lastIndex");
+    return !watch.threw();
+}
+
+value regexp_exec(context & cx, value rx, value subject) {
+    const detail::unwind_watch watch{cx};
+    const value exec = cx.lookup_property(rx, "exec");
+    if (watch.threw()) { return value::undefined(); }
+    if (exec.is_callable()) {
+        const value result = cx.call(exec, std::span<const value>{&subject, 1}, rx);
+        if (watch.threw()) { return value::undefined(); }
+        if (!result.is_object_like() && !result.is_null()) {
+            cx.throw_error("TypeError", "exec result must be an object or null");
+            return value::undefined();
+        }
+        return result;
+    }
+    if (!has_regexp_matcher(rx)) {
+        cx.throw_error("TypeError", "RegExp exec method called on an incompatible receiver");
+        return value::undefined();
+    }
+    // The built-in matcher IS %RegExp.prototype.exec%; calling it through the
+    // prototype keeps one implementation.
+    const value builtin =
+        cx.lookup_property(value::object(cx.prototype(context::proto_kind::regexp)), "exec");
+    if (!builtin.is_callable()) { return value::null(); }
+    const value result = cx.call(builtin, std::span<const value>{&subject, 1}, rx);
+    return watch.threw() ? value::undefined() : result;
+}
+
 // RegExpBuiltinExec, 22.2.7.2. `lastIndex` is read through [[Get]] and
 // ToLength - a page may have written anything into it - and written back
 // through Set with Throw=true, so a frozen pattern refuses with a TypeError.
@@ -301,20 +368,6 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
 
 } // namespace
 
-bool has_regexp_matcher(value v) {
-    return regexp_table(v) != nullptr;
-}
-
-bool regexp_slots(value v, std::string & source, std::string & flags) {
-    object_object * o = regexp_table(v);
-    if (o == nullptr) { return false; }
-    const value * src = o->find(slot_source);
-    const value * fl = o->find(slot_flags);
-    source = static_cast<string_object *>(src->as_heap())->text;
-    flags = fl == nullptr ? std::string{} : static_cast<string_object *>(fl->as_heap())->text;
-    return true;
-}
-
 bool is_regexp(context & cx, value v, bool & out) {
     out = false;
     if (!v.is_object_like()) { return true; }
@@ -323,30 +376,6 @@ bool is_regexp(context & cx, value v, bool & out) {
     if (watch.threw()) { return false; }
     out = matcher.is_undefined() ? has_regexp_matcher(v) : context::truthy(matcher);
     return true;
-}
-
-std::size_t advance_string_index(const std::string & s, std::size_t index, bool full_unicode) {
-    if (!full_unicode || index + 1 >= s.size()) { return index + 1; }
-    std::size_t next = index + 1;
-    while (next < s.size() && (static_cast<unsigned char>(s[next]) & 0xC0u) == 0x80u) { ++next; }
-    return next;
-}
-
-bool get_last_index(context & cx, value rx, double & out) {
-    const detail::unwind_watch watch{cx};
-    const value raw = cx.lookup_property(rx, "lastIndex");
-    if (watch.threw() || !numeric_arg(cx, raw)) { return false; }
-    out = to_length(cx.to_number_value(raw));
-    return !watch.threw();
-}
-
-bool set_last_index(context & cx, value rx, double v) {
-    const detail::unwind_watch watch{cx};
-    cx.clear_store_rejected();
-    cx.store_property(rx, "lastIndex", value::number(v));
-    if (watch.threw()) { return false; }
-    cx.strict_store_check("lastIndex");
-    return !watch.threw();
 }
 
 bool get_substitution(context & cx, const std::string & matched, const std::string & subject,
@@ -419,32 +448,6 @@ bool get_substitution(context & cx, const std::string & matched, const std::stri
         }
     }
     return true;
-}
-
-value regexp_exec(context & cx, value rx, value subject) {
-    const detail::unwind_watch watch{cx};
-    const value exec = cx.lookup_property(rx, "exec");
-    if (watch.threw()) { return value::undefined(); }
-    if (exec.is_callable()) {
-        const value result = cx.call(exec, std::span<const value>{&subject, 1}, rx);
-        if (watch.threw()) { return value::undefined(); }
-        if (!result.is_object_like() && !result.is_null()) {
-            cx.throw_error("TypeError", "exec result must be an object or null");
-            return value::undefined();
-        }
-        return result;
-    }
-    if (!has_regexp_matcher(rx)) {
-        cx.throw_error("TypeError", "RegExp exec method called on an incompatible receiver");
-        return value::undefined();
-    }
-    // The built-in matcher IS %RegExp.prototype.exec%; calling it through the
-    // prototype keeps one implementation.
-    const value builtin =
-        cx.lookup_property(value::object(cx.prototype(context::proto_kind::regexp)), "exec");
-    if (!builtin.is_callable()) { return value::null(); }
-    const value result = cx.call(builtin, std::span<const value>{&subject, 1}, rx);
-    return watch.threw() ? value::undefined() : result;
 }
 
 value regexp_create(context & cx, value pattern, value flags) {
@@ -616,28 +619,8 @@ void install_regexp(context & cx) {
         };
         for (std::size_t i = 0; i < s.size();) {
             // One code point, decoded forward; a stray byte is left alone.
-            const auto lead = static_cast<unsigned char>(s[i]);
-            std::size_t width = lead < 0x80u              ? 1
-                                : (lead & 0xE0u) == 0xC0u ? 2
-                                : (lead & 0xF0u) == 0xE0u ? 3
-                                : (lead & 0xF8u) == 0xF0u ? 4
-                                                          : 1;
-            if (i + width > s.size()) { width = 1; }
-            std::uint32_t cp = lead;
-            if (width == 2) {
-                cp = ((lead & 0x1Fu) << 6) | (static_cast<unsigned char>(s[i + 1]) & 0x3Fu);
-            }
-            if (width == 3) {
-                cp = ((lead & 0x0Fu) << 12) |
-                     ((static_cast<unsigned char>(s[i + 1]) & 0x3Fu) << 6) |
-                     (static_cast<unsigned char>(s[i + 2]) & 0x3Fu);
-            }
-            if (width == 4) {
-                cp = ((lead & 0x07u) << 18) |
-                     ((static_cast<unsigned char>(s[i + 1]) & 0x3Fu) << 12) |
-                     ((static_cast<unsigned char>(s[i + 2]) & 0x3Fu) << 6) |
-                     (static_cast<unsigned char>(s[i + 3]) & 0x3Fu);
-            }
+            std::size_t width = 1;
+            const std::uint32_t cp = rx::rx_utf8_decode(s, i, width);
             const std::string_view raw{s.data() + i, width};
             i += width;
             const bool alnum =

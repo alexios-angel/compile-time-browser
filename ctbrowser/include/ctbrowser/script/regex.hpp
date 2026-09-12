@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 // A regular-expression engine.
 //
 // Ported from ctjs's `rxd`, which was already a self-contained backtracking
@@ -119,12 +121,6 @@ inline constexpr void rx_class_escape(rx_class & out, char e) {
 // rx_escape_char, which keeps the previous lenient behaviour.
 inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
                                  std::uint32_t & cp) {
-	const auto digit = [](char d, std::uint32_t & out) {
-		if (d >= '0' && d <= '9') { out = static_cast<std::uint32_t>(d - '0'); return true; }
-		if (d >= 'a' && d <= 'f') { out = static_cast<std::uint32_t>(d - 'a' + 10); return true; }
-		if (d >= 'A' && d <= 'F') { out = static_cast<std::uint32_t>(d - 'A' + 10); return true; }
-		return false;
-	};
 	std::size_t want = 0;
 	if (e == 'x') {
 		want = 2;
@@ -133,9 +129,8 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 			std::uint32_t value = 0;
 			std::size_t j = i + 1;
 			bool any = false;
-			std::uint32_t d = 0;
-			for (; j < src.size() && digit(src[j], d); ++j) {
-				value = value * 16 + d;
+			for (; j < src.size() && hex_value(src[j]) >= 0; ++j) {
+				value = value * 16 + static_cast<std::uint32_t>(hex_value(src[j]));
 				any = true;
 			}
 			if (!any || j >= src.size() || src[j] != '}') { return false; }
@@ -150,31 +145,13 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 	if (i + want > src.size()) { return false; }
 	std::uint32_t value = 0;
 	for (std::size_t k = 0; k < want; ++k) {
-		std::uint32_t d = 0;
-		if (!digit(src[i + k], d)) { return false; }
-		value = value * 16 + d;
+		const int d = hex_value(src[i + k]);
+		if (d < 0) { return false; }
+		value = value * 16 + static_cast<std::uint32_t>(d);
 	}
 	cp = value;
 	i += want;
 	return true;
-}
-
-inline void rx_utf8_append(std::string & out, std::uint32_t cp) {
-	if (cp < 0x80) {
-		out.push_back(static_cast<char>(cp));
-	} else if (cp < 0x800) {
-		out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-	} else if (cp < 0x10000) {
-		out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-		out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-	} else {
-		out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-		out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-		out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-	}
 }
 
 // One code point decoded forward from `at`, and its width in bytes. A byte
@@ -372,7 +349,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 				// THE SUBJECT IS UTF-8, so a code point above ASCII is the
 				// run of bytes that spells it there, matched as a sequence.
 				// (Below 0x80 a code point and its byte are the same thing.)
-				rx_utf8_append(pc.text, cp);
+				append_utf8(pc.text, cp);
 				return pc;
 			}
 			pc.c = static_cast<char>(cp);
@@ -485,7 +462,7 @@ inline void rx_resolve_backrefs(rx_alt & alt, rx_prog & p, std::string_view src)
 					       digits[used] <= '7' && code * 8 + static_cast<std::uint32_t>(digits[used] - '0') <= 0377) {
 						code = code * 8 + static_cast<std::uint32_t>(digits[used++] - '0');
 					}
-					rx_utf8_append(pc.text, code);
+					append_utf8(pc.text, code);
 					pc.text += digits.substr(used);
 				}
 			} else {

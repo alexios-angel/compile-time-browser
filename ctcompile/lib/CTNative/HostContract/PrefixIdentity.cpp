@@ -73,8 +73,7 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
             auto closure = call.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (closure && closure.getFunction() >= 0 &&
                 functions.lookup(static_cast<unsigned>(closure.getFunction())) == target) {
                 callee = target;
@@ -107,7 +106,8 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             // Only the embedding's finite writable own-data slots exclude a
             // callback here. Their values and publication effects stay live.
             if (observedValues.lookup(receiver).kind == prefixValue::Kind::realm &&
-                llvm::is_contained(contract.realmOwnDataProperties, keyOf(propertyKey))) {
+                llvm::is_contained(contract.realmOwnDataProperties,
+                                   ctjs::constantKey(propertyKey))) {
                 continue;
             }
             if (!receiver.getDefiningOp<ctjs::CreateObjectOp>() &&

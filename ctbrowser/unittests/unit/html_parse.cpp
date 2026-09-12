@@ -25,13 +25,6 @@ using namespace ctbrowser;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // The tree as a flat string, so an expectation is readable and a failure shows
 // what was actually built. Elements are `tag(children)`, text is quoted.
 struct dumper {

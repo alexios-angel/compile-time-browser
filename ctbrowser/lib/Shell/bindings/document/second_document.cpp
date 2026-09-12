@@ -140,8 +140,7 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
         const node_id root =
             fresh.create_element(atoms_->intern(qualified_name), kind,
                                  qualified_name.find(':') != std::string_view::npos);
-        auto builder = fresh.build();
-        builder.set_root(root);
+        fresh.set_document_element(root);
         if (kind == node_ns::other || ns.empty()) {
             made.namespaces_.emplace(made.pack(root), std::string{ns});
         }
@@ -190,7 +189,7 @@ value dom_bindings::parse_from_string(context & cx, std::string_view markup,
         if (fresh.read().kind(fresh.root()).value_or(node_kind::document) == node_kind::element) {
             (void)fresh.append_child(fresh.root(), error);
         } else {
-            fresh.build().set_root(error);
+            fresh.set_document_element(error);
         }
         made.namespaces_.emplace(
             made.pack(error), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});

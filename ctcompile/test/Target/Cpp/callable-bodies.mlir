@@ -16,7 +16,7 @@
 #after = loc(fused<{ctnative.source_name = "after"}>["callable-creation.js":6:1])
 #lambda = loc(fused<{ctnative.source_name = "ctn_lambda"}>["callable-creation.js":7:1])
 #lambda_version = loc(fused<{ctnative.source_name = "ctn_lambda_1"}>["callable-creation.js":7:2])
-module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.constexpr_bindings} {
+module attributes {ctnative.readable_names, ctnative.const_bindings} {
   emitc.include "callable-body-fixture.h"
   emitc.declare_func @inline_target
   emitc.declare_func @mutable_target

@@ -33,7 +33,9 @@
     (function walk(el, path) {
         els.push([path, el]);
         var kids = el.children;
-        if (!kids) { return; }
+        if (!kids) {
+            return;
+        }
         for (var i = 0; i < kids.length; i++) {
             var kid = kids[i];
             var tag = (kid.tagName || '?').toLowerCase();
@@ -43,7 +45,9 @@
 
     function key(el) {
         var out = (el.tagName || '?').toLowerCase();
-        if (el.id) { out += '#' + el.id; }
+        if (el.id) {
+            out += '#' + el.id;
+        }
         var cls = (el.className || '').trim();
         if (cls) {
             // SORTED, so a difference in class ORDER is not a difference in
@@ -110,14 +114,18 @@
             var parts = [];
             for (var q = 0; q < pairs.length; q++) {
                 var v = pairs[q][1];
-                if (v !== '' && v !== null && v !== undefined) { parts.push(pairs[q][0] + '=' + v); }
+                if (v !== '' && v !== null && v !== undefined) {
+                    parts.push(pairs[q][0] + '=' + v);
+                }
             }
             line = els[i][0] + '|' + key(el) + '|' + parts.join(' ');
         } else {
             // JSON for css-parity.py, which wants a dict and does not care about
             // key order.
             var out = {};
-            for (var j = 0; j < pairs.length; j++) { out[pairs[j][0]] = pairs[j][1]; }
+            for (var j = 0; j < pairs.length; j++) {
+                out[pairs[j][0]] = pairs[j][1];
+            }
             line = els[i][0] + '|' + key(el) + '|' + JSON.stringify(out);
         }
         console.log(line);

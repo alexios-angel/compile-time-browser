@@ -1,6 +1,11 @@
 # The tools
 
-Everything in `tools/`, by job. `format.sh`, `remote-build.sh` and
+Everything in `tools/`, by job. `format.sh` (clang-format for the C++, black
+for the Python - `pyproject.toml` at the root is black's whole configuration,
+`tools/Brewfile` pins it - and js-beautify for the hand-written JS, HTML and
+CSS - `.jsbeautifyrc` at the root, the npm package since brew's Python port
+has no html-beautify; `ctbrowser/test/`, `ctcompile/test/` and `vendor/` are
+test data and stay byte-exact), `remote-build.sh` and
 `fetch-angle.sh` stay at the top level because they are the everyday entry
 points; the rest are foldered:
 
@@ -24,12 +29,6 @@ with it.
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `ctbrowser/tools/ctdrive/ctdrive.cpp` is the
   ctbrowser half. See `docs/build.md`.
-- `tools/check/check-spirv.py` — runs `spirv-val` over SPIR-V this engine produced,
-  given the files. OPTIONAL, and it says plainly when the validator is absent:
-  the driver accepting a module proves nothing, which `gpu_basics` measures
-  rather than assumes. What it validates today is the TILE shaders
-  (`gen-shaders.py`'s output); the WebGL front end it was written for went to
-  ANGLE on 2026-08-04 and emits no SPIR-V of its own.
 - `tools/check/css-parity.py` — **how far a Bootstrap page is from Chrome, per
   element and per property.** Drives both engines through `compare.py`'s daemon,
   runs `css-dump.js` in each, normalises both sides identically and ranks the
@@ -47,8 +46,6 @@ with it.
   gets 262 KB out in one call and looks correct, while a client that sleeps
   before reading lost 4 MB down to 2,588,672 bytes and no newline. Keep both —
   `stall` alone is a test with no explanation, `drain` alone cannot fail.
-- `tools/check/check-png.py` — decodes a PNG this engine wrote using Python's own
-  zlib, independently of the libpng that wrote it.
 - `tools/check/bootstrap-data-probe.py` — extracts the vendor Bootstrap Data
   factory and checks CommonJS, browser and delayed-AMD publication. Interpreter
   observations after factory return and native compile coverage are recorded

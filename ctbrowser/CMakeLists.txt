@@ -128,15 +128,13 @@ option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU 
 # lever is `image_option`, which needs no rebuild.
 option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction source offsets" ON)
 
-# THE TYPE ORACLE'S HOOK IN THE DISPATCH LOOP - ctcompile Phase 54B. ON, on the
-# same terms as the debug names above and for the same reason: there is no CI,
-# so a facility that only exists under a non-default flag is a facility nobody
-# ever runs. What it costs when ON and unused is NOTHING: run_loop is a template
-# on one bool and the instantiation a build without a recorder runs has no trace
-# of the hook in it. The per-instruction `if (recorder_)` that came first was
-# measured at +0.53% on bench_script and +0.48% on phaser_invaders, which is why
-# it is not what is there. What OFF buys is ~15 KB of cold object code.
-option(CTBROWSER_SCRIPT_RECORD_TYPES "Compile the type-oracle hook into the interpreter" ON)
+# THE TYPE ORACLE'S HOOK IN THE DISPATCH LOOP (ctcompile Phase 54B) has no
+# option: what it costs when unused is NOTHING - run_loop is a template on one
+# bool and the instantiation a build without a recorder runs has no trace of
+# the hook in it - and the OFF build the option once offered was never built
+# by anything. The per-instruction `if (recorder_)` that came first was
+# measured at +0.53% on bench_script and +0.48% on phaser_invaders, which is
+# why it is not what is there.
 
 # Two compile-time bricks are still submodules, for different reasons: ctjs is
 # the script compiler's runtime parser; ctcss is only the comparison oracle for
@@ -187,28 +185,24 @@ function(ctbrowser_pick_sdl_target out_var out_static name)
   endif()
 endfunction()
 
-set(CTBROWSER_SAT_DEFS "")
-set(CTBROWSER_SAT_LIBS "")
+# Picked ONCE, here; lib/Raster, lib/App and examples/ link and read these.
 set(CTBROWSER_SDL3_TARGET SDL3::SDL3)
 set(CTBROWSER_SDL3_IS_STATIC OFF)
 set(CTBROWSER_SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
 set(CTBROWSER_SDL3_TTF_IS_STATIC OFF)
+set(CTBROWSER_SDL3_IMAGE_TARGET SDL3_image::SDL3_image)
 if(SDL3_FOUND)
   ctbrowser_pick_sdl_target(CTBROWSER_SDL3_TARGET CTBROWSER_SDL3_IS_STATIC SDL3::SDL3)
   find_package(SDL3_image CONFIG QUIET)
   if(SDL3_image_FOUND)
-    ctbrowser_pick_sdl_target(image_target image_static SDL3_image::SDL3_image)
-    list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_IMAGE)
-    list(APPEND CTBROWSER_SAT_LIBS ${image_target})
+    ctbrowser_pick_sdl_target(CTBROWSER_SDL3_IMAGE_TARGET image_static SDL3_image::SDL3_image)
   endif()
   find_package(SDL3_ttf CONFIG QUIET)
   if(SDL3_ttf_FOUND)
     ctbrowser_pick_sdl_target(CTBROWSER_SDL3_TTF_TARGET CTBROWSER_SDL3_TTF_IS_STATIC
                               SDL3_ttf::SDL3_ttf)
-    list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_TTF)
-    list(APPEND CTBROWSER_SAT_LIBS ${CTBROWSER_SDL3_TTF_TARGET})
   endif()
-  message(STATUS "ctbrowser: SDL3 found (${CTBROWSER_SDL3_TARGET}); satellites: ${CTBROWSER_SAT_DEFS}")
+  message(STATUS "ctbrowser: SDL3 found (${CTBROWSER_SDL3_TARGET})")
 endif()
 
 # SVG, through plutosvg (which brings plutovg with it). NOT an SDL satellite,

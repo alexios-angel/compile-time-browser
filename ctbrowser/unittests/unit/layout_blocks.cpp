@@ -1,10 +1,9 @@
 // Block layout: the box tree is not the DOM tree, and a block's geometry -
 // widths, lengths, min/max clamps, auto margins, and what a fragment does not
 // carry back to the DOM. Carved out of unit/layout_basics.cpp on 2026-09-08,
-// when that file was 1,364 lines; the three other layout_*.cpp files beside
-// this one are the rest of it, and layout_fixture.hpp carries the fixture, the
-// prose assertions, and that file's own banner - the three claims it made are
-// now three files.
+// when that file was 1,364 lines; the other layout_*.cpp files beside this one
+// are the rest of it, and layout_fixture.hpp carries the fixture and the prose
+// assertions.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

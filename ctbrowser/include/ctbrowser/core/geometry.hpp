@@ -14,17 +14,9 @@ struct point {
     [[nodiscard]] friend constexpr bool operator==(point, point) = default;
 };
 
-struct size {
-    float width = 0, height = 0;
-    [[nodiscard]] constexpr bool empty() const noexcept { return width <= 0 || height <= 0; }
-    [[nodiscard]] friend constexpr bool operator==(size, size) = default;
-};
-
 struct rect {
     float x = 0, y = 0, width = 0, height = 0;
 
-    [[nodiscard]] constexpr float left() const noexcept { return x; }
-    [[nodiscard]] constexpr float top() const noexcept { return y; }
     [[nodiscard]] constexpr float right() const noexcept { return x + width; }
     [[nodiscard]] constexpr float bottom() const noexcept { return y + height; }
     [[nodiscard]] constexpr bool empty() const noexcept { return width <= 0 || height <= 0; }

@@ -178,7 +178,7 @@ const std::vector<std::string> & dom_bindings::console_output() const noexcept {
 }
 
 void dom_bindings::install_console(context & cx) {
-    auto * console = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * console = cx.allocate<script::object_object>();
     const auto log = [this](context & c, std::span<value> args) {
         std::string line;
         for (std::size_t i = 0; i < args.size(); ++i) {

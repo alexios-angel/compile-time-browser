@@ -18,11 +18,7 @@ namespace {
 
 llvm::StringRef actionOf(ctjs::CallOp call) {
     auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    if (!get) { return {}; }
-    auto constant = get.getKey().getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return text ? text.getValue() : llvm::StringRef{};
+    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
 }
 
 // This analysis also runs from CTJS-only binding-time and partial-evaluation
@@ -300,8 +296,7 @@ struct presenceAnalysis {
                         out.unknown = true;
                     }
                 } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-                    auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        call, call.getCalleeAttr());
+                    auto target = call.getTarget();
                     if (!target || target.getBody().empty()) {
                         out.unknown = true;
                     } else {
@@ -713,8 +708,7 @@ struct presenceAnalysis {
                 current = {};
             }
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             const auto summary = summaries.find(target);
             if (summary == summaries.end()) {
                 current = {};

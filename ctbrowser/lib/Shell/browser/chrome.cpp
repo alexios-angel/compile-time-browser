@@ -79,7 +79,7 @@ void browser::record_select_popup() {
                   font_size_of(select_open_),
                   options[i] == chosen ? color{ctbrowser::style::ua_widget_mark}
                                        : color{0xFF000000U},
-                  select_open_, paint_face_of(select_open_));
+                  select_open_, face_of(select_open_));
     }
     // A frame last, so it is not painted over by the rows.
     const color frame{ctbrowser::style::ua_widget_frame};
@@ -174,7 +174,7 @@ bool browser::is_password(node_id id) {
 
 std::string browser::masked_text(std::string_view text) {
     std::string out;
-    for (std::size_t at = 0; at < text.size(); at = next_code_point(text, at)) {
+    for (std::size_t at = 0; at < text.size(); at = form_store::next_code_point(text, at)) {
         out += "\xE2\x80\xA2"; // U+2022 BULLET
     }
     return out;
@@ -182,14 +182,6 @@ std::string browser::masked_text(std::string_view text) {
 
 std::string browser::shown(std::string_view text, bool masked) {
     return masked ? masked_text(text) : std::string{text};
-}
-
-std::size_t browser::next_code_point(std::string_view text, std::size_t at) {
-    std::size_t next = at + 1;
-    while (next < text.size() && (static_cast<unsigned char>(text[next]) & 0xC0) == 0x80) {
-        ++next;
-    }
-    return next;
 }
 
 color browser::text_colour(const ctbrowser::style::computed_style_ptr & style) {
@@ -204,11 +196,6 @@ color browser::text_colour(const ctbrowser::style::computed_style_ptr & style) {
 ctbrowser::layout::text_face browser::face_of(node_id id) const {
     const layout::box_node * found = find_box(boxes_, id);
     return found == nullptr ? ctbrowser::layout::text_face{} : found->face;
-}
-
-ctbrowser::paint::font_face browser::paint_face_of(node_id id) const {
-    const ctbrowser::layout::text_face face = face_of(id);
-    return ctbrowser::paint::font_face{face.family, face.bold, face.italic};
 }
 
 float browser::font_size_of(node_id id) const {

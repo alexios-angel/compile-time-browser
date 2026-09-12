@@ -20,7 +20,7 @@
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
 // the order it had; the helpers more than one of the eight needs are in
-// page_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -33,7 +33,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "page_probe.hpp"
+#include "chrome_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -48,7 +48,6 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-using ctbrowser_test::check;
 using ctbrowser_test::log_of;
 
 namespace {
@@ -117,7 +116,7 @@ void test_class_list_reaches_the_cascade() {
     </style></head><body><div id=d>x</div>
     <script>document.getElementById('d').classList.add('on');</script></body></html>)");
     check(page.script_error().empty(), "the script ran: " + page.script_error());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(count_fill(page, color::rgba(0, 128, 0)) == 1, "a class added from script cascades");
 }
 
@@ -159,7 +158,7 @@ void test_style_writes_reach_the_pixels() {
         document.getElementById('d').style.backgroundColor = '#0000ff';
     </script></body></html>)");
     check(page.script_error().empty(), "the script ran: " + page.script_error());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(count_fill(page, color::rgba(0, 0, 255)) == 1, "a style write repaints");
 }
 
@@ -169,11 +168,12 @@ void test_script_mutates_what_is_drawn() {
     browser page{browser_options{400, 200}};
     page.load_html(
         "<html><body><div id=a>original</div>"
-        "<script>document.getElementById('a').setText('replaced');</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+        "<script>document.getElementById('a').textContent = 'replaced';</script></body></html>");
+    page.frame();
     check(page.script_error().empty(), "the script ran without error");
     // The whole point: the mutation reached the pixels, not just the DOM.
-    check(rendered_text(page).find("replaced") != std::string::npos, "setText changed the page");
+    check(rendered_text(page).find("replaced") != std::string::npos,
+          "textContent changed the page");
     check(rendered_text(page).find("original") == std::string::npos, "and removed the old text");
 }
 
@@ -184,25 +184,25 @@ void test_attributes_and_classes() {
     </style></head><body><div id=a>x</div><script>
     var el = document.getElementById('a');
     el.setAttribute('data-role', 'banner');
-    el.addClass('hot');
+    el.classList.add('hot');
     console.log('role=' + el.getAttribute('data-role'));
-    console.log('hot=' + el.hasClass('hot'));
-    console.log('cold=' + el.hasClass('cold'));
+    console.log('hot=' + el.classList.contains('hot'));
+    console.log('cold=' + el.classList.contains('cold'));
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.script_error().empty(), "the script ran without error");
 
     const auto & log = log_of(page);
     check(log.size() == 3, "three console lines");
     if (log.size() == 3) {
         check(log[0] == "role=banner", "setAttribute then getAttribute round-trips");
-        check(log[1] == "hot=true", "hasClass sees the class it added");
+        check(log[1] == "hot=true", "classList sees the class it added");
         check(log[2] == "cold=false", "and does not see one it did not");
     }
     // And the class actually restyled the element, which is the part that
     // matters: adding a class that changes nothing on screen is not a binding
     // that works.
-    check(count_fill(page, color::rgba(255, 0, 0)) == 1, "addClass restyled the element");
+    check(count_fill(page, color::rgba(255, 0, 0)) == 1, "classList.add restyled the element");
 }
 
 // --- the document's own properties ------------------------------------------
@@ -217,11 +217,11 @@ void test_document_title_and_tag_lookup() {
     <script>
     console.log('title=' + document.title);
     console.log('paragraphs=' + document.getElementsByTagName('p').length);
-    console.log('second=' + document.getElementsByTagName('p')[1].getText());
+    console.log('second=' + document.getElementsByTagName('p')[1].textContent);
     console.log('star=' + (document.getElementsByTagName('*').length > 5));
     console.log('none=' + document.getElementsByTagName('blink').length);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.script_error().empty(), "the script ran without error");
 
     const auto & log = log_of(page);
@@ -237,8 +237,8 @@ void test_document_title_and_tag_lookup() {
     // ...and the title is LIVE, not a snapshot taken when the document object
     // was built. Rewriting the <title> has to be visible, which is the same bug
     // class location.href had: set once at install and wrong ever after.
-    (void)page.run_script("document.getElementsByTagName('title')[0].setText('renamed');");
-    check(page.frame().has_value(), "the page redraws");
+    (void)page.run_script("document.getElementsByTagName('title')[0].textContent = 'renamed';");
+    page.frame();
     (void)page.run_script("console.log('after=' + document.title);");
     check(log.size() == 6 && log[5] == "after=renamed", "document.title follows the element");
 }
@@ -253,7 +253,7 @@ void test_document_active_element_follows_focus() {
     <script>
     function active() { return document.activeElement ? document.activeElement.id : 'none'; }
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const auto ask = [&page](const char * label) {
         (void)page.run_script(std::string{"console.log('"} + label + "=' + active())");
@@ -286,7 +286,7 @@ void test_document_active_element_follows_focus() {
 void test_a_script_error_does_not_outlive_the_script() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><p id=p>x</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.script_error().empty(), "no error to begin with");
 
     check(!page.run_script("nosuchfunction();"), "a broken script fails");
@@ -300,20 +300,20 @@ void test_removeclass_undoes_it() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>.hot { background-color: #ff0000 }</style></head>
     <body><div id=a class=hot>x</div><script>
-    document.getElementById('a').removeClass('hot');
+    document.getElementById('a').classList.remove('hot');
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
-    check(count_fill(page, color::rgba(255, 0, 0)) == 0, "removeClass unstyled the element");
+    page.frame();
+    check(count_fill(page, color::rgba(255, 0, 0)) == 0, "classList.remove unstyled the element");
 }
 
 void test_create_and_append() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=host></div><script>
     var el = document.createElement('p');
-    el.setText('made by script');
+    el.textContent = 'made by script';
     document.getElementById('host').appendChild(el);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.script_error().empty(), "the script ran without error");
     check(rendered_text(page).find("made by script") != std::string::npos,
           "a created element appears once appended");
@@ -325,7 +325,7 @@ void test_remove_child() {
     var host = document.getElementById('host');
     host.removeChild(document.getElementById('gone'));
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(rendered_text(page).find("remove me") == std::string::npos,
           "a removed element stops being drawn");
 }
@@ -335,11 +335,11 @@ void test_a_stale_handle_is_inert() {
     page.load_html(R"(<html><body><div id=host><p id=doomed>text</p></div><script>
     var doomed = document.getElementById('doomed');
     document.getElementById('host').removeChild(doomed);
-    doomed.setText('written to a dead node');
-    doomed.addClass('whatever');
+    doomed.textContent = 'written to a dead node';
+    doomed.classList.add('whatever');
     console.log('survived');
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // the previous engine held a raw node* here. The handle turns a use-after-free into a
     // lookup that finds nothing, so the writes go nowhere and the page is
     // unharmed - which is the entire argument for handles.
@@ -357,7 +357,7 @@ void test_layout_is_visible_to_script() {
     var el = document.getElementById('a');
     console.log('w=' + el.offsetWidth + ' h=' + el.offsetHeight);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // The script ran BEFORE the first frame - and reading `offsetWidth` is
     // what asks for a layout (the accessor flushes, as getBoundingClientRect
@@ -380,9 +380,9 @@ void test_layout_is_visible_to_script() {
       console.log('w=' + el.offsetWidth + ' h=' + el.offsetHeight); }
     setTimeout(report, 0);
     </script></body></html>)");
-    check(page.frame().has_value(), "the second page renders");
+    page.frame();
     check(page.tick(1) == 1, "the timer ran after layout");
-    check(page.frame().has_value(), "and the frame after it renders");
+    page.frame();
     check(!log_of(page).empty() && log_of(page).back() == "w=123 h=45",
           "after layout, offsetWidth/Height report the real box");
 }
@@ -399,9 +399,9 @@ void test_zero_height_layout_is_still_visible_to_script() {
         console.log('x=' + box.x + ' y=' + box.y + ' w=' + box.width + ' h=' + box.height);
       }, 0);
     </script></body></html>)");
-    check(page.frame().has_value(), "the zero-height page lays out");
+    page.frame();
     check(page.tick(1) == 1, "the zero-height geometry timer ran after layout");
-    check(page.frame().has_value(), "and the zero-height page renders again");
+    page.frame();
     check(!log_of(page).empty() && log_of(page).back() == "x=5 y=7 w=123 h=0",
           "a zero-height fragment keeps its real position and width");
 }
@@ -412,7 +412,7 @@ void test_a_broken_script_still_renders() {
     browser page{browser_options{300, 200}};
     page.load_html(
         "<html><body><p>content</p><script>this is not javascript(((</script></body></html>");
-    check(page.frame().has_value(), "the page still renders");
+    page.frame();
     check(!page.script_error().empty(), "and the error is recorded");
     // A page whose script fails must still show its markup. Anything else
     // turns one bad script into a blank window.
@@ -425,7 +425,7 @@ void test_window_and_performance() {
     console.log('size ' + window.innerWidth + 'x' + window.innerHeight);
     console.log('t0 ' + performance.now());
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = log_of(page);
     check(log.size() == 2, "two console lines");
     if (log.size() == 2) {

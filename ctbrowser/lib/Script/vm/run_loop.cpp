@@ -1,23 +1,12 @@
 // ctbrowser.script context - the interpreter loop itself. All members of
 // `context`, declared in include/ctbrowser/script/vm.hpp.
 
-#include <array>
-#include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <functional>
-#include <optional>
-#include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
 #include <vector>
 
 #include <ctbrowser/aot/aot.hpp>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -53,13 +42,8 @@ namespace ctbrowser::script {
 // callee does. Everything that means - the deferred flush, the interning, the
 // parameter sweep - is in type_record.cpp, out of this translation unit.
 //
-// Compiled out entirely with -DCTBROWSER_SCRIPT_RECORD_TYPES=0, on the same
-// terms as CTBROWSER_SCRIPT_DEBUG_NAMES: a private definition, because
-// `context::recorder_` exists in every build and only this call does not.
-#ifndef CTBROWSER_SCRIPT_RECORD_TYPES
-#define CTBROWSER_SCRIPT_RECORD_TYPES 1
-#endif
-#if CTBROWSER_SCRIPT_RECORD_TYPES
+// Always compiled in: the shipped instantiation (Record = false) carries no
+// trace of it, so there is nothing for a build flag to buy.
 #define VM_RECORD_STEP()                                                                           \
     do {                                                                                           \
         if constexpr (Record) { record_step(in); }                                                 \
@@ -84,10 +68,6 @@ namespace ctbrowser::script {
             frames_.pop_back();                                                                    \
         }                                                                                          \
     } while (0)
-#else
-#define VM_RECORD_STEP() ((void)0)
-#define VM_POP_FRAME(carried_) frames_.pop_back()
-#endif
 
 #if VM_COMPUTED_GOTO
 // GNU extensions, suppressed HERE and nowhere else: the address-of-label and
@@ -873,32 +853,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     if (saved != nullptr) {
                         saved->awaiting = true;
                         saved->running = false;
-                        saved->handlers.clear();
                     } else {
                         saved = allocate<coroutine_object>();
                     }
-                    saved->proto = vm_frame->proto;
-                    saved->ip = vm_frame->ip;
-                    saved->await_reg = in.a;
-                    saved->argc = vm_frame->argc;
-                    saved->closure = vm_frame->closure;
-                    saved->receiver = vm_frame->receiver;
-                    saved->constructing = vm_frame->constructing;
-                    saved->promise = promise;
-                    saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
-                                         registers_.end());
-                    // This (*vm_frame)'s handlers travel with it, with reg_top made
-                    // RELATIVE - the (*vm_frame) comes back somewhere else in the stack,
-                    // and an absolute mark would point at whatever is there then.
-                    for (std::size_t i = vm_frame->handler_base; i < handlers_.size(); ++i) {
-                        handler moved = handlers_[i];
-                        moved.reg_top -= base;
-                        saved->handlers.push_back(moved);
-                    }
-                    handlers_.resize(vm_frame->handler_base);
                     const std::uint16_t slot = vm_frame->result_reg;
-                    registers_.resize(base);
-                    frames_.pop_back();
+                    suspend_frame(saved, in.a);
                     if (is_pending_promise(awaited)) {
                         attach_resume(awaited, value::object(saved));
                     } else {
@@ -942,10 +901,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(yield_value) do {
             {
-                // SUSPEND INTO THE GENERATOR AND HAND THE VALUE OUT. Everything
-                // here is the (*vm_frame)-lifting `await` does a few cases up; what
-                // differs is only who puts it back, and that a value goes to the
-                // caller of `.next()` rather than to a promise.
+                // SUSPEND INTO THE GENERATOR AND HAND THE VALUE OUT. The same
+                // frame-lifting `await` does a few cases up; what differs is
+                // only who puts it back, and that a value goes to the caller
+                // of `.next()` rather than to a promise.
                 coroutine_object * saved = vm_frame->generator;
                 if (saved == nullptr) {
                     // The compiler refuses `yield` outside a generator, so this is
@@ -955,23 +914,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     break;
                 }
                 const value produced = reg(in.b);
-                saved->ip = vm_frame->ip;
-                saved->await_reg = in.a;
-                saved->receiver = vm_frame->receiver;
-                saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
-                                     registers_.end());
-                // This (*vm_frame)'s handlers travel with it, with reg_top made RELATIVE:
-                // the (*vm_frame) comes back somewhere else in the register stack, and an
-                // absolute mark would point at whatever is there then.
-                saved->handlers.clear();
-                for (std::size_t i = vm_frame->handler_base; i < handlers_.size(); ++i) {
-                    handler moved = handlers_[i];
-                    moved.reg_top -= base;
-                    saved->handlers.push_back(moved);
-                }
-                handlers_.resize(vm_frame->handler_base);
-                registers_.resize(base);
-                frames_.pop_back();
+                suspend_frame(saved, in.a);
                 yielded_ = true;
                 if (frames_.size() <= stop_depth) { return produced; }
                 // A generator body is only ever entered by generator_resume, which
@@ -1299,9 +1242,7 @@ vm_done:
 // used from this translation unit and nowhere else, so nothing else needs the
 // definition and no explicit instantiation is required.
 value context::run_loop(std::size_t stop_depth) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     if (recorder_ != nullptr) { return run_loop_impl<true>(stop_depth); }
-#endif
     return run_loop_impl<false>(stop_depth);
 }
 

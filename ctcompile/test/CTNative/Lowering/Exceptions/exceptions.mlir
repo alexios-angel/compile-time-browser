@@ -1,5 +1,5 @@
 // RUN: split-file %s %t
-// RUN: python3 %S/exceptions.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables
+// RUN: python3 %S/exceptions.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables --node %node --reference %native_reference
 
 // Source programs retain runtime branches and both normal and throwing calls.
 // The checker compares independent Node and interpreter results with explicit

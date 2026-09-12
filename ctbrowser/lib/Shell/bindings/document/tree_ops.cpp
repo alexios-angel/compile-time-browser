@@ -177,7 +177,6 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
                 obj->set(std::string{handle_property},
                          value::number(static_cast<double>(pack(fresh))));
                 wrappers_.emplace(pack(fresh), obj);
-                install_element_methods(cx, *obj);
                 install_element_views(cx, *obj, fresh);
                 refresh_element(cx, *obj, fresh);
             }

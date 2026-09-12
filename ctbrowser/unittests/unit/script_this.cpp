@@ -20,13 +20,6 @@ using ctbrowser::script::value;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++ctbrowser_test_failures;
-    }
-}
-
 void expect_script(std::string_view source, std::string_view expected,
                    script_kind kind = script_kind::classic) {
     const program prog = compiler::compile(source, kind);

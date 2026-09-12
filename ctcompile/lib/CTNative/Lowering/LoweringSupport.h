@@ -101,7 +101,6 @@ bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
-bool mayBeUndefined(mlir::Type type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 std::string printed(mlir::Type type);
 using receiverGroups = llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>>;
@@ -112,9 +111,10 @@ std::string cIdentifier(llvm::StringRef symbol);
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
 std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
+// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
+// $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
 bool isUndefinedConstant(mlir::Value value);
-llvm::StringRef constantKeyOf(mlir::Value key);
 // All source stores to each emitted identity member, before any retyping.
 // A read's narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,

@@ -110,15 +110,15 @@ int main() {
     });
     must_notice("changed text", [](document & doc) {
         auto build = doc.build();
-        build.append(find(doc, "p"), build.create_text(" and more"));
+        build.append(find(doc, "p"), doc.create_text(" and more"));
     });
     must_notice("an extra element", [](document & doc) {
         auto build = doc.build();
-        build.append(find(doc, "body"), build.create_element(doc.atoms().intern("span")));
+        build.append(find(doc, "body"), doc.create_element(doc.atoms().intern("span")));
     });
     must_notice("a different tag", [](document & doc) {
         auto build = doc.build();
-        build.append(find(doc, "body"), build.create_element(doc.atoms().intern("section")));
+        build.append(find(doc, "body"), doc.create_element(doc.atoms().intern("section")));
     });
     // THE ONE THAT MATTERS MOST, and the one a comparator written by tag name
     // alone would miss: an SVG <title> and an HTML <title> intern to the SAME
@@ -127,7 +127,7 @@ int main() {
     must_notice("an element in the wrong namespace", [](document & doc) {
         auto build = doc.build();
         build.append(find(doc, "body"),
-                     build.create_element(doc.atoms().intern("title"), node_ns::svg));
+                     doc.create_element(doc.atoms().intern("title"), node_ns::svg));
     });
 
     // A TORN TREE, which is the default failure mode of a loader written
@@ -161,25 +161,25 @@ int main() {
         // expected: html > [ a > x, b > y ] - four distinct elements.
         {
             auto build = d1.build();
-            const node_id root = build.create_element(a1.intern("html"));
-            build.set_root(root);
-            const node_id ea = build.create_element(a1.intern("a"));
-            const node_id eb = build.create_element(a1.intern("b"));
+            const node_id root = d1.create_element(a1.intern("html"));
+            d1.set_document_element(root);
+            const node_id ea = d1.create_element(a1.intern("a"));
+            const node_id eb = d1.create_element(a1.intern("b"));
             build.append(root, ea);
             build.append(root, eb);
-            build.append(ea, build.create_element(a1.intern("x")));
-            build.append(eb, build.create_element(a1.intern("x")));
+            build.append(ea, d1.create_element(a1.intern("x")));
+            build.append(eb, d1.create_element(a1.intern("x")));
         }
         // actual: the SAME x hung under both. Every child count matches.
         {
             auto build = d2.build();
-            const node_id root = build.create_element(a2.intern("html"));
-            build.set_root(root);
-            const node_id ea = build.create_element(a2.intern("a"));
-            const node_id eb = build.create_element(a2.intern("b"));
+            const node_id root = d2.create_element(a2.intern("html"));
+            d2.set_document_element(root);
+            const node_id ea = d2.create_element(a2.intern("a"));
+            const node_id eb = d2.create_element(a2.intern("b"));
             build.append(root, ea);
             build.append(root, eb);
-            const node_id shared = build.create_element(a2.intern("x"));
+            const node_id shared = d2.create_element(a2.intern("x"));
             build.append(ea, shared);
             build.append(eb, shared);
         }

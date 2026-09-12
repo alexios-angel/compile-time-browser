@@ -7,7 +7,7 @@
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
 // the order it had; the helpers more than one of the eight needs are in
-// page_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -20,7 +20,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "page_probe.hpp"
+#include "chrome_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -35,7 +35,6 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-using ctbrowser_test::check;
 using ctbrowser_test::log_of;
 
 namespace {
@@ -300,7 +299,7 @@ void test_element_query_selector() {
         <span class=hit>outside</span>
         <script>
           const box = document.getElementById('box');
-          console.log('one=' + box.querySelector('.hit').getText());
+          console.log('one=' + box.querySelector('.hit').textContent);
           console.log('all=' + box.querySelectorAll('.hit').length);
           // The document's own search still sees everything, including the one
           // outside the box - that is what makes the scoping meaningful.
@@ -351,7 +350,7 @@ void test_inner_html() {
     check(log[4] == "asText=0,<not markup>", "textContent stores text, not markup: " + log[4]);
     // And the parsed nodes are in the CASCADE, which is what says they are
     // really in the document rather than in a side table.
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A <script>'s textContent is its SOURCE, unmangled. p5's error system
     // reads it back and parses it, so anything lost here becomes a syntax

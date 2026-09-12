@@ -42,13 +42,6 @@ using ctbrowser::script::value;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++ctbrowser_test_failures;
-    }
-}
-
 std::size_t leaf_calls = 0;
 std::size_t caller_calls = 0;
 std::size_t native_calls = 0;

@@ -27,22 +27,6 @@ control_kind browser::kind_of(const read_txn & txn, node_id id) {
                            txn.attribute_value(id, atoms_.intern("type")));
 }
 
-node_id browser::node_by_id(const read_txn & txn, std::string_view want) {
-    if (want.empty()) { return node_id{}; }
-    const atom key = atoms_.intern("id");
-    node_id found{};
-    const auto walk = [&](auto && self, node_id at) -> void {
-        if (found) { return; }
-        if (txn.attribute_value(at, key) == want) {
-            found = at;
-            return;
-        }
-        for (const node_id child : txn.children(at)) { self(self, child); }
-    };
-    walk(walk, txn.root());
-    return found;
-}
-
 node_id browser::labelled_control(const read_txn & txn, node_id from) {
     if (!from) { return node_id{}; }
     const atom label_tag = atoms_.intern_lower("label");
@@ -60,7 +44,7 @@ node_id browser::labelled_control(const read_txn & txn, node_id from) {
     // falling back to whatever the label happens to contain.
     const std::string_view target = txn.attribute_value(label, atoms_.intern("for"));
     if (!target.empty()) {
-        const node_id named = node_by_id(txn, target);
+        const node_id named = bindings_->find_by_id(std::string{target});
         return kind_of(txn, named) != control_kind::none ? named : node_id{};
     }
 

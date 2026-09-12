@@ -5,14 +5,8 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
-
-def run(command, *, success=True):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    if (result.returncode == 0) != success:
-        raise RuntimeError(f"unexpected tool status {result.returncode}: {command}\n{result.stdout}{result.stderr}")
-    return result
+from CTNative.harness import run
 
 
 def fingerprint(opt, ir):
@@ -25,10 +19,13 @@ def fingerprint(opt, ir):
 
 def manifest(opt, ir, *, absent=(), undefined=()):
     return {
-        "version": 1, "provider": "closed-source-v1",
-        "module_sha256": fingerprint(opt, ir), "entry": "_script_$0",
+        "version": 1,
+        "provider": "closed-source-v1",
+        "module_sha256": fingerprint(opt, ir),
+        "entry": "_script_$0",
         "roots": [{"binding": "host", "properties": ["slot"]}],
-        "observations": ["trace"], "absent_bindings": list(absent),
+        "observations": ["trace"],
+        "absent_bindings": list(absent),
         "undefined_bindings": list(undefined),
     }
 
@@ -39,7 +36,9 @@ def analyze(opt, ir, contract, prefix, *, strict=False, success=True, options=""
     output = prefix.with_suffix(".out.mlir")
     config.write_text(json.dumps(contract, indent=2) + "\n")
     flags = f"manifest={config} output={report} report=true require-proof={'true' if strict else 'false'} {options}"
-    result = run([opt, str(ir), "--ctnative-host-contract=" + flags, "-o", str(output)], success=success)
+    result = run(
+        [opt, str(ir), "--ctnative-host-contract=" + flags, "-o", str(output)], success=success
+    )
     return json.loads(report.read_text()) if report.exists() else None, output, result
 
 
@@ -92,13 +91,24 @@ def main():
         run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
         prepared[name] = ir
         contract = manifest(args.opt, ir, absent=("missing",) if name.startswith("absent_") else ())
-        positive = name in {"ordinary", "alias", "helper", "single_factory", "getter", "getter_alias", "getter_string", "getter_replaced"}
+        positive = name in {
+            "ordinary",
+            "alias",
+            "helper",
+            "single_factory",
+            "getter",
+            "getter_alias",
+            "getter_string",
+            "getter_replaced",
+        }
         report, _, _ = analyze(args.opt, ir, contract, args.work / f"{name}-check")
         if report["proved"] != positive:
             raise RuntimeError(f"{name}: wrong proof result: {report}")
         if positive:
             slot = report["slots"][0]
-            if slot["proved_edges"] != (2 if name == "getter_replaced" else 1) or slot["source_writes"] != (2 if name == "alias" else 1):
+            if slot["proved_edges"] != (2 if name == "getter_replaced" else 1) or slot[
+                "source_writes"
+            ] != (2 if name == "alias" else 1):
                 raise RuntimeError(f"{name}: wrong publication flow: {slot}")
         elif any(slot["proved_edges"] for slot in report["slots"]):
             raise RuntimeError(f"{name}: a refusal exposed usable edges")
@@ -112,12 +122,27 @@ def main():
 
     unknown = prepared["unknown"]
     forged = args.work / "forged.mlir"
-    forged.write_text(unknown.read_text().replace("module {", 'module attributes {ctnative.host_proved = true, ctnative.host_reason = "trusted"} {', 1))
-    rejection, _, _ = analyze(args.opt, forged, manifest(args.opt, unknown), args.work / "forged-check", strict=True, success=False)
+    forged.write_text(
+        unknown.read_text().replace(
+            "module {",
+            'module attributes {ctnative.host_proved = true, ctnative.host_reason = "trusted"} {',
+            1,
+        )
+    )
+    rejection, _, _ = analyze(
+        args.opt,
+        forged,
+        manifest(args.opt, unknown),
+        args.work / "forged-check",
+        strict=True,
+        success=False,
+    )
     if rejection["proved"] or not rejection["reason"]:
         raise RuntimeError("forged host metadata survived reanalysis")
 
-    stale, _, result = analyze(args.opt, prepared["alias"], contract, args.work / "stale", strict=True, success=False)
+    stale, _, result = analyze(
+        args.opt, prepared["alias"], contract, args.work / "stale", strict=True, success=False
+    )
     if not stale or "fingerprint mismatch" not in result.stderr:
         raise RuntimeError("stale manifest did not produce its exact diagnostic")
     bad_provider = dict(contract, provider="magic-bootstrap-host")
@@ -131,7 +156,9 @@ def main():
     exhausted, _, _ = analyze(args.opt, ir, contract, args.work / "budget", options="max-steps=0")
     if exhausted["proved"] or "budget" not in exhausted["reason"]:
         raise RuntimeError("budget exhaustion did not withhold proof")
-    print("host contract: 8 publication positives, 22 source refusals, stale/forged/provider/claim/budget controls passed")
+    print(
+        "host contract: 8 publication positives, 22 source refusals, stale/forged/provider/claim/budget controls passed"
+    )
 
 
 if __name__ == "__main__":

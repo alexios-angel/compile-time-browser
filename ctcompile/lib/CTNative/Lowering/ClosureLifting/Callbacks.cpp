@@ -12,8 +12,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             })) {
             return;
         }
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         if (target && seen.insert(target.getOperation()).second) { candidates.push_back(target); }
     });
     for (ctjs::FuncOp wrapper : candidates) {
@@ -104,7 +103,8 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                 refuse("callers do not supply one known capture-free callback target");
                 continue;
             }
-            const unsigned arity = callback.getBody().front().getNumArguments() - 3;
+            const unsigned arity =
+                callback.getBody().front().getNumArguments() - ctjs::implicit_arguments;
             bool callbackReadsArguments = false;
             callback.walk([&](mlir::Operation * operation) {
                 callbackReadsArguments |=

@@ -5,6 +5,7 @@
 # are standard LLVM out-of-tree convention, which the plan does not spell -
 # noted here rather than presented as though it did.
 import os
+import shutil
 
 import lit.formats
 import lit.llvm
@@ -44,8 +45,7 @@ llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
 # holding a positive program and three negative ones needs to be four files;
 # split-file cuts one file at its `//--- name` markers and drops the preamble
 # where the RUN and CHECK lines live.
-llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"],
-                                   [config.llvm_tools_dir])
+llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"], [config.llvm_tools_dir])
 
 # %cxx COMPILES THE EMITTED TRANSLATION UNIT AGAINST THE REAL ABI HEADERS.
 #
@@ -67,8 +67,28 @@ llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"],
 # `<compiler> -fsyntax-only ... _exe file.cpp`, which fails with a message about
 # a file called "_exe" rather than about the order of this list.
 config.substitutions.append(
-    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}"))
+    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}")
+)
 
 config.substitutions.append(
-    ("%cxx",
-     f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}"))
+    ("%cxx", f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}")
+)
+
+# %gxx AND %clangxx ARE BOTH COMPILERS, NOT THE HOST ONE. The Target/Cpp tests
+# run the emitted C++ under GCC and Clang because a gate that silently drops a
+# compiler passes vacuously (test/cmake/Native.cmake); %cxx would be one of
+# them. Same preference order as Target/Cpp/harness.py so the python drivers
+# and the RUN lines pick the same binaries. Optimisation and sanitizer flags
+# stay on the RUN line, since they differ per test.
+for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18", "clang++"))):
+    found = next((shutil.which(c) for c in candidates if shutil.which(c)), candidates[-1])
+    config.substitutions.append(
+        (name, f"{found} -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic")
+    )
+
+config.substitutions.append(("%node", config.node or shutil.which("node") or "node"))
+config.substitutions.append(("%native_reference", config.native_reference))
+
+# THE PYTHON DRIVERS IMPORT EACH OTHER ACROSS DIRECTORIES (CTNative/harness.py
+# says how), and a hand run wants the same path.
+config.environment["PYTHONPATH"] = config.test_source_root

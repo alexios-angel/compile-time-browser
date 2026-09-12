@@ -26,7 +26,7 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     };
 
     const auto handle = [](context & c, std::uint32_t made_id, const char * kind) {
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         out->set("__id", value::number(made_id));
         out->set("__kind", c.string(kind));
         return value::object(out);
@@ -325,7 +325,7 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     method("getExtension", [gl, touches](context & c, std::span<value> a) {
         const std::string name = a.empty() ? std::string{} : c.to_string(a[0]);
         const auto make = [&c](const char * label, auto && install) {
-            auto * ext = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * ext = c.allocate<script::object_object>();
             const auto add = [&c, ext](std::string method_name, script::native_fn fn) {
                 ext->set(method_name, value::object(c.allocate<script::native_object>(
                                           method_name, std::move(fn))));

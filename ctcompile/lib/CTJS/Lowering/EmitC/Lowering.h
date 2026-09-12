@@ -20,14 +20,6 @@
 
 namespace ctcompile::ctjs::emitc_detail {
 namespace ec = mlir::emitc;
-// THE IMPLICIT ARGUMENTS THE IMPORTER PREPENDS, named rather than counted.
-// BytecodeImport.cpp declares the same three; they are repeated here because
-// this file has to know which of them the entry ABI can actually supply.
-inline constexpr unsigned arg_receiver = 0;
-inline constexpr unsigned arg_new_target = 1;
-inline constexpr unsigned arg_callee = 2;
-inline constexpr unsigned implicit_arguments = 3;
-
 // The frame block's element type, aligned for whatever the runtime constructs
 // in it rather than for a byte.
 inline constexpr const char * kFrameStorageElement = "alignas(::std::max_align_t) unsigned char";
@@ -46,7 +38,7 @@ struct compiled_entry {
 
     // WHERE EACH JAVASCRIPT VALUE IS ROOTED.
     //
-    // THE COLLECTOR IS PRECISE and walks exactly the roots in GCRoots.def. A
+    // THE COLLECTOR IS PRECISE and walks exactly the roots of context::each_root. A
     // value living only in a C++ local of the emitted function is reachable
     // from NONE of them, so a helper that collects can free it while the
     // generated code still holds its bits - and 33 of the 69 ABI rows are

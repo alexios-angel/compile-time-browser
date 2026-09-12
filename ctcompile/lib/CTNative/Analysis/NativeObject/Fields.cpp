@@ -17,24 +17,6 @@ int64_t nativeObjectFieldGroup(mlir::Operation * op) {
 }
 
 namespace object_detail {
-namespace {
-bool ordinaryKey(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    if (!key) { return false; }
-    // Missing ordinary fields are undefined only while the prototype world is
-    // closed. These inherited names and the prototype setter are not fields.
-    return !llvm::StringSwitch<bool>(key.getValue())
-                .Cases({"__proto__", "prototype", "constructor"}, true)
-                .Cases({"toString", "valueOf", "toLocaleString"}, true)
-                .Cases({"hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"}, true)
-                .Cases({"__defineGetter__", "__defineSetter__"}, true)
-                .Cases({"__lookupGetter__", "__lookupSetter__"}, true)
-                .Default(false);
-}
-} // namespace
-
 bool scalarFieldOperation(mlir::Operation * op) {
     // Native Map recognition already excludes unknown calls, constructors,
     // globals and module imports. Reject the direct prototype/accessor routes
@@ -45,10 +27,10 @@ bool scalarFieldOperation(mlir::Operation * op) {
         return false;
     }
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-        if (!ordinaryKey(get.getKey())) { return false; }
+        if (!ctjs::ordinaryKey(get.getKey())) { return false; }
     }
     if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-        if (!ordinaryKey(set.getKey())) { return false; }
+        if (!ctjs::ordinaryKey(set.getKey())) { return false; }
     }
     return true;
 }
@@ -62,10 +44,10 @@ bool scalarFieldEnvironment(mlir::ModuleOp module) {
 bool scalarFieldUse(mlir::OpOperand & use) {
     if (use.getOperandNumber() != 0) { return false; }
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
-        return ordinaryKey(get.getKey());
+        return ctjs::ordinaryKey(get.getKey());
     }
     if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner())) {
-        return ordinaryKey(set.getKey());
+        return ctjs::ordinaryKey(set.getKey());
     }
     return false;
 }
@@ -117,8 +99,7 @@ struct fieldPresenceQuery {
 
     mlir::Attribute key(mlir::Value value) const {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && object_detail::ordinaryKey(value) ? constant.getValue()
-                                                             : mlir::Attribute{};
+        return ctjs::ordinaryKey(value) ? constant.getValue() : mlir::Attribute{};
     }
 
     mlir::Value origin(mlir::Value value, mlir::Operation * at, const fieldState & state) {

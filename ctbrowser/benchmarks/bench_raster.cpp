@@ -63,25 +63,25 @@ void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler 
     const rect viewport{0, 0, static_cast<float>(viewport_w), static_cast<float>(viewport_h)};
     const double first_ms = bench::time_ms(10, [&] {
         raster::software_backend backend{viewport_w, viewport_h};
-        (void)raster::draw(backend, layers, nullptr, raster::default_tile_extent, viewport);
+        raster::draw(backend, layers, nullptr, raster::default_tile_extent, viewport);
     });
     const double first_par_ms = bench::time_ms(10, [&] {
         raster::software_backend backend{viewport_w, viewport_h};
-        (void)raster::draw(backend, layers, &pool, raster::default_tile_extent, viewport);
+        raster::draw(backend, layers, &pool, raster::default_tile_extent, viewport);
     });
 
     // A SCROLL FRAME, measured the way one actually happens: raster whatever
     // came into view, then composite. Tiles already drawn are kept, so the
     // steady-state cost is one row of tiles rather than a page.
     raster::software_backend scrolled{viewport_w, viewport_h};
-    (void)raster::draw(scrolled, layers, &pool, raster::default_tile_extent, viewport);
+    raster::draw(scrolled, layers, &pool, raster::default_tile_extent, viewport);
     const std::size_t after_first = scrolled.raster_calls();
     float at = 0;
     const int scroll_steps = 40;
     const double scroll_ms = bench::time_ms(scroll_steps, [&] {
         at += 60;
         layers.scroll_to(0, at);
-        (void)raster::draw(scrolled, layers, &pool, raster::default_tile_extent, viewport);
+        raster::draw(scrolled, layers, &pool, raster::default_tile_extent, viewport);
     });
     const double tiles_per_scroll =
         static_cast<double>(scrolled.raster_calls() - after_first) / scroll_steps;

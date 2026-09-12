@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <initializer_list>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +39,16 @@ void ascii_upper_in_place(std::string & text) noexcept;
 // `boost::algorithm::iequals`, whose default overload takes the global locale -
 // the host dependence above - and never merges two different UTF-8 sequences.
 [[nodiscard]] bool ascii_iequals(std::string_view a, std::string_view b) noexcept;
+
+// ascii_iequals against ANY of a keyword list - the shape every "is this one
+// of the reserved words" test in the CSS front end has. The initializer_list
+// overload exists because a span will not take a braced list.
+[[nodiscard]] bool ascii_iequals_any(std::string_view text,
+                                     std::span<const std::string_view> names) noexcept;
+[[nodiscard]] inline bool ascii_iequals_any(
+    std::string_view text, std::initializer_list<std::string_view> names) noexcept {
+    return ascii_iequals_any(text, std::span<const std::string_view>{names.begin(), names.size()});
+}
 
 // The prefix form. CSS FUNCTION NAMES ARE ASCII CASE-INSENSITIVE - Bootstrap
 // writes `RGBA(...)` in capitals - so this is what a function-name test wants.
@@ -89,6 +101,25 @@ inline constexpr std::string_view js_whitespace = " \t\n\r\f\v";
     return text.substr(first, text.find_last_not_of(set) - first + 1);
 }
 
+// Infra's "strip and collapse": trim, then every interior run of the set
+// becomes ONE space. `document.title` and a CSSOM prelude both read this way
+// (`two\t\ttabs` comes back "two tabs"), and having them collapse differently
+// was the two-decoder bug base64 had.
+[[nodiscard]] inline std::string collapse_whitespace(std::string_view text, std::string_view set) {
+    std::string out;
+    bool space = false;
+    for (const char c : trim(text, set)) {
+        if (set.find(c) != std::string_view::npos) {
+            space = true;
+            continue;
+        }
+        if (space) { out += ' '; }
+        space = false;
+        out += c;
+    }
+    return out;
+}
+
 // --- utf-8 ----------------------------------------------------------------
 
 // One code point, appended as UTF-8. A byte encoder and nothing more: the
@@ -111,6 +142,50 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
         out.push_back(static_cast<char>(0x80u | ((v >> 6) & 0x3Fu)));
         out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
     }
+}
+
+// One code point out of UTF-8, advancing `at` past it. A truncated or
+// malformed sequence yields the lead byte itself and advances by one, so bad
+// input is REJECTED rather than approximated: a name check sees a value no
+// production admits, a glyph walk still keeps the byte count honest. Only
+// the continuation FORM is checked, never the range - WTF-8 lone surrogates
+// (ED A0 80) must round-trip through CharacterData, so this is deliberately
+// not a validator.
+[[nodiscard]] constexpr char32_t decode_utf8(std::string_view text, std::size_t & at) {
+    const auto lead = static_cast<unsigned char>(text[at]);
+    std::size_t extra = 0;
+    char32_t built = 0;
+    if (lead < 0x80u) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if ((lead & 0xE0u) == 0xC0u) {
+        extra = 1;
+        built = static_cast<char32_t>(lead & 0x1Fu);
+    } else if ((lead & 0xF0u) == 0xE0u) {
+        extra = 2;
+        built = static_cast<char32_t>(lead & 0x0Fu);
+    } else if ((lead & 0xF8u) == 0xF0u) {
+        extra = 3;
+        built = static_cast<char32_t>(lead & 0x07u);
+    } else {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if (at + extra >= text.size()) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    for (std::size_t i = 1; i <= extra; ++i) {
+        const auto byte = static_cast<unsigned char>(text[at + i]);
+        if ((byte & 0xC0u) != 0x80u) {
+            ++at;
+            return static_cast<char32_t>(lead);
+        }
+        built = static_cast<char32_t>((built << 6) | (byte & 0x3Fu));
+    }
+    at += extra + 1;
+    return built;
 }
 
 // --- base64 ---------------------------------------------------------------

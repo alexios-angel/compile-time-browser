@@ -19,18 +19,18 @@ namespace ctbrowser::shell {
 
 script::object_object * dom_bindings::install_performance(context & cx) {
     // PerformanceEntry.prototype, and PerformancePaintTiming.prototype behind it.
-    auto * entry_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
-    entry_proto->set(
-        "toJSON", value::object(cx.allocate<script::native_object>("toJSON", [](context & c,
-                                                                                std::span<value>) {
-            auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
-            const value self = c.current_this();
-            for (const char * key : {"name", "entryType", "startTime", "duration"}) {
-                out->set(key, c.lookup_property(self, key));
-            }
-            return value::object(out);
-        })));
-    auto * paint_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * entry_proto = cx.allocate<script::object_object>();
+    entry_proto->set("toJSON", value::object(cx.allocate<script::native_object>(
+                                   "toJSON", [](context & c, std::span<value>) {
+                                       auto * out = c.allocate<script::object_object>();
+                                       const value self = c.current_this();
+                                       for (const char * key :
+                                            {"name", "entryType", "startTime", "duration"}) {
+                                           out->set(key, c.lookup_property(self, key));
+                                       }
+                                       return value::object(out);
+                                   })));
+    auto * paint_proto = cx.allocate<script::object_object>();
     paint_proto->prototype = value::object(entry_proto);
     for (const auto & [name, proto] : {std::pair{"PerformanceEntry", entry_proto},
                                        std::pair{"PerformancePaintTiming", paint_proto}}) {
@@ -57,7 +57,7 @@ script::object_object * dom_bindings::install_performance(context & cx) {
         for (const performance_entry & entry : performance_entries_) {
             if (!name.empty() && entry.name != name) { continue; }
             if (!type.empty() && entry.type != type) { continue; }
-            auto * object = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * object = c.allocate<script::object_object>();
             object->prototype = paint_prototype;
             object->set("name", c.string(entry.name));
             object->set("entryType", c.string(entry.type));
@@ -67,7 +67,7 @@ script::object_object * dom_bindings::install_performance(context & cx) {
         }
         return list;
     };
-    auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * performance = cx.allocate<script::object_object>();
     const auto method = [&](const char * name, auto fn) {
         auto * native = cx.allocate<script::native_object>(name, std::move(fn));
         // The prototype lives in a C++ capture the collector cannot see, and

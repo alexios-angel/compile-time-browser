@@ -875,7 +875,7 @@ void dom_bindings::install_node_methods(context & cx) {
     });
     method(element, "getBoundingClientRect", 0, [this](context & c, std::span<value>) {
         const rect box = box_of(receiver(c));
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         const auto set = [&](const char * name, float v) {
             out->set(name, value::number(static_cast<double>(v)));
         };

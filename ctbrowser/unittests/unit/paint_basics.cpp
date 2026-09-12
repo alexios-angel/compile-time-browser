@@ -26,13 +26,6 @@ using namespace ctbrowser::paint;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // The whole front of the pipeline, since a display list is only meaningful at
 // the end of it.
 struct fixture {

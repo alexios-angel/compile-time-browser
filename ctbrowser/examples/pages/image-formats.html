@@ -11,23 +11,34 @@
      Drawn three times at three sizes because scaling is nearest-neighbour and
      an <img> is rasterised at the size its box got - so this also pins that. -->
 <html>
-  <head>
+<head>
     <meta charset="utf-8">
     <style>
-      body { margin: 0; background: #ffffff }
-      img { display: block; image-rendering: pixelated }
-      .row { padding: 8px }
+        body {
+            margin: 0;
+            background: #ffffff
+        }
+
+        img {
+            display: block;
+            image-rendering: pixelated
+        }
+
+        .row {
+            padding: 8px
+        }
+
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <div class="row">
-      <img src="examples/assets/badge.png" width="16" height="16">
+        <img src="examples/assets/badge.png" width="16" height="16">
     </div>
     <div class="row">
-      <img src="examples/assets/badge.png" width="64" height="64">
+        <img src="examples/assets/badge.png" width="64" height="64">
     </div>
     <div class="row">
-      <img src="examples/assets/badge.png" width="32" height="64">
+        <img src="examples/assets/badge.png" width="32" height="64">
     </div>
-  </body>
+</body>
 </html>

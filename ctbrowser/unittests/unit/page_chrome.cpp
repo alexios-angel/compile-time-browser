@@ -27,7 +27,6 @@ using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
 // Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
 using ctbrowser_test::box_of;
-using ctbrowser_test::check;
 using ctbrowser_test::commands;
 using ctbrowser_test::draws_text;
 using ctbrowser_test::find_id;
@@ -46,13 +45,13 @@ namespace {
 void test_scrollbar_appears_only_when_needed() {
     browser shortish{browser_options{300, 400}};
     shortish.load_html("<body><p>one line</p></body>");
-    check(shortish.frame().has_value(), "the short page renders");
+    shortish.frame();
     check(shortish.max_scroll() == 0, "a short page does not scroll");
     check(!shortish.on_scrollbar(295), "and has no scrollbar");
 
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
-    check(page.frame().has_value(), "the tall page renders");
+    page.frame();
     check(page.max_scroll() > 0, "a tall page scrolls");
     check(page.on_scrollbar(295), "and has a scrollbar at the right edge");
     check(!page.on_scrollbar(100), "which is not the middle of the page");
@@ -63,7 +62,7 @@ void test_the_scrollbar_reserves_its_width() {
     // lay out, and if it overflows, lay out again in what is left.
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // Every fragment ends before the scrollbar starts.
     float rightmost = 0;
     const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy) -> void {
@@ -78,7 +77,7 @@ void test_the_scrollbar_reserves_its_width() {
 void test_dragging_the_thumb_scrolls() {
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.scroll_y() == 0, "starts at the top");
 
     // Grab the thumb (it is at the top) and drag down.
@@ -96,7 +95,7 @@ void test_dragging_the_thumb_scrolls() {
 void test_clicking_the_track_pages() {
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // Well below the thumb: a page down, not a jump to the pointer.
     (void)page.handle(input_event::mouse_down_at(295, 190));
     (void)page.handle(input_event::mouse_up_at(295, 190));
@@ -108,7 +107,7 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
     browser page{browser_options{300, 200}};
     page.load_html(tall_page() + "<script>document.addEventListener('click', function () {"
                                  "  console.log('page clicked'); });</script>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     (void)page.handle(input_event::mouse_down_at(295, 100));
     (void)page.handle(input_event::mouse_up_at(295, 100));
     check(page.bindings().console_output().empty(), "the page never sees the scrollbar's click");
@@ -121,7 +120,7 @@ void test_the_scrollbar_thumb_follows_the_scroll() {
     // re-record. That is the delay.
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const auto thumb_top = [&] {
         float top = -1;
@@ -137,7 +136,7 @@ void test_the_scrollbar_thumb_follows_the_scroll() {
 
     page.scroll_to(page.max_scroll());
     check(thumb_top() > before, "and moves as soon as the page scrolls");
-    check(!page.frame().has_value() || true, "no re-record was needed");
+    page.frame();
 }
 
 // --- the select popup, the context menu, the clipboard --------------------
@@ -146,21 +145,21 @@ void test_select_popup_opens_and_chooses() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><select id=s><option>one</option><option>two</option>"
                    "<option>three</option></select></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // Closed, the list is not on screen - only the selected option is.
     check(!draws_text(page, "three"), "the options are not drawn while it is closed");
 
     const rect box = box_of(page, "s");
     (void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
     (void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
-    check(page.frame().has_value(), "the opened frame renders");
+    page.frame();
     check(draws_text(page, "three"), "clicking the select shows the whole list");
 
     // Pick the third row. The popup opens directly below the box, one row per
     // option, each as tall as the box.
     const float row = box.height;
     (void)page.handle(input_event::mouse_down_at(box.x + 5, box.bottom() + row * 2.5f));
-    check(page.frame().has_value(), "the chosen frame renders");
+    page.frame();
     check(!draws_text(page, "one"), "choosing closes the list");
     check(draws_text(page, "three"), "and the choice is what the box now shows");
 }
@@ -169,30 +168,30 @@ void test_clicking_away_closes_the_popup() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><select id=s><option>alpha</option><option>beta</option></select>"
                    "<p id=elsewhere>elsewhere</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "s");
     (void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
     (void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
-    (void)page.frame();
+    page.frame();
     check(draws_text(page, "beta"), "the list is open");
 
     (void)page.handle(input_event::mouse_down_at(300, 250)); // nowhere near it
-    (void)page.frame();
+    page.frame();
     check(!draws_text(page, "beta"), "a click anywhere else closes it");
 }
 
 void test_the_context_menu() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><p>right click me</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(!draws_text(page, "Paste"), "no menu to start with");
 
     (void)page.handle(input_event::mouse_down_at(60, 40, input_event::right_button));
-    check(page.frame().has_value(), "the menu frame renders");
+    page.frame();
     check(draws_text(page, "Copy") && draws_text(page, "Paste"), "the right button opens a menu");
 
     (void)page.handle(input_event::mouse_down_at(300, 250));
-    (void)page.frame();
+    page.frame();
     check(!draws_text(page, "Paste"), "and a click elsewhere closes it");
 }
 
@@ -202,9 +201,9 @@ void test_a_page_can_take_over_the_context_menu() {
                    "document.addEventListener('contextmenu', function (e) { e.preventDefault(); });"
                    "</script></body>");
     check(page.script_error().empty(), "the script ran");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     (void)page.handle(input_event::mouse_down_at(60, 40, input_event::right_button));
-    (void)page.frame();
+    page.frame();
     // preventDefault means the page is drawing its own; ours must not appear.
     check(!draws_text(page, "Paste"), "a cancelled contextmenu suppresses the browser's menu");
 }
@@ -212,7 +211,7 @@ void test_a_page_can_take_over_the_context_menu() {
 void test_clipboard_round_trip() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input id=a type=text value=hello><input id=b type=text></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // Focus the first field, select everything, copy.
     const rect first = box_of(page, "a");
@@ -237,7 +236,7 @@ void test_clipboard_round_trip() {
 void test_cut_removes_what_it_copied() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input id=a type=text value=gone></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "a");
     (void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
     (void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
@@ -281,7 +280,7 @@ void test_a_cut_listener_may_create_controls() {
             document.getElementById('seen').value = String(made);
         });
         </script></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect box = box_of(page, "a");
     (void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
@@ -300,7 +299,7 @@ void test_the_cursor_follows_the_element() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><a href='#' id=link>a link</a><input id=field type=text>"
                    "<p id=plain>plain</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect link = box_of(page, "link");
     const rect field = box_of(page, "field");
     // The UA sheet gives a link `cursor: pointer`; an editable is an I-beam.
@@ -326,7 +325,7 @@ void drag(browser & page, float x1, float y1, float x2, float y2) {
 void test_dragging_selects_text() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><p id=p>selectable words here</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(!page.has_selection(), "nothing is selected to start with");
 
     const rect box = box_of(page, "p");
@@ -349,22 +348,21 @@ void test_selection_is_drawn() {
     const auto highlight_pixels = [](bool select) {
         browser page{browser_options{300, 120}};
         page.load_html("<body><p id=p>highlight me</p></body>");
-        (void)page.frame();
+        page.frame();
         if (select) {
             const rect box = box_of(page, "p");
             const float middle = box.y + box.height / 2;
             drag(page, box.x + 1, middle, box.x + box.width - 1, middle);
-            (void)page.frame();
+            page.frame();
         }
         std::size_t found = 0;
-        if (const auto image = page.read_pixels()) {
-            for (int y = 0; y < image->height(); ++y) {
-                const auto row = image->row(y);
-                for (int x = 0; x < image->width(); ++x) {
-                    if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) ==
-                        (style::ua_selection_highlight & 0x00FFFFFFU)) {
-                        ++found;
-                    }
+        const raster::surface & image = page.read_pixels();
+        for (int y = 0; y < image.height(); ++y) {
+            const auto row = image.row(y);
+            for (int x = 0; x < image.width(); ++x) {
+                if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) ==
+                    (style::ua_selection_highlight & 0x00FFFFFFU)) {
+                    ++found;
                 }
             }
         }
@@ -377,7 +375,7 @@ void test_selection_is_drawn() {
 void test_selection_spans_elements() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><p id=one>first para</p><p id=two>second para</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect first = box_of(page, "one");
     const rect second = box_of(page, "two");
     drag(page, first.x + 1, first.y + first.height / 2, second.right() - 1,
@@ -392,7 +390,7 @@ void test_selection_is_direction_agnostic() {
     const auto select = [](bool backwards) {
         browser page{browser_options{400, 200}};
         page.load_html("<body><p id=p>forwards and backwards</p></body>");
-        (void)page.frame();
+        page.frame();
         const rect box = box_of(page, "p");
         const float middle = box.y + box.height / 2;
         if (backwards) {
@@ -409,7 +407,7 @@ void test_selection_is_direction_agnostic() {
 void test_copying_the_page_selection() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><p id=p>copy this</p><input id=field type=text></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "p");
     const float middle = box.y + box.height / 2;
     drag(page, box.x + 1, middle, box.right() - 1, middle);
@@ -436,7 +434,7 @@ void test_selection_across_a_wrap() {
     browser page{browser_options{200, 200}};
     // Narrow enough that this must wrap.
     page.load_html("<body><p id=p>alpha bravo charlie delta echo</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "p");
     check(box.height > 30, "the paragraph really did wrap");
 
@@ -453,14 +451,14 @@ void test_selection_survives_a_relayout() {
     // a resize rebuilds every fragment.
     browser page{browser_options{400, 200}};
     page.load_html("<body><p id=p>this text outlives a resize</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "p");
     drag(page, box.x + 1, box.y + box.height / 2, box.right() - 1, box.y + box.height / 2);
     const std::string before = page.selected_text();
     check(!before.empty(), "something is selected");
 
     (void)page.handle(input_event::resized(300, 200));
-    check(page.frame().has_value(), "the resized frame renders");
+    page.frame();
     check(page.has_selection(), "the selection survived the relayout");
     // EXACTLY the same text, across a relayout that rebuilt every fragment and
     // rewrapped the paragraph. That is what a (node, code point) position buys,

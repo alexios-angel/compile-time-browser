@@ -6,24 +6,19 @@ native executable out.
 The application driver is still incomplete. With MLIR enabled, `ctjs-translate`
 and `ctjs-opt` import JavaScript and compile it through boxed or native EmitC
 pipelines. The native subset emits standalone C++ and diagnoses unsupported
-functions. Full native Bootstrap execution is not yet established.
+functions; a native program retains no VM dependency. Full native Bootstrap
+execution is not yet established.
 
-Recent native work includes [tagged optional scalars](docs/native-optional-scalars.md),
-[boolean/number unions for Bootstrap's getter](docs/native-scalar-unions.md),
-[owning object/scalar Map values](docs/native-object-values.md),
-[conditional BTA effect queries](docs/native-conditional-effects.md), and opt-in
-[partial evaluation with heap residualisation](docs/native-partial-evaluation.md).
-The partial evaluator reuses ctbrowser's primitive semantics inside the compiler;
-generated native programs retain no VM dependency.
-
-The [native optimization roadmap](docs/native-pe-roadmap.md) documents separate
-opt-in controls for precomputation, specialization, heap evaluation, Map snapshot
-deforestation, recursive supercompilation and
-[unreachable-helper removal](docs/native-reachability.md). The default native pipeline enables
-none of these transforms. The research designs for
-[modern PE](docs/native-modern-pe.md) and
-[supercompilation](docs/native-supercompilation.md) distinguish implemented slices
-from the remaining heap, host-effect and generalization work.
+Native status - what the tier claims, the newest gate numbers and what lands
+next - is `docs/HANDOFF.md`'s top entry, and the source-derived execution
+boundary is the [Bootstrap Data probe](docs/bootstrap-data-probe.md); this file
+does not keep a second copy of either.
+What the default native pipeline runs (primitive precomputation and
+unreachable-helper removal, both on by default with opt-outs) is
+[native-optimization-defaults.md](docs/native-optimization-defaults.md); the
+opt-in transforms and the research designs behind them
+([modern PE](docs/native-modern-pe.md) among them) hang off the
+[native optimization roadmap](docs/native-pe-roadmap.md).
 
 ## What it is for
 
@@ -81,12 +76,3 @@ boundary is real rather than a directory name.
 MLIR is behind `CTCOMPILE_ENABLE_MLIR`; the full devbox gate enables it.
 Engine-only builds do not require LLVM. The version is pinned in
 `cmake/LLVMVersion.cmake`; see `docs/LLVMUpgrade.md`.
-
-## What lands next
-
-Native Bootstrap still needs component and host object representations, typed
-host publication and its library/error paths. Partial evaluation now preserves
-a runtime suffix after a static entry prefix and owns immutable closure heaps.
-Component fields, explicit host contracts and splitting across regions remain for
-Bootstrap initialization. See the [Bootstrap Data probe](docs/bootstrap-data-probe.md)
-for the current source-derived execution boundary.

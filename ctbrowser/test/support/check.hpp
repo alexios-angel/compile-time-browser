@@ -1,11 +1,17 @@
 #ifndef CTBROWSER_V2_TEST_CHECK_HPP
 #define CTBROWSER_V2_TEST_CHECK_HPP
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <vector>
 #include <version>
 
 #include <csignal>
@@ -25,6 +31,34 @@
 // Same shape as the previous engine's tests: a non-zero exit fails ctest, and every failure
 // prints its own file:line so a CI log says what broke without a debugger.
 inline int ctbrowser_test_failures = 0;
+
+// CHECK() below prints the expression that failed. Layout and page failures
+// read far better as prose ("second block stacks below the first") than as a
+// float comparison or a stringified call, so most of the suite asserts with a
+// sentence instead. There were 22 file-local copies of this before it moved here.
+inline void check(bool ok, std::string_view what) {
+    if (!ok) {
+        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
+        ++ctbrowser_test_failures;
+    }
+}
+
+// A file as bytes-in-a-string, or empty when it is not there. Every corpus
+// test slurps its bundle and its record this way; ctest runs from ctbrowser/,
+// so relative paths name the checkout. There were 14 copies of this.
+[[nodiscard]] inline std::string read_file(const std::filesystem::path & path) {
+    std::ifstream in{path, std::ios::binary};
+    if (!in) { return {}; }
+    std::ostringstream all;
+    all << in.rdbuf();
+    return all.str();
+}
+
+// Text as the bytes an asset registry takes. Seven tests had one each.
+[[nodiscard]] inline std::vector<std::byte> bytes_of(std::string_view text) {
+    const auto * begin = reinterpret_cast<const std::byte *>(text.data());
+    return {begin, begin + text.size()};
+}
 
 namespace ctbrowser_test {
 

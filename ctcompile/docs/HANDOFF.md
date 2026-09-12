@@ -905,9 +905,10 @@ the default full workflow is unchanged. Current full matrix: **425 positives /
 compilations plus ten sanitizer builds**. Run on the devbox under the build lock:
 
 ```sh
-python3 ctcompile/test/CTNative/Ownership/global-maps.py \
+PYTHONPATH=ctcompile/test python3 ctcompile/test/CTNative/Ownership/global-maps.py \
   --translate build/ctcompile/tools/ctjs-translate/ctjs-translate \
   --opt build/ctcompile/tools/ctjs-opt/ctjs-opt \
+  --node "$(command -v node)" --reference build/ctcompile/test/ctcompile-test-native-reference \
   --work /tmp/ctcompile-object-keys --group object-keys
 ```
 
@@ -6025,6 +6026,10 @@ primary backend, sources are in `lib/`, build on the devbox.
   `(fr, op_kind, lhs, rhs, out)` where the kind is an attribute and `out` is an
   out-parameter). A mismatch declines the match rather than failing the module,
   so what it declines is the work list for the rest of the phase.
+  **Retired 2026-09-12**: the rest of the phase was never written, the EmitC
+  backend names each op with `dyn_cast` and consumes no `func.call`, and the
+  shared piece the postmortem below asked for is RuntimeHelpers.hpp's role
+  table, which stays. The pass, its lit test and `values_only` are gone.
 * **Phase 9 — THE IMPORTER WORKS AND ITS GATE IS MET.** Real bytecode functions
   translate into CTJS MLIR: **p5.js imports 3,200 of its functions and phaser
   6,069**, and both modules verify. `ctjs-translate --ctbrowser-js-to-ctjs f.js`

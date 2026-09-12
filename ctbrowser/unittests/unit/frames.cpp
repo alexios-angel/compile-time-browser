@@ -40,13 +40,6 @@ constexpr const char * inner_html = "<!DOCTYPE html><html><head><title>inner</ti
 constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1 1\">"
                                    "<Leaf/>text</root>";
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out;
-    out.reserve(text.size());
-    for (const char c : text) { out.push_back(static_cast<std::byte>(c)); }
-    return out;
-}
-
 // Load a page with the two frames available by name, run enough ticks for the
 // reconcile and the frame's load event to have happened, and answer with what
 // the expression logged.

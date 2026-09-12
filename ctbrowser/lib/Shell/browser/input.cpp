@@ -459,21 +459,15 @@ bool browser::edit_key(control_state & control, const input_event & event) {
         mark(dirty::paint);
         return true;
     }
-    if (event.ctrl && key == "KeyA") {
-        forms_.select_all(control);
-        mark(dirty::paint);
-        return true;
-    }
     if (key == "Enter") {
         // In a textarea this is a newline; in a single-line field it submits
         // the form, which is the implicit-submission rule every login page
         // depends on.
-        const auto txn = doc_->read();
-        if (kind_of(txn, focused_) == control_kind::textarea) {
+        if (multiline) {
             forms_.insert_text(control, "\n");
             return edited(true);
         }
-        submit(form_store::owning_form(txn, atoms_, focused_));
+        submit(form_store::owning_form(doc_->read(), atoms_, focused_));
         return true;
     }
     return false;

@@ -29,6 +29,7 @@ be read, not silently failed." The numbers are ratcheted so a regression is
 caught; the READING is a person's job. ctbrowser/unittests/unit/bootstrap_layout.cpp is the
 automatic half and needs no Chrome.
 """
+
 import argparse
 import importlib.util
 import json
@@ -101,23 +102,55 @@ CELL_TOLERANCE = 24
 PROPS_VERSION = 1
 PROPS = [
     # box
-    "display", "box-sizing", "width", "height",
-    "min-width", "max-width", "min-height", "max-height",
-    "margin-top", "margin-right", "margin-bottom", "margin-left",
-    "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "display",
+    "box-sizing",
+    "width",
+    "height",
+    "min-width",
+    "max-width",
+    "min-height",
+    "max-height",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
     # positioning
-    "position", "top", "right", "bottom", "left", "z-index",
+    "position",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "z-index",
     # flow
-    "float", "clear",
+    "float",
+    "clear",
     # flex
-    "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis",
-    "justify-content", "align-items", "align-self", "align-content", "order",
-    "row-gap", "column-gap",
+    "flex-direction",
+    "flex-wrap",
+    "flex-grow",
+    "flex-shrink",
+    "flex-basis",
+    "justify-content",
+    "align-items",
+    "align-self",
+    "align-content",
+    "order",
+    "row-gap",
+    "column-gap",
     # text
-    "line-height", "text-align", "vertical-align", "white-space",
-    "font-size", "font-weight",
+    "line-height",
+    "text-align",
+    "vertical-align",
+    "white-space",
+    "font-size",
+    "font-weight",
     # paint
-    "color", "background-color",
+    "color",
+    "background-color",
 ]
 GEOMETRY = ["@x", "@y", "@w", "@h"]
 
@@ -128,7 +161,8 @@ GEOMETRY = ["@x", "@y", "@w", "@h"]
 # there is a real finding rather than a missing default.
 INITIAL = {
     "box-sizing": "content-box",
-    "width": "auto", "height": "auto",
+    "width": "auto",
+    "height": "auto",
     # 0px, THOUGH CSS SIZING 3 SAYS THE INITIAL VALUE IS `auto`. Chrome reports
     # `auto` for a FLEX ITEM and `0px` for everything else, because `min-width:
     # auto` only has a meaning - the automatic minimum size - inside a flex or grid
@@ -136,20 +170,46 @@ INITIAL = {
     # wrong way, which is a good measurement of how much of Bootstrap is flex: the
     # remaining min-width differences are flex items and they close at the flex
     # rung, not in this table.
-    "min-width": "0px", "max-width": "none", "min-height": "0px", "max-height": "none",
-    "margin-top": "0px", "margin-right": "0px", "margin-bottom": "0px", "margin-left": "0px",
-    "padding-top": "0px", "padding-right": "0px", "padding-bottom": "0px", "padding-left": "0px",
+    "min-width": "0px",
+    "max-width": "none",
+    "min-height": "0px",
+    "max-height": "none",
+    "margin-top": "0px",
+    "margin-right": "0px",
+    "margin-bottom": "0px",
+    "margin-left": "0px",
+    "padding-top": "0px",
+    "padding-right": "0px",
+    "padding-bottom": "0px",
+    "padding-left": "0px",
     "position": "static",
-    "top": "auto", "right": "auto", "bottom": "auto", "left": "auto", "z-index": "auto",
-    "float": "none", "clear": "none",
-    "flex-direction": "row", "flex-wrap": "nowrap",
-    "flex-grow": "0", "flex-shrink": "1", "flex-basis": "auto",
-    "justify-content": "normal", "align-items": "normal", "align-self": "auto",
-    "align-content": "normal", "order": "0",
-    "row-gap": "normal", "column-gap": "normal",
-    "line-height": "normal", "text-align": "start", "vertical-align": "baseline",
-    "white-space": "normal", "font-size": "16px", "font-weight": "400",
-    "color": "rgb(0, 0, 0)", "background-color": "rgba(0, 0, 0, 0)",
+    "top": "auto",
+    "right": "auto",
+    "bottom": "auto",
+    "left": "auto",
+    "z-index": "auto",
+    "float": "none",
+    "clear": "none",
+    "flex-direction": "row",
+    "flex-wrap": "nowrap",
+    "flex-grow": "0",
+    "flex-shrink": "1",
+    "flex-basis": "auto",
+    "justify-content": "normal",
+    "align-items": "normal",
+    "align-self": "auto",
+    "align-content": "normal",
+    "order": "0",
+    "row-gap": "normal",
+    "column-gap": "normal",
+    "line-height": "normal",
+    "text-align": "start",
+    "vertical-align": "baseline",
+    "white-space": "normal",
+    "font-size": "16px",
+    "font-weight": "400",
+    "color": "rgb(0, 0, 0)",
+    "background-color": "rgba(0, 0, 0, 0)",
 }
 
 FIXTURES = ["box", "type", "grid", "components", "position", "kitchen"]
@@ -158,6 +218,7 @@ CHUNK = 40
 
 
 # --- talking to the rig ------------------------------------------------------
+
 
 def load_compare():
     """compare.py as a module, so there is one client and one protocol."""
@@ -202,7 +263,7 @@ def collect(cmp, engines: list[str]) -> dict:
                 raise RuntimeError(f"engine {name!r} threw: {side['error']}")
             for line in side.get("console", []):
                 if line.startswith("#head "):
-                    heads[name] = json.loads(line[len("#head "):])
+                    heads[name] = json.loads(line[len("#head ") :])
                     continue
                 path, _, rest = line.partition("|")
                 ident, _, payload = rest.partition("|")
@@ -226,9 +287,14 @@ NUMBER_RE = re.compile(r"^-?(?:\d+\.?\d*|\.\d+)$")
 RGB_RE = re.compile(r"^rgba?\(([^)]*)\)$")
 HEX_RE = re.compile(r"^#([0-9a-fA-F]{3,8})$")
 NAMED = {
-    "transparent": (0, 0, 0, 0.0), "black": (0, 0, 0, 1.0), "white": (255, 255, 255, 1.0),
-    "red": (255, 0, 0, 1.0), "lime": (0, 255, 0, 1.0), "blue": (0, 0, 255, 1.0),
-    "gray": (128, 128, 128, 1.0), "grey": (128, 128, 128, 1.0),
+    "transparent": (0, 0, 0, 0.0),
+    "black": (0, 0, 0, 1.0),
+    "white": (255, 255, 255, 1.0),
+    "red": (255, 0, 0, 1.0),
+    "lime": (0, 255, 0, 1.0),
+    "blue": (0, 0, 255, 1.0),
+    "gray": (128, 128, 128, 1.0),
+    "grey": (128, 128, 128, 1.0),
 }
 
 
@@ -280,7 +346,7 @@ def normalise(prop: str, raw: str):
         if len(digits) in (3, 4):
             digits = "".join(c * 2 for c in digits)
         if len(digits) in (6, 8):
-            vals = [int(digits[i:i + 2], 16) for i in range(0, len(digits), 2)]
+            vals = [int(digits[i : i + 2], 16) for i in range(0, len(digits), 2)]
             a = vals[3] / 255.0 if len(vals) > 3 else 1.0
             return colour_text(vals[0], vals[1], vals[2], a)
         return text
@@ -312,6 +378,7 @@ def show(value) -> str:
 
 
 # --- the comparison ----------------------------------------------------------
+
 
 class Finding:
     __slots__ = ("path", "ident", "prop", "mine", "theirs", "substituted")
@@ -378,8 +445,13 @@ def rank(result):
         if len(members) < 8:
             continue
         root = min((f.path for f in members), key=len)
-        groups.append((f"{len(members)} elements share a {prop} offset of {delta:+g}px",
-                       f"first at {root}", members))
+        groups.append(
+            (
+                f"{len(members)} elements share a {prop} offset of {delta:+g}px",
+                f"first at {root}",
+                members,
+            )
+        )
         claimed.update(id(f) for f in members)
 
     # 2. By property: which FEATURE is missing.
@@ -477,8 +549,11 @@ def cells_that_differ(cmp, name: str, engines: list[str]) -> int:
         raise RuntimeError(f"screenshots differ in size: {w1}x{h1} vs {w2}x{h2}")
     ours = cell_means(w1, h1, a)
     ref = cell_means(w2, h2, b)
-    bad = [i for i, (p, q) in enumerate(zip(ours, ref))
-           if max(abs(p[0] - q[0]), abs(p[1] - q[1]), abs(p[2] - q[2])) > CELL_TOLERANCE]
+    bad = [
+        i
+        for i, (p, q) in enumerate(zip(ours, ref))
+        if max(abs(p[0] - q[0]), abs(p[1] - q[1]), abs(p[2] - q[2])) > CELL_TOLERANCE
+    ]
     # WHERE, not just how many. A count says there is something to look at; the
     # band of rows says where to point the screenshot, and that is the difference
     # between a number and a lead.
@@ -501,13 +576,19 @@ def read_record() -> dict:
     for line in RECORD.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
-            if line.startswith("props-version=") or line.startswith("epsilon-px=") \
-                    or line.startswith("viewport="):
+            if (
+                line.startswith("props-version=")
+                or line.startswith("epsilon-px=")
+                or line.startswith("viewport=")
+            ):
                 key, _, value = line.partition("=")
                 out[key] = value
             continue
-        if line.startswith("props-version=") or line.startswith("epsilon-px=") \
-                or line.startswith("viewport="):
+        if (
+            line.startswith("props-version=")
+            or line.startswith("epsilon-px=")
+            or line.startswith("viewport=")
+        ):
             key, _, value = line.partition("=")
             out[key] = value
             continue
@@ -535,12 +616,17 @@ def write_record(results: dict) -> None:
 
 # --- reporting ---------------------------------------------------------------
 
+
 def report(name, result, limit, show_all):
-    print(f"\n=== bootstrap-{name}.html "
-          f"({result['elements']} elements, {len(GEOMETRY + PROPS)} properties) ===")
+    print(
+        f"\n=== bootstrap-{name}.html "
+        f"({result['elements']} elements, {len(GEOMETRY + PROPS)} properties) ==="
+    )
     if result["only_mine"] or result["only_theirs"]:
-        print(f"  TREE SHAPE: {len(result['only_mine'])} ctbrowser-only, "
-              f"{len(result['only_theirs'])} chrome-only elements")
+        print(
+            f"  TREE SHAPE: {len(result['only_mine'])} ctbrowser-only, "
+            f"{len(result['only_theirs'])} chrome-only elements"
+        )
         for path in (result["only_mine"] + result["only_theirs"])[:5]:
             print(f"    {path}")
     groups = rank(result)
@@ -552,22 +638,25 @@ def report(name, result, limit, show_all):
     if findings:
         components = by_component(findings)[:6]
         if components:
-            print("\n  BY COMPONENT   " +
-                  ", ".join(f".{token} ({n})" for n, token in components))
+            print("\n  BY COMPONENT   " + ", ".join(f".{token} ({n})" for n, token in components))
         print(f"\n  {'ELEMENT':<44} {'PROPERTY':<17} {'ctbrowser':<16} chrome")
         for f in findings[: (len(findings) if show_all else limit)]:
             ident = f.ident if len(f.ident) <= 43 else f.ident[:40] + "..."
             print(f"  {ident:<44} {f.prop:<17} {show(f.mine):<16} {show(f.theirs)}")
         if not show_all and len(findings) > limit:
             print(f"  ... {len(findings) - limit} more (--all)")
-    print(f"\n  {result['elements']} elements, {len(GEOMETRY + PROPS)} properties: "
-          f"{len(findings)} differ / {result['compared']}, substituted={result['substituted']}")
+    print(
+        f"\n  {result['elements']} elements, {len(GEOMETRY + PROPS)} properties: "
+        f"{len(findings)} differ / {result['compared']}, substituted={result['substituted']}"
+    )
     if result.get("cells") is not None:
         total = CELL_COLUMNS * CELL_ROWS
         where = result.get("cells_where") or ""
-        print(f"  {result['cells']} of {total} screen cells look different"
-              + (f", around {where}" if where else "")
-              + " - the number the property diff cannot see")
+        print(
+            f"  {result['cells']} of {total} screen cells look different"
+            + (f", around {where}" if where else "")
+            + " - the number the property diff cannot see"
+        )
 
 
 def main() -> int:
@@ -576,18 +665,28 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="print every difference, not the first 40")
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--advance", action="store_true", help="record the numbers (the only writer)")
-    ap.add_argument("--emit-props", action="store_true",
-                    help="write css-parity-props.txt for the C++ test and exit")
+    ap.add_argument(
+        "--emit-props",
+        action="store_true",
+        help="write css-parity-props.txt for the C++ test and exit",
+    )
     ap.add_argument("--engine", default="chrome", help="the reference engine")
     ap.add_argument("--keep", action="store_true", help="leave the session running")
-    ap.add_argument("--remote", nargs="?", const="devbox", default="", metavar="HOST",
-                    help="drive ctdrive on HOST rather than a local build (see compare.py)")
+    ap.add_argument(
+        "--remote",
+        nargs="?",
+        const="devbox",
+        default="",
+        metavar="HOST",
+        help="drive ctdrive on HOST rather than a local build (see compare.py)",
+    )
     args = ap.parse_args()
 
     if args.emit_props:
         PROPS_FILE.write_text(
             "# GENERATED by tools/check/css-parity.py --emit-props. Do not edit.\n"
-            f"# version={PROPS_VERSION}\n" + "\n".join(GEOMETRY + PROPS) + "\n")
+            f"# version={PROPS_VERSION}\n" + "\n".join(GEOMETRY + PROPS) + "\n"
+        )
         print(f"wrote {PROPS_FILE.relative_to(REPO)} ({len(GEOMETRY + PROPS)} columns)")
         return 0
 
@@ -595,25 +694,41 @@ def main() -> int:
     names = args.pages or [f"ctbrowser/examples/pages/bootstrap-{f}.html" for f in FIXTURES]
     record = read_record()
     if record.get("props-version") and int(record["props-version"]) != PROPS_VERSION:
-        print(f"css-parity: record file is props-version={record['props-version']}, "
-              f"this tool is {PROPS_VERSION}. Re-baseline deliberately (--advance).",
-              file=sys.stderr)
+        print(
+            f"css-parity: record file is props-version={record['props-version']}, "
+            f"this tool is {PROPS_VERSION}. Re-baseline deliberately (--advance).",
+            file=sys.stderr,
+        )
         return 2
 
     results, rc = {}, 0
     for page in names:
         stem = Path(page).stem.replace("bootstrap-", "")
-        subprocess.run([sys.executable, str(HERE / "compare.py"), "stop"],
-                       capture_output=True, check=False)
+        subprocess.run(
+            [sys.executable, str(HERE / "compare.py"), "stop"], capture_output=True, check=False
+        )
         start = subprocess.run(
-            [sys.executable, str(HERE / "compare.py"), "start", page,
-             "--engine", f"ctbrowse,{args.engine}",
-             "--size", str(VIEWPORT[0]), str(VIEWPORT[1])]
+            [
+                sys.executable,
+                str(HERE / "compare.py"),
+                "start",
+                page,
+                "--engine",
+                f"ctbrowse,{args.engine}",
+                "--size",
+                str(VIEWPORT[0]),
+                str(VIEWPORT[1]),
+            ]
             + (["--remote", args.remote] if args.remote else []),
-            capture_output=True, text=True, check=False)
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if start.returncode != 0:
-            print(f"css-parity: could not start a session for {page}:\n{start.stderr}",
-                  file=sys.stderr)
+            print(
+                f"css-parity: could not start a session for {page}:\n{start.stderr}",
+                file=sys.stderr,
+            )
             return 2
         time.sleep(1.0)
         # THE SESSION STAYS OPEN UNTIL BOTH MEASUREMENTS ARE TAKEN. The property
@@ -633,16 +748,21 @@ def main() -> int:
             return 2
         finally:
             if not args.keep:
-                subprocess.run([sys.executable, str(HERE / "compare.py"), "stop"],
-                               capture_output=True, check=False)
+                subprocess.run(
+                    [sys.executable, str(HERE / "compare.py"), "stop"],
+                    capture_output=True,
+                    check=False,
+                )
 
         heads = data["heads"]
         widths = {name: h.get("cw") for name, h in heads.items()}
         if len(set(widths.values())) > 1:
-            print(f"css-parity: RIG FAILURE on {page}: the two engines disagree about the "
-                  f"viewport ({widths}). Every @x and @w would differ for one reason; "
-                  f"fix the scrollbar/ICB difference before reading a property diff.",
-                  file=sys.stderr)
+            print(
+                f"css-parity: RIG FAILURE on {page}: the two engines disagree about the "
+                f"viewport ({widths}). Every @x and @w would differ for one reason; "
+                f"fix the scrollbar/ICB difference before reading a property diff.",
+                file=sys.stderr,
+            )
             return 2
 
         result = compare_page(data, "ctbrowse", args.engine)
@@ -653,16 +773,20 @@ def main() -> int:
 
         was = record.get(f"bootstrap-{stem}.html")
         if was and not args.advance:
-            for field, now in (("differ", len(result["findings"])),
-                               ("substituted", result["substituted"]),
-                               ("cells", result["cells"])):
+            for field, now in (
+                ("differ", len(result["findings"])),
+                ("substituted", result["substituted"]),
+                ("cells", result["cells"]),
+            ):
                 if now > was.get(field, now):
                     print(f"  RATCHET: {field} rose {was[field]} -> {now}")
                     rc = 1
             if was.get("elements") not in (None, result["elements"]):
-                print(f"  RATCHET: elements changed {was['elements']} -> {result['elements']}; "
-                      f"the fixture or the parser moved and the other numbers are "
-                      f"incomparable. Re-baseline deliberately.")
+                print(
+                    f"  RATCHET: elements changed {was['elements']} -> {result['elements']}; "
+                    f"the fixture or the parser moved and the other numbers are "
+                    f"incomparable. Re-baseline deliberately."
+                )
                 rc = 1
 
     if args.advance:

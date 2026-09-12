@@ -31,31 +31,10 @@ namespace {
     std::u16string units;
     units.reserve(text.size());
     for (std::size_t at = 0; at < text.size();) {
-        const auto lead = static_cast<unsigned char>(text[at]);
-        std::size_t width = 1;
-        char32_t cp = lead;
-        if ((lead & 0xE0u) == 0xC0u) {
-            width = 2;
-            cp = lead & 0x1Fu;
-        } else if ((lead & 0xF0u) == 0xE0u) {
-            width = 3;
-            cp = lead & 0x0Fu;
-        } else if ((lead & 0xF8u) == 0xF0u) {
-            width = 4;
-            cp = lead & 0x07u;
-        }
         // A truncated or invalid sequence: the byte stands for itself, which
         // keeps this total on any bytes at all - the document's text comes
         // from a tokenizer that does not promise well-formedness.
-        if (width == 1 || at + width > text.size()) {
-            units.push_back(static_cast<char16_t>(lead));
-            ++at;
-            continue;
-        }
-        for (std::size_t i = 1; i < width; ++i) {
-            cp = (cp << 6) | (static_cast<unsigned char>(text[at + i]) & 0x3Fu);
-        }
-        at += width;
+        const char32_t cp = decode_utf8(text, at);
         if (cp >= 0x10000) {
             units.push_back(static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)));
             units.push_back(static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 0x3FF)));

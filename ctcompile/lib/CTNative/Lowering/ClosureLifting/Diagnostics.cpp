@@ -22,7 +22,7 @@ std::string closureLifter::blockingLabel(mlir::Value object, mlir::OpOperand & u
             if (!into.getDefiningOp<ctjs::CreateObjectOp>()) {
                 return "set.stored-into.not-a-literal";
             }
-            if (constantKeyOf(set.getKey()).empty()) {
+            if (ctjs::constantKey(set.getKey()).empty()) {
                 return "set.stored-into.a-literal-under-a-dynamic-key";
             }
             return closedAfterLift(into) ? "set.stored-into.a-closed-literal"
@@ -89,13 +89,18 @@ void closureLifter::blockingLabelsOf(mlir::Value object, llvm::StringSet<> & int
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(get.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
+                continue;
+            }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(set.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
+                continue;
+            }
         } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
             if (use.getOperandNumber() == 1) {
                 auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (load && load.getObject() == object && !constantKeyOf(load.getKey()).empty()) {
+                if (load && load.getObject() == object &&
+                    !ctjs::constantKey(load.getKey()).empty()) {
                     continue;
                 }
             }
@@ -150,7 +155,7 @@ void closureLifter::censusOpenLiteral(mlir::Value object) {
     unsigned fields = 0;
     for (mlir::Operation * user : object.getUsers()) {
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
-        if (set && set.getObject() == object && !constantKeyOf(set.getKey()).empty() &&
+        if (set && set.getObject() == object && !ctjs::constantKey(set.getKey()).empty() &&
             set.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
             ++fields;
         }

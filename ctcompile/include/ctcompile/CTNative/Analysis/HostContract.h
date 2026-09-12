@@ -45,6 +45,9 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);
 // host-contract reports are excluded; all semantic operations remain bound.
 std::string hostContractFingerprint(mlir::ModuleOp module);
 void clearHostContractReports(mlir::ModuleOp module);
+// Remove every attribute of `op` whose name starts with `prefix` - the
+// analyses' reports and proof markers, which a clone must never inherit.
+void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 
 struct HostSlotEdge {
     ctjs::SetPropertyOp write;

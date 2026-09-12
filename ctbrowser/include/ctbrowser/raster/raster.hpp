@@ -4,22 +4,15 @@
 //   surface     pixels as span + explicit stride (libstdc++ 13 has no mdspan)
 //   tile        the unit of raster work, in CONTENT space so a scroll does not
 //               invalidate it
-//   draw        display list -> pixels, shared by EVERY backend, so the GPU
-//               image and the software image are comparable by construction
-//   backend     the RasterBackend concept - software and GPU are compile-time
-//               interchangeable, and "did I implement all of it" is an error
-//   software    the FIRST backend, so everything downstream is testable
-//               headlessly and byte-for-byte before any GPU code exists
-//   renderer    the movable handle to the software backend that the browser
-//               owns
+//   draw        display list -> pixels
+//   software    the tile store and compositor the browser owns; headless and
+//               byte-for-byte reproducible
 //   compositor  draw() for a frame
 //   svg         vector graphics -> a bitmap AT THE SIZE ASKED FOR, through
 //               plutosvg; optional, and the only third-party rasteriser the
 //               engine calls that is not SDL
 
-#include <ctbrowser/raster/backend/backend.hpp>
 #include <ctbrowser/raster/backend/compositor.hpp>
-#include <ctbrowser/raster/backend/renderer.hpp>
 #include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/draw.hpp>
 #include <ctbrowser/raster/gl.hpp>

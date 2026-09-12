@@ -11,7 +11,6 @@
 include "ctcompile/CTNative/IR/CTNativeBase.td"
 include "ctcompile/CTNative/IR/CTNativeTypes.td"
 include "ctcompile/CTNative/IR/CTNativeEnums.td"
-include "ctcompile/CTNative/IR/CTNativeInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffects]> {

@@ -6,7 +6,7 @@
 # Matching buckets rules by their rightmost simple selector and rejects
 # descendant selectors with an ancestor filter.
 # Depends on dom for read_txn - matching consumes a stable read view, never
-# the live tree, which is what makes it parallelisable.
+# the live tree.
 #
 # css/ is a SUBDIRECTORY, not an eleventh subsystem: one target, one aggregate
 # header, and the parser lives beside the cascade that is its only consumer.

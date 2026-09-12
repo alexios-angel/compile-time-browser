@@ -6,11 +6,6 @@
 
 namespace ctbrowser::shell {
 
-void browser::use_renderer(renderer r) {
-    renderer_ = std::move(r);
-    mark(dirty::paint); // the new renderer has no tiles
-}
-
 void browser::load_html(std::string_view html) {
     load_document(html, source_kind::html);
 }
@@ -192,7 +187,7 @@ bool browser::use_real_fonts(std::string_view directory) {
     ttf_ = std::move(backend);
     load_page_fonts();
     fonts_ = ttf_.get();
-    renderer_.set_fonts(fonts_);
+    renderer_.fonts = fonts_;
     // The canvas measures and draws its own text, so it needs the same backend
     // - otherwise a page's canvas keeps the bitmap font while the document
     // around it switches to real faces.

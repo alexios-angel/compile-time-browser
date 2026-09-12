@@ -28,8 +28,6 @@ struct admission {
 
     bool numeric(mlir::Value v, llvm::StringRef where);
 
-    bool boolean(mlir::Value v, llvm::StringRef where);
-
     bool printable(mlir::Value v, llvm::StringRef where);
     bool identityField(mlir::Operation * op);
     bool ownedTableField(ctjs::SetPropertyOp store);
@@ -65,8 +63,6 @@ struct admission {
     static bool isCellParameter(mlir::Value v);
 
     static bool namesASharedCell(mlir::Value v);
-
-    static llvm::StringRef keyOf(mlir::Value key);
 
     static bool isCIdentifier(llvm::StringRef key);
 

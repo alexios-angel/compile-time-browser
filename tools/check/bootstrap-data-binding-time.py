@@ -16,7 +16,6 @@ import re
 import subprocess
 import sys
 
-
 _SPEC = importlib.util.spec_from_file_location(
     "bootstrap_data_probe", Path(__file__).with_name("bootstrap-data-probe.py")
 )
@@ -28,13 +27,23 @@ FUNCTION = re.compile(r"^\s*ctjs\.func\s+(?:private\s+)?@([^\s(]+)")
 BINDING = re.compile(r'ctnative\.binding_time = "(static|dynamic)"')
 REASON = re.compile(r'ctnative\.binding_time_reason = "((?:[^"\\]|\\.)*)"')
 PE_REASON = re.compile(r'ctnative\.partial_eval_reason = "((?:[^"\\]|\\.)*)"')
-ROLES = ("script", "console recorder", "UMD wrapper", "Data factory", "Data.set", "Data.get", "Data.remove")
+ROLES = (
+    "script",
+    "console recorder",
+    "UMD wrapper",
+    "Data factory",
+    "Data.set",
+    "Data.get",
+    "Data.remove",
+)
 
 
 def run(command: list[str], text: str | None = None) -> subprocess.CompletedProcess:
     result = subprocess.run(command, input=text, capture_output=True, text=True, timeout=120)
     if result.returncode:
-        raise ProbeError(f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}")
+        raise ProbeError(
+            f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"
+        )
     return result
 
 
@@ -74,16 +83,23 @@ def inspect(ir: str) -> dict:
         index = int(name.rsplit("$", 1)[1])
         if index >= len(ROLES):
             raise ProbeError(f"unexpected source function identity: {name}")
-        if "ctnative.argument_binding_times = " not in function["header"] or \
-                "ctnative.binding_time_summary = " not in function["header"]:
+        if (
+            "ctnative.argument_binding_times = " not in function["header"]
+            or "ctnative.binding_time_summary = " not in function["header"]
+        ):
             raise ProbeError(f"function {name} has no binding-time argument/summary facts")
         counts = {"static": 0, "dynamic": 0}
         for line in function["lines"]:
             binding = BINDING.search(line)
             if re.search(r"(?:^\s*|=\s*)ctjs\.(?!func\b)", line):
-                if not binding or not REASON.search(line) or \
-                        "ctnative.result_binding_times = " not in line:
-                    raise ProbeError(f"function {name} has incomplete operation facts: {line.strip()}")
+                if (
+                    not binding
+                    or not REASON.search(line)
+                    or "ctnative.result_binding_times = " not in line
+                ):
+                    raise ProbeError(
+                        f"function {name} has incomplete operation facts: {line.strip()}"
+                    )
             if binding:
                 counts[binding.group(1)] += 1
             if 'ctjs.load_global "console"' in line:
@@ -115,8 +131,9 @@ def forge_console(ir: str) -> str:
             lines[i] = BINDING.sub('ctnative.binding_time = "static"', line)
             lines[i] = REASON.sub('ctnative.binding_time_reason = "forged source proof"', lines[i])
             lines[i] = re.sub(
-                r'ctnative\.result_binding_times = \[[^]]*\]',
-                'ctnative.result_binding_times = ["static"]', lines[i]
+                r"ctnative\.result_binding_times = \[[^]]*\]",
+                'ctnative.result_binding_times = ["static"]',
+                lines[i],
             )
             return "".join(lines)
     raise ProbeError("console host read missing before metadata control")
@@ -130,11 +147,14 @@ def check(args: argparse.Namespace) -> None:
     stem = args.work / "bootstrap-data-binding-time"
     program = stem.with_suffix(".js")
     program.write_bytes(generated.encode("utf-8"))
-    provenance.update({
-        "vendor": str(args.bootstrap), "program": str(program),
-        "program_sha256": _SOURCE.sha256(generated),
-        "scope": "source-derived Data initialization analysis; no native host execution",
-    })
+    provenance.update(
+        {
+            "vendor": str(args.bootstrap),
+            "program": str(program),
+            "program_sha256": _SOURCE.sha256(generated),
+            "scope": "source-derived Data initialization analysis; no native host execution",
+        }
+    )
     stem.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     if args.generate_only:
         print(f"bootstrap-data binding time: generated {program}")
@@ -182,30 +202,50 @@ def check(args: argparse.Namespace) -> None:
         reason = PE_REASON.search(function["header"])
         if reason:
             declined.append({"function": name, "reason": reason.group(1)})
-    summary = re.search(r"partial evaluation: (\d+) function\(s\), (\d+) residual heap node\(s\), (\d+) declined", partial.stderr)
-    if not summary or tuple(map(int, summary.groups())) != (0, 0, len(declined)) or \
-            "ctnative.partial_evaluated = " in partial.stdout or \
-            'ctjs.load_global "console"' not in partial.stdout:
+    summary = re.search(
+        r"partial evaluation: (\d+) function\(s\), (\d+) residual heap node\(s\), (\d+) declined",
+        partial.stderr,
+    )
+    if (
+        not summary
+        or tuple(map(int, summary.groups())) != (0, 0, len(declined))
+        or "ctnative.partial_evaluated = " in partial.stdout
+        or 'ctjs.load_global "console"' not in partial.stdout
+    ):
         raise ProbeError("Data effect boundary was specialized or lacks an intact host read")
     # The imported UMD functions remain public and indirect, outside the closed
     # private factory candidate set. Zero attempts must not be reported as seven
     # failed evaluations: record non-candidates separately from actual refusals.
-    outside_candidates = [name for name, function in functions(partial.stdout).items()
-                          if not PE_REASON.search(function["header"])]
-    factory = next(value for name, value in functions(partial.stdout).items() if name.endswith("$3"))
-    if not any("ctjs.construct " in line for line in factory["lines"]) or \
-            sum("ctjs.create_closure " in line for line in factory["lines"]) != 3:
+    outside_candidates = [
+        name
+        for name, function in functions(partial.stdout).items()
+        if not PE_REASON.search(function["header"])
+    ]
+    factory = next(
+        value for name, value in functions(partial.stdout).items() if name.endswith("$3")
+    )
+    if (
+        not any("ctjs.construct " in line for line in factory["lines"])
+        or sum("ctjs.create_closure " in line for line in factory["lines"]) != 3
+    ):
         raise ProbeError("Data initializer no longer retains its Map and three latent methods")
 
-    report = {**provenance, "reference_observations": observed, "binding_time": facts,
-              "partial_evaluation_refusals": declined,
-              "partial_evaluation_non_candidates": outside_candidates,
-              "partial_evaluation_specialized": 0, "metadata_rederived": True}
+    report = {
+        **provenance,
+        "reference_observations": observed,
+        "binding_time": facts,
+        "partial_evaluation_refusals": declined,
+        "partial_evaluation_non_candidates": outside_candidates,
+        "partial_evaluation_specialized": 0,
+        "metadata_rederived": True,
+    }
     stem.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-    print(f"bootstrap-data binding time: 7 source functions, {len(observed)} reference observations; "
-          f"{facts['dynamic_global_publications']} dynamic publications, "
-          f"{len(declined)} PE refusal(s), {len(outside_candidates)} outside candidate set; "
-          "no native host execution")
+    print(
+        f"bootstrap-data binding time: 7 source functions, {len(observed)} reference observations; "
+        f"{facts['dynamic_global_publications']} dynamic publications, "
+        f"{len(declined)} PE refusal(s), {len(outside_candidates)} outside candidate set; "
+        "no native host execution"
+    )
 
 
 def main() -> None:

@@ -32,11 +32,6 @@ using ctbrowser_test::logged;
 
 namespace {
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    const auto * begin = reinterpret_cast<const std::byte *>(text.data());
-    return {begin, begin + text.size()};
-}
-
 // THE STATEMENTS THE FRONT END FINDS: only the leading run, the URL in any of
 // its three spellings, the media list with `layer` and `supports()` removed,
 // and byte spans a caller can splice.
@@ -187,7 +182,7 @@ void test_link_disabled() {
     </script></body></html>)");
     for (int i = 0; i < 3; ++i) {
         (void)page.tick(16.0);
-        CHECK(page.frame().has_value());
+        page.frame();
     }
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "before="), std::string{"before=0|true|rgb(0, 0, 0)"});
@@ -215,7 +210,7 @@ void test_link_disabled() {
     </script></body></html>)");
     for (int i = 0; i < 3; ++i) {
         (void)alternate.tick(16.0);
-        CHECK(alternate.frame().has_value());
+        alternate.frame();
     }
     CHECK(alternate.script_error().empty());
     CHECK_EQ(logged(alternate, "noop="), std::string{"noop=false|rgb(0, 0, 0)|0"});

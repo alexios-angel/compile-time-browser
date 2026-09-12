@@ -17,7 +17,6 @@ from pathlib import Path
 import subprocess
 import sys
 
-
 _SPEC = importlib.util.spec_from_file_location(
     "bootstrap_data_probe", Path(__file__).with_name("bootstrap-data-probe.py")
 )
@@ -54,22 +53,31 @@ Object.defineProperty(define, "amd", {get: function() {
 var traceOldExports = exports === originalExports && exports !== module.exports ? 1 : 0;
 var traceNoBrowser = globalThis.bootstrap === undefined ? 1 : 0;
 """,
-        {"traceDefineReads": "0", "traceDefineCalls": "0", "traceMapAllocations": "1",
-         "tracePublished": "1", "traceOldExports": "1", "traceNoBrowser": "1"}, False,
+        {
+            "traceDefineReads": "0",
+            "traceDefineCalls": "0",
+            "traceMapAllocations": "1",
+            "tracePublished": "1",
+            "traceOldExports": "1",
+            "traceNoBrowser": "1",
+        },
+        False,
     ),
     "browser-target": (
         BROWSER + "var scriptThis = this; var self = {};\n",
         """var traceChosenGlobal = typeof globalThis.bootstrap.get === "function" ? 1 : 0;
 var traceNoFallback = scriptThis.bootstrap === undefined && self.bootstrap === undefined ? 1 : 0;
 """,
-        {"traceChosenGlobal": "1", "traceNoFallback": "1"}, False,
+        {"traceChosenGlobal": "1", "traceNoFallback": "1"},
+        False,
     ),
     "browser-this-fallback": (
         "var globalThis = undefined; var scriptThis = this; var self = {};\n",
         """var traceChosenThis = typeof scriptThis.bootstrap.get === "function" ? 1 : 0;
 var traceNoSelf = self.bootstrap === undefined ? 1 : 0;
 """,
-        {"traceChosenThis": "1", "traceNoSelf": "1"}, False,
+        {"traceChosenThis": "1", "traceNoSelf": "1"},
+        False,
     ),
     "amd-retained-factory": (
         BROWSER + MAP_COUNTER + """var pending;
@@ -91,9 +99,16 @@ var traceIndependent = first !== second && second.get(element, "bs.alert") === n
 var traceRetained = first.get(element, "bs.alert");
 var traceNoBrowser = globalThis.bootstrap === undefined ? 1 : 0;
 """,
-        {"traceMapAllocations": "3", "traceDefineCalls": "1", "traceDefineReceiver": "1",
-         "traceDelayed": "1", "traceIndependent": "1", "traceRetained": "42",
-         "traceNoBrowser": "1"}, False,
+        {
+            "traceMapAllocations": "3",
+            "traceDefineCalls": "1",
+            "traceDefineReceiver": "1",
+            "traceDelayed": "1",
+            "traceIndependent": "1",
+            "traceRetained": "42",
+            "traceNoBrowser": "1",
+        },
+        False,
     ),
     "mutable-export-and-methods": (
         BROWSER,
@@ -116,9 +131,16 @@ var traceOldMethod = originalGet(element, "bs.alert");
 detachedRemove(element, "bs.alert");
 var traceDetachedRemove = originalGet(element, "bs.alert") === null ? 1 : 0;
 """,
-        {"traceMutableDescriptor": "1", "traceDetached": "42", "traceArrowReceiver": "42",
-         "traceReplacementReceiver": "1", "traceFieldReplacement": "77",
-         "traceExportReplacement": "88", "traceOldMethod": "42", "traceDetachedRemove": "1"},
+        {
+            "traceMutableDescriptor": "1",
+            "traceDetached": "42",
+            "traceArrowReceiver": "42",
+            "traceReplacementReceiver": "1",
+            "traceFieldReplacement": "77",
+            "traceExportReplacement": "88",
+            "traceOldMethod": "42",
+            "traceDetachedRemove": "1",
+        },
         False,
     ),
     "console-replacement-and-throw": (
@@ -140,9 +162,16 @@ var traceReplacementCalls = 0;
 console = {error: function() { traceReplacementCalls = traceReplacementCalls + 1; return 123; }};
 var traceUndefinedReturn = data.set(element, "bs.collapse", 99) === undefined ? 1 : 0;
 """,
-        {"traceCaught": "1", "traceErrorReceiver": "1", "traceErrorMessage": "1",
-         "traceOriginal": "42", "traceRejected": "1", "traceReplacementCalls": "1",
-         "traceUndefinedReturn": "1"}, False,
+        {
+            "traceCaught": "1",
+            "traceErrorReceiver": "1",
+            "traceErrorMessage": "1",
+            "traceOriginal": "42",
+            "traceRejected": "1",
+            "traceReplacementCalls": "1",
+            "traceUndefinedReturn": "1",
+        },
+        False,
     ),
     "console-reentry": (
         BROWSER + "var console = {};\n",
@@ -157,8 +186,13 @@ var traceOuterReturn = data.set(element, "bs.collapse", 99) === undefined ? 1 : 
 var traceInnerValue = data.get(element, "bs.collapse");
 var traceOldRemoved = data.get(element, "bs.alert") === null ? 1 : 0;
 """,
-        {"traceCalls": "1", "traceOuterReturn": "1", "traceInnerValue": "64",
-         "traceOldRemoved": "1"}, False,
+        {
+            "traceCalls": "1",
+            "traceOuterReturn": "1",
+            "traceInnerValue": "64",
+            "traceOldRemoved": "1",
+        },
+        False,
     ),
     "callee-read-order": (
         BROWSER + """var traceOrder = 0;
@@ -182,7 +216,8 @@ Object.defineProperty(console, "error", {get: function() {
 globalThis.bootstrap.set(element, "bs.alert", 42);
 globalThis.bootstrap.set(element, "bs.collapse", 99);
 """,
-        {"traceOrder": "1234"}, False,
+        {"traceOrder": "1234"},
+        False,
     ),
     "publication-setter-throw": (
         BROWSER + """var marker = {}; var retained; var traceCaught = 0; var traceSetterCalls = 0;
@@ -195,7 +230,8 @@ Object.defineProperty(globalThis, "bootstrap", {set: function(value) {
         """var element = {}; retained.set(element, "bs.alert", 42);
 var traceRetained = retained.get(element, "bs.alert");
 """,
-        {"traceCaught": "1", "traceSetterCalls": "1", "traceRetained": "42"}, True,
+        {"traceCaught": "1", "traceSetterCalls": "1", "traceRetained": "42"},
+        True,
     ),
     "factory-throw-before-publication": (
         BROWSER + """var marker = {}; var traceCaught = 0; var traceSetterCalls = 0;
@@ -205,7 +241,8 @@ Object.defineProperty(globalThis, "bootstrap", {set: function(value) {
 var Map = function() { throw marker; };
 """,
         "",
-        {"traceCaught": "1", "traceSetterCalls": "0"}, True,
+        {"traceCaught": "1", "traceSetterCalls": "0"},
+        True,
     ),
     "amd-registration-throw": (
         BROWSER + MAP_COUNTER + """var marker = {}; var pending; var traceCaught = 0;
@@ -216,8 +253,13 @@ define.amd = 1;
 var retained = pending(); var element = {}; retained.set(element, "bs.alert", 42);
 var traceRetained = retained.get(element, "bs.alert");
 """,
-        {"traceMapAllocations": "2", "traceCaught": "1", "traceDelayed": "1",
-         "traceRetained": "42"}, True,
+        {
+            "traceMapAllocations": "2",
+            "traceCaught": "1",
+            "traceDelayed": "1",
+            "traceRetained": "42",
+        },
+        True,
     ),
 }
 
@@ -239,7 +281,9 @@ process.stdout.write(JSON.stringify({node: process.version, observations}, null,
 def run(command: list[str]) -> subprocess.CompletedProcess:
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
-        raise ProbeError(f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}")
+        raise ProbeError(
+            f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"
+        )
     return result
 
 
@@ -249,24 +293,43 @@ def check(args: argparse.Namespace) -> None:
     args.work.mkdir(parents=True, exist_ok=True)
     rows = []
     for name, (before, after, expected, caught) in SCENARIOS.items():
-        wrapped = ("try {\n" + fragment + "} catch (error) {\n"
-                   "    traceCaught = error === marker ? 1 : 0;\n}\n") if caught else fragment
+        wrapped = (
+            (
+                "try {\n" + fragment + "} catch (error) {\n"
+                "    traceCaught = error === marker ? 1 : 0;\n}\n"
+            )
+            if caught
+            else fragment
+        )
         source = before + wrapped + after
         if args.negative_control and name == "callee-read-order":
             source += "traceOrder = traceOrder + 1;\n"
         path = (args.work / f"{name}.js").resolve()
         path.write_bytes(source.encode("utf-8"))
-        rows.append({"name": name, "program": str(path), "program_sha256": _SOURCE.sha256(source),
-                     "expected": expected, "variant": "exact-wrapper-and-data"})
+        rows.append(
+            {
+                "name": name,
+                "program": str(path),
+                "program_sha256": _SOURCE.sha256(source),
+                "expected": expected,
+                "variant": "exact-wrapper-and-data",
+            }
+        )
     manifest = (args.work / "manifest.json").resolve()
     manifest.write_text(json.dumps(rows, indent=2) + "\n")
     driver = args.work / "node-driver.cjs"
     driver.write_text(NODE_DRIVER)
-    report = {**provenance, "vendor": str(args.bootstrap),
-              "scope": "host semantic audit; no native compile or execution claim", "scenarios": rows}
+    report = {
+        **provenance,
+        "vendor": str(args.bootstrap),
+        "scope": "host semantic audit; no native compile or execution claim",
+        "scenarios": rows,
+    }
     if args.generate_only:
         (args.work / "audit.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"bootstrap host contract: generated {len(rows)} exact-fragment scenarios in {args.work}")
+        print(
+            f"bootstrap host contract: generated {len(rows)} exact-fragment scenarios in {args.work}"
+        )
         return
 
     oracle = run([args.node, str(driver), str(manifest)])
@@ -305,8 +368,10 @@ def check(args: argparse.Namespace) -> None:
     (args.work / "audit.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"bootstrap host contract: Node agrees with {len(rows)} exact-fragment host scenarios")
     if args.reference:
-        print(f"ctbrowser reference: {len(rows) - len(mismatches)}/{len(rows)} agree; "
-              f"boundary mismatches: {', '.join(mismatches) or 'none'}")
+        print(
+            f"ctbrowser reference: {len(rows) - len(mismatches)}/{len(rows)} agree; "
+            f"boundary mismatches: {', '.join(mismatches) or 'none'}"
+        )
         if mismatches and args.require_reference_match:
             raise ProbeError("ctbrowser host boundary differs from Node: " + ", ".join(mismatches))
     print(f"audit report: {args.work / 'audit.json'}; no native coverage asserted")
@@ -327,8 +392,14 @@ def main() -> None:
     if args.generate_only and (args.reference or args.negative_control):
         parser.error("--generate-only cannot run a reference or negative control")
     # Compare the complete expected diagnostic; a tool failure cannot pass.
-    expected_error = ("Node observation callee-read-order: expected {'traceOrder': '1234'}, "
-                      "got {'traceOrder': '1235'}") if args.negative_control else None
+    expected_error = (
+        (
+            "Node observation callee-read-order: expected {'traceOrder': '1234'}, "
+            "got {'traceOrder': '1235'}"
+        )
+        if args.negative_control
+        else None
+    )
     try:
         check(args)
     except ProbeError as error:

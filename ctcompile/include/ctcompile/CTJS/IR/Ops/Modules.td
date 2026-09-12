@@ -117,7 +117,7 @@ def CTJS_ModuleNamespaceOp
 
     A SAFEPOINT: it allocates the object and one native_object per export. Safe
     under a real collector because the half-built object is stored into
-    namespace_object - GCRoots.def's `module_namespace` row - before the
+    namespace_object - `root_label::module_namespace` - before the
     accessor loop runs.
 
     NOT MayReenterJS. Building the namespace installs getters and invokes none
@@ -139,8 +139,9 @@ def CTJS_DynamicImportOp
 
     THE REFERRER IS NOT HERE, AND MUST NOT BE. function_proto::module is
     stamped by the LOADER after compilation - "the compiler cannot do this: a
-    specifier is the loader's name for a file" - and is absent from
-    engine_contract::proto_header, so an image does not carry it either. The
+    specifier is the loader's name for a file" - and the serializer
+    (program_image/write.cpp) does not write it, so an image does not carry it
+    either. The
     helper reads it off the frame. Baking a literal would leave bare and
     absolute specifiers working and break exactly the relative ones, which is
     the worst failure distribution available.

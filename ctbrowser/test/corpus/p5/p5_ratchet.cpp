@@ -36,7 +36,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,14 +118,6 @@ struct measurement {
         if (!stopped) { level = rung; }
     }
 };
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 // What a reported position is named after. --bisect pads its fragment with
 // blank lines so the numbers stay p5.js's own, which is the only way a

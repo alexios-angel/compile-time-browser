@@ -22,26 +22,6 @@ std::uint32_t compiler_impl::read_hex(std::string_view s, std::size_t & at, std:
     return value;
 }
 
-std::string compiler_impl::encode_code_point(std::uint32_t code) {
-    std::string out;
-    if (code < 0x80) {
-        out += static_cast<char>(code);
-    } else if (code < 0x800) {
-        out += static_cast<char>(0xC0 | (code >> 6));
-        out += static_cast<char>(0x80 | (code & 0x3F));
-    } else if (code < 0x10000) {
-        out += static_cast<char>(0xE0 | (code >> 12));
-        out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (code & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (code >> 18));
-        out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (code & 0x3F));
-    }
-    return out;
-}
-
 std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
     if (lexeme.size() >= 2 &&
         (lexeme.front() == '\'' || lexeme.front() == '"' || lexeme.front() == '`')) {
@@ -68,7 +48,7 @@ std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
         // encoded the letter x. Strings here are bytes, so a code point
         // becomes its UTF-8 - the same choice String.fromCharCode makes,
         // which is what keeps a round trip through String.prototype honest.
-        case 'x': out += encode_code_point(read_hex(lexeme, i, 2)); break;
+        case 'x': append_utf8(out, read_hex(lexeme, i, 2)); break;
         case 'u': {
             std::uint32_t code = 0;
             if (i + 1 < lexeme.size() && lexeme[i + 1] == '{') {
@@ -92,7 +72,7 @@ std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
                     }
                 }
             }
-            out += encode_code_point(code);
+            append_utf8(out, code);
             break;
         }
         // A backslash before a real newline is a line continuation and

@@ -15,9 +15,8 @@ the whole API.** One include, one link target (`ctbrowser::ctbrowser` in-tree,
 `run_app` owns the window, the event loop, the clock (it calls `tick()`, so
 timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.
 `app_options` mirrors the previous engine's: size, `logical_width/height` letterboxing,
-`max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets`,
-`on_native_window` (the escape hatch — hands you the `SDL_Window*` as `void*`)
-and `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
+`max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets` and
+`on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
 is how an example becomes a ctest with no test code in it.
 
 **SDL3 is OPTIONAL AT BUILD TIME.** `ctbrowser-app` always builds;
@@ -131,8 +130,8 @@ landed 2026-07-28 — see below.)
 was called without a face, so every control's text came out in the default
 serif while the caret was measured with the element's own — and a textarea is
 monospace by UA rule. The caret ran ahead by the difference on every character,
-which reads as a gap that grows as you type. `paint_face_of()` is the
-conversion and every control text draw goes through it.
+which reads as a gap that grows as you type. `face_of()` is the face (it is
+paint's type too) and every control text draw goes through it.
 
 **A field's geometry lives in ONE place** (`layout_of_field`): the inset, the
 line height, and where each line begins in the value. The painter draws from it
@@ -780,8 +779,7 @@ a tree walk and not a decode.
 
 `canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
 (`shell/image/images.hpp`) writes one through libpng's simplified API, the same
-library that decodes them. `tools/check/check-png.py` decodes what the engine
-wrote with Python's own zlib, independently of it.
+library that decodes them.
 
 ### `<a download>` WRITES A FILE - the one invented behaviour
 

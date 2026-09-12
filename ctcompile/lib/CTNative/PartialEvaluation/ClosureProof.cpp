@@ -2,6 +2,7 @@
 
 #include "../Lowering/ClosureLifting/ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/IR/IRMapping.h"
@@ -67,13 +68,7 @@ closureHeapProof prepareClosureHeapFacts(
                                           "partial-evaluation-origin-" + std::to_string(ordinal++));
         origins[name] = original;
         cloned->setLoc(mlir::NameLoc::get(name, original->getLoc()));
-        llvm::SmallVector<mlir::StringAttr> remove;
-        for (mlir::NamedAttribute attribute : cloned->getAttrs()) {
-            if (attribute.getName().getValue().starts_with("ctnative.")) {
-                remove.push_back(attribute.getName());
-            }
-        }
-        for (mlir::StringAttr name : remove) { cloned->removeAttr(name); }
+        removeAttrsWithPrefix(cloned, "ctnative.");
     });
     lowering_detail::closureLifter lifter{*copy, false};
     (void)lifter.run();
@@ -85,8 +80,7 @@ closureHeapProof prepareClosureHeapFacts(
         if (!original) { return; }
         if (llvm::isa<ctjs::CallDirectOp>(operation) && llvm::isa<ctjs::CallOp>(original)) {
             auto call = llvm::cast<ctjs::CallDirectOp>(operation);
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target && !target.getBody().empty()) { result.closedCalls.insert(original); }
         }
         if (operation->getName() != original->getName()) { return; }

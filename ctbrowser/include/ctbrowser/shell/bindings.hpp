@@ -317,10 +317,6 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
-    // A NO-OP since the methods moved to the interface prototypes (see
-    // define_operation); kept only because bindings/custom_elements.cpp calls
-    // it on the instance a `new`-made custom element becomes.
-    void install_element_methods(context & cx, script::object_object & obj);
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
     // `"insertBefore" in Node.prototype` and `.length` on each are what the
@@ -993,14 +989,6 @@ public:
     // the CSSOM has since done to it.
     [[nodiscard]] std::string author_style_text();
 
-    // CSSOM §2.1, "serialize an identifier". `CSS.escape` IS this algorithm and
-    // so is every name in a serialised selector - a type, an id, a class and an
-    // attribute's name all go through it - so it is one function rather than
-    // two: escaping too little produces a selector that means something else and
-    // escaping too much produces one that matches nothing, and having the two
-    // callers disagree about which is which is the bug this shape prevents.
-    [[nodiscard]] static std::string serialize_css_identifier(std::string_view text);
-
 private:
     // The document's sheets, re-derived from the DOM. Cheap and idempotent: an
     // owner node that already has a record keeps it, which is what makes
@@ -1103,6 +1091,10 @@ public:
     // traversal state, not the rules, so an engine with no sheets in it answers a
     // query exactly as well.
     void observe_style_engine(style::engine & engine) { selector_engine_ = &engine; }
+
+    // getElementById's walk, which the browser's fragment scroll and focus
+    // navigation share rather than keeping a second one.
+    [[nodiscard]] node_id find_by_id(const std::string & want);
 
 private:
     [[nodiscard]] style::engine & selector_engine();
@@ -1208,8 +1200,6 @@ private:
     [[nodiscard]] std::string text_of(node_id id) const;
 
     void set_text(node_id id, std::string text);
-
-    void edit_classes(node_id id, const std::string & name, bool add);
 
     [[nodiscard]] static std::vector<std::string_view> split(std::string_view text);
 
@@ -1340,7 +1330,7 @@ private:
     [[nodiscard]] value make_response(context & cx, const std::string & url, int status,
                                       const std::string & content_type,
                                       std::vector<std::byte> body) {
-        auto * response = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * response = cx.allocate<script::object_object>();
         response->set("url", cx.string(url));
         response->set("status", value::number(status));
         response->set("ok", value::boolean(status >= 200 && status < 300));
@@ -1353,7 +1343,7 @@ private:
         // knows is the content type - so it answers that one and reports every
         // other as absent rather than pretending.
         {
-            auto * headers = static_cast<script::object_object *>(cx.make_object().as_heap());
+            auto * headers = cx.allocate<script::object_object>();
             headers->set("__contentType", cx.string(content_type));
             const auto header_method = [&](std::string name, script::native_fn fn) {
                 headers->set(
@@ -1417,7 +1407,7 @@ private:
             // The shape install_typed_arrays recognises: an object carrying
             // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
             // storage rather than a copy of it.
-            auto * buffer = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * buffer = c.allocate<script::object_object>();
             buffer->set("byteLength", value::number(static_cast<double>(body.size())));
             buffer->set("length", value::number(static_cast<double>(body.size())));
             buffer->set("__bytes", byte_array(c, body));
@@ -1427,7 +1417,7 @@ private:
             // A minimal Blob: its size, its type and its bytes. Enough for a
             // page that hands one to URL.createObjectURL, which is the only
             // thing anything here does with one.
-            auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * blob = c.allocate<script::object_object>();
             // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
             // probe only ever read as passing because the throw in its
             // `.then` was lost rather than delivered as a rejection.
@@ -1516,8 +1506,6 @@ private:
 
     // --- lookups ----------------------------------------------------------
 
-    [[nodiscard]] node_id find_by_id(const std::string & want);
-
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
     // Every element with this tag, in document order; "*" means all of them.
     [[nodiscard]] std::vector<node_id> all_by_tag(std::string_view tag);
@@ -1597,12 +1585,6 @@ private:
     // ninety neighbours, and running it twice would leave two of each and break
     // every `instanceof` taken across the two documents.
     void adopt_interfaces_of(const dom_bindings & primary);
-    // "Strip and collapse ASCII whitespace", Infra - leading and trailing
-    // removed, every interior run replaced by ONE space. It is applied by
-    // `document.title`'s GETTER and not by its setter, which is why
-    // `document.title = "two  spaces"` reads back as "two spaces" while the
-    // attribute node still holds what was written.
-    [[nodiscard]] static std::string strip_and_collapse(std::string_view text);
     // `document.title`, `document.images` and the seven collections beside it,
     // all as ACCESSORS - see the definition for why not one of them can be a
     // property refreshed on the tick.
@@ -1737,17 +1719,16 @@ private:
     // Blob` has to be true whoever made it.
     value blob_prototype_;
 
-    // THE DOM'S INTERFACE OBJECTS - `window.HTMLCanvasElement` and friends.
+    // THE CONTEXT INTERFACE OBJECTS - `window.CanvasRenderingContext2D` and
+    // friends; the element interfaces live in the table (interface_prototypes_).
     //
     // A browser exposes one per interface, and libraries use them two ways that
     // both have to work: feature detection (`!!window.CanvasRenderingContext2D`)
-    // and identity (`el instanceof HTMLCanvasElement`). A bare marker object
-    // satisfies the first and makes the second silently FALSE.
+    // and identity (`ctx instanceof CanvasRenderingContext2D`). A bare marker
+    // object satisfies the first and makes the second silently FALSE.
     //
     // So each carries a real `prototype`, and the objects that are instances get
     // that prototype linked. See interface_prototype().
-    value canvas_element_prototype_;
-    value image_element_prototype_;
     // `Event.prototype` and `CustomEvent.prototype`. Every event object this
     // engine makes is linked to one, which is what carries `e.constructor`,
     // `e instanceof Event` and the four phase constants a page reads as
@@ -1908,7 +1889,7 @@ private:
     // cannot host one.
     [[nodiscard]] value attach_shadow(context & cx, node_id host, std::span<value> args);
     // The members a ShadowRoot has that an ordinary DocumentFragment does not.
-    // Installed from wrap(), AFTER install_element_methods, so the two it
+    // Installed from wrap(), AFTER the prototype link, so the two it
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);

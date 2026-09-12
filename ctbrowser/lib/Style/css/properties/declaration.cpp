@@ -162,7 +162,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // has never heard of, and serialises lowercased.
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
-        if (only.type == token_type::ident && in_list(wide_keywords, ts.text_of(only))) {
+        if (only.type == token_type::ident && ascii_iequals_any(ts.text_of(only), wide_keywords)) {
             return yes(ascii_lower_copy(ts.text_of(only)));
         }
     }

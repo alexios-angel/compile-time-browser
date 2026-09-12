@@ -227,8 +227,7 @@ turned down rather than overlooked:
   nothing includes `<boost/crc.hpp>`. Kept for the record: `boost::crc_32_type`
   replaced the 256-entry CRC table `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
   0xEDB88320 reflected), so this is the same checksum from a library rather than
-  from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
-  zlib independently of it. Header-only, so the cross-build needs nothing.
+  from memory. Header-only, so the cross-build needs nothing.
   **`encode_png` moved to `ctbrowser/lib/Shell/image/images.cpp` first**: it was `inline` in a
   public header, which made it the odd one out beside the BMP/PNG/JPEG decoders,
   and the rule against third-party headers in public ones is the reason the
@@ -394,16 +393,12 @@ whose parent directory is excluded.
 The in-app profiler (`CTBROWSER_PROFILE`, `CTBROWSER_PROFILE_SECONDS`) is gone
 (2026-09-10): `benchmarks/` measures every stage it reported.
 
-**`frame` is broken into styles / layout / record / raster since 2026-08-08.**
-It was one bucket for all four, so the profiler could say a frame was slow and
-never which part of it was - and those four are exactly what the dirty level
-chooses between, which makes their SUM the least informative way to report them.
-A skipped stage reads 0, and that is the number to look at: a scroll or a caret
-blink should leave three of them at zero, and "it didn't" is a regression in the
-dirty-level design that nothing else in the tree would catch. The engine times
-itself (`browser::last_frame_timing()`); the app layer only copies the numbers
-out, so the split costs four clock reads on a path that then rasterises the
-viewport.
+**`frame` is styles / layout / record / raster**, and those four are exactly
+what the dirty level chooses between, so the benchmarks report them one at a
+time rather than as a sum. That a scroll or a caret blink skips three of them is
+asserted through `browser::layout_count()` (`control_scrolling`,
+`bench_interaction`); the per-stage clock the engine once kept
+(`last_frame_timing()`) went with the profiler, nothing read it.
 `ctbrowser/benchmarks/bench_interaction` is the headless half: what a mouse move, a hover
 change and a scroll each COST, with the implied CPU at 60 fps printed beside
 them.

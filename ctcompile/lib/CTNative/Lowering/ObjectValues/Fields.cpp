@@ -22,7 +22,7 @@ llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solve
             if (nativeObjectFieldGroup(op) < 0) { return; }
             const auto absent = OptType::get(op->getContext(), BottomType::get(op->getContext()));
             auto [position, inserted] =
-                types.try_emplace(admission::keyOf(op->getOperand(1)), absent);
+                types.try_emplace(ctjs::constantKey(op->getOperand(1)), absent);
             (void)inserted;
             auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             if (!store) { return; }
@@ -47,7 +47,7 @@ void lowering::censusIdentityFields(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](mlir::Operation * op) {
             if (nativeObjectFieldGroup(op) < 0) { return; }
-            const auto name = fieldName(admission::keyOf(op->getOperand(1)));
+            const auto name = fieldName(ctjs::constantKey(op->getOperand(1)));
             identityFields.insert(name);
             identityAccess[op] = name;
             needsNullable = true;

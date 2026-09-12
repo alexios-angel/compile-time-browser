@@ -1,15 +1,12 @@
-// ctbrowser.raster: tiles, the backend seam, and the scroll path.
+// ctbrowser.raster: tiles, the software backend, and the scroll path.
 //
-// Four claims, and the last two are the ones the architecture stands on:
+// Three claims, and the last two are the ones the architecture stands on:
 //
-//   1. the software backend satisfies RasterBackend - checked at compile time
-//      in the module itself, so a missing method is a build error, not a
-//      surprise when the GPU backend lands beside it.
-//   2. blending and clipping are right.
-//   3. TILING IS INVISIBLE. The same page rastered as one tile and as sixteen
+//   1. blending and clipping are right.
+//   2. TILING IS INVISIBLE. The same page rastered as one tile and as sixteen
 //      must be byte-identical, and so must sequential against parallel. A tile
 //      seam is a visible bug that no unit test of a single fill would catch.
-//   4. A SCROLL DOES NOT RASTER. This is the reason tiles are kept in content
+//   3. A SCROLL DOES NOT RASTER. This is the reason tiles are kept in content
 //      space at all; the evidence is that the raster counter does not move.
 
 #include <ctbrowser/core/core.hpp>
@@ -37,13 +34,6 @@ using ctbrowser::paint::layer_tree;
 using ctbrowser::paint::recorder;
 
 namespace {
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
 
 // A page, taken all the way from HTML to a layer tree.
 struct page {
@@ -101,7 +91,7 @@ void test_fill_and_clip() {
     software_backend backend{64, 64, 64};
     layer_tree tree;
     tree.layers.push_back(layer{list, point{}, rect{}, true});
-    check(draw(backend, tree).has_value(), "a clipped fill draws without error");
+    draw(backend, tree);
 
     check(pixel_at(backend.target(), 5, 5) == 0xFFFF0000u, "inside the clip is filled");
     check(pixel_at(backend.target(), 20, 20) != 0xFFFF0000u, "outside the clip is not");
@@ -118,7 +108,7 @@ void test_rounded_corners_are_cut_away() {
     software_backend backend{64, 64, 64};
     layer_tree tree;
     tree.layers.push_back(layer{list, point{}, rect{}, true});
-    check(draw(backend, tree).has_value(), "a rounded fill draws without error");
+    draw(backend, tree);
 
     check(pixel_at(backend.target(), 20, 20) == 0xFFFF0000u, "the middle is filled");
     check(pixel_at(backend.target(), 20, 1) == 0xFFFF0000u, "so is the middle of an edge");
@@ -147,7 +137,7 @@ void test_a_radius_is_scaled_to_fit_its_box() {
     software_backend backend{64, 64, 64};
     layer_tree tree;
     tree.layers.push_back(layer{list, point{}, rect{}, true});
-    check(draw(backend, tree).has_value(), "the pill draws");
+    draw(backend, tree);
     check(pixel_at(backend.target(), 30, 10) == 0xFF0000FFu, "its middle is filled");
     check(pixel_at(backend.target(), 0, 0) != 0xFF0000FFu, "and its ends are round");
 }
@@ -164,22 +154,9 @@ void test_a_ring_is_hollow() {
     software_backend backend{64, 64, 64};
     layer_tree tree;
     tree.layers.push_back(layer{list, point{}, rect{}, true});
-    check(draw(backend, tree).has_value(), "a ring draws without error");
+    draw(backend, tree);
     check(pixel_at(backend.target(), 20, 1) == 0xFF008000u, "the band itself is painted");
     check(pixel_at(backend.target(), 20, 20) != 0xFF008000u, "and the middle is left alone");
-}
-
-void test_frame_bracketing_is_enforced() {
-    software_backend backend{16, 16, 16};
-    // Calling into a backend outside a frame is a programming error the
-    // interface can report rather than a crash later - the GPU backend will
-    // have a command buffer that genuinely does not exist yet.
-    const auto bad = backend.raster(tile_id{0, 0, 0}, display_list{});
-    check(!bad.has_value() && bad.error() == gpu_error::no_frame, "raster outside a frame fails");
-    const auto opened = backend.begin_frame();
-    check(opened.has_value(), "begin_frame opens one");
-    check(!backend.begin_frame().has_value(), "and a second begin_frame is refused");
-    check(backend.end_frame().has_value(), "end_frame closes it");
 }
 
 // --- tiling is invisible --------------------------------------------------
@@ -210,8 +187,8 @@ void test_tiling_does_not_change_the_image() {
     // several down, so almost every glyph and every fill straddles a seam.
     software_backend whole{400, 300, 1024};
     software_backend tiled{400, 300, 32};
-    check(draw(whole, p.layers, nullptr, 1024).has_value(), "untiled draw succeeds");
-    check(draw(tiled, p.layers, nullptr, 32).has_value(), "tiled draw succeeds");
+    draw(whole, p.layers, nullptr, 1024);
+    draw(tiled, p.layers, nullptr, 32);
     check(whole.target() == tiled.target(), "tiling is invisible: the images are byte-identical");
     check(tiled.raster_calls() > whole.raster_calls(), "...and it really did use more tiles");
 }
@@ -228,13 +205,13 @@ void test_parallel_raster_matches_sequential() {
 
     scheduler pool;
     software_backend sequential{640, 480, 64};
-    check(draw(sequential, p.layers, nullptr, 64).has_value(), "sequential draw succeeds");
+    draw(sequential, p.layers, nullptr, 64);
 
     // Several runs: a tile race that only shows on some interleaving is still
     // a race, and one clean image proves very little.
     for (int attempt = 0; attempt < 8; ++attempt) {
         software_backend parallel{640, 480, 64};
-        check(draw(parallel, p.layers, &pool, 64).has_value(), "parallel draw succeeds");
+        draw(parallel, p.layers, &pool, 64);
         if (!(sequential.target() == parallel.target())) {
             std::printf("FAIL parallel raster diverged from sequential on attempt %d\n", attempt);
             ++ctbrowser_test_failures;
@@ -257,7 +234,7 @@ void test_scrolling_recomposites_without_rastering() {
            200);
 
     software_backend backend{200, 200, 64};
-    check(draw(backend, p.layers, nullptr, 64).has_value(), "the first frame draws");
+    draw(backend, p.layers, nullptr, 64);
     const std::size_t after_first = backend.raster_calls();
     check(after_first > 0, "the first frame rastered something");
 
@@ -265,7 +242,7 @@ void test_scrolling_recomposites_without_rastering() {
     for (int y = 0; y < 200; ++y) { before.push_back(pixel_at(backend.target(), 10, y)); }
 
     p.layers.scroll_to(0, 20);
-    check(draw(backend, p.layers, nullptr, 64).has_value(), "the scrolled frame composites");
+    draw(backend, p.layers, nullptr, 64);
 
     // THE CLAIM. A scroll is a composite. Tiles were rastered in content space
     // and are still valid; the previous engine re-ran layout and re-emitted every command.
@@ -296,9 +273,9 @@ void test_a_fixed_layer_does_not_move() {
     tree.layers.push_back(layer{pinned, point{}, rect{}, false});
 
     software_backend backend{128, 128, 128};
-    check(draw(backend, tree, nullptr, 128).has_value(), "two layers draw");
+    draw(backend, tree, nullptr, 128);
     tree.scroll_to(0, 20);
-    check(draw(backend, tree, nullptr, 128).has_value(), "and re-composite after a scroll");
+    draw(backend, tree, nullptr, 128);
 
     // position:fixed needs no per-command flag here - it is simply a layer the
     // scroll does not move. the previous engine carried a `fixed` bool on every paint command.
@@ -325,8 +302,8 @@ void test_culling_does_not_change_what_you_see() {
     const rect viewport{0, 0, 300, 200};
     software_backend everything{300, 200, 64};
     software_backend culled{300, 200, 64};
-    check(draw(everything, p.layers, nullptr, 64).has_value(), "the uncelled frame draws");
-    check(draw(culled, p.layers, nullptr, 64, viewport).has_value(), "the culled frame draws");
+    draw(everything, p.layers, nullptr, 64);
+    draw(culled, p.layers, nullptr, 64, viewport);
 
     // Culling is an optimisation, so it has to be invisible. If it is not, the
     // page has holes in it and no amount of speed makes up for that.
@@ -345,11 +322,11 @@ void test_a_repeated_frame_rasters_nothing() {
 
     software_backend backend{300, 200, 64};
     const rect viewport{0, 0, 300, 200};
-    check(draw(backend, p.layers, nullptr, 64, viewport).has_value(), "the first frame draws");
+    draw(backend, p.layers, nullptr, 64, viewport);
     const std::size_t after_first = backend.raster_calls();
     check(after_first > 0, "and it rastered something");
 
-    check(draw(backend, p.layers, nullptr, 64, viewport).has_value(), "the second frame draws");
+    draw(backend, p.layers, nullptr, 64, viewport);
     // Nothing changed, so nothing needs redrawing. Without this a caret blink
     // or a hover repaints the page.
     check(backend.raster_calls() == after_first, "an unchanged frame rasters NOTHING again");
@@ -362,11 +339,11 @@ void test_scrolling_rasters_only_what_came_into_view() {
 
     software_backend backend{300, 200, 64};
     const rect viewport{0, 0, 300, 200};
-    check(draw(backend, p.layers, nullptr, 64, viewport).has_value(), "the first frame draws");
+    draw(backend, p.layers, nullptr, 64, viewport);
     const std::size_t first = backend.raster_calls();
 
     p.layers.scroll_to(0, 64);
-    check(draw(backend, p.layers, nullptr, 64, viewport).has_value(), "the scrolled frame draws");
+    draw(backend, p.layers, nullptr, 64, viewport);
     const std::size_t after_scroll = backend.raster_calls() - first;
 
     // A one-tile scroll exposes one row of tiles. Paying for the whole page
@@ -378,7 +355,7 @@ void test_scrolling_rasters_only_what_came_into_view() {
     // And scrolling BACK is free, because those tiles were kept.
     const std::size_t before_back = backend.raster_calls();
     p.layers.scroll_to(0, 0);
-    check(draw(backend, p.layers, nullptr, 64, viewport).has_value(), "scrolling back draws");
+    draw(backend, p.layers, nullptr, 64, viewport);
     check(backend.raster_calls() == before_back, "scrolling back over kept tiles rasters nothing");
 }
 
@@ -387,13 +364,13 @@ void test_relayout_invalidates_every_tile() {
     p.load("<html><body><div id=a>x</div></body></html>",
            "#a { height: 100px; background-color: #204080 }", 300);
     software_backend backend{300, 200, 64};
-    check(draw(backend, p.layers, nullptr, 64).has_value(), "the first frame draws");
+    draw(backend, p.layers, nullptr, 64);
     const std::size_t first = backend.raster_calls();
 
     // A relayout means the tiles hold pixels for content that no longer exists.
     // Keeping them would show the old page.
     backend.discard();
-    check(draw(backend, p.layers, nullptr, 64).has_value(), "the frame after a discard draws");
+    draw(backend, p.layers, nullptr, 64);
     check(backend.raster_calls() > first, "discard() forces every tile to be rastered again");
 }
 
@@ -438,7 +415,7 @@ void test_golden_page() {
            320);
 
     software_backend backend{320, 240, 64};
-    check(draw(backend, p.layers, nullptr, 64).has_value(), "the golden page draws");
+    draw(backend, p.layers, nullptr, 64);
     const std::string got = to_ppm(backend.target());
 
     if (const char * regolden = std::getenv("REGOLDEN"); regolden != nullptr && *regolden != '0') {
@@ -491,7 +468,6 @@ int main() {
     test_rounded_corners_are_cut_away();
     test_a_radius_is_scaled_to_fit_its_box();
     test_a_ring_is_hollow();
-    test_frame_bracketing_is_enforced();
 
     test_tiles_floor_at_negative_coordinates();
     test_tiling_does_not_change_the_image();

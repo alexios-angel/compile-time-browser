@@ -1,6 +1,6 @@
 // A REAL PAGE, RUNNING COMPILED BODIES.
 //
-// LauncherApp.cpp runs a JavaScript program against a bare `script::context`,
+// Application.cpp runs a JavaScript program against a bare `script::context`,
 // which is the smallest thing that can be called an application. This runs
 // `ctbrowser/examples/pages/invaders.html` - a game, with a canvas, a sprite
 // sheet, event listeners and requestAnimationFrame - through the whole engine,
@@ -14,9 +14,9 @@
 // interpreted its own JavaScript while every count on the way in read a
 // truthful zero.
 //
-// ONE SOURCE, TWO EXECUTABLES, as in LauncherApp.cpp: this file is compiled
+// ONE SOURCE, TWO EXECUTABLES, as in Application.cpp: this file is compiled
 // once alone and once with the generated bodies and their entry table, and
-// check-launcher-page.cmake compares what the two draw.
+// check-page.cmake compares what the two draw.
 //
 // THE CANVAS IS THE OUTPUT, and it is the right one for this page. `invaders`
 // draws nothing into the document - the whole game is `ctx.drawImage` and

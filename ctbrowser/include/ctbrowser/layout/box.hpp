@@ -297,8 +297,7 @@ public:
     box_builder(atom_table & atoms, const style::style_map & styles, measure_text_fn measure = {})
         : atoms_(&atoms), styles_(&styles), measure_(std::move(measure)),
           display_(atoms.intern("display")), width_(atoms.intern("width")),
-          height_(atoms.intern("height")), margin_(atoms.intern("margin")),
-          padding_(atoms.intern("padding")), font_size_(atoms.intern("font-size")),
+          height_(atoms.intern("height")), font_size_(atoms.intern("font-size")),
           margin_sides_{atoms.intern("margin-top"), atoms.intern("margin-right"),
                         atoms.intern("margin-bottom"), atoms.intern("margin-left")},
           padding_sides_{atoms.intern("padding-top"), atoms.intern("padding-right"),
@@ -813,8 +812,6 @@ private:
         return out;
     }
 
-    [[nodiscard]] static side_lengths parse_sides(std::string_view shorthand);
-
     [[nodiscard]] static std::string_view trimmed(std::string_view v) noexcept {
         return trim(v, html_whitespace);
     }
@@ -873,7 +870,7 @@ private:
     atom_table * atoms_;
     const style::style_map * styles_;
     measure_text_fn measure_;
-    atom display_, width_, height_, margin_, padding_, font_size_;
+    atom display_, width_, height_, font_size_;
     side_atoms margin_sides_, padding_sides_;
     atom font_family_, font_weight_, font_style_, text_decoration_, white_space_;
     atom line_height_;

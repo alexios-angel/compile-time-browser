@@ -1201,7 +1201,8 @@ void install_date(context & cx) {
 void install_globals(context & cx) {
     using detail::method;
     using detail::new_table;
-    cx.define_native("parseInt", [](context & c, std::span<value> a) {
+    // 19.2.5 gives parseInt two parameters and 19.2.4 gives parseFloat one.
+    detail::global_fn(cx, "parseInt", 2, [](context & c, std::span<value> a) {
         const std::string s = str_at(c, a, 0);
         const int given = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 0;
         int base = given == 0 ? 10 : given;
@@ -1226,7 +1227,7 @@ void install_globals(context & cx) {
             return value::number(std::nan(""));
         }
     });
-    cx.define_native("parseFloat", [](context & c, std::span<value> a) {
+    detail::global_fn(cx, "parseFloat", 1, [](context & c, std::span<value> a) {
         // string_to_number_prefix, not std::stod: stod reads LC_NUMERIC for the
         // decimal separator, so `parseFloat("1.5")` would answer 1 on a host
         // whose locale writes a comma - and this repository byte-compares
@@ -1249,24 +1250,12 @@ void install_globals(context & cx) {
     // Installed HERE rather than in install_number because that runs first (see
     // install_builtins), when neither global exists yet. Four `css/css-values`
     // files in the WPT sweep fail on `Number.parseFloat` alone.
-    //
-    // Their own `name` and `length` go on at the same time: define_native
-    // allocates a bare native, so both were answered by context::own_property's
-    // synthesised fallback or not at all. 19.2.5 gives parseInt two parameters
-    // and 19.2.4 gives parseFloat one.
-    const auto expose = [&](const char * name, double arity) {
-        const value fn = cx.global(name);
-        if (!fn.is_kind(heap_kind::native)) { return; }
-        auto * made = static_cast<native_object *>(fn.as_heap());
-        made->is_constructor = false; // a global function, clause 19
-        made->define("length", value::number(arity), attr_configurable);
-        made->define("name", cx.string(name), attr_configurable);
-        if (const value number = cx.global("Number"); number.is_kind(heap_kind::native)) {
-            static_cast<native_object *>(number.as_heap())->define(name, fn, attr_builtin);
+    if (const value number = cx.global("Number"); number.is_kind(heap_kind::native)) {
+        for (const char * name : {"parseInt", "parseFloat"}) {
+            static_cast<native_object *>(number.as_heap())
+                ->define(name, cx.global(name), attr_builtin);
         }
-    };
-    expose("parseInt", 2);
-    expose("parseFloat", 1);
+    }
 }
 
 } // namespace ctbrowser::script::builtins_detail

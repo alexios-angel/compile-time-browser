@@ -1,0 +1,13 @@
+# tools/format.sh runs black over every tracked .py with this file as its whole
+# configuration. 100 columns is what .clang-format already says for the C++;
+# the exclusions are the same as the formatter's other half - nothing vendored
+# and nothing built.
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+extend-exclude = '''
+/(
+    third-party
+  | build[^/]*
+)/
+'''

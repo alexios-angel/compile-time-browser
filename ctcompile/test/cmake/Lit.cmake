@@ -58,7 +58,8 @@ if(CTCOMPILE_ENABLE_MLIR)
 
     add_lit_testsuite(check-ctcompile "Running the ctcompile regression tests"
       "${CMAKE_CURRENT_BINARY_DIR}"
-      DEPENDS ctjs-opt ctjs-translate ctcompile-tool FileCheck count not)
+      DEPENDS ctjs-opt ctjs-translate ctcompile-tool ctcompile-test-native-reference
+              FileCheck count not)
 
     # AND RUN BY ctest TOO, so that a green `ctest` means the IR tests ran.
     # Without this the lit suite is a target somebody has to remember, and the

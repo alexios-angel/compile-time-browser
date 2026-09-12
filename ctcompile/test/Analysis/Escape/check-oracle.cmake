@@ -26,12 +26,6 @@ if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "the escape oracle's own self-test failed (exit ${_rc})")
 endif()
 
-# THE SAME SKIP THE EXECUTABLE TAKES, on its own word.
-if(_out MATCHES "SKIPPED")
-  message(STATUS "escape oracle: skipped - this build has no recording hook")
-  return()
-endif()
-
 # `<stub> claimed A observed B unobserved C violations D sound E partial F pending G
 #  imprecise H exact I unclaimed J inconclusive K mismatch L`, as the C++ side
 # printed it. Anchored, because this file exists because two numbers that were

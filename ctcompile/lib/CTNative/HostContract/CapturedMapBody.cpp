@@ -436,7 +436,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     PrimitiveAlternatives::String | PrimitiveAlternatives::Null |
                     PrimitiveAlternatives::Undefined;
                 const unsigned mask = payload.truthy | payload.falsy;
-                if (!objects.contains(write.getObject()) || !ordinaryKey(keyOf(write.getKey())) ||
+                if (!objects.contains(write.getObject()) ||
+                    !ctjs::ordinaryKey(ctjs::constantKey(write.getKey())) ||
                     !primitives.contains(write.getValue()) || !payload.known || !mask ||
                     (mask & ~scalar)) {
                     return false;
@@ -444,7 +445,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 objectWrites.insert(write);
                 result.leafWrites.push_back(write);
                 const auto origin = objects.lookup(write.getObject());
-                const auto key = keyOf(write.getKey());
+                const auto key = ctjs::constantKey(write.getKey());
                 bool found = false;
                 for (auto & field : fields) {
                     if (!step()) { return false; }
@@ -682,9 +683,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 upvalues.insert(load);
                 maps.try_emplace(load.getResult(), capturedOrigin);
             } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                const auto key = keyOf(read.getKey());
+                const auto key = ctjs::constantKey(read.getKey());
                 if (auto origin = objects.lookup(read.getObject())) {
-                    if (!ordinaryKey(key)) { return false; }
+                    if (!ctjs::ordinaryKey(key)) { return false; }
                     PrimitiveAlternatives payload;
                     for (const auto & field : fields) {
                         if (!step()) { return false; }
@@ -727,7 +728,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (!read || !reads.contains(read) || read.getObject() != invoke.getReceiver()) {
                     return false;
                 }
-                const auto key = keyOf(read.getKey());
+                const auto key = ctjs::constantKey(read.getKey());
                 const unsigned arity = key == "set" ? 2u : (key == "clear" ? 0u : 1u);
                 if (key == "size" || invoke.getArgs().size() != arity) { return false; }
                 const auto origin = maps.lookup(invoke.getReceiver());
@@ -932,7 +933,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                              : ctjs::GetPropertyOp{};
             if (!read || !calls.contains(call) ||
                 (use.getOperandNumber() != 2 &&
-                 (keyOf(read.getKey()) != "set" || use.getOperandNumber() != 3))) {
+                 (ctjs::constantKey(read.getKey()) != "set" || use.getOperandNumber() != 3))) {
                 return false;
             }
         }
@@ -1013,7 +1014,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     for (std::size_t index = firstRead; index < result.reads.size(); ++index) {
         auto read = result.reads[index];
         if (!step()) { return false; }
-        if (keyOf(read.getKey()) == "size") { continue; }
+        if (ctjs::constantKey(read.getKey()) == "size") { continue; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
             if (!step()) { return false; }
             if (!dominance.dominates(read.getResult(), use.getOwner())) { return false; }

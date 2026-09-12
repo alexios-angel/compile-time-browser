@@ -10,6 +10,8 @@
 
 #include "checker.hpp"
 
+#include "../child_slots.hpp"
+
 namespace ctbrowser::script::detail::early {
 
 namespace {
@@ -39,34 +41,6 @@ namespace {
     case nk::with_stmt:
     case nk::func_decl: return true;
     default: return false;
-    }
-}
-
-// WHICH OF A NODE'S FOUR FIXED SLOTS ARE REALLY CHILDREN. The same table
-// compiler_impl::child_slots keeps, plus `update` - whose `b` is 1 for a prefix
-// operator and 0 for a postfix one, and is a NODE INDEX to anything that does
-// not know that.
-[[nodiscard]] std::array<std::int32_t, 4> slots(const vp::node & n) {
-    switch (n.kind) {
-    case nk::param:
-    case nk::prop:
-    case nk::pattern_prop:
-    case nk::class_member: return {n.a, n.b, -1, -1};
-    case nk::func_decl:
-    case nk::func_expr:
-    case nk::arrow: return {n.a, -1, -1, -1};
-    case nk::update: return {n.a, -1, -1, -1};
-    case nk::new_expr: return {n.a, -1, -1, -1};
-    case nk::forof_stmt: return {n.a, n.b, n.c, -1};
-    case nk::yield_expr: return {n.a, -1, -1, -1}; // d = 1 says `yield*`
-    case nk::case_clause: return {n.a, -1, -1, -1};
-    case nk::import_decl:
-    case nk::import_meta: return {-1, -1, -1, -1};
-    case nk::import_spec:
-    case nk::export_decl:
-    case nk::export_spec: return {n.a, -1, -1, -1};
-    case nk::dynamic_import: return {n.a, n.b, -1, -1}; // b: the options argument
-    default: return {n.a, n.b, n.c, n.d};
     }
 }
 
@@ -530,7 +504,7 @@ void checker::walk_expression(std::int32_t idx) {
         walk_statement(idx, list_kind::block, ignored);
         return;
     }
-    for (const std::int32_t slot : slots(n)) { walk_expression(slot); }
+    for (const std::int32_t slot : child_slots(n)) { walk_expression(slot); }
     for (const std::int32_t k : kids(n)) { walk_expression(k); }
 }
 

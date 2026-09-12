@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <functional>
@@ -27,10 +28,10 @@ namespace ctbrowser::layout {
 // tree and the fragment tree need it. Putting it with the fragments made :box
 // import :fragment, which imports :box - a cycle the module system rejects
 // outright rather than letting it become a subtle build-order problem.
-// The face a run is measured in. Identical in shape to paint::font_face and
-// deliberately NOT that type: :values depends on nothing, and layout importing
-// the paint module to name a struct would invert the dependency the whole
-// pipeline is built on. The recorder converts.
+// The face a run is measured in, and the one it is drawn in: paint::font_face
+// is an alias of it. It lives HERE because values.hpp depends on nothing, and
+// layout naming a paint type would invert the dependency the whole pipeline is
+// built on; paint naming a layout type is the direction the pipeline already runs.
 struct text_face {
     std::string family; // "" = the backend's default
     bool bold = false;
@@ -38,18 +39,6 @@ struct text_face {
 
     [[nodiscard]] friend bool operator==(const text_face &, const text_face &) = default;
 };
-
-// A FORM CONTROL'S CHROME, in one place because two subsystems have to agree
-// about it: layout reserves this much room around a control's text, and the
-// shell's painter insets the text by exactly the same amount. They did not
-// agree - the box reserved 4 per side and the painter drew 6 in - so every
-// field's text started two pixels inside the room that had been set aside for
-// it, and a value that just fitted was clipped anyway.
-//
-// Here rather than in the shell because layout cannot see the shell; the shell
-// can see layout, so this is the only direction that works.
-inline constexpr float control_text_inset = 6;   // border + padding, per side
-inline constexpr float control_border_inset = 2; // top and bottom, per side
 
 // What layout needs to know about a font: how wide a run is, and where its
 // BASELINE sits inside a line.
@@ -105,16 +94,12 @@ enum class unit : std::uint8_t {
 // plain percentage rather than dropping it - the percentage is the part that
 // matters for the two places Bootstrap writes one.
 [[nodiscard]] inline float parse_calc_offset(std::string_view rest) {
-    std::size_t at = 0;
-    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
-    if (at >= rest.size() || (rest[at] != '+' && rest[at] != '-')) { return 0; }
-    const float sign = rest[at] == '-' ? -1.0f : 1.0f;
-    ++at;
-    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
+    rest = trim(rest, " \t");
+    if (rest.empty() || (rest.front() != '+' && rest.front() != '-')) { return 0; }
+    const float sign = rest.front() == '-' ? -1.0f : 1.0f;
+    rest = trim(rest.substr(1), " \t");
     float px = 0;
-    if (std::from_chars(rest.data() + at, rest.data() + rest.size(), px).ec != std::errc{}) {
-        return 0;
-    }
+    if (std::from_chars(rest.data(), rest.data() + rest.size(), px).ec != std::errc{}) { return 0; }
     return sign * px;
 }
 
@@ -149,9 +134,7 @@ struct length {
 };
 
 [[nodiscard]] inline length parse_length(std::string_view text) {
-    std::size_t i = 0;
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
-    text.remove_prefix(i);
+    text = trim(text, " \t");
     if (text.empty()) { return length{}; }
     if (text == "auto") { return length{0, unit::auto_}; }
     // `calc(50% + 12px)` - THE ONE CALC FORM THAT REACHES LAYOUT. The cascade folds
@@ -481,9 +464,7 @@ struct flex_spec {
 // invalid for the two factors and the caller clamps; `order` may be negative,
 // which is how a utility pulls an item in front of its source-order siblings.
 [[nodiscard]] inline float parse_flex_number(std::string_view text, float fallback) {
-    std::size_t i = 0;
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
-    text.remove_prefix(i);
+    text = trim(text, " \t");
     if (text.empty()) { return fallback; }
     float value = 0;
     if (std::from_chars(text.data(), text.data() + text.size(), value).ec != std::errc{}) {
@@ -514,10 +495,7 @@ struct side_lengths {
 [[nodiscard]] inline bool generates_no_box(std::string_view tag) {
     constexpr std::string_view hidden[] = {"head", "style", "script", "title",
                                            "meta", "link",  "base",   "template"};
-    for (const std::string_view t : hidden) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(hidden, tag) != std::ranges::end(hidden);
 }
 
 // The tag list HTML renders inline by default, when the sheet says nothing.
@@ -530,10 +508,7 @@ struct side_lengths {
         // Left to the unknown-element default this would be block-level, and a
         // graphic mid-paragraph would break the line before and after itself.
         "svg"};
-    for (const std::string_view t : inline_tags) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(inline_tags, tag) != std::ranges::end(inline_tags);
 }
 
 // Elements sized by what they ARE rather than by what they contain. A <canvas>
@@ -555,10 +530,7 @@ struct side_lengths {
     // stays replaced and keeps the widget painter's arm.
     constexpr std::string_view names[] = {"canvas", "img",    "input", "select", "textarea",
                                           "video",  "iframe", "embed", "object", "svg"};
-    for (const std::string_view t : names) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
 // What `display` a tag has before any sheet speaks.

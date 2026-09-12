@@ -10,7 +10,7 @@
 // reason.
 //
 // RUN: split-file %s %t
-// RUN: python3 %S/nullable-global-output.py --translate ctjs-translate --opt ctjs-opt --work %t/execute
+// RUN: python3 %S/nullable-global-output.py --translate ctjs-translate --opt ctjs-opt --work %t/execute --node %node --reference %native_reference
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hoisted.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=HOISTED

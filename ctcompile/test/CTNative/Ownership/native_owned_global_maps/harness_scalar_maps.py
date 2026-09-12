@@ -10,24 +10,68 @@ import re
 import subprocess
 
 from .sources import (
-    methods, owned, boundary, host, parameter_sources, seeded_result_sources, key_fact_sources,
-    joined_result_sources, size_result_sources, payload_result_sources, STRING_RESULT,
-    RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
-    saved_join_sources, OTHER_STRING_RESULT, guarded_saved_sources, shortcircuit_sources,
-    nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
-    nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
+    methods,
+    owned,
+    boundary,
+    host,
+    parameter_sources,
+    seeded_result_sources,
+    key_fact_sources,
+    joined_result_sources,
+    size_result_sources,
+    payload_result_sources,
+    STRING_RESULT,
+    RESULT_SIGNATURES,
+    mixed_result_sources,
+    MIXED_RESULT_TYPES,
+    saved_read_sources,
+    saved_join_sources,
+    OTHER_STRING_RESULT,
+    guarded_saved_sources,
+    shortcircuit_sources,
+    nullable_result_sources,
+    nullable_key_sources,
+    NULLABLE_OBSERVATIONS,
+    nullable_payload_sources,
+    NULLABLE_PAYLOAD_READBACKS,
+    nullable_host_result_sources,
     nullable_nested_result_sources,
-    leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
-    leaf_absence_sources, leaf_absence_cases, primitive_absence_sources,
-    leaf_clear_sources, leaf_clear_cases,
-    numeric_entry_sources, numeric_entry_cases, scalar_global_cases, scalar_global_sources, scalar_global_output,
-    scalar_global_values, NUMERIC_ENTRY_SAVED_GLOBALS,
-    constant_global_cases, constant_global_sources, normalized_scalar_output,
-    STRING_GLOBAL_LONG, StringValue, string_field_cases, string_field_sources,
-    STRING_FIELD_BYTES, STRING_FIELD_LONG, zero_size_cases, zero_size_sources,
-    one_size_cases, one_size_sources, delete_size_cases, delete_size_sources,
-    join_size_cases, join_size_sources,
-    mutation_size_cases, mutation_size_sources, object_argument_cases,
+    leaf_object_sources,
+    LEAF_OBJECT_FIELDS,
+    leaf_readback_sources,
+    LEAF_COMPARISON_CASES,
+    leaf_absence_sources,
+    leaf_absence_cases,
+    primitive_absence_sources,
+    leaf_clear_sources,
+    leaf_clear_cases,
+    numeric_entry_sources,
+    numeric_entry_cases,
+    scalar_global_cases,
+    scalar_global_sources,
+    scalar_global_output,
+    scalar_global_values,
+    NUMERIC_ENTRY_SAVED_GLOBALS,
+    constant_global_cases,
+    constant_global_sources,
+    normalized_scalar_output,
+    STRING_GLOBAL_LONG,
+    StringValue,
+    string_field_cases,
+    string_field_sources,
+    STRING_FIELD_BYTES,
+    STRING_FIELD_LONG,
+    zero_size_cases,
+    zero_size_sources,
+    one_size_cases,
+    one_size_sources,
+    delete_size_cases,
+    delete_size_sources,
+    join_size_cases,
+    join_size_sources,
+    mutation_size_cases,
+    mutation_size_sources,
+    object_argument_cases,
 )
 
 
@@ -35,10 +79,10 @@ def check_result_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing native entry for result-call census")
-    methods_by_value = dict(re.findall(
-        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
-    calls = re.findall(
-        r"(?:\b(\w+)\s*=\s*)?ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
+    calls = re.findall(r"(?:\b(\w+)\s*=\s*)?ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     sequence, pending = [], []
     setter_result = None
     for call_index, (result, callee, arguments) in enumerate(calls):
@@ -52,14 +96,24 @@ def check_result_calls(cpp, name, mode):
             pending.append(result)
         elif method == "set":
             actuals = [argument.strip() for argument in arguments.split(",")[1:]]
-            actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument)
-                       for argument in actuals]
-            literal_key = name in {"nullable_key_identity", "nullable_key_identity_normalized",
-                                   "nullable_key_string_saved", "nullable_payload_identity",
-                                   "nullable_payload_saved", "nullable_payload_mixed_identity",
-                                   "nullable_payload_mixed_saved", "nullable_host_result_identity",
-                                   "nullable_nested_result_identity", "nullable_nested_result_saved"} \
-                and not pending and len(actuals) == 1
+            actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument) for argument in actuals]
+            literal_key = (
+                name
+                in {
+                    "nullable_key_identity",
+                    "nullable_key_identity_normalized",
+                    "nullable_key_string_saved",
+                    "nullable_payload_identity",
+                    "nullable_payload_saved",
+                    "nullable_payload_mixed_identity",
+                    "nullable_payload_mixed_saved",
+                    "nullable_host_result_identity",
+                    "nullable_nested_result_identity",
+                    "nullable_nested_result_saved",
+                }
+                and not pending
+                and len(actuals) == 1
+            )
             if name in nullable_nested_result_sources() and call_index == 2:
                 if not setter_result or actuals != [setter_result]:
                     raise RuntimeError(f"{name}/{mode}: outer setter lost the inner setter result")
@@ -68,8 +122,10 @@ def check_result_calls(cpp, name, mode):
             pending.clear()
             setter_result = result
         elif method == "size" and name in nullable_host_result_sources():
-            actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument.strip())
-                       for argument in arguments.split(",")[1:]]
+            actuals = [
+                re.sub(r"^std::move\((\w+)\)$", r"\1", argument.strip())
+                for argument in arguments.split(",")[1:]
+            ]
             if not setter_result or actuals != [setter_result]:
                 raise RuntimeError(f"{name}/{mode}: size lost the live nullable setter result")
     expected = {
@@ -101,13 +157,33 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_key_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_payload_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_host_result_sources()},
-        **{name: ["get", "set", "set", "get", "set", "size"]
-           for name in nullable_nested_result_sources()},
-        "nullable_nested_result_identity": ["get", "set", "set", "get", "set", "set", "set",
-                                            "set", "size"],
+        **{
+            name: ["get", "set", "set", "get", "set", "size"]
+            for name in nullable_nested_result_sources()
+        },
+        "nullable_nested_result_identity": [
+            "get",
+            "set",
+            "set",
+            "get",
+            "set",
+            "set",
+            "set",
+            "set",
+            "size",
+        ],
         "nullable_nested_result_saved": ["get", "set", "set", "set", "size"],
-        "nullable_host_result_identity": ["get", "set", "get", "set", "set", "set",
-                                          "get", "set", "size"],
+        "nullable_host_result_identity": [
+            "get",
+            "set",
+            "get",
+            "set",
+            "set",
+            "set",
+            "get",
+            "set",
+            "size",
+        ],
         "saved_join_string_saved": ["get", "set", "size"],
         "guarded_saved_string_saved": ["get", "set", "size"],
         "shortcircuit_empty_string": ["get", "set", "size"],
@@ -134,44 +210,89 @@ def check_result_calls(cpp, name, mode):
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
-    seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
-              **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
-              **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
-              **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-              **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
-              **primitive_absence_sources()}
+    seeded = {
+        **seeded_result_sources(),
+        **key_fact_sources(),
+        **joined_result_sources(),
+        **size_result_sources(),
+        **payload_result_sources(),
+        **mixed_result_sources(),
+        **saved_read_sources(),
+        **saved_join_sources(),
+        **guarded_saved_sources(),
+        **shortcircuit_sources(),
+        **nullable_result_sources(),
+        **nullable_key_sources(),
+        **nullable_payload_sources(),
+        **nullable_host_result_sources(),
+        **nullable_nested_result_sources(),
+        **primitive_absence_sources(),
+    }
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the live size-keyed deletion")
-    if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
-                "saved_read_write_string_saved", "saved_join_string_saved",
-                "guarded_saved_string_saved", "shortcircuit_string_saved", "nullable_string_saved",
-                "nullable_key_string_saved", "nullable_payload_saved", "nullable_payload_mixed_saved",
-                "nullable_host_result_saved", "nullable_nested_result_saved"} \
-            and "ctnative::map_delete(" not in cpp:
+    if (
+        name
+        in {
+            "result_seeded_string_saved",
+            "result_seeded_mixed_string_saved",
+            "saved_read_write_string_saved",
+            "saved_join_string_saved",
+            "guarded_saved_string_saved",
+            "shortcircuit_string_saved",
+            "nullable_string_saved",
+            "nullable_key_string_saved",
+            "nullable_payload_saved",
+            "nullable_payload_mixed_saved",
+            "nullable_host_result_saved",
+            "nullable_nested_result_saved",
+        }
+        and "ctnative::map_delete(" not in cpp
+    ):
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
-    mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
-             **guarded_saved_sources(), **shortcircuit_sources(), **nullable_result_sources(),
-             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
-             **primitive_absence_sources()}
+    mixed = {
+        **mixed_result_sources(),
+        **saved_read_sources(),
+        **saved_join_sources(),
+        **guarded_saved_sources(),
+        **shortcircuit_sources(),
+        **nullable_result_sources(),
+        **nullable_key_sources(),
+        **nullable_payload_sources(),
+        **nullable_host_result_sources(),
+        **nullable_nested_result_sources(),
+        **primitive_absence_sources(),
+    }
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
             source_count = len(re.findall(rf"\bstate\.{method}\(", source))
             native_count = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
             if native_count != source_count:
-                raise RuntimeError(f"{name}/{mode}: changed the {source_count} live Map.{method} calls")
-    if name in {**shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-                **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}:
+                raise RuntimeError(
+                    f"{name}/{mode}: changed the {source_count} live Map.{method} calls"
+                )
+    if name in {
+        **shortcircuit_sources(),
+        **nullable_result_sources(),
+        **nullable_key_sources(),
+        **nullable_payload_sources(),
+        **nullable_host_result_sources(),
+        **nullable_nested_result_sources(),
+    }:
         getter = re.search(r"^[^\n;]+\bfn_4\([^\n]*\) \{(.*?)^\}", cpp, re.M | re.S)
-        branches = 5 if name == "nullable_threeway" else 4 if name in nullable_result_sources() else 3
+        branches = (
+            5 if name == "nullable_threeway" else 4 if name in nullable_result_sources() else 3
+        )
         if name == "nullable_homogeneous_key":
             branches = 2
         if name in nullable_key_sources():
             branches = 4 if name in {"nullable_original_key", "nullable_second_key_use"} else 2
         if name in nullable_payload_sources():
-            branches = 4 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"} else 2
+            branches = (
+                4 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"} else 2
+            )
         if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
             branches = 2
         # Canonicalization can use ?: for the pure Null/Undefined selection.
@@ -185,17 +306,26 @@ def nullable_observer_source(source, name):
     # The published body needs no extra comparison or observer proof to do so.
     observed = source + "\n(function() { trace = 0;\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
-        expected = json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
-        observed += (f"var nullableObserved{index} = host.slot.get({arguments});\n"
-                     f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n")
-    for index, (argument, _, _, tag, value) in enumerate(NULLABLE_PAYLOAD_READBACKS.get(name, ()),
-                                                        len(NULLABLE_OBSERVATIONS[name])):
-        expected = json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
+        expected = (
+            json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
+        )
+        observed += (
+            f"var nullableObserved{index} = host.slot.get({arguments});\n"
+            f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n"
+        )
+    for index, (argument, _, _, tag, value) in enumerate(
+        NULLABLE_PAYLOAD_READBACKS.get(name, ()), len(NULLABLE_OBSERVATIONS[name])
+    ):
+        expected = (
+            json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
+        )
         invocation = f"host.slot.set({argument})"
         if name in nullable_nested_result_sources():
             invocation = f"host.slot.set({invocation})"
-        observed += (f"var nullableObserved{index} = {invocation};\n"
-                     f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n")
+        observed += (
+            f"var nullableObserved{index} = {invocation};\n"
+            f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n"
+        )
     return observed + "})();\n"
 
 
@@ -205,35 +335,50 @@ def nullable_identity_cpp(cpp, name):
         raise RuntimeError("nullable identity observer needs exactly one entry")
     changed += "\nint main() {\n    if (ctnative_test_entry() != 0) { return 90; }\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
-        changed += (f"    const auto observed_{index} = g_host->slot->m_get({arguments});\n"
-                    f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
-                    f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
+        changed += (
+            f"    const auto observed_{index} = g_host->slot->m_get({arguments});\n"
+            f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
+            f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n"
+        )
     for index, (_, input_tag, input_value, tag, value) in enumerate(
-            NULLABLE_PAYLOAD_READBACKS.get(name, ()), len(NULLABLE_OBSERVATIONS[name])):
+        NULLABLE_PAYLOAD_READBACKS.get(name, ()), len(NULLABLE_OBSERVATIONS[name])
+    ):
         invocation = f"g_host->slot->m_set(input_{index})"
         if name in nullable_nested_result_sources():
             invocation = f"g_host->slot->m_set({invocation})"
-        changed += (f"    ctnative::nullable_string input_{index};\n"
-                    f"    input_{index}.tag = ctnative::nullable_string::kind::{input_tag};\n"
-                    f"    input_{index}.value = {json.dumps(input_value)};\n"
-                    f"    const auto observed_{index} = {invocation};\n"
-                    f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
-                    f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
+        changed += (
+            f"    ctnative::nullable_string input_{index};\n"
+            f"    input_{index}.tag = ctnative::nullable_string::kind::{input_tag};\n"
+            f"    input_{index}.value = {json.dumps(input_value)};\n"
+            f"    const auto observed_{index} = {invocation};\n"
+            f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
+            f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n"
+        )
     return changed + "    return 0;\n}\n"
 
 
 def source_calls(text):
-    return [call.strip() for call in re.findall(
-        r"^\s*(?:%[-\w.$]+ = )?ctjs\.(call(?:_direct)? [^\n{]+)", text, re.M)]
+    return [
+        call.strip()
+        for call in re.findall(r"^\s*(?:%[-\w.$]+ = )?ctjs\.(call(?:_direct)? [^\n{]+)", text, re.M)
+    ]
 
 
 def contract(args, ir, name, binding="host"):
     config = owned.contract(args, ir, name, binding)
     value = json.loads(config.read_text())
     value["initial_intrinsics"] = ["Map"]
-    candidates = NUMERIC_ENTRY_SAVED_GLOBALS | scalar_global_cases().keys() | constant_global_cases().keys()
-    case = next((candidate for candidate in sorted(candidates, key=len, reverse=True)
-                 if name == candidate or name.startswith(candidate + "-")), None)
+    candidates = (
+        NUMERIC_ENTRY_SAVED_GLOBALS | scalar_global_cases().keys() | constant_global_cases().keys()
+    )
+    case = next(
+        (
+            candidate
+            for candidate in sorted(candidates, key=len, reverse=True)
+            if name == candidate or name.startswith(candidate + "-")
+        ),
+        None,
+    )
     if case:
         # Requested output is only an observer; live owner/type checks still
         # derive every saved scalar independently from the current program.
@@ -251,13 +396,16 @@ def resolve_getter(args, ir):
     key = re.search(r'(%[-\w.$]+) = ctjs\.constant #ctjs\.string<"get">', entry)
     if len(targets) != 4 or not undefined or not key:
         raise RuntimeError("direct getter lost its source function chain")
-    getter = re.search(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\["
-                       + re.escape(key[1]) + r"\]", entry)
+    getter = re.search(
+        r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[" + re.escape(key[1]) + r"\]", entry
+    )
     if not getter:
         raise RuntimeError("direct getter lost its property read")
-    entry, count = re.subn(r"ctjs\.call " + re.escape(getter[1]) + r"\("
-                          + re.escape(getter[2]) + r"\)",
-        lambda _: f"ctjs.call_direct @{targets[3]}({getter[2]}, {undefined[1]}, {getter[1]})", entry)
+    entry, count = re.subn(
+        r"ctjs\.call " + re.escape(getter[1]) + r"\(" + re.escape(getter[2]) + r"\)",
+        lambda _: f"ctjs.call_direct @{targets[3]}({getter[2]}, {undefined[1]}, {getter[1]})",
+        entry,
+    )
     if count != 1:
         raise RuntimeError("direct getter control did not resolve exactly one call")
     output = args.work / "already_resolved.direct.mlir"
@@ -271,14 +419,19 @@ def lifetime(args, cpp, name, mode, value, compiler):
         raise RuntimeError("lifetime harness needs exactly one entry")
     # Observe the real runtime Map allocation without adding a strong owner.
     # A constant getter or leaked environment cannot pass these weak witnesses.
-    changed = ("#include <memory>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("Map allocation lifetime observer no longer matches both helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
     auto first = g_host;
@@ -318,7 +471,7 @@ int main() {
     }
     return 0;
 }
-'''
+"""
     # The growing-key method changes its Map on EVERY invocation. The saved
     # environment has had one extra call, so sharing the reentry allocation or
     # replacing later calls with a startup summary cannot satisfy this witness.
@@ -329,28 +482,54 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != f"trace={value}\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}"
+        )
 
 
 def shared_lifetime(args, cpp, name, mode, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("shared lifetime harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("shared Map lifetime observer lost its allocation helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
     auto owner = g_host;
@@ -396,25 +575,33 @@ int main() {
     if (!ctn_test_maps[1].expired()) { return 99; }
     return 0;
 }
-'''
+"""
     if name == "shared_parameter":
         # This is a typed C++ caller, not permission for arbitrary JS exports.
         # New keys after startup must flow through the real formal. The Map
         # also owns string bytes after the caller mutates its original buffer.
-        changed = changed.replace("CHECK_SIGNATURE", """
+        changed = changed.replace(
+            "CHECK_SIGNATURE",
+            """
     static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
     static_assert(!std::is_invocable_v<decltype(setter)>);
     static_assert(!std::is_invocable_v<decltype(setter), int>);
     static_assert(!std::is_invocable_v<decltype(setter), std::string, int>);
-""")
+""",
+        )
         changed = changed.replace("BEFORE_FIRST", "std::string saved_key(96, 's');")
         changed = changed.replace("SAVED_FIRST", "setter(saved_key)")
-        changed = changed.replace("AFTER_FIRST", """
+        changed = changed.replace(
+            "AFTER_FIRST",
+            """
     saved_key.assign(96, 't');
     if (setter(std::string(96, 's')) != 2 || getter() != 2) { return 100; }
-""")
+""",
+        )
         changed = changed.replace("SAVED_NEXT", 'setter("saved-" + std::to_string(index))')
-        changed = changed.replace("FRESH_NEXT", 'g_host->slot->m_set("fresh-" + std::to_string(index))')
+        changed = changed.replace(
+            "FRESH_NEXT", 'g_host->slot->m_set("fresh-" + std::to_string(index))'
+        )
     else:
         for marker in ("CHECK_SIGNATURE", "BEFORE_FIRST", "AFTER_FIRST"):
             changed = changed.replace(marker, "")
@@ -424,32 +611,60 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: shared Map lifetime failure\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: shared Map lifetime failure\n" f"{result.stdout}{result.stderr}"
+        )
 
 
 def string_payload_lifetime(args, cpp, name, mode, compiler):
-    joined = name in {"saved_join_string_saved", "guarded_saved_string_saved",
-                      "shortcircuit_string_saved"}
+    joined = name in {
+        "saved_join_string_saved",
+        "guarded_saved_string_saved",
+        "shortcircuit_string_saved",
+    }
     initial_size = 2 if joined else 1
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("string lifetime harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("string Map lifetime observer lost its allocation helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     const std::string expected = EXPECTED_STRING;
     const std::string other_expected = OTHER_EXPECTED_STRING;
@@ -505,9 +720,10 @@ int main() {
     }
     return 0;
 }
-'''
-    changed = changed.replace("OTHER_EXPECTED_STRING",
-        json.dumps(OTHER_STRING_RESULT if joined else STRING_RESULT))
+"""
+    changed = changed.replace(
+        "OTHER_EXPECTED_STRING", json.dumps(OTHER_STRING_RESULT if joined else STRING_RESULT)
+    )
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
     changed = changed.replace("GETTER_PARAMETERS", "bool" if joined else "")
     changed = changed.replace("GETTER_ARGUMENT", "other" if joined else "")
@@ -517,29 +733,54 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != f"trace={initial_size}\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: saved string lifetime failure\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: saved string lifetime failure\n" f"{result.stdout}{result.stderr}"
+        )
 
 
 def nullable_payload_lifetime(args, cpp, name, mode, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("nullable lifetime harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("nullable lifetime observer lost its allocation helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     using result_type = ctnative::nullable_string;
     using kind = result_type::kind;
@@ -595,34 +836,59 @@ int main() {
         null_survivor.tag != kind::null_value) { return 99; }
     return 0;
 }
-'''
+"""
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: nullable result lifetime failure\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: nullable result lifetime failure\n" f"{result.stdout}{result.stderr}"
+        )
 
 
 def nullable_key_lifetime(args, cpp, name, mode, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("nullable key lifetime harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("nullable key lifetime observer lost its allocation helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     using key_type = ctnative::nullable_string;
     using kind = key_type::kind;
@@ -680,34 +946,59 @@ int main() {
     }
     return 0;
 }
-'''
+"""
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: nullable key lifetime failure\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: nullable key lifetime failure\n" f"{result.stdout}{result.stderr}"
+        )
 
 
 def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("nullable stored-payload harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
-               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
-    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-                      "ctn_test_maps.emplace_back(made); return made;", changed)
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
     if count != 2:
         raise RuntimeError("nullable stored-payload observer lost its allocation helpers")
-    changed += r'''
+    changed += r"""
 int main() {
     using result_type = ctnative::nullable_string;
     using kind = result_type::kind;
@@ -771,7 +1062,7 @@ int main() {
         !equal(fresh, kind::string, expected)) { return 97; }
     return 0;
 }
-'''
+"""
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
     if name == "nullable_nested_result_saved":
         generated, separator, observer = changed.rpartition("\nint main() {\n")
@@ -783,16 +1074,26 @@ int main() {
         for before, after in (
             ("const auto saved = setter(caller);", "const auto saved = setter(setter(caller));"),
             ("auto returned = setter(input);", "auto returned = setter(setter(input));"),
-            ("const auto survivor = setter(getter(false));",
-             "const auto survivor = setter(setter(getter(false)));"),
-            ("const auto null_survivor = setter(getter(true));",
-             "const auto null_survivor = setter(setter(getter(true)));"),
-            ("const auto undefined_survivor = setter(result_type{});",
-             "const auto undefined_survivor = setter(setter(result_type{}));"),
-            ("const auto empty_survivor = setter(result_type{std::string{}});",
-             "const auto empty_survivor = setter(setter(result_type{std::string{}}));"),
-            ("const auto fresh = g_host->slot->m_set(g_host->slot->m_get(false));",
-             "const auto fresh = g_host->slot->m_set(g_host->slot->m_set(g_host->slot->m_get(false)));"),
+            (
+                "const auto survivor = setter(getter(false));",
+                "const auto survivor = setter(setter(getter(false)));",
+            ),
+            (
+                "const auto null_survivor = setter(getter(true));",
+                "const auto null_survivor = setter(setter(getter(true)));",
+            ),
+            (
+                "const auto undefined_survivor = setter(result_type{});",
+                "const auto undefined_survivor = setter(setter(result_type{}));",
+            ),
+            (
+                "const auto empty_survivor = setter(result_type{std::string{}});",
+                "const auto empty_survivor = setter(setter(result_type{std::string{}}));",
+            ),
+            (
+                "const auto fresh = g_host->slot->m_set(g_host->slot->m_get(false));",
+                "const auto fresh = g_host->slot->m_set(g_host->slot->m_set(g_host->slot->m_get(false)));",
+            ),
         ):
             if observer.count(before) != 1:
                 raise RuntimeError("nested nullable observer lost an owning result call")
@@ -813,70 +1114,144 @@ int main() {
             raise RuntimeError("nullable host-result observer lost its three size calls")
         observer = observer.replace("g_host->slot->m_size()", "g_host->slot->m_" + size_call)
         observer = observer.replace(size_call + " != 0", size_call + " != 1")
-        observer = observer.replace("    auto caller = getter(false);",
+        observer = observer.replace(
+            "    auto caller = getter(false);",
             "    static_assert(std::is_same_v<decltype(size), std::function<js_num(result_type)>>);\n"
-            "    auto caller = getter(false);")
-        observer = observer.replace("    for (int index = 0; index < 128; ++index) {",
+            "    auto caller = getter(false);",
+        )
+        observer = observer.replace(
+            "    for (int index = 0; index < 128; ++index) {",
             "    g_host->slot->m_set(g_host->slot->m_get(false));\n"
-            "    for (int index = 0; index < 128; ++index) {")
+            "    for (int index = 0; index < 128; ++index) {",
+        )
         changed = generated + separator + observer
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     expected_trace = 1 if name == "nullable_host_result_saved" else 0
     if result.returncode or result.stdout != f"trace={expected_trace}\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: nullable stored-payload lifetime failure\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: nullable stored-payload lifetime failure\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
-    if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable", "leaf_object",
-                        "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
-                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_",
-                        "object_argument_")):
-        pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
-                   r"scf\.(?:if|yield))\b[^\n]*)")
+    if name.startswith(
+        (
+            "saved_join",
+            "guarded_saved",
+            "shortcircuit",
+            "nullable",
+            "leaf_object",
+            "leaf_readback",
+            "local_",
+            "historical_object",
+            "field_",
+            "zero_size_",
+            "size_one_",
+            "startup_empty_",
+            "size_deleted_",
+            "size_saved_",
+            "joined_",
+            "object_argument_",
+        )
+    ):
+        pattern = (
+            r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
+            r"scf\.(?:if|yield))\b[^\n]*)"
+        )
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
-    if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
-                        "size_one_", "startup_empty_", "size_deleted_", "size_saved_", "joined_",
-                        "object_argument_")):
+    if name.startswith(
+        (
+            "leaf_object",
+            "leaf_readback",
+            "local_",
+            "historical_object",
+            "field_",
+            "zero_size_",
+            "size_one_",
+            "startup_empty_",
+            "size_deleted_",
+            "size_saved_",
+            "joined_",
+            "object_argument_",
+        )
+    ):
         pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
-        if ([match.strip() for match in re.findall(pattern, original, re.M)]
-                != [match.strip() for match in re.findall(pattern, output, re.M)]):
-            raise RuntimeError(f"{name}: failed ownership changed leaf allocations or field operands")
+        if [match.strip() for match in re.findall(pattern, original, re.M)] != [
+            match.strip() for match in re.findall(pattern, output, re.M)
+        ]:
+            raise RuntimeError(
+                f"{name}: failed ownership changed leaf allocations or field operands"
+            )
 
 
 def check_prepared_result_calls(text, original, name):
     calls = re.findall(
         r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
-        r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+        r"\{ctnative\.stored_call = 1 : i32\}",
+        text,
+        re.M,
+    )
     if name == "nullable_nested_sibling":
         actuals = [arguments.split(", ") for _, _, arguments in calls]
-        if (len(source_calls(text)) != len(source_calls(original))
-                or [target for _, target, _ in calls] != ["fn$4", "fn$5", "fn$5", "fn$4", "fn$5", "fn$3"]
-                or [len(arguments) for arguments in actuals] != [5, 5, 5, 5, 5, 4]
-                or any(actuals[consumer][-1] != calls[producer][0] for producer, consumer in ((0, 1), (1, 2), (3, 4)))
-                or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
-            raise RuntimeError(f"{name}: Object/String carrier refusal lost prepared nested result operands")
+        if (
+            len(source_calls(text)) != len(source_calls(original))
+            or [target for _, target, _ in calls]
+            != ["fn$4", "fn$5", "fn$5", "fn$4", "fn$5", "fn$3"]
+            or [len(arguments) for arguments in actuals] != [5, 5, 5, 5, 5, 4]
+            or any(
+                actuals[consumer][-1] != calls[producer][0]
+                for producer, consumer in ((0, 1), (1, 2), (3, 4))
+            )
+            or f'ctjs.store_global "trace", {calls[-1][0]}' not in text
+        ):
+            raise RuntimeError(
+                f"{name}: Object/String carrier refusal lost prepared nested result operands"
+            )
         return
     pairs = 2 if name.startswith("nullable") else 1
     getter_arguments = 5 if name.startswith("nullable") else 4
-    if (len(source_calls(text)) != len(source_calls(original))
-            or [target for _, target, _ in calls] != ["fn$4", "fn$5"] * pairs + ["fn$3"]
-            or [len(arguments.split(", ")) for _, _, arguments in calls]
-            != [getter_arguments, 5] * pairs + [4]
-            or any(calls[index + 1][2].split(", ")[-1] != calls[index][0]
-                   for index in range(0, pairs * 2, 2))
-            or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
+    if (
+        len(source_calls(text)) != len(source_calls(original))
+        or [target for _, target, _ in calls] != ["fn$4", "fn$5"] * pairs + ["fn$3"]
+        or [len(arguments.split(", ")) for _, _, arguments in calls]
+        != [getter_arguments, 5] * pairs + [4]
+        or any(
+            calls[index + 1][2].split(", ")[-1] != calls[index][0]
+            for index in range(0, pairs * 2, 2)
+        )
+        or f'ctjs.store_global "trace", {calls[-1][0]}' not in text
+    ):
         raise RuntimeError(f"{name}: carrier refusal lost the prepared live result edge")
 
 
@@ -887,11 +1262,21 @@ def forge_map_presence(text, payload="bool"):
     # Forge each accepted vocabulary independently, so parsing cannot reject
     # the control before its live read/presence evidence is rederived.
     scalar = "string" if payload == "nullable_string" else payload
-    marked, count = re.subn(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = \""
-                      + payload + "\", ctnative.map_write_type = \"" + scalar + "\""
-                      + ", ctnative.map_key_type = \"" + scalar + "\""
-                      + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
+    marked, count = re.subn(
+        r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
+        lambda match: match[1].rstrip()
+        + ' {ctnative.map_present = true, ctnative.map_read_type = "'
+        + payload
+        + '", ctnative.map_write_type = "'
+        + scalar
+        + '"'
+        + ', ctnative.map_key_type = "'
+        + scalar
+        + '"'
+        + (", " if match[2] else "}"),
+        methods.forge_reports(text),
+        flags=re.M,
+    )
     if count == 0:
         raise RuntimeError("forged-presence control lost every live Map call")
     return marked
@@ -899,14 +1284,21 @@ def forge_map_presence(text, payload="bool"):
 
 def forge_leaf_evidence(text, payload="bool"):
     marked = forge_map_presence(text, payload)
-    marked, count = re.subn(r"(\bctjs\.create_object)(\s*\{)?",
-        lambda match: match[1] + " {ctnative.object_identity"
-                      + (", " if match[2] else "}"), marked)
+    marked, count = re.subn(
+        r"(\bctjs\.create_object)(\s*\{)?",
+        lambda match: match[1] + " {ctnative.object_identity" + (", " if match[2] else "}"),
+        marked,
+    )
     if count == 0:
         raise RuntimeError("forged leaf evidence lost every allocation")
-    marked, count = re.subn(r"(^\s*(?:%[-\w.$]+ = )?ctjs\.(?:get|set)_property [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip() + " {ctnative.object_field_group = 99 : i64"
-                      + (", " if match[2] else "}"), marked, flags=re.M)
+    marked, count = re.subn(
+        r"(^\s*(?:%[-\w.$]+ = )?ctjs\.(?:get|set)_property [^\n{]+)(\{)?",
+        lambda match: match[1].rstrip()
+        + " {ctnative.object_field_group = 99 : i64"
+        + (", " if match[2] else "}"),
+        marked,
+        flags=re.M,
+    )
     if count == 0:
         raise RuntimeError("forged leaf evidence lost every field/publication access")
     return marked
@@ -914,10 +1306,24 @@ def forge_leaf_evidence(text, payload="bool"):
 
 def check_budgets(args, ir, config, name, functions=4):
     original = ir.read_text()
-    signatures = re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
-                            r"upvalue_count = (\d+) : i32", original, re.M)
-    operations = ("create_object", "create_cell", "cell_set", "create_closure", "load_upvalue",
-                  "construct", "set_property", "get_property", "call", "call_direct", "store_global")
+    signatures = re.findall(
+        r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?" r"upvalue_count = (\d+) : i32",
+        original,
+        re.M,
+    )
+    operations = (
+        "create_object",
+        "create_cell",
+        "cell_set",
+        "create_closure",
+        "load_upvalue",
+        "construct",
+        "set_property",
+        "get_property",
+        "call",
+        "call_direct",
+        "store_global",
+    )
     counts = {op: len(re.findall(rf"\bctjs\.{op}\b", original)) for op in operations}
     checked = {}
     rollback = []
@@ -925,16 +1331,31 @@ def check_budgets(args, ir, config, name, functions=4):
     def admitted(budget):
         if budget in checked:
             return checked[budget]
-        output = owned.lower(args, ir, f"{name}-budget-{budget}", config,
-                             options=f"host-max-steps={budget}", cleanup=False)
+        output = owned.lower(
+            args,
+            ir,
+            f"{name}-budget-{budget}",
+            config,
+            options=f"host-max-steps={budget}",
+            cleanup=False,
+        )
         text = methods.census(output, functions, name)
         native = len(boundary.NATIVE.findall(text))
         if native not in (0, functions):
             raise RuntimeError(f"{name}/{budget}: published an incomplete native component")
         if native == 0:
-            if re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
-                          r"upvalue_count = (\d+) : i32", text, re.M) != signatures:
-                raise RuntimeError(f"{name}/{budget}: leaked speculative capture/signature rewrites")
+            if (
+                re.findall(
+                    r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
+                    r"upvalue_count = (\d+) : i32",
+                    text,
+                    re.M,
+                )
+                != signatures
+            ):
+                raise RuntimeError(
+                    f"{name}/{budget}: leaked speculative capture/signature rewrites"
+                )
             check_call_preservation(original, text, f"{name}/{budget}")
             for op, count in counts.items():
                 if len(re.findall(rf"\bctjs\.{op}\b", text)) != count:
@@ -956,6 +1377,8 @@ def check_budgets(args, ir, config, name, functions=4):
     for budget in range(max(0, high - 16), high + 1):
         if admitted(budget) != (budget >= high):
             raise RuntimeError(f"{name}: inconsistent admission at the measured budget boundary")
-    print(f"{name}: first complete budget {high}; {len(checked)} cutoffs checked; "
-          f"{len(rollback)} discard a speculative rewrite after original owner proof")
+    print(
+        f"{name}: first complete budget {high}; {len(checked)} cutoffs checked; "
+        f"{len(rollback)} discard a speculative rewrite after original owner proof"
+    )
     return rollback

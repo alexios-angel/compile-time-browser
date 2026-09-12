@@ -31,21 +31,16 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/regex.hpp")
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 
-# All three PRIVATE, and they must be: none changes the shape of a public
+# Both PRIVATE, and they must be: neither changes the shape of a public
 # header. The dispatch strategy is run_loop's alone; the debug side tables are
-# read through `debug_names_enabled()`; `context::recorder_` is a member in
-# EVERY build and only run_loop's recording instantiation disappears
-# (`script::type_recording_enabled()` says which). Gating a member on a flag
-# would compile this library against one `context` and every consumer against
-# another - which links, and then reads the wrong offsets.
+# read through `debug_names_enabled()`. Gating a member on a flag would compile
+# this library against one `context` and every consumer against another -
+# which links, and then reads the wrong offsets.
 if(CTBROWSER_COMPUTED_GOTO)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_COMPUTED_GOTO)
 endif()
 if(NOT CTBROWSER_SCRIPT_DEBUG_NAMES)
   target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_DEBUG_NAMES=0)
-endif()
-if(NOT CTBROWSER_SCRIPT_RECORD_TYPES)
-  target_compile_definitions(ctbrowser-script PRIVATE CTBROWSER_SCRIPT_RECORD_TYPES=0)
 endif()
 
 ctbrowser_target(ctbrowser-script)

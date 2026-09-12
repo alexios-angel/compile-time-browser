@@ -1,6 +1,5 @@
 #pragma once
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -55,7 +54,6 @@ namespace ctbrowser::shell {
 using ctbrowser::layout::box_node;
 using ctbrowser::layout::fragment;
 using ctbrowser::paint::layer_tree;
-using ctbrowser::raster::renderer;
 
 // How much of the pipeline the next frame has to re-run. Ordered: a later stage
 // implies every earlier one is still valid.
@@ -94,8 +92,7 @@ class browser {
 public:
     explicit browser(browser_options options = {})
         : options_(options), recorder_(atoms_),
-          renderer_(renderer::software(options.width, options.height,
-                                       ctbrowser::raster::default_tile_extent)) {
+          renderer_(options.width, options.height, ctbrowser::raster::default_tile_extent) {
         reset_document();
     }
 
@@ -108,10 +105,9 @@ public:
     browser(browser &&) = delete;
     browser & operator=(browser &&) = delete;
 
-    // Render with something other than the software backend - the GPU one, or
-    // whatever gpu::create_renderer() decided this machine can run.
-    void use_renderer(renderer r);
-    [[nodiscard]] const renderer & rendering_with() const noexcept { return renderer_; }
+    [[nodiscard]] const ctbrowser::raster::software_backend & rendering_with() const noexcept {
+        return renderer_;
+    }
 
     // --- content ---------------------------------------------------------
 
@@ -328,19 +324,6 @@ public:
     // not increment it.
     [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
 
-    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds, per stage.
-    //
-    // Zero for a stage the frame SKIPPED, which is the interesting half: the
-    // dirty-level design is about not running these, so a zero is the design
-    // working rather than missing data.
-    struct frame_timing {
-        double styles_ms = 0;
-        double layout_ms = 0;
-        double record_ms = 0;
-        double raster_ms = 0;
-    };
-    [[nodiscard]] const frame_timing & last_frame_timing() const noexcept { return timing_; }
-
     // Collect the script heap now, and how many objects it has. Exposed
     // because "does a collection free what the page is still using" is only
     // answerable from outside.
@@ -508,7 +491,7 @@ public:
 
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
     // which is the common case and the point.
-    std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr);
+    void frame(scheduler * pool = nullptr);
 
     [[nodiscard]] rect viewport() const noexcept;
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
@@ -516,9 +499,8 @@ public:
     [[nodiscard]] const layer_tree & layers() const noexcept { return layers_; }
 
     // The composited image, for goldens and for headless runs.
-    [[nodiscard]] std::expected<ctbrowser::raster::surface, ctbrowser::raster::gpu_error>
-    read_pixels() {
-        return renderer_.read_target();
+    [[nodiscard]] const ctbrowser::raster::surface & read_pixels() const noexcept {
+        return renderer_.target();
     }
 
 private:
@@ -771,7 +753,7 @@ private:
                 const float size = font_size_of(id);
                 into.text(rect{content.x, box.y + baseline_inset(box, size),
                                std::max(0.0f, content.width - 20), size * 1.25f},
-                          label, size, control_text_colour(id, style), id, paint_face_of(id));
+                          label, size, control_text_colour(id, style), id, face_of(id));
             }
             // The drop-down arrow, in the gutter the intrinsic width reserves.
             const float arrow = 4;
@@ -838,7 +820,7 @@ private:
         const rect inner = content_box_of(id, box);
         const float x = inner.x + std::max(0.0f, (inner.width - width) / 2);
         into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
-                  label, size, control_text_colour(id, style), id, paint_face_of(id));
+                  label, size, control_text_colour(id, style), id, face_of(id));
     }
 
     // Where a single line of text sits inside a control: vertically centred on
@@ -953,7 +935,6 @@ private:
     [[nodiscard]] static std::string masked_text(std::string_view text);
     // What the user SEES for a stretch of the value.
     [[nodiscard]] static std::string shown(std::string_view text, bool masked);
-    [[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at);
 
     // Where in a control's value a point falls. The nearest character boundary
     // on the line the point is on - which is the ONLY way a click can put the
@@ -990,7 +971,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - want); distance < best_distance) {
@@ -1030,7 +1011,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - column); distance < best_distance) {
@@ -1146,7 +1127,7 @@ private:
         const rect inner = geometry.inner;
         const float size = geometry.size;
         const float line_height = geometry.line_height;
-        const ctbrowser::paint::font_face face = paint_face_of(id);
+        const ctbrowser::paint::font_face face = face_of(id);
         // MEASURED WITH THE FONT THAT DRAWS IT, and with the text that IS
         // drawn - a password's bullets are wider than its letters, so measuring
         // the letters puts the caret inside the bullets.
@@ -1300,15 +1281,11 @@ private:
     // with. Measuring a caret position with a different font from the one that
     // drew the text is how the caret ends up a character or two past the end of
     // what you typed.
-    [[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const;
-
-    // The same face, as the paint layer names it. The two types are separate on
-    // purpose - layout may not import paint - so the conversion is explicit,
-    // and every control's text MUST go through it: drawing a control's text
+    // Every control's text MUST draw with it too: drawing a control's text
     // with the default face while measuring the caret with the element's own
     // is a caret that drifts further right with every character typed. A
     // textarea is monospace by UA rule and was drawn in the default serif.
-    [[nodiscard]] ctbrowser::paint::font_face paint_face_of(node_id id) const;
+    [[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const;
 
     [[nodiscard]] float font_size_of(node_id id) const;
     [[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at,
@@ -1398,7 +1375,7 @@ private:
     [[nodiscard]] node_id body_node();
 
     // The DOM and the cascade are rebuilt on navigation, and neither type is
-    // copyable - a slab with live epochs is not something to assign over.
+    // copyable - a slab is not something to assign over.
     void reset_document();
 
     // Whether the focused element is one that shows a caret. Distinct from
@@ -1410,9 +1387,6 @@ private:
     [[nodiscard]] control_state * editable_focus();
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
-
-    // The element with this `id`, or nothing.
-    [[nodiscard]] node_id node_by_id(const read_txn & txn, std::string_view want);
 
     // The control a <label> labels, per HTML: its `for` attribute resolved by
     // id, or failing that the FIRST labelable element inside it.
@@ -1558,7 +1532,7 @@ private:
     box_node boxes_;
     fragment fragments_;
     layer_tree layers_;
-    renderer renderer_;
+    ctbrowser::raster::software_backend renderer_;
 
     std::size_t page_layers_ = 0; // how many of layers_ are the page's
     node_id select_open_;         // the <select> whose popup is showing
@@ -1586,7 +1560,6 @@ private:
     source_kind source_kind_ = source_kind::html;
     std::string xml_error_;
     std::size_t layouts_ = 0;
-    frame_timing timing_;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;

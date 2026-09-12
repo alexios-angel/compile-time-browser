@@ -47,10 +47,10 @@ bool ends_a_block(op code);
 bool falls_through(op code);
 bool in_terminator(op code);
 
-inline constexpr unsigned implicit_arguments = 3;
-inline constexpr unsigned arg_receiver = 0;
-inline constexpr unsigned arg_new_target = 1;
-inline constexpr unsigned arg_callee = 2;
+using ctjs::arg_callee;
+using ctjs::arg_new_target;
+using ctjs::arg_receiver;
+using ctjs::implicit_arguments;
 
 struct function_importer {
     mlir::OpBuilder & builder;

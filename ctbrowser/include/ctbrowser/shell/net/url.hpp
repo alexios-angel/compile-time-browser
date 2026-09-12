@@ -94,4 +94,10 @@ struct data_url {
 // matches what browsers do with a truncated base64 tail.
 [[nodiscard]] bool parse_data_url(std::string_view url, data_url & out);
 
+// Percent-decode, LENIENTLY: `%XX` becomes the byte, anything else - a stray
+// `%`, a truncated escape - passes through as itself. One decoder for a data:
+// URL's text form, a `javascript:` href's body and a fragment being matched
+// against an id, so they cannot disagree about a malformed escape.
+[[nodiscard]] std::string percent_decode(std::string_view text);
+
 } // namespace ctbrowser::shell

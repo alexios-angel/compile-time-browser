@@ -7,7 +7,7 @@
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
 // the order it had; the helpers more than one of the eight needs are in
-// page_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -20,7 +20,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "page_probe.hpp"
+#include "chrome_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -35,7 +35,6 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-using ctbrowser_test::check;
 using ctbrowser_test::log_of;
 
 namespace {
@@ -451,7 +450,7 @@ void test_listener_options() {
           function report() { console.log(log + ' counted=' + counted); }
         </script></body></html>)");
     check(page.script_error().empty(), "the script ran: " + page.script_error());
-    (void)page.frame();
+    page.frame();
     for (int i = 0; i < 3; ++i) {
         (void)page.handle(input_event::mouse_down_at(10, 10));
         (void)page.handle(input_event::mouse_up_at(10, 10));
@@ -483,7 +482,7 @@ void test_click_dispatch() {
       console.log('clicked ' + e.type);
     });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(log_of(page).empty(), "nothing fired yet");
 
     // A click is a press and a release on the same element - which is what
@@ -513,7 +512,7 @@ void test_handler_properties() {
     a.onclick = function (e) { console.log('handler ' + e.type + ' ' + (this === a)); };
     a.addEventListener('click', function () { console.log('listener'); });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
@@ -548,7 +547,7 @@ void test_events_bubble_and_can_be_prevented() {
     document.getElementById('outer').addEventListener('click', function () { console.log('outer'); });
     document.addEventListener('click', function () { console.log('document'); });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     (void)page.handle(input_event::mouse_down_at(10, 10));
     (void)page.handle(input_event::mouse_up_at(10, 10));

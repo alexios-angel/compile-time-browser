@@ -21,8 +21,7 @@ struct CTNativeSupercompilePass : impl::CTNativeSupercompileBase<CTNativeSuperco
         });
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             auto caller = call->getParentOfType<ctjs::FuncOp>();
             // Seed only original indexed source functions, not generated
             // variants. Generic whistle boundaries cannot restart a fresh

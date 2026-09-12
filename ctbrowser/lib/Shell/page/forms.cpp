@@ -189,14 +189,14 @@ void form_store::erase_selection(control_state & control) {
     control.selection = from;
 }
 
-std::size_t form_store::previous_code_point(const std::string & text, std::size_t at) {
+std::size_t form_store::previous_code_point(std::string_view text, std::size_t at) {
     if (at == 0) { return 0; }
     --at;
     while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) { --at; }
     return at;
 }
 
-std::size_t form_store::next_code_point(const std::string & text, std::size_t at) {
+std::size_t form_store::next_code_point(std::string_view text, std::size_t at) {
     if (at >= text.size()) { return text.size(); }
     ++at;
     while (at < text.size() && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) { ++at; }

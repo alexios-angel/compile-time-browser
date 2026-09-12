@@ -27,13 +27,6 @@ using ctbrowser::shell::svg_natural;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // A solid red square filling its viewBox, so any pixel inside is the same
 // colour and the assertions do not depend on where they sample.
 constexpr std::string_view red_square =
@@ -45,14 +38,6 @@ constexpr std::string_view red_square =
 constexpr std::string_view circle =
     R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">)"
     R"(<circle cx="5" cy="5" r="4.5" fill="#000000"/></svg>)";
-
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
 
 // The laid-out box of the first element with this tag.
 [[nodiscard]] rect box_of_tag(shell::browser & page, std::string_view tag) {

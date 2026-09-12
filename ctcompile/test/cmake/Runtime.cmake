@@ -10,14 +10,14 @@
 # own compiled bodies at startup with no hand-written table anywhere - and
 # printing the same bytes as the same application interpreted.
 #
-# TWO EXECUTABLES FROM ONE DRIVER. LauncherApp.cpp is compiled twice: once
+# TWO EXECUTABLES FROM ONE DRIVER. Application.cpp is compiled twice: once
 # alone, once with the generated bodies and the generated entry table. That is
 # what makes the comparison mean something - the arms differ in exactly the two
 # generated objects and a preprocessor symbol.
 #
 # THE COUNTERS ARE THE ASSERTION, not the transcripts. Both arms run the same
 # program, so an application that silently interpreted everything prints
-# identical bytes and exits 0. check-launcher.cmake asserts instead that the
+# identical bytes and exits 0. check-application.cmake asserts instead that the
 # compiled arm never crossed C++ -> VM, VM -> AOT or AOT -> VM: the interpreter
 # did not run at all.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
@@ -194,36 +194,12 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 endif()
 
 # ---------------------------------------------------------------------------
-# PHASE 58 - GENERATORS AS C++ COROUTINES. Appended as one block at the end of
-# this file, per Appendix A.3 of `23-lexical-implementation.md`.
-#
-# OUTSIDE THE MLIR GUARD ON PURPOSE. It compiles no IR and runs no pass: it
-# runs the ENGINE's generators against hand-written `ctnative::generator<T>`
-# coroutines, which is the only way to ask whether Phase 58's mapping is sound
-# before there is a lowering to ask it of. That also means it keeps running on
-# a machine with no LLVM, which is where the `<generator>` fact it prints
-# matters most.
-add_executable(ctcompile-test-native-generator Runtime/NativeGenerator.cpp)
-target_link_libraries(ctcompile-test-native-generator PRIVATE ctbrowser::ctbrowser)
-ctcompile_target(ctcompile-test-native-generator)
-add_test(NAME ctcompile_native_generator COMMAND ctcompile-test-native-generator)
-# ---------------------------------------------------------------------------
 # --- PHASE 61: the JavaScript-global to C++/Boost map -------------------------
 #
 # `ctcompile-plan/24-native-cpp-backend.md` Phase 61 - the specification's §8
-# table. The rows live in TableGen (include/ctcompile/StdLib/StdLibMap.td) and
-# this turns them into the X-macro header the test walks, so the map has ONE
-# spelling: when Phase 53's `ctnative` dialect lands, its declarative rewrite
-# rules are `Pat<>`s beside those same records rather than a second table.
-#
-# NO MLIR IS REQUIRED, deliberately. StdLibMap.td includes nothing - not
-# OpBase.td, not a dialect - so `llvm-tblgen --dump-json` reads it on a box with
-# no MLIR in the build at all, and the conformance test runs in the
+# table, an X-macro in include/ctcompile/StdLib/StdLibMap.def that the test
+# walks directly. NO MLIR IS REQUIRED, so the conformance test runs in the
 # CTCOMPILE_ENABLE_MLIR=OFF configuration where most of this file does not.
-find_program(CTCOMPILE_LLVM_TBLGEN llvm-tblgen
-  HINTS "${LLVM_TOOLS_BINARY_DIR}" ${CTBROWSER_BREW_HINTS}
-  PATH_SUFFIXES bin opt/llvm/bin)
-find_program(CTCOMPILE_PYTHON NAMES python3 python)
 
 # BOOST.JSON AND BOOST.REGEX, WHICH THE ENGINE DOES NOT ALREADY ASK FOR.
 # ctbrowser/cmake/dependencies.cmake requests COMPONENTS url and ctcompile's own
@@ -233,22 +209,8 @@ find_program(CTCOMPILE_PYTHON NAMES python3 python)
 # asserted without running the thing being refused is a refusal nobody checked.
 find_package(Boost CONFIG QUIET COMPONENTS json regex)
 
-if(CTCOMPILE_LLVM_TBLGEN AND CTCOMPILE_PYTHON AND TARGET Boost::json AND TARGET Boost::regex)
-  set(_stdlib_td "${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/StdLib/StdLibMap.td")
-  set(_stdlib_inc "${CMAKE_CURRENT_BINARY_DIR}/StdLibMap.inc")
-  add_custom_command(
-    OUTPUT "${_stdlib_inc}"
-    COMMAND "${CTCOMPILE_PYTHON}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../utils/stdlib-map-emit.py"
-            --tblgen "${CTCOMPILE_LLVM_TBLGEN}"
-            --input "${_stdlib_td}"
-            --output "${_stdlib_inc}"
-    DEPENDS "${_stdlib_td}" "${CMAKE_CURRENT_SOURCE_DIR}/../utils/stdlib-map-emit.py"
-    COMMENT "Emitting the standard-library map from StdLibMap.td"
-    VERBATIM)
-
-  add_executable(ctcompile-test-stdlib_map Runtime/StdLibMap.cpp "${_stdlib_inc}")
-  target_include_directories(ctcompile-test-stdlib_map PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+if(TARGET Boost::json AND TARGET Boost::regex)
+  add_executable(ctcompile-test-stdlib_map Runtime/StdLibMap.cpp)
   target_link_libraries(ctcompile-test-stdlib_map
     PRIVATE ctbrowser::script Boost::json Boost::regex)
   ctcompile_target(ctcompile-test-stdlib_map)
@@ -259,9 +221,8 @@ else()
   # nothing" this project has already been bitten by twice.
   message(WARNING
     "ctcompile: the Phase 61 standard-library map test is NOT registered. "
-    "llvm-tblgen=${CTCOMPILE_LLVM_TBLGEN} python=${CTCOMPILE_PYTHON} "
     "Boost_json_FOUND=${Boost_json_FOUND} Boost_regex_FOUND=${Boost_regex_FOUND} - "
-    "install the missing one (brew install llvm boost) and configure again.")
+    "install Boost (brew install boost) and configure again.")
 endif()
 
 # --- PHASE 53: the ctnative type lattice --------------------------------------
@@ -277,7 +238,7 @@ endif()
 # associativity sweep alone is 9261 triples, and the divergence pin has to
 # COMPILE AND RUN JavaScript in the real interpreter to find out what
 # `"\u{1F600}".length` answers, because writing the number down here is exactly
-# the stale-constant failure GCRoots.cpp records at the other end of the tree.
+# the stale-constant failure GC/Roots.cpp records at the other end of the tree.
 #
 # IT LINKS BOTH SIDES, and it is the only test that does: CTNativeDialect for
 # the lattice, ctbrowser::script for the interpreter that judges it. That is the

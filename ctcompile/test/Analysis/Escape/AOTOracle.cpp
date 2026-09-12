@@ -211,10 +211,6 @@ void check_interpreted(const type_recorder & recorder, std::string_view name, bo
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (!type_recording_enabled()) {
-        std::printf("ok escape_oracle_aot (SKIPPED - recording disabled)\n");
-        return 0;
-    }
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--out") != 0)) { return 2; }
     const run_counts baseline = run(nullptr);
     type_recorder recorder;

@@ -51,8 +51,7 @@ bool undefined(value input) {
 value evaluator::directCall(ctjs::CallDirectOp invoked, environment & env, unsigned depth) {
     llvm::SmallVector<value> args;
     for (mlir::Value operand : invoked.getOperands()) { args.push_back(env.lookup(operand)); }
-    auto target =
-        mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(invoked, invoked.getCalleeAttr());
+    auto target = invoked.getTarget();
     if (!target || args.size() < 3 || !undefined(args[1])) {
         return fail("direct call has no proved ordinary target");
     }

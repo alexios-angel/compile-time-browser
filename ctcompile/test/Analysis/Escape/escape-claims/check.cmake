@@ -24,10 +24,6 @@
 #   -DSTRICT=  ON for the fixture: partial and pending must both be zero
 
 execute_process(COMMAND "${ORACLE}" OUTPUT_VARIABLE _self ERROR_VARIABLE _selferr RESULT_VARIABLE _rc)
-if(_self MATCHES "SKIPPED")
-  message(STATUS "escape claims (${NAME}): skipped - this build has no recording hook")
-  return()
-endif()
 if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "the type oracle's self-test failed before the escape claims ran:\n${_self}${_selferr}")
 endif()

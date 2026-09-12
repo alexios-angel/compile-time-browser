@@ -1,4 +1,4 @@
-# The ctnative dialect library. Three generated headers, three DEPENDS edges.
+# The ctnative dialect library. Two generated headers, two DEPENDS edges.
 #
 # IT DOES NOT LINK ctbrowser::script, AND THE ABSENCE IS THE POINT. CTJSDialect
 # does, because CTJS_RuntimeOp names a ctbrowser::aot::helper_id enumerator and
@@ -12,7 +12,6 @@
 # real interpreter and pins kDefaultStringEncoding against the answer.
 add_mlir_library(CTNativeDialect
   CTNativeDialect.cpp
-  CTNativeInterfaces.cpp
   CTNativeLattice.cpp
   CTNativeOps.cpp
   CTNativeTypes.cpp
@@ -20,7 +19,6 @@ add_mlir_library(CTNativeDialect
   DEPENDS
     MLIRCTNativeOpsIncGen
     CTNativeEnumsIncGen
-    CTNativeInterfacesIncGen
 
   LINK_LIBS PUBLIC
     MLIREmitCDialect

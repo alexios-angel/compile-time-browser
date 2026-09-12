@@ -13,29 +13,18 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <cstdio>
 #include <string>
 #include <vector>
 
-using ctbrowser::shell::browser;
-using ctbrowser::shell::browser_options;
-
 namespace {
 
-[[nodiscard]] std::string answer(const std::string & expression) {
-    browser page{browser_options{400, 300}};
-    page.load_html("<!DOCTYPE html><html><body><script>try { console.log(String(" + expression +
-                   ")); } catch (e) { console.log('threw:' + e.name); }</script></body></html>");
-    const std::vector<std::string> & logged = page.bindings().console_output();
-    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
-    return logged.back();
-}
+constexpr const char * page_html = "<!DOCTYPE html><html><body></body></html>";
 
 void is(const std::string & expression, const std::string & expected) {
-    const std::string got = answer(expression);
-    CHECK_EQ(got, expected);
-    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+    ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 void test_an_absent_attribute_is_null() {

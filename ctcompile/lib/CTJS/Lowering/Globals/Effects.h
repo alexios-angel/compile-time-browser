@@ -20,7 +20,6 @@ std::optional<std::uint32_t> function_index_of(FuncOp function);
 bool names_global_object(llvm::StringRef name);
 bool names_eval(llvm::StringRef name);
 std::string describe(mlir::Operation * op);
-llvm::StringRef constant_key(mlir::Value key);
 bool may_be_function(mlir::Value value);
 bool prototype_replaced(mlir::ModuleOp module);
 bool hands_back_the_global_object(llvm::StringRef key);

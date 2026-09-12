@@ -9,29 +9,14 @@
 // with nothing to declare.
 
 #include <algorithm>
-#include <array>
-#include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
-#include <ctbrowser/script/vm.hpp>
-#include <functional>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <vector>
 
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
+#include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
 
@@ -215,15 +200,6 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     return out;
 }
 
-// The interpreter loop, entered at a frame depth and running until it unwinds
-// back to it. `stop_depth` is 0 for the top-level program and the caller's
-// depth for a call from C++ - which is what makes call() re-entrant instead of
-// a second interpreter.
-// WHAT was called, in the terms the source used. "attempted to call a
-// non-function" is true and useless; `o.foo is undefined, not a function` says
-// which line to look at. The method and computed forms know the name outright;
-// a plain call only knows what it found, which is still the difference between
-// "undefined" and "a number".
 // Where a plain call's callee CAME FROM. A method call knows its name outright;
 // `f(...)` only has a register, so this walks back through the emitted code for
 // the instruction that last wrote it. Costs nothing until something fails, and
@@ -261,6 +237,11 @@ std::string context::callee_origin(const function_proto & fn, std::size_t ip,
     return {};
 }
 
+// WHAT was called, in the terms the source used. "attempted to call a
+// non-function" is true and useless; `o.foo is undefined, not a function` says
+// which line to look at. The method and computed forms know the name outright;
+// a plain call only knows what it found, which is still the difference between
+// "undefined" and "a number".
 std::string context::describe_callee(const function_proto & fn, std::string_view name,
                                      value callee) {
     const std::string what =
@@ -277,9 +258,6 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
            (fn.display_name().empty() ? std::string{"<anonymous>"} : "`" + fn.display_name() + "`");
 }
 
-// The handler's trap of this name, if it has one. An ABSENT trap is not an
-// error and not a silent skip: the operation falls through to the target,
-// which is exactly what absent means in the spec.
 // WHAT WAS THROWN, in the terms the thrower used. `to_string` on an object is
 // "[object Object]", which is the least useful thing a diagnostic can say -
 // and an uncaught throw is almost always an Error, whose name and message are
@@ -502,19 +480,17 @@ value context::get_iterator(value v) {
         state->set("at", value::number(0));
         const value iterator = make_object();
         auto * it = static_cast<object_object *>(iterator.as_heap());
-        it->set("next", value::object(allocate<native_object>("next", [state](context & c,
-                                                                              std::span<value>) {
-                    const value list = *state->find("items");
-                    auto * arr = static_cast<array_object *>(list.as_heap());
-                    const auto at = static_cast<std::size_t>(state->find("at")->as_number());
-                    value out = c.make_object();
-                    auto * record = static_cast<object_object *>(out.as_heap());
-                    const bool done = at >= arr->items.size();
-                    record->set("value", done ? value::undefined() : arr->items[at]);
-                    record->set("done", value::boolean(done));
-                    if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
-                    return out;
-                })));
+        it->set(
+            "next",
+            value::object(allocate<native_object>("next", [state](context & c, std::span<value>) {
+                const value list = *state->find("items");
+                auto * arr = static_cast<array_object *>(list.as_heap());
+                const auto at = static_cast<std::size_t>(state->find("at")->as_number());
+                const bool done = at >= arr->items.size();
+                const value out = c.iter_result(done ? value::undefined() : arr->items[at], done);
+                if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
+                return out;
+            })));
         it->set("state", value::object(state)); // keeps the list reachable
         return iterator;
     }

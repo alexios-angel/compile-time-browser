@@ -2,13 +2,6 @@
 
 namespace ctcompile::ctnative::map_detail {
 namespace {
-llvm::StringRef keyOf(mlir::Value key) {
-    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return string ? string.getValue() : llvm::StringRef{};
-}
-
 std::string proveImmediateConsumption(ctjs::CallOp iterator, const snapshotCopies & copies) {
     ctjs::CallOp consumed;
     for (mlir::OpOperand & use : iterator.getResult().getUses()) {
@@ -49,12 +42,13 @@ std::string collectSnapshotCopies(mlir::ModuleOp module,
                 call && use.getOperandNumber() == 1) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (method && method.getObject() == load.getResult() &&
-                    keyOf(method.getKey()) == "from") {
+                    ctjs::constantKey(method.getKey()) == "from") {
                     continue;
                 }
             }
             auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-            if (!method || use.getOperandNumber() != 0 || keyOf(method.getKey()) != "from") {
+            if (!method || use.getOperandNumber() != 0 ||
+                ctjs::constantKey(method.getKey()) != "from") {
                 reason = "standard Array.from identity escapes, is inspected or is mutated";
                 return;
             }
@@ -74,7 +68,8 @@ std::string collectSnapshotCopies(mlir::ModuleOp module,
                 auto read = snapshot ? snapshot.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                      : ctjs::GetPropertyOp{};
                 if (!snapshot || !mapCalls.contains(snapshot) || !read ||
-                    (keyOf(read.getKey()) != "keys" && keyOf(read.getKey()) != "values")) {
+                    (ctjs::constantKey(read.getKey()) != "keys" &&
+                     ctjs::constantKey(read.getKey()) != "values")) {
                     reason = "native Array.from requires a proved Map keys or values snapshot";
                     return;
                 }
@@ -94,7 +89,8 @@ std::string collectSnapshotCopies(mlir::ModuleOp module,
     for (mlir::Operation * op : mapCalls) {
         auto call = llvm::cast<ctjs::CallOp>(op);
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (method && (keyOf(method.getKey()) == "keys" || keyOf(method.getKey()) == "values")) {
+        if (method && (ctjs::constantKey(method.getKey()) == "keys" ||
+                       ctjs::constantKey(method.getKey()) == "values")) {
             reason = proveImmediateConsumption(call, out);
             if (!reason.empty()) { return reason; }
         }

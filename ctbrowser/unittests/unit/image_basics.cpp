@@ -58,14 +58,6 @@ namespace {
     return walk(walk, page.fragments(), 0, 0);
 }
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
-
 // Scripts report through console.log, the same way the other binding tests do.
 [[nodiscard]] std::string logged(browser & page) {
     std::string out;
@@ -157,7 +149,7 @@ void test_img_element() {
     ctbrowser::browser page{{.width = 200, .height = 120}};
     page.assets().add("cat.bmp", make_bmp(20, 10));
     page.load_html("<body><img src='cat.bmp'></body>");
-    CHECK(page.frame());
+    page.frame();
 
     // The <img> is as big as its bitmap: no width attribute, so the size comes
     // from the decode. Before images existed this was zero.
@@ -167,13 +159,9 @@ void test_img_element() {
 
     // And it is actually PAINTED - the pixel in the middle of it is the
     // image's colour, not the page background.
-    const auto image = page.read_pixels();
-    CHECK(image.has_value());
-    if (image) {
-        const int x = static_cast<int>(box.x + box.width / 2);
-        const int y = static_cast<int>(box.y + box.height / 2);
-        CHECK(image->row(y)[static_cast<std::size_t>(x)] == 0xFF3366CCU);
-    }
+    const int x = static_cast<int>(box.x + box.width / 2);
+    const int y = static_cast<int>(box.y + box.height / 2);
+    CHECK(page.read_pixels().row(y)[static_cast<std::size_t>(x)] == 0xFF3366CCU);
 }
 
 void test_img_sizing_rules() {
@@ -183,13 +171,13 @@ void test_img_sizing_rules() {
     // An explicit width with no height keeps the aspect ratio, which is what
     // `<img width=40>` on a 20x10 image means.
     page.load_html("<body><img src='cat.bmp' width='40'></body>");
-    CHECK(page.frame());
+    page.frame();
     CHECK(box_of_tag(page, "img").width == 40.0f);
     CHECK(box_of_tag(page, "img").height == 20.0f);
 
     // A missing image is zero-sized rather than a broken-image box.
     page.load_html("<body><img src='absent.bmp'></body>");
-    CHECK(page.frame());
+    page.frame();
     CHECK(box_of_tag(page, "img").width == 0.0f);
 }
 
@@ -213,7 +201,7 @@ void test_script_images() {
     CHECK(logged(page) == "8x8|missing=-1");
 
     // The sprite really landed on the canvas.
-    CHECK(page.frame());
+    page.frame();
     const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
     CHECK(static_cast<bool>(pixels));
     if (pixels) {
@@ -237,7 +225,7 @@ void test_img_in_canvas_from_element() {
       </script>
     </body>)");
     CHECK(page.script_error().empty());
-    CHECK(page.frame());
+    page.frame();
     const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
     if (pixels) { CHECK(pixels->at(4, 4) == 0xFFFF0000U); }
 }
@@ -282,7 +270,7 @@ void test_blob_object_url_and_image() {
     CHECK(logged(page) == "loaded 8x8 natural=8 complete=true");
 
     // The pixels really arrived, through a URL that no longer resolves.
-    CHECK(page.frame());
+    page.frame();
     const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
     CHECK(static_cast<bool>(pixels));
     if (pixels) {
@@ -324,7 +312,7 @@ void test_a_constructed_image_is_an_element() {
     CHECK(page.script_error().empty());
     CHECK(logged(page) == "IMG true");
     for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
-    CHECK(page.frame());
+    page.frame();
     // Laid out at its intrinsic size, by the same code path an <img> in the
     // markup takes.
     CHECK(box_of_tag(page, "img").width == 20.0f);
@@ -332,8 +320,7 @@ void test_a_constructed_image_is_an_element() {
 }
 
 // The PNG this engine writes must be readable by things that are not this
-// engine, so the check is structural AND independent: the file is written out
-// and tools/check/check-png.py decodes it with Python's own zlib.
+// engine, so the check is structural: signature, chunk order, IHDR fields.
 void test_encode_png() {
     const auto image = decode_bmp(make_bmp(4, 3, 0xFF3366CCU));
     const std::vector<std::byte> png = ctbrowser::shell::encode_png(image);
@@ -352,10 +339,6 @@ void test_encode_png() {
     // Empty in, empty out - not a header with no pixels, which a decoder would
     // reject and which would look like a corrupt file rather than no file.
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
-
-    // Written for tools/check/check-png.py, which decodes it with Python's zlib.
-    std::ofstream out{"../build/render-encode.png", std::ios::binary};
-    out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
 }
 
 // EXPORT, END TO END - the path p5's save() takes, and the one place this engine

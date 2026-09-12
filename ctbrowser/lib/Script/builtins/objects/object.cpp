@@ -12,7 +12,6 @@
 
 namespace ctbrowser::script::builtins_detail {
 
-using detail::descriptor_object;
 using detail::key_filter;
 using detail::own_property_names;
 using detail::prototype_of;
@@ -588,7 +587,7 @@ void install_object(context & cx) {
         }
         context::property_descriptor found;
         if (!c.own_property(a[0], c.to_string(arg_at(a, 1)), found)) { return value::undefined(); }
-        return value::object(descriptor_object(c, found));
+        return c.from_property_descriptor(found);
     });
     // `Object.create(proto, properties)`. A real chain has existed since
     // `extends`; what was missing was any way for a page to reach it, and then
@@ -706,7 +705,7 @@ void install_object(context & cx) {
         for (const std::string & key : own_property_names(c, from, key_filter::all)) {
             context::property_descriptor found;
             if (c.own_property(from, key, found)) {
-                out->set(key, value::object(descriptor_object(c, found)));
+                out->set(key, c.from_property_descriptor(found));
             }
         }
         return value::object(out);
@@ -890,7 +889,7 @@ void install_object(context & cx) {
             // THE SNAPSHOT IS A ROOT. A [[Set]] on the target can run a page's
             // setter, which can allocate, which can collect - and until it is
             // stored, a copied value's only reference is this vector, which no
-            // root in GCRoots.def reaches.
+            // root of context::each_root reaches.
             std::vector<value> held;
             held.reserve(entries.size());
             for (const auto & entry : entries) { held.push_back(entry.second); }

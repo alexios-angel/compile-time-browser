@@ -13,8 +13,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -25,27 +23,6 @@ using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 
 namespace {
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
-// Only the glyph-cache test reads a face off disk, and that test compiles
-// away without SDL3_ttf - so this is unused, not dead, on such a build.
-[[maybe_unused, nodiscard]] std::vector<std::byte> read_font(const char * path) {
-    std::ifstream in{path, std::ios::binary};
-    std::vector<std::byte> out;
-    if (!in) { return out; }
-    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
-    out.resize(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
 
 // Every text command the page draws, in order.
 [[nodiscard]] std::vector<paint::paint_command> text_commands(browser & page) {
@@ -90,7 +67,7 @@ void test_family_weight_and_style_resolve() {
       <p style="font-weight: 300">light</p>
       <p style="font-weight: 700">heavy</p>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const paint::paint_command * bolded = run_saying(page, "bolded");
     check(bolded != nullptr, "the bold run was recorded");
@@ -124,7 +101,7 @@ void test_the_face_inherits() {
         <span style="font-weight: normal">reset</span>
       </div>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A child with no font of its own is drawn in its parent's, which is what
     // makes `body { font-family: ... }` mean anything at all.
@@ -151,7 +128,7 @@ void test_decoration() {
       <p style="text-decoration: line-through">struck</p>
       <p style="text-decoration: none">plain</p>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     if (const paint::paint_command * linked = run_saying(page, "linked")) {
         check(linked->decoration == paint::text_decoration::underline, "a link is underlined");
@@ -171,16 +148,14 @@ void test_the_underline_is_actually_drawn() {
     const auto ink_below_text = [](std::string_view html) {
         browser page{browser_options{200, 80}};
         page.load_html(std::string{html});
-        (void)page.frame();
-        const auto image = page.read_pixels();
+        page.frame();
+        const raster::surface & image = page.read_pixels();
         std::size_t found = 0;
-        if (image) {
-            for (int y = 0; y < image->height(); ++y) {
-                const auto row = image->row(y);
-                for (int x = 0; x < image->width(); ++x) {
-                    // The UA link colour, #0000ee.
-                    if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x0000EEU) { ++found; }
-                }
+        for (int y = 0; y < image.height(); ++y) {
+            const auto row = image.row(y);
+            for (int x = 0; x < image.width(); ++x) {
+                // The UA link colour, #0000ee.
+                if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x0000EEU) { ++found; }
             }
         }
         return found;
@@ -200,7 +175,7 @@ void test_layout_measures_with_the_drawing_font() {
     // text that overflows its own line.
     browser page{browser_options{600, 120}};
     page.load_html("<body><p>abcdef</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     if (const paint::paint_command * run = run_saying(page, "abcdef")) {
         const float drawn = raster::font8x8_advance("abcdef", run->font_size);
         check(run->bounds.width == drawn, "the recorded box is exactly the drawn width");
@@ -248,19 +223,15 @@ void test_font8x8_has_bold_and_italic() {
                                             : "";
         page.load_html(std::string{"<body style='font-size: 32px'><p style='"} + style +
                        "'>Hamburg</p></body>");
-        (void)page.frame();
-        const auto image = page.read_pixels();
+        page.frame();
+        const raster::surface & image = page.read_pixels();
         drawn out;
-        if (image) {
-            for (int y = 0; y < image->height(); ++y) {
-                const auto row = image->row(y);
-                for (int x = 0; x < image->width(); ++x) {
-                    if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x00FFFFFFU) {
-                        continue;
-                    }
-                    ++out.ink;
-                    out.shape = out.shape * 1000003u + static_cast<std::size_t>(y * 4096 + x);
-                }
+        for (int y = 0; y < image.height(); ++y) {
+            const auto row = image.row(y);
+            for (int x = 0; x < image.width(); ++x) {
+                if ((row[static_cast<std::size_t>(x)] & 0x00FFFFFFU) == 0x00FFFFFFU) { continue; }
+                ++out.ink;
+                out.shape = out.shape * 1000003u + static_cast<std::size_t>(y * 4096 + x);
             }
         }
         return out;
@@ -345,7 +316,7 @@ void test_real_fonts() {
     check(page.has_real_fonts(), "and the backend took");
 
     page.load_html("<body><p>Hamburgefonstiv</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
     check(run != nullptr, "the run was recorded");
@@ -359,16 +330,13 @@ void test_real_fonts() {
 
     // It puts ANTIALIASED ink on the page: font8x8 is on or off, so a partly
     // covered pixel can only come from an outline.
-    const auto image = page.read_pixels();
-    check(image.has_value(), "the frame composited");
+    const raster::surface & image = page.read_pixels();
     std::size_t partial = 0;
-    if (image) {
-        for (int y = 0; y < image->height(); ++y) {
-            const auto row = image->row(y);
-            for (int x = 0; x < image->width(); ++x) {
-                const std::uint32_t px = row[static_cast<std::size_t>(x)] & 0x00FFFFFFU;
-                if (px != 0x000000U && px != 0xFFFFFFU) { ++partial; }
-            }
+    for (int y = 0; y < image.height(); ++y) {
+        const auto row = image.row(y);
+        for (int x = 0; x < image.width(); ++x) {
+            const std::uint32_t px = row[static_cast<std::size_t>(x)] & 0x00FFFFFFU;
+            if (px != 0x000000U && px != 0xFFFFFFU) { ++partial; }
         }
     }
     check(partial > 0, "the glyphs are antialiased, which font8x8 cannot be");
@@ -380,7 +348,7 @@ void test_real_fonts_distinguish_faces() {
         browser page{browser_options{600, 200}};
         check(page.use_real_fonts(), "the faces load");
         page.load_html("<body><p style='" + std::string{style} + "'>Hamburgefonstiv</p></body>");
-        (void)page.frame();
+        page.frame();
         const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
         return run != nullptr ? run->bounds.width : 0.0f;
     };
@@ -402,7 +370,7 @@ void test_unknown_family_falls_back() {
     // A family nobody has must still draw - in the default face, not in
     // nothing. A page asking for "Comic Sans MS" gets text.
     page.load_html("<body><p style='font-family: Nonexistent Face'>fallback</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     if (const paint::paint_command * run = run_saying(page, "fallback")) {
         check(run->bounds.width > 0, "an unknown family still measures something");
     }
@@ -428,7 +396,7 @@ void test_canvas_text_uses_the_real_font() {
                    "console.log('w=' + ctx.measureText('Lives: 3').width);"
                    "ctx.fillText('Lives: 3', 480 - 65, 20);"
                    "</script></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // font8x8 gives exactly 8 glyphs * 8px * scale(16)=2 = 128. A real 16px
     // face is nowhere near that, and 65 of room is enough for it.
@@ -482,8 +450,12 @@ void test_the_glyph_cache_is_thread_safe() {
     if (!raster::ttf_available()) { return; }
     raster::ttf_backend fonts;
     check(fonts.ok(), "SDL3_ttf started");
-    const std::vector<std::byte> regular = read_font("resources/fonts/FiraSans-Regular.ttf");
-    const std::vector<std::byte> bold = read_font("resources/fonts/FiraSans-Bold.ttf");
+    // Off disk through the registry, which probes the working directory the
+    // way a page's <link> would.
+    const std::vector<std::byte> regular =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Regular.ttf");
+    const std::vector<std::byte> bold =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Bold.ttf");
     check(!regular.empty(), "the vendored face is readable");
     check(fonts.add_face("Fira Sans", false, false, regular), "the face loads");
     check(fonts.add_face("Fira Sans", true, false, bold), "and its bold");
@@ -537,7 +509,7 @@ void test_page_font_face() {
             "  src: url(\"examples/assets/fonts/PressStart2P-Regular.ttf\"); }</style></head>"
             "<body><p style='font-family: " +
             std::string{family} + "'>ARCADE</p></body>");
-        (void)page.frame();
+        page.frame();
         const paint::paint_command * run = run_saying(page, "ARCADE");
         return run != nullptr ? run->bounds.width : 0.0f;
     };
@@ -566,13 +538,12 @@ void test_real_fonts_are_deterministic_and_thread_safe() {
         html += "</body>";
         page.load_html(html);
         scheduler pool;
-        (void)page.frame(parallel ? &pool : nullptr);
+        page.frame(parallel ? &pool : nullptr);
         std::vector<std::uint32_t> pixels;
-        if (const auto image = page.read_pixels()) {
-            for (int y = 0; y < image->height(); ++y) {
-                const auto row = image->row(y);
-                pixels.insert(pixels.end(), row.begin(), row.end());
-            }
+        const raster::surface & image = page.read_pixels();
+        for (int y = 0; y < image.height(); ++y) {
+            const auto row = image.row(y);
+            pixels.insert(pixels.end(), row.begin(), row.end());
         }
         return pixels;
     };
@@ -592,7 +563,7 @@ void test_real_fonts_do_not_quantise() {
         check(page.use_real_fonts(), "the faces load");
         page.load_html("<body><p style='font-size:" + std::to_string(size) +
                        "px'>Hamburgefonstiv</p></body>");
-        (void)page.frame();
+        page.frame();
         const paint::paint_command * run = run_saying(page, "Hamburgefonstiv");
         return run != nullptr ? run->bounds.width : 0.0f;
     };

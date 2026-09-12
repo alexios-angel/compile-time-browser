@@ -353,7 +353,8 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument(
-        "--no-default-optimizations", action="store_true",
+        "--no-default-optimizations",
+        action="store_true",
         help="measure admission without default precomputation and reachability pruning",
     )
     parser.add_argument(
@@ -388,7 +389,8 @@ def main() -> None:
         help="negative proof: rename every ctjs.call_direct, which the check must catch",
     )
     parser.add_argument(
-        "--mutate-pruned-count", action="store_true",
+        "--mutate-pruned-count",
+        action="store_true",
         help="negative proof: overcount pruning, which source conservation must catch",
     )
     parser.add_argument(
@@ -413,13 +415,20 @@ def main() -> None:
                 "guard fired. The parent must strip it."
             )
         child_argv = [
-            sys.executable, __file__,
-            "--translate", argv.translate,
-            "--opt", argv.opt,
-            "--corpus", argv.corpus,
-            "--name", argv.name,
-            "--top", str(argv.top),
-            "--timeout", str(argv.timeout),
+            sys.executable,
+            __file__,
+            "--translate",
+            argv.translate,
+            "--opt",
+            argv.opt,
+            "--corpus",
+            argv.corpus,
+            "--name",
+            argv.name,
+            "--top",
+            str(argv.top),
+            "--timeout",
+            str(argv.timeout),
         ]
         if argv.json:
             child_argv += ["--json", argv.json]
@@ -458,9 +467,7 @@ def main() -> None:
                 f"native-claims ({argv.name}): the child failed, but not for the reason "
                 f"this test exists to prove:\n{output}"
             )
-        print(
-            f"native claims ({argv.name}): the child failed as it had to: {argv.expect_failure}"
-        )
+        print(f"native claims ({argv.name}): the child failed as it had to: {argv.expect_failure}")
         return
 
     result = run(argv)
@@ -486,10 +493,7 @@ def main() -> None:
             f"native-claims ({result['name']}): emitted {result['call_direct']} "
             f"ctjs.call_direct, floor is {argv.min_direct} - the CLOSED WORLD NARROWED."
         )
-    if (
-        argv.min_lifted_direct is not None
-        and result["lifted_call_direct"] < argv.min_lifted_direct
-    ):
+    if argv.min_lifted_direct is not None and result["lifted_call_direct"] < argv.min_lifted_direct:
         sys.exit(
             f"native-claims ({result['name']}): the closure lift made "
             f"{result['lifted_call_direct']} ctjs.call_direct, floor is "

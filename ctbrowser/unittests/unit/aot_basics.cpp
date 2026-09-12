@@ -35,13 +35,6 @@ using ctbrowser::script::value;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // HOW MANY TIMES THE COMPILED BODY ACTUALLY RAN. Without this the test proves
 // nothing: the interpreter produces the same 42.
 std::size_t native_calls = 0;

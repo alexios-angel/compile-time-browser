@@ -236,11 +236,6 @@ mlir::Type methodTableCarrierType(MethodTableType type) {
                                                       cIdentifier(type.getSite()) + ">");
 }
 
-// Opt includes null or undefined, retained by the tagged scalar carrier.
-bool mayBeUndefined(mlir::Type type) {
-    return llvm::isa<OptType>(type);
-}
-
 mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // `none` HAS NO REPRESENTATION, and returning f64 for it was a silent
     // guess at the one thing this tier exists not to guess at. A value with no
@@ -281,74 +276,6 @@ std::string printed(mlir::Type type) {
     return out;
 }
 
-// --- PHASE 59 SLICE 1: A CLOSURE CARRIES BY LIFTING, NOT BY ALLOCATING ----------
-//
-// A JavaScript closure is a function plus the bindings it captured. The obvious
-// C++ for it is a lambda with a capture list, or a `std::function` where the
-// callee is not known - and both of those own storage, which is the one thing a
-// tier with no collector has to be most careful about. So this slice does not
-// build a closure at all. It LIFTS: the captured values become extra LEADING
-// parameters of the target function, `ctjs.load_upvalue i` inside it becomes a
-// reference to parameter i, `ctjs.create_closure` lowers to nothing exactly as a
-// declaration closure already does, and each call passes the captured values as
-// ordinary arguments. Zero allocation, no functor, no ownership question.
-//
-// IT IS AN IR REWRITE THAT RUNS BEFORE THE SOLVE, and that is what makes it
-// cheap rather than a second dataflow analysis. Once a closure call is a
-// `ctjs.call_direct`, every piece of machinery this file already has works
-// unchanged: MLIR's CallOpInterface makes the target reachable to
-// DeadCodeAnalysis (an uncalled private function is dead and its types read
-// `<unvisited>`), TypeInference propagates each capture's proved type into the
-// leading parameter it became, and the call-graph fixpoint in runOnOperation
-// closes over the new edge in both directions. The lowering below needed no new
-// arm for the call and no new carrier.
-//
-// WHAT THE IR ACTUALLY DOES, AND WHERE THE BRIEF FOR THIS WORK WAS WRONG.
-// "Captures are parent-frame VALUES at construction" is not what the bytecode
-// emits: `compiler_impl::is_captured` sets `local::boxed` for a local MENTIONED
-// inside a nested function, mutated or not, and `op::new_cell` then boxes it -
-// so EVERY from_parent_local capture operand is a `ctjs.create_cell` result and
-// none of them has a carrier. Taken literally the admission rule "every
-// capture's value has a carrier" would lift nothing at all. What is true is the
-// sentence after it: a cell nothing ever writes is a constant box, so this
-// unboxes exactly those - every use a `ctjs.cell_get` or a capture of a lifted
-// closure, no `ctjs.cell_set`, and no `ctjs.store_upvalue` anywhere the cell can
-// reach - and the carrier check then applies to what the cell HOLDS.
-//
-// AND A CAPTURE THAT IS NOT A CELL COMES THROUGH THE ENCLOSING CLOSURE - PHASE
-// 59 SLICE 1b. For a descriptor that is not from_parent_local the VM copies the
-// enclosing closure's upvalue into the slot (context::make_closure); the
-// operand the importer writes beside it is an `undefined` placeholder nothing
-// reads, and WHICH upvalue is on the closure's `enclosing_indices` attribute,
-// parallel to the capture list (BytecodeImport.cpp, op::closure). While the
-// enclosing function is unlifted this tier does not carry that closure at all,
-// and the capture is refused - naming the enclosing closure's own reason,
-// because that is the obstacle. Once the enclosing function IS lifted, lift()
-// has turned its upvalue k into its capture parameter: the entry-block argument
-// 3 + k, in [3, 3 + ctnative.captures), holding the initial of a cell some outer
-// frame proved constant. The index names a CELL in the enclosing closure and
-// the argument holds the VALUE every read of that cell yields (run_loop.cpp,
-// VM_CASE(get_upvalue): `reg = cell->slot`), which is what a lifted call wants:
-// a nested closure whose capture is that argument captures the same constant,
-// and passing the argument on is exact for exactly the reason slice 1 is. The
-// classify-then-lift loop is therefore a FIXPOINT: an outer closure lifts in one
-// round and the closure nested in it is judged again in the next, when its
-// enclosing function carries `ctnative.captures`. This is what a UMD bundle is
-// made of - the module body is the factory's frame, so every closure inside a
-// nested function reaches a module binding this way - and it was 15 of the 19
-// callees a direct call reaches in bootstrap before this slice.
-//
-// AND A CELL WITH ONE DOMINATING WRITE IS CONSTANT TOO - PHASE 59 SLICE 2 STEP
-// 1. `compiler_impl::predeclare_locals` boxes every `var`/`let`/`const` of a
-// body up front holding `undefined`, so a declaration is a ctjs.cell_set into
-// an already-built box and slice 1 reads every local binding in the language as
-// reassigned. A binding written ONCE is constant after that write, and the
-// carrier is then the store's operand rather than the cell's initial. The four
-// conditions, and why the initial stops being observable, are stated beside
-// `closureLifter::writtenOnce`; `constantValueOf` is the one function that
-// picks between the two values, because the admission, the call-site rewrite
-// and the unboxing have to agree or a lifted call prints `undefined`.
-
 // The function index the importer put after the last `$` of the symbol. The
 // same reading ResolveGlobals does, and the only link there is between a
 // `ctjs.create_closure`'s `$function` attribute and the `ctjs.func` it names.
@@ -361,27 +288,11 @@ std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn) {
     return index;
 }
 
-// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
-// $enclosing_this, which are operands and not attributes.
-
 bool isUndefinedConstant(mlir::Value v) {
     auto k = v.getDefiningOp<ctjs::ConstantOp>();
     return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
 }
 
-// The constant string a property key operand carries, or empty. The same
-// reading TypeInference and admission::keyOf make; spelled here because the
-// lift runs before either of them is available.
-llvm::StringRef constantKeyOf(mlir::Value key) {
-    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return str ? str.getValue() : llvm::StringRef{};
-}
-
-// What the rewrite did, for the `report` remark. Pass statistics are compiled
-// out of the LLVM package this builds against, so a counter that is asserted
-// has to be printed.
 // Every value that names the same object as `v`, `v` included. A literal
 // nothing is lifted onto is a group of one, so callers need no special case.
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {
