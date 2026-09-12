@@ -6,6 +6,61 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Caller-owned Map payloads, 2026-09-11
+
+Resumed the seven dirty files left by the **03:04:07 UTC failed loop**,
+found in the synchronization journal and diff at **3255556d**. Two agents then
+hit rate limits; root recovered their partial tests, completed the wiring and
+reviewed all independent consumers. **added9fd** commits the recovered work.
+
+Checked empty caller objects can now be retained at the exact `Map.set`
+payload position. The complete family accounts for those writes before any
+invocation return facts, preventing an unseeded sibling getter from inheriting
+primitive-only contents. Source allocations, global stores/loads and actual
+arguments remain intact. Existing identity ownership, `object_value` storage
+and C++ emission suffice; no runtime helper or Script dependency was added.
+Caller fields, outgoing edges, object returns, mixed actuals and unknown uses
+remain refused. Tests cover both family orderings and source/prepared forms;
+scalar reseeds and object-key-only primitive families retain their proofs.
+
+Unchanged compiled inputs **ca0f13c2** and **a056b669** now admit **4/4 native
+functions**, preserve **five calls** and produce **trace=1** in both modes.
+Their fixture hashes remain **7f6601d7** and **9e803ae5**; the import helper
+appends one newline. A scalar-key payload-only source admits **6/6**, ten calls,
+trace=1, so key ownership cannot conceal a missing payload owner.
+All **47 historical source bodies/hashes/call counts/traces** are unchanged.
+The expanded cohort passes **19 native programs / 36 refusals**, **55 source
+rows / 65 typed Node/interpreter observations / 36 distinguishing mutations**.
+Both C++ layouts pass GCC/Clang and ASan/UBSan/leak checks, including caller and
+global release, replacement/delete/clear, saved callables, **128 future rounds**,
+entry reexecution and final owner destruction. Complete budgets are
+**1763 / 32 cutoffs**, **1622 / 31** and **14072 / 31** for the three payload cases.
+
+The **320-step devbox rebuild**, **8/8 focused CTests in 1.35 seconds** and
+all-CPU object-key workflow in **39.85 seconds** pass. All **1240 frozen inputs**
+match the devbox. Stable clang-format **22.1.8** passes **795 files**; the actual
+bundled-23 check retains the same **nine byte-identical baseline differences**.
+The full standard gate is pending; no fresh full Bootstrap count is claimed yet.
+Evidence: `/tmp/ctcompile-payload-resume-{focused.log,frozen.json}` and
+`/tmp/ctcompile-payload-resume-static/summary.json`.
+
+**Next Bootstrap boundary:** preserve the existing exact Data ordinary
+publication source **8359592c** (2,522 bytes, seven functions, 40 calls,
+19 observations). Prove a fresh child Map retained by the captured outer Map
+and its guarded readback, keeping each Map identity and mutation state separate.
+Existing local nested-Map schemas and carriers already exist; the captured
+family and independent ownership proof must authorize them. Exact Data also
+needs field-bearing/mixed payloads, object returns and its recorder callback;
+BaseComponent then needs component and DOM ownership. Earlier measured Data
+publication refusals are not a measured nested-Map diagnostic. See
+`/tmp/ctcompile-payload-resume-next.md` and
+`/tmp/ctcompile-object-resume-exact-data/exact_data_ordinary_publication.js`.
+Full native Bootstrap and direct browser integration remain unfinished.
+
+After the recovered payload commit, a separate agent is implementing the
+small dense-array mixed BigInt Pow retention increment from the prior audit.
+It does not grant generic ordinary-object own-data/prototype authority.
+
 ## Global key alias chains, 2026-09-11
 
 Continued exact **511cca31** from **0e5cfbef** and the **2026-09-12
