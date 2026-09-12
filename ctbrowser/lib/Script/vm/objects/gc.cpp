@@ -188,13 +188,14 @@ std::size_t context::collect() {
     // collection has no dead window.
     mark_roots(registers_.size());
     // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED - see context::native_scope.
-    // Newest first, down to and including the head at the outermost entry;
-    // that one object was live before the native and pinning it keeps the
-    // epoch pointer valid across this sweep.
+    // Newest first, down to but NOT including the head at the outermost
+    // entry: that one was live before the native and is the collector's to
+    // judge (ctcompile's Cycle.cpp pins that `churnVia` keeps exactly one
+    // dead ring, and the epoch head is a node of the previous one). sweep()
+    // moves the epoch along if it frees it.
     if (native_depth_ > 0) {
-        for (heap_object * o = heap_; o != nullptr; o = o->next) {
+        for (heap_object * o = heap_; o != nullptr && o != native_epoch_; o = o->next) {
             mark_object(o);
-            if (o == native_epoch_) { break; }
         }
     }
     return sweep();
@@ -214,6 +215,10 @@ std::size_t context::sweep() {
             link = &o->next;
         } else {
             *link = o->next;
+            // The native-scope boundary (see collect) moves to the next older
+            // object when the one it named is freed: everything between was
+            // freed too, so the "allocated since entry" prefix is unchanged.
+            if (o == native_epoch_) { native_epoch_ = o->next; }
             // THE ESCAPE ORACLE HEARS ABOUT EVERY FREE, so a record can never
             // be read through a stale pointer: the recorder flags it dead and
             // forgets the address before `delete` reuses it.
