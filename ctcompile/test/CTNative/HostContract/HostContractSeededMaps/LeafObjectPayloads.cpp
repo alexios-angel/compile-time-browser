@@ -125,7 +125,8 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                             "exactly once");
         };
         unsigned rows = 0;
-        const auto variant = [&](const std::string & text, bool expected, const char * message) {
+        const auto variant = [&](const std::string & text, bool expected, const char * message,
+                                 bool localLeaf = true) {
             ++rows;
             auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             check(static_cast<bool>(module), "source/prepared leaf Map fixture parses");
@@ -139,7 +140,19 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                 std::fprintf(stderr, "leaf Map host %s case %u: %s\n",
                              prepared ? "prepared" : "source", rows, query.reason().str().c_str());
             }
-            if (expected && query.proved()) { edges(*module, query); }
+            if (expected && query.proved()) {
+                if (localLeaf) {
+                    edges(*module, query);
+                } else {
+                    bool complete = query.callables().size() == 4;
+                    for (const auto & edge : query.callables()) {
+                        complete &= edge.capturedMap && edge.capturedMap->leafObjects.empty() &&
+                                    edge.capturedMap->leafReads.empty() &&
+                                    edge.capturedMap->leafWrites.empty();
+                    }
+                    check(complete, "caller payloads grant no method-local object or field facts");
+                }
+            }
             check(hostContractFingerprint(*module) == contract.moduleSha256,
                   "leaf proof never hoists an allocation or substitutes a startup observation");
         };
@@ -219,24 +232,98 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
 
         // This getter has no local CreateObject. The complete sibling census
         // must still prevent its unknown payload from becoming a primitive.
-        const auto getter = replaced(program,
-                                     "    %key = ctjs.constant #ctjs.string<\"size\">\n"
-                                     "    %answer = ctjs.get_property %state[%key]",
-                                     "    %key = ctjs.constant #ctjs.string<\"get\">\n"
-                                     "    %reader = ctjs.get_property %state[%key]\n"
-                                     "    %probeKey = ctjs.constant #ctjs.string<\"x\">\n"
-                                     "    %answer = ctjs.call %reader(%state, %probeKey)");
+        const std::string sizeRead = "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                                     "    %answer = ctjs.get_property %state[%key]";
+        const std::string payloadRead = "    %key = ctjs.constant #ctjs.string<\"get\">\n"
+                                        "    %reader = ctjs.get_property %state[%key]\n"
+                                        "    %probeKey = ctjs.constant #ctjs.string<\"x\">\n"
+                                        "    %answer = ctjs.call %reader(%state, %probeKey)";
+        const std::string reseed = "    %setName = ctjs.constant #ctjs.string<\"set\">\n"
+                                   "    %seedSetter = ctjs.get_property %state[%setName]\n"
+                                   "    %seed = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                   "    %seeded = ctjs.call %seedSetter(%state, %probeKey, %seed)\n"
+                                   "    %answer = ctjs.call %reader";
+        const auto getter = replaced(program, sizeRead, payloadRead);
         variant(getter, false,
                 "an object-writing sibling vetoes an unknown supposedly primitive get");
-        variant(replaced(getter, "    %answer = ctjs.call %reader",
-                         "    %setName = ctjs.constant #ctjs.string<\"set\">\n"
-                         "    %seedSetter = ctjs.get_property %state[%setName]\n"
-                         "    %seed = ctjs.constant #ctjs.number<4607182418800017408>\n"
-                         "    %seeded = ctjs.call %seedSetter(%state, %probeKey, %seed)\n"
-                         "    %answer = ctjs.call %reader"),
-                true,
+        variant(replaced(getter, "    %answer = ctjs.call %reader", reseed), true,
                 "a live exact primitive reseed proves its read despite object-writing siblings");
         check(rows == 25, "every leaf allocation, scalar field and escaping-use control ran");
+
+        // Remove the unused method-local allocation: the caller formal alone
+        // must close primitive contents before any sibling return is checked.
+        auto caller = replaced(formal, "    %value = ctjs.create_object\n", "");
+        caller = replaced(
+            caller, "    %actual = ", "    %payloadActual = ctjs.create_object\n    %actual = ");
+        for (unsigned index = 0; index != 3; ++index) {
+            caller = replaced(caller, ", %owned)", ", %payloadActual)");
+        }
+        for (const bool named : {false, true}) {
+            auto actual = caller;
+            if (named) {
+                actual = replaced(actual, "    %payloadActual = ctjs.create_object",
+                                  "    %payloadObject = ctjs.create_object\n"
+                                  "    ctjs.store_global \"payload\", %payloadObject\n"
+                                  "    %payloadActual = ctjs.load_global \"payload\"");
+            }
+            for (const bool writerFirst : {false, true}) {
+                auto ordered = actual;
+                if (writerFirst) {
+                    const std::string creation =
+                        "    %putter = ctjs.create_closure %callee[3] this %u captures " +
+                        std::string(prepared ? "%state\n" : "%cell\n");
+                    ordered = replaced(ordered, creation, "");
+                    ordered = replaced(ordered, "    %getter = ctjs.create_closure",
+                                       creation + "    %getter = ctjs.create_closure");
+                } else {
+                    const std::string invocation =
+                        prepared ? "    %getterEnv = ctjs.load_upvalue %getter[0]\n"
+                                   "    %answer = ctjs.call_direct @get$2(%owned, %u, %getter, "
+                                   "%getterEnv)\n"
+                                 : "    %answer = ctjs.call %getter(%owned)\n";
+                    ordered = replaced(ordered, invocation, "");
+                    ordered = replaced(ordered, "    %putKey = ctjs.constant",
+                                       invocation + "    %putKey = ctjs.constant");
+                }
+                variant(ordered, true, "a caller-owned empty leaf can be a scalar-key Map payload",
+                        false);
+                const auto unknown = replaced(ordered, sizeRead, payloadRead);
+                variant(unknown, false,
+                        "caller payload siblings veto an unseeded get in either method order",
+                        false);
+                variant(replaced(unknown, "    %answer = ctjs.call %reader", reseed), true,
+                        "an exact scalar reseed survives caller payload siblings in either order",
+                        false);
+                variant(replaced(unknown, "%setter(%state, %entryKey, %payload)",
+                                 "%setter(%state, %payload, %entryKey)"),
+                        true, "object keys alone keep the primitive-only contents guarantee",
+                        false);
+                const std::string origin = named ? "%payloadObject" : "%payloadActual";
+                variant(replaced(unknown, origin + " = ctjs.create_object",
+                                 origin + " = ctjs.constant #ctjs.number<4607182418800017408>"),
+                        true, "scalar payload formals keep primitive-only contents", false);
+            }
+        }
+        for (const char * use : {"    %field = ctjs.get_property %payload[%entryKey]\n",
+                                 "    ctjs.set_property %payload[%entryKey], %entryKey\n",
+                                 "    ctjs.set_property %payload[%entryKey], %payload\n",
+                                 "    ctjs.set_property %payload[%entryKey], %state\n",
+                                 "    ctjs.store_global \"escaped\", %payload\n"}) {
+            variant(replaced(caller, "    ctjs.return %size",
+                             std::string(use) + "    ctjs.return %size"),
+                    false, "caller payload storage grants no fields, cycles or foreign uses",
+                    false);
+        }
+        variant(replaced(caller, "    ctjs.return %size", "    ctjs.return %payload"), false,
+                "a caller-owned payload cannot escape as a direct method result", false);
+        variant(replaced(caller, "    ctjs.return %size",
+                         "    %getName = ctjs.constant #ctjs.string<\"get\">\n"
+                         "    %reader = ctjs.get_property %state[%getName]\n"
+                         "    %loaded = ctjs.call %reader(%state, %entryKey)\n"
+                         "    ctjs.return %loaded"),
+                false, "storing a caller payload does not authorize its Map.get-derived return",
+                false);
+        check(rows == 52, "every local and caller payload family control ran");
         checkLeafReadbacks(context, program, prepared);
         checkDefiniteMapAbsence(context, program, prepared);
         checkCapturedMapClear(context, program, prepared);

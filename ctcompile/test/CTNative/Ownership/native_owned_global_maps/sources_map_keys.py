@@ -713,7 +713,17 @@ var trace = host.slot.get({});
     add('global_alias_late_root', aliased + 'key = {};\n')
     add('global_alias_late_alias', aliased + 'alias = {};\n')
     add('global_alias_chain', aliased.replace('var trace = host.slot.get(alias);',
-        'var copy = alias; var trace = host.slot.get(copy);'))
+        'var copy = alias; var trace = host.slot.get(copy);'), admitted=True)
+    chain = rows['object_argument_global_alias_chain']['source']
+    rows['object_argument_global_alias_chain'].update(global_alias=True, global_chain=('copy',))
+    add('global_chain_late_intermediate', chain + 'alias = {};\n')
+    add('global_chain_early_descendant', chain.replace('var alias = key; var copy = alias;',
+        'var copy = alias; var alias = key;'))
+    rows['object_argument_global_chain_early_descendant']['undefined_globals'] = ('copy',)
+    add('global_chain_foreign_intermediate',
+        'function consume(value) { return 0; }\n' + chain.replace(
+            'var trace =', 'consume(alias); var trace ='), 5, functions=5)
+    add('global_chain_unused_descendant', chain + 'var spare = copy;\n')
     add('global_alias_cycle', aliased.replace('var key = {};', 'var key = alias;'))
     rows['object_argument_global_alias_early_root']['undefined_globals'] = ('alias',)
     rows['object_argument_global_alias_cycle']['undefined_globals'] = ('alias', 'key')
@@ -729,7 +739,8 @@ var trace = host.slot.get({});
         'function consume(value) { return 0; }\n' + named.replace(
             'return t.has(e)', 'consume(e); return t.has(e)'), 5, functions=5)
     add('global_object_payload', named.replace('return t.has(e)',
-        't.set(e, e); return t.has(e)'), 5, 1)
+        't.set(e, e); return t.has(e)'), 5, 1, True)
+    rows['object_argument_global_object_payload'].update(global_key=True, object_payload=True)
     add('global_object_return', named.replace('return t.has(e) ? 1 : 0;', 'return e;').replace(
         'var trace = host.slot.get(key);', 'var trace = host.slot.get(key) === key ? 1 : 0;'), 3, 1)
     add('global_later_number', named.replace('var trace = host.slot.get(key);',
@@ -740,7 +751,29 @@ var trace = host.slot.get({});
                                     'host.slot.get({}); var trace = host.slot.get(1);'), 5)
     add('field_write', base.replace('return t.has(e)', 'e.value = 1; return t.has(e)'))
     add('key_write', base.replace('return t.has(e)', 't.set(e, 1); return t.has(e)'), 5, 1, True)
-    add('object_payload', base.replace('return t.has(e)', 't.set(e, e); return t.has(e)'), 5, 1)
+    add('object_payload', base.replace('return t.has(e)', 't.set(e, e); return t.has(e)'), 5, 1, True)
+    rows['object_argument_object_payload']['object_payload'] = True
+    # A scalar key cannot retain the caller's object if its payload owner is lost.
+    payload = named.replace('return { get(e) { return t.has(e) ? 1 : 0; } };', '''return {
+        get(e) { t.set(1, e); return t.has(1) ? 1 : 0; },
+        erase() { return t.delete(1) ? 1 : 0; },
+        clear() { t.clear(); return 0; }
+    };''').replace('var trace = host.slot.get(key);',
+        'host.slot.get(key); host.slot.erase(); host.slot.clear(); var trace = host.slot.get(key);')
+    add('scalar_key_payload', payload, 10, 1, True, functions=6)
+    rows['object_argument_scalar_key_payload'].update(
+        global_key=True, object_payload=True, payload_only=True)
+    retained = rows['object_argument_global_object_payload']['source']
+    add('payload_field', retained.replace('var key = {};', 'var key = {value: 1};'), 5, 1)
+    add('payload_field_write', retained.replace('t.set(e, e);', 'e.value = 1; t.set(e, e);'), 5, 1)
+    add('payload_cycle', retained.replace('t.set(e, e);', 'e.self = e; t.set(e, e);'), 5, 1)
+    add('payload_return', retained.replace('return t.has(e) ? 1 : 0;', 't.has(e); return e;').replace(
+        'var trace = host.slot.get(key);', 'var trace = host.slot.get(key) === key ? 1 : 0;'), 5, 1)
+    add('payload_unknown_consumer', 'function consume(value) { return 0; }\n' + retained.replace(
+        't.set(e, e);', 'consume(e); t.set(e, e);'), 6, 1, functions=5)
+    add('payload_later_number', retained.replace('var trace = host.slot.get(key);',
+        'host.slot.get(key); var trace = host.slot.get(1);'), 6, 1)
+    add('payload_later_object', retained.replace('var trace =', 'host.slot.get(1); var trace ='), 6, 1)
     siblings = base.replace('return { get(e) { return t.has(e) ? 1 : 0; } };', '''return {
         get(e) { return t.has(e) ? t.get(e) : 0; },
         set(e, value) { t.set(e, value); return t.get(e); },
@@ -762,6 +795,15 @@ var trace = host.slot.get({});
         15, 11, True, functions=7)
     for name in ('global_alias', 'siblings_global'):
         rows['object_argument_' + name]['global_alias'] = True
+    branched = rows['object_argument_siblings_global']['source'].replace(
+        'alias = key, other = {};',
+        'alias = key, copy = alias, tail = copy, branch = alias, other = {};').replace(
+        'host.slot.set(key,', 'host.slot.set(tail,').replace(
+        'host.slot.set(alias,', 'host.slot.set(branch,').replace(
+        'host.slot.get(alias)', 'host.slot.get(branch)')
+    add('siblings_global_chain', branched, 15, 11, True, functions=7)
+    rows['object_argument_siblings_global_chain'].update(
+        global_alias=True, global_chain=('copy', 'tail', 'branch'))
     siblings = siblings.replace('    const key = {}, alias = key, other = {};\n', '')
     for actual in ('key', 'alias', 'other'):
         siblings = siblings.replace('(' + actual + ',', '({},').replace(
@@ -786,6 +828,12 @@ var trace = host.slot.get({});
         '7573e89b9f576f9d433b7003b033e0aa8525b2fff97c6991ea5325d669f4ab81')
     assert rows['object_argument_global_alias']['sha256'] == (
         'abbf4b9c87939c11c4fa1ea57a27dbe9c1d8140bef4b8a39d931956a3be3745c')
+    assert rows['object_argument_global_alias_chain']['sha256'] == (
+        '511cca3159bab80ed32ef4957d495fd4f114144c127408907b9fb769663b5e9c')
+    assert rows['object_argument_global_object_payload']['sha256'] == (
+        '7f6601d735fd317744668aa37d75290cbe2f23eb1207175052811ade91a00644')
+    assert rows['object_argument_object_payload']['sha256'] == (
+        '9e803ae57583cbfdfb53754cef34b0f899eb2d9f2e290c3035431323ba33d8de')
     assert rows['object_argument_exact']['sha256'] == (
         '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
     assert rows['object_argument_evaluated_number']['sha256'] == (

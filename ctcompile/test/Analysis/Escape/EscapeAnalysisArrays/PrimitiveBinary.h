@@ -32,7 +32,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             return false;
         } else {
             return producerKind == ctjs::BinaryKind::Sub || producerKind == ctjs::BinaryKind::Mul ||
-                   producerKind == ctjs::BinaryKind::Div || producerKind == ctjs::BinaryKind::Mod;
+                   producerKind == ctjs::BinaryKind::Div || producerKind == ctjs::BinaryKind::Mod ||
+                   producerKind == ctjs::BinaryKind::Pow;
         }
     }();
     const std::string mnemonic = isComparison ? "ctjs.compare" : "ctjs.binary";

@@ -490,10 +490,12 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                   "  %bad = ctjs.binary mod %operand, %zero\n" + done,
                           .arrays = "a:[x] | a:[x] | a:[x]",
                           .exit = "produced -> {}; produced -> {}; produced -> {}"}});
-        run({.contents = {.what = "mixed comparison cannot authorize mixed Pow conversion",
+        run({.contents = {.what =
+                              "mixed comparison and later Pow have independent retention proofs",
                           .body = threeCategories + compareInput("%operand") +
                                   "  %bad = ctjs.binary pow %operand, %zero\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+                          .arrays = "a:[x] | a:[x] | a:[x]",
+                          .exit = "produced -> {}; produced -> {}; produced -> {}"}});
         for (const std::string saved : {"%lhs", "%zero", "%text", "%x"}) {
             run({.contents = {
                      .what = "both saved comparison operands survive independent slot mutations",

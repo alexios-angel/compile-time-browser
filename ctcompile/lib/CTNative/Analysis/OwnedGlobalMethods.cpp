@@ -400,13 +400,12 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (store.getValue() != made.getResult()) {
             auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
             const auto * predecessor = source ? host.objectRead(source) : nullptr;
-            auto original = predecessor ? predecessor->initialization : ctjs::StoreGlobalOp{};
-            // The predecessor is revalidated by this same complete census.
-            // Requiring its direct allocation also bounds aliases to one hop.
-            if (!predecessor || predecessor->object != made ||
-                original.getValue() != made.getResult() || source->getParentOp() != entry ||
+            // This complete census revalidates every predecessor too. Each
+            // step precedes its store in the entry block, so no cycle can
+            // survive and the chain must end at the checked allocation.
+            if (!predecessor || predecessor->object != made || source->getParentOp() != entry ||
                 !source->isBeforeInBlock(store)) {
-                reject("object key alias lacks its direct source global initialization");
+                reject("object key alias lacks its earlier source global initialization");
                 return;
             }
         }

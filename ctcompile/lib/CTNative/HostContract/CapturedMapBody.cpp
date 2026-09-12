@@ -628,7 +628,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
                     if (!step()) { return false; }
                     if (primitives.contains(argument)) { continue; }
-                    if (index == 0 && llvm::is_contained(parameters.objectKeys, argument)) {
+                    if (llvm::is_contained(parameters.objectKeys, argument) &&
+                        (index == 0 || (key == "set" && index == 1))) {
                         continue;
                     }
                     if (key != "set" || index != 1 || !objects.contains(argument)) { return false; }
@@ -734,7 +735,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                              : ctjs::GetPropertyOp{};
-            if (!read || !calls.contains(call) || use.getOperandNumber() != 2) { return false; }
+            if (!read || !calls.contains(call) ||
+                (use.getOperandNumber() != 2 &&
+                 (keyOf(read.getKey()) != "set" || use.getOperandNumber() != 3))) {
+                return false;
+            }
         }
     }
     for (mlir::BlockArgument argument : body.getArguments()) {

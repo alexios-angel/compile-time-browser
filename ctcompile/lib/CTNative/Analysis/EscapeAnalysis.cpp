@@ -1211,14 +1211,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if ((binary.getKind() == ctjs::BinaryKind::Sub ||
                      binary.getKind() == ctjs::BinaryKind::Mul ||
                      binary.getKind() == ctjs::BinaryKind::Div ||
-                     binary.getKind() == ctjs::BinaryKind::Mod) &&
+                     binary.getKind() == ctjs::BinaryKind::Mod ||
+                     binary.getKind() == ctjs::BinaryKind::Pow) &&
                     lhs && rhs &&
                     ((bigIntOrigin(lhs, state.bigIntOrigins) &&
                       primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
                      (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
                       bigIntOrigin(rhs, state.bigIntOrigins)))) {
                     // bigint_binary rejects these mixed original primitive
-                    // categories before lookup or user conversion. Its TypeError
+                    // categories before lookup, conversion or exponent checks. Its TypeError
                     // has no input/local object edge; its VM result carrier is
                     // independent Undefined, never a BigInt or a proved Number.
                     // Calls, handlers and publication remain excluded across

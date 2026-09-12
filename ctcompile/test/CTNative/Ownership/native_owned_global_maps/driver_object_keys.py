@@ -23,6 +23,7 @@ from .driver_fields import (
 from .driver_object_maps import (
     check_leaf_object_forgeries,
 )
+from .harness_objects import object_payload_observer_source
 
 def check_object_argument_observations(args, node, reference):
     cases = object_argument_cases()
@@ -65,9 +66,15 @@ def check_object_argument_observations(args, node, reference):
     for name, observer, mutations in (
             ('object_argument_global_alias', object_argument_observer_source,
              (('var alias = key;', 'var alias = {};'),)),
+            ('object_argument_global_alias_chain', object_argument_observer_source,
+             (('var copy = alias;', 'var copy = {};'),)),
             ('object_argument_siblings_global', retained_key_observer_source,
-             (('alias = key,', 'alias = {},'), ('other = {};', 'other = key;')))):
-        aliased, value = observer(cases[name]['source'], global_alias=True)
+             (('alias = key,', 'alias = {},'), ('other = {};', 'other = key;'))),
+            ('object_argument_siblings_global_chain', retained_key_observer_source,
+             (('copy = alias,', 'copy = {},'), ('tail = copy,', 'tail = {},'),
+              ('branch = alias,', 'branch = {},'), ('other = {};', 'other = key;')))):
+        aliased, value = observer(cases[name]['source'], global_alias=True,
+                                 global_chain=cases[name].get('global_chain', ()))
         expected_alias = observe(name + '_future', aliased, value)
         for index, (old, replacement) in enumerate(mutations):
             assert aliased.count(old) == 1, old
@@ -115,6 +122,25 @@ def check_object_argument_observations(args, node, reference):
                                 capture_output=True, text=True, timeout=30)
         if not result.returncode and result.stdout == expected:
             raise RuntimeError(f'retained-key observer cannot distinguish {replacement}')
+    payload_observations = payload_mutations = 0
+    for name, row in cases.items():
+        if not row.get('object_payload'):
+            continue
+        payload, value = object_payload_observer_source(row['source'], name)
+        expected_payload = observe(name + '_future', payload, value)
+        payload_observations += 1
+        key = '1' if row.get('payload_only') else 'e'
+        old = f't.set({key}, e);'
+        assert payload.count(old) == 1
+        for index, replacement in enumerate((f't.set({key}, {{}});', f't.set({key}, 1);',
+                                              f't.has({key});', 't.set(2, e);')):
+            js = args.work / f'{name}-payload-blinded-{index}.js'
+            js.write_text(payload.replace(old, replacement))
+            result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                    capture_output=True, text=True, timeout=30)
+            if not result.returncode and result.stdout == expected_payload:
+                raise RuntimeError(f'{name}: payload observer cannot distinguish {replacement}')
+            payload_mutations += 1
     source = cases['parameter_object']['source']
     old = 'state.set(key, 1);'
     assert source.count(old) == 1
@@ -124,9 +150,9 @@ def check_object_argument_observations(args, node, reference):
                             capture_output=True, text=True, timeout=30)
     if not result.returncode and result.stdout == 'trace=1\n':
         raise RuntimeError('historical object setter observation cannot distinguish a skipped write')
-    return dict(sources=len(cases), observations=len(cases) + 5,
+    return dict(sources=len(cases), observations=len(cases) + 7 + payload_observations,
                 mutations=len(mutations) + len(retained_mutations) + len(named_mutations)
-                + alias_mutations + 1)
+                + alias_mutations + payload_mutations + 1)
 
 
 def check_object_argument_census(args, ir, name):
@@ -146,20 +172,24 @@ def check_object_argument_census(args, ir, name):
     if raw.count('cf.cond_br') != prepared.count('scf.if'):
         raise RuntimeError(f'{name}: preparation lost an object-key result branch')
     if row.get('global_alias'):
-        arguments = re.findall(r'host\.slot\.\w+\((key|alias|other)[,)]', row['source'])
+        bindings = '|'.join(('key', 'alias', *row.get('global_chain', ()), 'other'))
+        initializers = re.findall(r'\b(' + bindings + r') = (\{\}|\w+)(?=[,;])', row['source'])
+        predecessors = [value for _, value in initializers if value != '{}']
+        arguments = re.findall(r'host\.slot\.\w+\((' + bindings + r')[,)]', row['source'])
         for text in (raw, prepared):
             entry = text.split('\n  }', 1)[0]
             created = re.findall(r'(%[-\w.$]+) = ctjs\.create_object', entry)[1:]
-            loads = re.findall(r'(%[-\w.$]+) = ctjs\.load_global "(key|alias|other)"', entry)
-            stores = re.findall(r'ctjs\.store_global "(key|alias|other)", (%[-\w.$]+)', entry)
+            loads = re.findall(r'(%[-\w.$]+) = ctjs\.load_global "(' + bindings + r')"', entry)
+            stores = re.findall(r'ctjs\.store_global "(' + bindings + r')", (%[-\w.$]+)', entry)
             actuals = re.findall(r'ctjs\.call %[-\w.$]+\(%[-\w.$]+, (%[-\w.$]+)(?:, %[-\w.$]+)?\)', entry)
-            expected_stores = [('key', created[0]), ('alias', loads[0][0])]
-            if len(created) == 2:
-                expected_stores.append(('other', created[1]))
+            allocations, reads = iter(created), iter(value for value, _ in loads)
+            expected_stores = [(binding, next(allocations) if value == '{}' else next(reads))
+                               for binding, value in initializers]
             # The raw factory invocation has a closure argument before the key calls.
             actuals = [value for value in actuals if value in dict(loads)]
-            if (stores != expected_stores or [binding for _, binding in loads] != ['key', *arguments]
-                    or actuals != [value for value, _ in loads[1:]]):
+            if (stores != expected_stores
+                    or [binding for _, binding in loads] != [*predecessors, *arguments]
+                    or actuals != [value for value, _ in loads[len(predecessors):]]):
                 raise RuntimeError(f'{name}: changed the exact global alias initializer or actual edges')
 
 
@@ -205,9 +235,21 @@ def check_object_argument_controls(args, saved):
     check_budgets(args, ir, config, 'object_argument_global_alias', functions=4)
     ir, config, _ = saved['object_argument_siblings_global']
     check_budgets(args, ir, config, 'object_argument_siblings_global', functions=7)
+    for name in ('object_argument_global_alias_chain', 'object_argument_siblings_global_chain'):
+        ir, config, _ = saved[name]
+        check_budgets(args, ir, config, name, functions=object_argument_cases()[name]['functions'])
+    for name, row in object_argument_cases().items():
+        if row.get('object_payload'):
+            ir, config, _ = saved[name]
+            check_budgets(args, ir, config, name, functions=row['functions'])
     for case, bindings in (('object_argument_global', ('key',)),
+                           ('object_argument_global_object_payload', ('key',)),
+                           ('object_argument_scalar_key_payload', ('key',)),
                            ('object_argument_global_alias', ('key', 'alias')),
-                           ('object_argument_siblings_global', ('key', 'alias', 'other'))):
+                           ('object_argument_global_alias_chain', ('key', 'alias', 'copy')),
+                           ('object_argument_siblings_global', ('key', 'alias', 'other')),
+                           ('object_argument_siblings_global_chain',
+                            ('key', 'alias', 'copy', 'tail', 'branch', 'other'))):
         ir, config, _ = saved[case]
         for binding in bindings:
             observation = json.loads(config.read_text())

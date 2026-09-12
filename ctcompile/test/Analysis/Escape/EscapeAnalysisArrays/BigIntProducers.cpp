@@ -132,7 +132,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                     const bool supported =
                         (form == "binary" &&
                          (operation == "concat" || operation == "sub" || operation == "mul" ||
-                          operation == "div" || operation == "mod")) ||
+                          operation == "div" || operation == "mod" || operation == "pow")) ||
                         (operands == "%produced, %big" &&
                          (form == "binary"
                               ? operation == "add" || operation == "sub" || operation == "mul" ||
@@ -410,7 +410,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                                      (kind == ctjs::BinaryKind::Sub ||
                                                       kind == ctjs::BinaryKind::Mul ||
                                                       kind == ctjs::BinaryKind::Div ||
-                                                      kind == ctjs::BinaryKind::Mod) &&
+                                                      kind == ctjs::BinaryKind::Mod ||
+                                                      kind == ctjs::BinaryKind::Pow) &&
                                                      input == "%zero"
                                                  ? ArrayContentsFailure::None
                                              : isStatic && input == "%p"
@@ -429,6 +430,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                                   kind == ctjs::BinaryKind::Mul ||
                                                   kind == ctjs::BinaryKind::Div ||
                                                   kind == ctjs::BinaryKind::Mod ||
+                                                  kind == ctjs::BinaryKind::Pow ||
                                                   (kind == ctjs::BinaryKind::Add &&
                                                    attribute == "#ctjs.string<\"2\">"))
                                         ? ArrayContentsFailure::None
@@ -509,7 +511,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                                 (consumerForm == "binary" &&
                                                  (operation == "concat" || operation == "sub" ||
                                                   operation == "mul" || operation == "div" ||
-                                                  operation == "mod"))
+                                                  operation == "mod" || operation == "pow"))
                                             ? ArrayContentsFailure::None
                                             : ArrayContentsFailure::UnsupportedOperation,
                              .arrays = "a:[x]",
@@ -749,7 +751,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 constant.setValueAttr(ctjs::NumberAttr::get(&context, 0));
                 inspect(!isStatic &&
                                 (kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
-                                 kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod)
+                                 kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
+                                 kind == ctjs::BinaryKind::Pow)
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 constant.setValueAttr(oldValue);
