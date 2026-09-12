@@ -148,6 +148,9 @@ namespace detail {
         {"window", "#ffffff"},
         {"windowframe", "#cccccc"},
         {"windowtext", "#000000"},
+        // ...and the one named colour CSS Color 4 added that paint's table
+        // predates (adoptedstylesheets-cascade-order).
+        {"rebeccapurple", "#663399"},
     };
     const std::string_view word = trim(text, html_whitespace);
     for (const auto & [name, hex] : table) {
