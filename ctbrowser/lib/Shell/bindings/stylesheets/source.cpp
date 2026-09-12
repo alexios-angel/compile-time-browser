@@ -338,14 +338,16 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     const bool descriptor = rule.type == page_rule || rule.type == font_face_rule ||
                             rule.type == counter_style_rule ||
                             rule.type == font_feature_values_rule;
+    // ...and neither has an element to draw a random() for (random-in-descriptors).
     if (descriptor) {
-        for (std::size_t i = 0; i + 14 <= value.size(); ++i) {
+        for (std::size_t i = 0; i + 7 <= value.size(); ++i) {
             const char before = i == 0 ? ' ' : value[i - 1];
             const bool boundary =
                 !((before >= 'a' && before <= 'z') || (before >= 'A' && before <= 'Z') ||
                   (before >= '0' && before <= '9') || before == '-' || before == '_');
             if (boundary && (ascii_iequals(value.substr(i, 14), "sibling-index(") ||
-                             ascii_iequals(value.substr(i, 14), "sibling-count("))) {
+                             ascii_iequals(value.substr(i, 14), "sibling-count(") ||
+                             ascii_iequals(value.substr(i, 7), "random("))) {
                 return false;
             }
         }

@@ -309,6 +309,15 @@ void test_random() {
     const std::string waiting = fold("random(10%, 100%)");
     CHECK(waiting.starts_with("random(fixed 0.") && waiting.ends_with(", 10%, 100%)"));
     CHECK_EQ(fold(waiting), waiting);
+    // A UA ident is a key like a dashed name: shared across elements, and
+    // replaced by the base it drew when the value waits (random-computed).
+    const std::string ua = fold("random(ua-width-1, 10%, 100%)");
+    CHECK(ua.starts_with("random(fixed 0.") && ua.ends_with(", 10%, 100%)"));
+    CHECK_EQ(fold("random(ua-width-1, 0, 1000000)"), [&] {
+        length_context other = ctx;
+        other.element_key = 9;
+        return fold_math("random(ua-width-1, 0, 1000000)", other).text;
+    }());
 }
 
 // tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"

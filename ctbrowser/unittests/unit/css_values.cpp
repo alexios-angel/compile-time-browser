@@ -877,6 +877,9 @@ void test_random_spells_its_key() {
        "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
     // ...and the sharing grammar (random-invalid).
+    ok("width", "random(--foo ua-width-1, 10px, 20%)", "random(--foo ua-width-1, 10px, 20%)");
+    ok("width", "random(--foo ua-x element-scoped, 10px, 20%)",
+       "random(--foo element-scoped ua-x, 10px, 20%)");
     bad("width", "random(--foo --bar, 1px, 2px)");
     bad("width", "random(fixed 0.5 auto, 1px, 2px)");
     bad("width", "random(fixed -1, 1px, 2px)");

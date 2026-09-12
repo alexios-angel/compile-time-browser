@@ -924,11 +924,12 @@ private:
         // computed-value time and nowhere earlier (random-serialize).
         if (basis_ == basis::symbolic) { return unresolvable(); }
         // The options: everything before the first comma, read as tokens.
-        // `[ [ auto | <dashed-ident> | <ua-ident> ] || element-scoped |
+        // `[ [ auto | <dashed-ident> ] || <ua-ident> || element-scoped |
         // property-scoped | property-index-scoped ] | fixed <number>`: one
-        // name at most, each scoping word at most once, `property-scoped` and
-        // `property-index-scoped` exclusive of each other and of a UA ident,
-        // and `fixed` alone with its number in [0, 1] (random-invalid).
+        // dashed name and one UA ident at most, each scoping word at most once,
+        // `property-scoped` and `property-index-scoped` exclusive of each other
+        // and of a UA ident, and `fixed` alone with its number in [0, 1]
+        // (random-invalid, random-serialize).
         std::string options;
         bool fixed = false;
         double base = 0.0;
@@ -968,12 +969,12 @@ private:
                 const bool is_index = ascii_iequals(word, "property-index-scoped");
                 if (is_name || is_ua || is_element || is_property || is_index) {
                     if (fixed) { return fail(); }
-                    names += is_name || is_ua ? 1 : 0;
+                    names += is_name ? 1 : 0;
                     ua += is_ua ? 1 : 0;
                     element += is_element ? 1 : 0;
                     property += is_property ? 1 : 0;
                     index += is_index ? 1 : 0;
-                    if (names > 1 || element > 1 || property + index > 1 ||
+                    if (names > 1 || ua > 1 || element > 1 || property + index > 1 ||
                         (ua > 0 && property + index > 0)) {
                         return fail();
                     }
