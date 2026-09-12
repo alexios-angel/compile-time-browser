@@ -795,6 +795,47 @@ public:
             if (!txn.has_attribute(node, key)) { return std::nullopt; }
             return std::string{txn.attribute_value(node, key)};
         };
+        // ...AND WHAT `if()` MAY ASK (CSS Values 5 §if-notation): the parent's
+        // custom properties for `style(--x: inherit)`, substituted against the
+        // parent's own scope; any property folded so far for `style(color:
+        // green)`; and the window for `media()`. The bases are filled in below
+        // once the font size is known, and the property per declaration.
+        css::condition_environment conditions;
+        conditions.inherited = [&parent,
+                                this](std::string_view name) -> std::optional<std::string> {
+            if (!parent || !parent->inherited) { return std::nullopt; }
+            const atom key = atoms_->intern(name);
+            const declaration * held = nullptr;
+            for (const declaration & d : parent->inherited->declarations) {
+                if (d.property == key) { held = &d; }
+            }
+            if (held == nullptr || held->value == guaranteed_invalid) { return std::nullopt; }
+            const css::custom_lookup above = [&parent](atom n) -> std::optional<std::string_view> {
+                for (const declaration & d : parent->inherited->declarations) {
+                    if (d.property == n) {
+                        if (d.value == guaranteed_invalid) { return std::nullopt; }
+                        return std::string_view{d.value};
+                    }
+                }
+                return std::nullopt;
+            };
+            return css::substitute_var(held->value, above, *atoms_);
+        };
+        conditions.computed = [&out, &parent,
+                               this](std::string_view name) -> std::optional<std::string> {
+            const atom key = atoms_->intern(name);
+            for (const declaration & d : out) {
+                if (d.property == key) { return d.value; }
+            }
+            if (parent && parent->inherited) {
+                const std::string_view held = parent->inherited->get(key);
+                if (!held.empty()) { return std::string{held}; }
+            }
+            return std::nullopt;
+        };
+        conditions.media = [this](std::string_view text) {
+            return css::evaluate_media_condition(text, environment_);
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -851,12 +892,14 @@ public:
             // for a containing block it will never be measured against.
             css::length_context ctx = font_context(parent_font_size, parent_line_height);
             ctx.percent_basis = parent_font_size;
+            conditions.lengths = ctx;
+            conditions.property = "font-size";
             fold([&](const declaration & d) {
                 if (d.property != font_size_) { return; }
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_, attributes);
+                        css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
                     if (!done) { return; }
                     value = *done;
                 }
@@ -904,12 +947,14 @@ public:
         line_height_lengths.percent_basis = own_font_size;
         {
             const css::length_context & ctx = line_height_lengths;
+            conditions.lengths = ctx;
+            conditions.property = "line-height";
             fold([&](const declaration & d) {
                 if (d.property != line_height_) { return; }
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_, attributes);
+                        css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
                     if (!done) { return; }
                     value = *done;
                 }
@@ -981,8 +1026,10 @@ public:
             };
             const bool had_var = css::may_have_var(value);
             if (had_var) {
+                conditions.lengths = lengths_for(d.property);
+                conditions.property = std::string{property};
                 const std::optional<std::string> done =
-                    css::substitute_var(value, lookup, *atoms_, attributes);
+                    css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
                 // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
                 // property lets the inherited value through and otherwise means absent.
                 // NOT "drop it and let an earlier declaration win" - that is the classic

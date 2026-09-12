@@ -332,7 +332,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return px_text(len.resolve(0.0f, at.font_size));
     };
 
-    const auto value_of = [this, at, id, atoms, declared,
+    const auto value_of = [this, at, id, atoms, declared, declared_on,
                            computed_length](std::string_view property) -> std::string {
         // 0. A CUSTOM PROPERTY IS NOT A KEYWORD. Its value is an arbitrary token
         //    sequence whose case is significant and whose computed value is the
@@ -362,10 +362,46 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     if (!txn.has_attribute(id, key)) { return std::nullopt; }
                     return std::string{txn.attribute_value(id, key)};
                 };
-                if (std::optional<std::string> done =
-                        style::css::substitute_var(text, custom, *atoms, attributes)) {
-                    text = std::move(*done);
+                // ...AND WHAT AN `if()` IN IT MAY ASK: the parent's custom
+                //    properties, substituted in the parent's own scope, for
+                //    `style(--x: inherit)`; any other property's cascaded text;
+                //    the window for `media()`.
+                style::css::condition_environment conditions;
+                conditions.property = std::string{property};
+                conditions.lengths.font_size = at.font_size;
+                conditions.lengths.root_font_size = at.root_font_size;
+                conditions.lengths.viewport_width = static_cast<float>(viewport_width_);
+                conditions.lengths.viewport_height = static_cast<float>(viewport_height_);
+                conditions.inherited = [&](std::string_view name) -> std::optional<std::string> {
+                    if (at.chain.size() < 2) { return std::nullopt; }
+                    const node_id parent = at.chain[1];
+                    const std::string_view held = declared_on(parent, name);
+                    if (held.empty() || held == style::guaranteed_invalid) { return std::nullopt; }
+                    const style::css::custom_lookup above =
+                        [&](atom n) -> std::optional<std::string_view> {
+                        const std::string_view v = declared_on(parent, atoms->text(n));
+                        if (v.empty() || v == style::guaranteed_invalid) { return std::nullopt; }
+                        return v;
+                    };
+                    return style::css::substitute_var(held, above, *atoms);
+                };
+                conditions.computed = [&](std::string_view name) -> std::optional<std::string> {
+                    const std::string_view held = declared(name);
+                    if (held.empty()) { return std::nullopt; }
+                    return std::string{held};
+                };
+                if (selector_engine_ != nullptr) {
+                    conditions.media = [this](std::string_view condition) {
+                        return style::css::evaluate_media_condition(
+                            condition, selector_engine_->environment());
+                    };
                 }
+                std::optional<std::string> done =
+                    style::css::substitute_var(text, custom, *atoms, attributes, &conditions);
+                // INVALID AT COMPUTED-VALUE TIME: the guaranteed-invalid value,
+                //    which a custom property serialises as nothing at all.
+                if (!done) { return {}; }
+                text = std::move(*done);
             }
             return text;
         }

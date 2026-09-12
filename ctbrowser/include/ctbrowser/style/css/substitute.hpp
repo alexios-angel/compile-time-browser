@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 
 // `var()` substitution: CSS Custom Properties Level 1, §3 - and `attr()`, CSS
 // Values 5 §attr, which is the same operation over a different source.
@@ -43,7 +44,43 @@ using custom_lookup = std::function<std::optional<std::string_view>(atom)>;
 // leaves this empty, and every `attr()` is then left as written.
 using attribute_lookup = std::function<std::optional<std::string>(std::string_view name)>;
 
-// The value with every `var()` and `attr()` replaced, or nothing if the result is
+// WHAT `if()` MAY ASK, CSS Values 5 §if-notation. The third arbitrary
+// substitution function: `if( <if-condition> : <declaration-value>? ; ... )`,
+// replaced by the value of the first branch whose condition holds, or `else`.
+// A condition is a boolean expression over three tests, and each needs a fact
+// the substituter does not have on its own:
+//
+//   style( <style-query> )     the element's computed values - the custom ones
+//                              through `custom_lookup`, the parent's for
+//                              `inherit` through `inherited`, and any other
+//                              property's through `computed`
+//   media( <media-condition> ) the window, through `media`
+//   supports( ... )            the property table, asked directly
+//
+// An engine without one of these leaves that test false rather than guessing;
+// with no environment at all every `if()` is left as written, like an `attr()`
+// without an element.
+struct condition_environment {
+    // A property's computed value on the PARENT, or nothing if it has none:
+    // what `style(--x: inherit)` compares against.
+    std::function<std::optional<std::string>(std::string_view property)> inherited;
+    // A NON-custom property's computed value on the element, for
+    // `style(color: green)`.
+    std::function<std::optional<std::string>(std::string_view property)> computed;
+    // A media condition's truth against the current environment, or nothing for
+    // one that does not parse.
+    std::function<std::optional<bool>(std::string_view condition)> media;
+    // The bases a range query resolves its dimensions against: `style(10em >
+    // 3px)` needs a font size.
+    length_context lengths;
+    // THE PROPERTY THE VALUE BELONGS TO, when the caller knows it. A custom
+    // property whose `if()` queries itself - `--x: if(style(--x): a; else: b)`
+    // - is a cycle, and only the name tells that from a query about some
+    // other property.
+    std::string property;
+};
+
+// The value with every `var()`, `attr()` and `if()` replaced, or nothing if the result is
 // INVALID AT COMPUTED-VALUE TIME - a missing custom property with no fallback, a
 // cycle, an attribute whose text does not parse as the type `attr()` asked for
 // and no fallback to take instead, or a substitution that introduced a
@@ -57,12 +94,11 @@ using attribute_lookup = std::function<std::optional<std::string>(std::string_vi
 //
 // renders as the INHERITED colour in Chrome, not red. Dropping the second
 // declaration would let the first one win.
-[[nodiscard]] std::optional<std::string> substitute_var(std::string_view value,
-                                                        const custom_lookup & lookup,
-                                                        atom_table & atoms,
-                                                        const attribute_lookup & attributes = {});
+[[nodiscard]] std::optional<std::string> substitute_var(
+    std::string_view value, const custom_lookup & lookup, atom_table & atoms,
+    const attribute_lookup & attributes = {}, const condition_environment * conditions = nullptr);
 
-// Whether a value contains a `var()` or an `attr()` at all - a cheap guard so
+// Whether a value contains a `var()`, an `attr()` or an `if()` at all - a cheap guard so
 // the substitution machinery only runs on the values that need it.
 //
 // A plain `find` would be wrong for `content: "var(--x)"`, where the text is inside a
