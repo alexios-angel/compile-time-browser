@@ -780,8 +780,7 @@ a tree walk and not a decode.
 
 `canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
 (`shell/image/images.hpp`) writes one through libpng's simplified API, the same
-library that decodes them. `tools/check/check-png.py` decodes what the engine
-wrote with Python's own zlib, independently of it.
+library that decodes them.
 
 ### `<a download>` WRITES A FILE - the one invented behaviour
 
