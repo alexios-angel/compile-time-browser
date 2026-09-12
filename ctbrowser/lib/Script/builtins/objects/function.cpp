@@ -351,6 +351,16 @@ void install_destructuring_iteration(context & cx) {
         if (!done && !c.throw_pending()) { record->set("done", value::boolean(false)); }
         return item;
     });
+    cx.define_native(std::string{array_holes_name}, [](context &, std::span<value> a) {
+        if (a.empty() || !a[0].is_array()) { return value::undefined(); }
+        auto * arr = static_cast<array_object *>(a[0].as_heap());
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            if (!a[i].is_number()) { continue; }
+            const auto at = static_cast<std::uint32_t>(a[i].as_number());
+            if (at < arr->items.size()) { arr->set_element_attrs(at, array_object::elem_hole); }
+        }
+        return value::undefined();
+    });
     cx.define_native(std::string{catch_filter_name}, [](context & c, std::span<value> a) {
         if (!a.empty() && c.is_return_marker(a[0])) { c.throw_value(a[0]); }
         return value::undefined();

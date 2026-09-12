@@ -81,6 +81,10 @@ inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_dele
 // escaping marker back into {value: v, done: true}.
 inline constexpr std::string_view return_marker_key = "@#return";
 inline constexpr std::string_view catch_filter_name = "__ctbrowser_catch_filter";
+// An array literal's elisions (13.2.4.1): (array, index...) marks each index
+// a hole - the literal appended undefined there because `append` is the one
+// opcode an element has, and a hole is an attribute on the slot.
+inline constexpr std::string_view array_holes_name = "__ctbrowser_array_holes";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";

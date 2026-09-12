@@ -988,6 +988,14 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
 void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
     proto().emit(instruction{op::new_array, dst});
     const std::uint32_t mark = reg_mark();
+    // An ELISION IS A HOLE (13.2.4.1): `[1, , 3]` has a length of 3 and no
+    // element 1, which forEach and `1 in` can tell from undefined. The slot
+    // is appended as undefined and marked afterwards, in one native call
+    // naming the positions - only while those positions are static, which
+    // a spread before the hole makes them not.
+    std::vector<std::uint32_t> holes;
+    bool positions_known = true;
+    std::uint32_t position = 0;
     for (const std::int32_t element : kids(n)) {
         const std::uint16_t v = alloc_reg();
         // A HOLE. `[, x]` and `[a, , b]` are legal, and an element list is
@@ -996,6 +1004,8 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
         if (element < 0) {
             proto().emit(instruction{op::load_undef, v});
             proto().emit(instruction{op::append, dst, v});
+            if (positions_known) { holes.push_back(position); }
+            ++position;
             release_to(mark);
             continue;
         }
@@ -1004,10 +1014,27 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
             // index loop rather than an opcode, because that is all it is.
             compile_expr(at(element).a, v);
             emit_append_all(dst, v);
+            positions_known = false;
         } else {
             compile_expr(element, v);
             proto().emit(instruction{op::append, dst, v});
+            ++position;
         }
+        release_to(mark);
+    }
+    if (!holes.empty()) {
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{array_holes_name})));
+        const std::uint16_t arr = alloc_reg();
+        proto().emit(instruction{op::move, arr, dst});
+        std::uint16_t argc = 1;
+        for (const std::uint32_t at_index : holes) {
+            if (argc == 200) { break; }
+            emit_const(alloc_reg(), value::number(static_cast<double>(at_index)));
+            ++argc;
+        }
+        proto().emit(instruction{op::call, callee, argc});
         release_to(mark);
     }
 }
