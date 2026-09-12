@@ -370,6 +370,20 @@ void test_for_await() {
     expect_after_turn("var result = ''; Array.fromAsync(null).then(() => { result = 'no'; }, e => "
                       "{ result = e.name; });",
                       "TypeError");
+    // A constructor as `this` takes the elements through defineProperty: a
+    // non-configurable slot is a TypeError, not an endless loop (test262
+    // this-constructor-with-unsettable-element ran the box out of memory).
+    expect_after_turn(
+        "var result = ''; function M() { Object.defineProperty(this, 0, {value: 0,"
+        "  writable: true, configurable: false}); }"
+        "var it = { next() { return Promise.resolve({value: 1, done: false}); },"
+        "  [Symbol.asyncIterator]() { return this; } };"
+        "Array.fromAsync.call(M, it).then(() => { result = 'no'; }, e => { result = e.name; });",
+        "TypeError");
+    expect_after_turn(
+        "var result = ''; Array.fromAsync({length: 2 ** 40}).then(() => { result = 'no'; },"
+        "  e => { result = e.name; });",
+        "RangeError");
 }
 
 } // namespace
