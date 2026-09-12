@@ -32,11 +32,13 @@ using namespace detail;
 //
 // WHAT THE MODEL CANNOT DO, said here rather than guessed at each call site:
 //
-//   * `documentElement` CANNOT BE DETACHED. `document::remove_child` refuses
-//     the root - `dom_error::is_root` - because a tree whose root is gone has
-//     nothing left to be. So `removeChild(documentElement)` and
-//     `replaceChildren()` are NotSupportedError; `replaceChild(el,
-//     documentElement)` works because the new element takes the slot.
+//   * THE PAGE'S `documentElement` CANNOT BE DETACHED. `document::remove_child`
+//     refuses the root - `dom_error::is_root` - because a tree whose root is
+//     gone has nothing left to lay out. So `removeChild(documentElement)` and
+//     `replaceChildren()` are NotSupportedError on the page's own document;
+//     `replaceChild(el, documentElement)` works because the new element
+//     takes the slot. A document a page MADE is laid out by nothing, and
+//     does all three through `document::remove_document_element`.
 //   * A node from ANOTHER document is adopted on the way in, by `node_from`,
 //     and checked afterwards - see may_become_a_child.
 //
@@ -671,10 +673,19 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             return value::undefined();
         }
         if (child == element_child()) {
-            throw_dom_exception(c, "NotSupportedError",
-                                "this engine cannot detach the document element: it is the root "
-                                "of the tree and an emptied document has nothing to lay out");
-            return value::undefined();
+            // A DOCUMENT NOTHING LAYS OUT - one a page made - may lose its
+            // element, as DOM says; the page's own cannot, see the top of
+            // this file.
+            if (!secondary_) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    "this engine cannot detach the document element: it is the "
+                                    "root of the tree and an emptied document has nothing to lay "
+                                    "out");
+                return value::undefined();
+            }
+            doc_->remove_document_element();
+            mutated();
+            return arg(args, 0);
         }
         (void)doc_->remove_child(child);
         mutated();
@@ -697,16 +708,31 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         const node_id fresh = handle_of(arg(args, 0));
         if (fresh == stale) { return arg(args, 1); }
         if (stale == element_child()) {
-            // Only another element may take the root's slot - anything else
-            // would leave the document with no element to lay out.
-            if (doc_->read().kind(fresh).value_or(node_kind::comment) != node_kind::element) {
+            // Only another element may take the page's root's slot - anything
+            // else would leave the document with no element to lay out. A
+            // document nothing lays out takes whatever DOM allows.
+            const bool element =
+                doc_->read().kind(fresh).value_or(node_kind::comment) == node_kind::element;
+            if (!element && !secondary_) {
                 throw_dom_exception(c, "NotSupportedError",
                                     "replacing the document element with a non-element would "
                                     "detach the root of the tree, which this engine cannot do");
                 return value::undefined();
             }
-            doc_->set_document_element(fresh, node_id{});
-            mutated();
+            if (element) {
+                doc_->set_document_element(fresh, node_id{});
+                mutated();
+                return arg(args, 1);
+            }
+            node_id after;
+            {
+                const auto txn = doc_->read();
+                const std::span<const node_id> kids = txn.children(txn.document_node());
+                const auto at = std::ranges::find(kids, stale);
+                if (at != kids.end() && at + 1 != kids.end()) { after = *(at + 1); }
+            }
+            doc_->remove_document_element();
+            place(fresh, after);
             return arg(args, 1);
         }
         // The next sibling of `stale` is where the new node lands once the
@@ -768,8 +794,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     method("replaceChildren",
            [this, insert_all, element_child](context & c, std::span<value> args) {
                // `replaceChildren` has to REMOVE what is there first, which on a
-               // document with an element means detaching it.
-               if (element_child()) {
+               // document with an element means detaching it - which the
+               // page's own document cannot do, see removeChild.
+               if (element_child() && !secondary_) {
                    throw_dom_exception(c, "NotSupportedError",
                                        "replaceChildren would detach the document element, which "
                                        "this engine's document cannot do - see removeChild");
@@ -781,6 +808,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                    const std::span<const node_id> kids = txn.children(txn.document_node());
                    existing.assign(kids.begin(), kids.end());
                }
+               doc_->remove_document_element();
                for (const node_id one : existing) { (void)doc_->remove_child(one); }
                (void)insert_all(c, args, node_id{});
                return value::undefined();

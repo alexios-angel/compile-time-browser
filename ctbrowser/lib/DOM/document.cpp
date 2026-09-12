@@ -258,6 +258,20 @@ void document::set_document_element(node_id id, node_id before) {
     bump_version();
 }
 
+void document::remove_document_element() {
+    const std::lock_guard structure{structure_};
+    if (root_ == document_node_) { return; }
+    node * doc_node = find(document_node_);
+    if (doc_node == nullptr) { return; }
+    const child_list * stale = doc_node->children.load(std::memory_order_acquire);
+    auto * fresh = new child_list{stale->items};
+    const auto gone = std::ranges::remove(fresh->items, root_);
+    fresh->items.erase(gone.begin(), gone.end());
+    publish(doc_node->children, static_cast<const child_list *>(fresh));
+    root_ = document_node_;
+    bump_version();
+}
+
 void document::detach_locked(node * child_node, node_id child) {
     const node_id old_parent = child_node->parent.load(std::memory_order_acquire);
     if (!old_parent) { return; }

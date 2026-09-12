@@ -201,6 +201,12 @@ public:
     // see (document_node says why). `root()` stays the Document node itself
     // while there is no element, which is what `new Document()` is.
     void set_document_element(node_id id, node_id before = node_id{});
+    // THE OTHER DIRECTION: the document element leaves the Document node's
+    // child list and `root()` is the Document node again, as on a document
+    // that never had one. `remove_child` refuses the root because the
+    // engine's walks start there; a document nothing lays out - one a page
+    // made - may do this, and DOM says it may. No-op without an element.
+    void remove_document_element();
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
 
