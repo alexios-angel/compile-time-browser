@@ -383,47 +383,53 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                 preserved(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
-def check_leaf_readback_carriers(args, positives, node, reference, controls):
+def check_leaf_readback_carriers(args, positives, node, reference, controls, compilers, nm):
     for name, (source, value, old, replacement, repair, source_call_count) in controls.items():
         js, ir, count = boundary.prepare(args, name, source)
         if count != 5 or len(source_calls(ir.read_text())) != source_call_count:
             raise RuntimeError(f"{name}: changed exact complete-owner carrier source")
         expected = f"trace={value}\n"
+        reference_result = host.run([str(reference), str(js)])
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
+                or reference_result.stdout != expected
+                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr):
             raise RuntimeError(f"{name}: complete-owner carrier observation mismatch")
         if source.count(old) != 1 or source.replace(old, replacement) != positives[repair][0]:
             raise RuntimeError(f"{name}: carrier repair changed its exact source")
         config = contract(args, ir, name)
 
-        def check_prepared(output, label):
-            text = methods.census(output, 5, label, admitted=0)
-            calls = re.findall(r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
-                               r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+        def check_native(output, input_ir, label):
+            text = methods.census(output, 5, label, admitted=5)
+            cpp = host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout
+            entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
             if ("ctnative.host_owner_proved = true" not in text
-                    or len(source_calls(text)) != source_call_count
-                    or [callee for _, callee, _ in calls] != ["fn$3", "fn$4"]
-                    or [len(actuals.split(", ")) for _, _, actuals in calls]
-                    != [4, 5]
-                    or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
-                raise RuntimeError(f"{label}: lost complete local origins or prepared published calls")
+                    or "std::function<ctnative::nullable_scalar(std::string)>" not in cpp
+                    or not entry or entry[1].count("ctnative::invoke_callable(") != 2):
+                raise RuntimeError(f"{label}: lost complete local origins or published nullable calls")
+            return comparable_provenance(cpp, input_ir)
 
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
-            output = owned.lower(args, ir, name + "-" + mode, config, options=options, cleanup=False)
-            check_prepared(output, name + "-" + mode)
+            mode_name = name + "-" + mode
+            output = owned.lower(args, ir, mode_name, config, options=options)
+            expected_cpp = check_native(output, ir, mode_name)
+            owned.standalone(args, output, mode_name, expected, compilers, nm)
             for payload in ("bool", "string", "nullable_string"):
-                label = name + "-" + mode + "-forged-" + payload
+                label = mode_name + "-forged-" + payload
                 forged = args.work / f"{label}.mlir"
                 forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
                 stale = methods.refused(args, forged, label + "-stale", config,
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), stale.read_text(), label + "-stale")
                 fresh = contract(args, forged, label)
-                checked = owned.lower(args, forged, label, fresh, options=options, cleanup=False)
-                check_prepared(checked, label)
-                rerun = methods.refused(args, checked, label + "-rerun", fresh,
-                    options=options, reason="fingerprint mismatch", admitted=0)
-                check_call_preservation(checked.read_text(), rerun.read_text(), label + "-rerun")
+                checked = owned.lower(args, forged, label, fresh, options=options)
+                if check_native(checked, forged, label) != expected_cpp:
+                    raise RuntimeError(f"{label}: forged schema facts changed native field output")
+                rerun = owned.lower(args, checked, label + "-rerun", fresh,
+                    options=options, cleanup=False)
+                text = methods.census(rerun, count, label + "-rerun", admitted=count)
+                if ("ctnative.host_owner_proved = false" not in text
+                        or "fingerprint mismatch" not in text):
+                    raise RuntimeError(f"{label}: native field rerun reused source authority")
 
 
 def check_leaf_readback_observations(args, node, reference):

@@ -183,8 +183,9 @@
 # future Number arguments and final-owner lifetime checks under sanitizers.
 # Presence never narrows the full schema's stored value-type join: a Boolean
 # on another Map-stored allocation and an explicit Undefined overwritten by
-# Number keep complete host ownership but refuse native numeric exports.
-# Exact one-edit repairs restore independently gated historical source bytes.
+# Number keep complete host ownership and use nullable native exports.
+# Their unchanged sources execute exact Number observations in both modes;
+# fresh schema forgeries cannot alter the emitted result or reuse stale authority.
 # Comparison-only fresh RHS allocations and the exact saved-object repairs
 # retain all four source programs, numeric fields and Map operations. Standalone
 # explicit/deduced GCC/Clang execution and sanitizer observers exercise 128
@@ -262,8 +263,8 @@
 # binary operand through preparation and both emitted C++ forms. NaN observers
 # check its Number tag and allow only the reference's irrelevant sign spelling;
 # signed-zero aliases retain their sign and a negative-infinity reciprocal.
-# Undefined originals and literal substitutions remain refused
-# at their separate Map-identity or scalar-global boundaries; duplicate writes,
+# Undefined originals that read a global alias retain their separate Map-identity
+# refusal; the literal substitution now executes exact Undefined output. Duplicate writes,
 # reads before initialization, dynamic globals and future method writes retain
 # independent ownership refusals and exact admitted repairs. Fresh/stale forged
 # reports, reruns and measured budget cutoffs grant no authority.
@@ -282,7 +283,7 @@
 # Duplicate/mixed writes retain their Map-identity refusal, while reads before
 # initialization, dynamic/future effects and optional/mixed entry branches retain
 # their exact independent owner refusals and admitted repairs. Undefined
-# literal-copy candidates retain their separate global-storage diagnostics.
+# literal-copy candidates execute their actual Undefined global tag.
 # Fresh/stale forgeries, prepared reruns and bounded proofs cannot manufacture a
 # Boolean fact or erase evaluated calls. Every earlier source hash stays fixed.
 # A mixed Number/Boolean snapshot lifetime runs 128 future saved Map calls with
@@ -342,9 +343,9 @@
 # Typed Node/interpreter observations distinguish saved from current sizes and
 # count duplicate/distinct writes independently of successful object lookup.
 # An own-field read independently requires the saved key to select the object.
-# Its raw optional global result remains a complete-owner refusal; entry + 0
-# and a field comparison separately execute the unchanged field lookup with
-# definite Number observations, distinguishing a mistaken absence proof.
+# Its unchanged raw optional global result now executes natively; entry + 0
+# and a field comparison still check the same lookup with definite Number
+# observations, distinguishing a mistaken absence proof.
 # Saved native size/set callables select the original object with saved one
 # after growth, across 128 future calls/both flags, publication-owner release and
 # independent entry reexecution. Weak observers check Map/leaf reclamation and
