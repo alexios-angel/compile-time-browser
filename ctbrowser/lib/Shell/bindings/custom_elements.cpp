@@ -368,7 +368,6 @@ void dom_bindings::install_custom_elements(context & cx) {
             // author's class.
             auto * obj = static_cast<script::object_object *>(self.as_heap());
             obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(made))));
-            install_element_methods(c, *obj);
             install_element_views(c, *obj, made);
             refresh_element(c, *obj, made);
             wrappers_.emplace(pack(made), obj);

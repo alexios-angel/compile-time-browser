@@ -107,10 +107,4 @@ void dom_bindings::install_operations(context & cx) {
     });
 }
 
-void dom_bindings::install_element_methods(context &, script::object_object &) {
-    // Nothing is per wrapper any more - see define_operation. A custom element
-    // instance reaches every operation through its class's chain, which ends at
-    // HTMLElement.prototype.
-}
-
 } // namespace ctbrowser::shell

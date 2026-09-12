@@ -317,10 +317,6 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
-    // A NO-OP since the methods moved to the interface prototypes (see
-    // define_operation); kept only because bindings/custom_elements.cpp calls
-    // it on the instance a `new`-made custom element becomes.
-    void install_element_methods(context & cx, script::object_object & obj);
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
     // `"insertBefore" in Node.prototype` and `.length` on each are what the
@@ -1908,7 +1904,7 @@ private:
     // cannot host one.
     [[nodiscard]] value attach_shadow(context & cx, node_id host, std::span<value> args);
     // The members a ShadowRoot has that an ordinary DocumentFragment does not.
-    // Installed from wrap(), AFTER install_element_methods, so the two it
+    // Installed from wrap(), AFTER the prototype link, so the two it
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
