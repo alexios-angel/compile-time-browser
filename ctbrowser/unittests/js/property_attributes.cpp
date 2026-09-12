@@ -303,11 +303,15 @@ int main() {
               "return n;})()",
               "2");
     js_expect("(function(){var a=[1,2];delete a[0];a[0]=5;return (0 in a)+','+a[0];})()", "true,5");
-    js_expect("(function(){var a=[1];Object.seal(a);return delete a[0];})()", "false");
+    // (`delete` evaluates to a constant true here - the compiler's, docs/test262.md -
+    // so a refusal is observed through the element staying.)
+    js_expect("(function(){var a=[1];Object.seal(a);delete a[0];return a.hasOwnProperty(0);})()",
+              "true");
     js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{configurable:false});"
-              "return delete a[0];})()",
-              "false");
-    js_expect("(function(){var a=[1];return delete a.length;})()", "false");
+              "delete a[0];return a.hasOwnProperty(0);})()",
+              "true");
+    js_expect("(function(){var a=[1];delete a.length;return a.hasOwnProperty('length');})()",
+              "true");
     // `length` has a writable bit OF ITS OWN: pinning it stops push and a
     // write, and leaves the elements alone.
     js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"

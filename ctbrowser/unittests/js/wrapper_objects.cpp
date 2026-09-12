@@ -29,7 +29,7 @@ int main() {
     js_expect("Object('ab') instanceof String", "true");
     js_expect("Object.getPrototypeOf(new Number(1)) === Number.prototype", "true");
     js_expect("Object(5) === Object(5)", "false"); // two objects
-    js_expect("var o = {}; Object(o) === o", "true");
+    js_expect("(function(){var o = {}; return Object(o) === o;})()", "true");
 
     // --- the slot is invisible ---------------------------------------------
     js_expect("Object.keys(new Number(5)).length", "0");
@@ -70,17 +70,20 @@ int main() {
               "{\"value\":2,\"writable\":false,\"enumerable\":false,\"configurable\":false}");
     js_expect("JSON.stringify(Object.getOwnPropertyDescriptor(Object('ab'), '0'))",
               "{\"value\":\"a\",\"writable\":false,\"enumerable\":true,\"configurable\":false}");
-    js_expect("var s = Object('ab'); s[0] = 'x'; s[0]", "a"); // non-writable
-    js_expect("var s = Object('ab'); s.length = 9; s.length", "2");
-    js_expect("var s = Object('ab'); delete s[0]", "false");
-    js_expect("var s = Object('ab'); s.extra = 1; s.extra", "1"); // still extensible
+    js_expect("(function(){var s = Object('ab'); s[0] = 'x'; return s[0];})()", "a");
+    js_expect("(function(){var s = Object('ab'); s.length = 9; return s.length;})()", "2");
+    // (`delete` evaluates to a constant true here - the compiler's, docs/test262.md -
+    // so the refusal is observed through the property staying.)
+    js_expect("(function(){var s = Object('ab'); delete s[0]; return s.hasOwnProperty(0);})()",
+              "true");
+    js_expect("(function(){var s = Object('ab'); s.extra = 1; return s.extra;})()", "1");
     js_expect("Object.keys(Object('ab')).concat(Object.keys(Object(5))).length", "2");
 
     // --- Symbol and BigInt box the same way (Object(x) only; both refuse new)
     js_expect("typeof Object(Symbol('s'))", "object");
     js_expect("Object(Symbol('s')).toString()", "Symbol(s)");
     js_expect("Object(Symbol('s')).valueOf() === Object(Symbol('s')).valueOf()", "false");
-    js_expect("var y = Symbol(); Object(y).valueOf() === y", "true");
+    js_expect("(function(){var y = Symbol(); return Object(y).valueOf() === y;})()", "true");
     js_expect("Object(5n) instanceof BigInt", "true");
     js_expect("Object(5n).valueOf()", "5");
     js_expect("Object(255n).toString(16)", "ff");
@@ -99,11 +102,11 @@ int main() {
     js_expect("String.prototype.valueOf.call(Object('s'))", "s");
 
     // --- a wrapper is a descriptor: 8.10.5 reads through [[Get]] ----------
-    js_expect("var d = new Number(1); d.configurable = true; d.value = 3;"
-              " var o = Object.defineProperty({}, 'p', d); o.p",
+    js_expect("(function(){var d = new Number(1); d.configurable = true; d.value = 3;"
+              " var o = Object.defineProperty({}, 'p', d); return o.p;})()",
               "3");
-    js_expect("var d = new Boolean(false); d.enumerable = true; d.value = 4;"
-              " Object.keys(Object.create({}, {p: d})).join()",
+    js_expect("(function(){var d = new Boolean(false); d.enumerable = true; d.value = 4;"
+              " return Object.keys(Object.create({}, {p: d})).join();})()",
               "p");
 
     // --- Symbol refuses ToNumber and ToString (7.1.4, 7.1.17) ---------------

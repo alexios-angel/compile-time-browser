@@ -144,7 +144,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         for (double k = 0; k < len; k += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            detail::put_element(c, out, k, c.call(callback, call_args, this_arg));
+            if (!detail::put_element(c, out, k, c.call(callback, call_args, this_arg))) {
+                return out;
+            }
         }
         return out;
     });
@@ -407,9 +409,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         sort_values(c, work, comparator);
         const auto kept = static_cast<double>(work.size());
         for (double k = 0; k < kept; k += 1.0) {
-            detail::put_element(c, self, k, work[static_cast<std::size_t>(k)]);
+            if (!detail::put_element(c, self, k, work[static_cast<std::size_t>(k)])) {
+                return self;
+            }
         }
-        for (double k = kept; k < len; k += 1.0) { detail::delete_element(c, self, k); }
+        for (double k = kept; k < len; k += 1.0) {
+            if (!detail::delete_element(c, self, k)) { return self; }
+        }
         return self;
     });
     detail::constant(array_ctor, "prototype", value::object(array_proto));
@@ -498,7 +504,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         for (; count > 0; count -= 1.0, from += direction, to += direction) {
             if (detail::has_element(c, self, from)) {
-                detail::put_element(c, self, to, detail::element_at(c, self, from));
+                if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
+                    return self;
+                }
             } else {
                 c.delete_index(self, value::number(to));
             }
@@ -523,7 +531,10 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
         const value replacement = arg_at(a, 1);
         for (double k = 0; k < len; k += 1.0) {
-            detail::put_element(c, out, k, k == at ? replacement : detail::element_at(c, self, k));
+            if (!detail::put_element(c, out, k,
+                                     k == at ? replacement : detail::element_at(c, self, k))) {
+                return out;
+            }
         }
         return out;
     });
@@ -535,7 +546,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const context::rooted keep(c, out);
         if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
         for (double k = 0; k < len; k += 1.0) {
-            detail::put_element(c, out, k, detail::element_at(c, self, len - k - 1));
+            if (!detail::put_element(c, out, k, detail::element_at(c, self, len - k - 1))) {
+                return out;
+            }
         }
         return out;
     });
@@ -602,13 +615,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (detail::new_array_of_length(c, out, new_len) == nullptr) { return out; }
         double at = 0;
         for (; at < start; at += 1.0) {
-            detail::put_element(c, out, at, detail::element_at(c, self, at));
+            if (!detail::put_element(c, out, at, detail::element_at(c, self, at))) { return out; }
         }
         for (std::size_t i = 2; i < a.size(); ++i, at += 1.0) {
-            detail::put_element(c, out, at, a[i]);
+            if (!detail::put_element(c, out, at, a[i])) { return out; }
         }
         for (double from = start + skipped; at < new_len; at += 1.0, from += 1.0) {
-            detail::put_element(c, out, at, detail::element_at(c, self, from));
+            if (!detail::put_element(c, out, at, detail::element_at(c, self, from))) { return out; }
         }
         return out;
     });

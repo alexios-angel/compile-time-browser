@@ -270,10 +270,29 @@ namespace detail {
 // does not land (a frozen array, a non-writable `length`, a String receiver's
 // index) is a TypeError even in sloppy code. context::store_index records the
 // refusal in store_rejected_ and strict_store_check turns it into the throw.
-inline void put_element(context & cx, value self, double i, value v) {
+//
+// FALSE MEANS THE THROW IS IN FLIGHT and the method must return at once: a
+// second throw_error on the way out would consume a second handler
+// (context::reentry_scope says why that loses the page's own `try`), and a
+// walk that carries on after its first refused write is doing work the
+// specification stopped.
+//
+// WHETHER A DIRECT throw_error HAPPENED is read off context::last_thrown: a
+// throw the native raised itself is not parked (that is `call`'s doing, and
+// throw_pending sees only that), but it does replace `thrown_`, which is a
+// collector root and so cannot be re-allocated at the same address. A native
+// that must know whether its own strict_store_check threw compares before
+// and after.
+[[nodiscard]] inline bool threw_since(context & cx, value before) {
+    return cx.throw_pending() || !(cx.last_thrown() == before);
+}
+[[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
+    const value before = cx.last_thrown();
     cx.clear_store_rejected();
     cx.store_index(self, value::number(i), v);
+    if (cx.throw_pending()) { return false; }
     cx.strict_store_check(number_to_string(i));
+    return !threw_since(cx, before);
 }
 
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
@@ -299,14 +318,19 @@ inline void put_element(context & cx, value self, double i, value v) {
 // The two writes the MUTATING methods are built out of, named so that push,
 // pop, shift, unshift, splice and reverse read like their clauses in 23.1.3
 // rather than like calls on the context.
-inline void delete_element(context & cx, value self, double i) {
-    if (cx.delete_own_property(self, number_to_string(i))) { return; }
+[[nodiscard]] inline bool delete_element(context & cx, value self, double i) {
+    if (cx.delete_own_property(self, number_to_string(i))) { return !cx.throw_pending(); }
+    if (cx.throw_pending()) { return false; }
     cx.throw_error("TypeError", "Cannot delete property '" + number_to_string(i) + "'");
+    return false;
 }
-inline void put_length(context & cx, value self, double len) {
+[[nodiscard]] inline bool put_length(context & cx, value self, double len) {
+    const value before = cx.last_thrown();
     cx.clear_store_rejected();
     cx.store_property(self, "length", value::number(len));
+    if (cx.throw_pending()) { return false; }
     cx.strict_store_check("length");
+    return !threw_since(cx, before);
 }
 
 // THE FAST PATH'S RECEIVER: a real, ORDINARY Array, whose elements are its own

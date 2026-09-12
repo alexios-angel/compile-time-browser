@@ -72,8 +72,7 @@ void install_array(context & cx) {
     // CreateDataPropertyOrThrow(A, k, v), 7.3.5 - and the refusal is a TypeError.
     const auto create_element = [](context & c, value target, double k, value v) {
         if (target.is_array() && detail::dense_array_this(target) != nullptr) {
-            detail::put_element(c, target, k, v);
-            return !c.throw_pending();
+            return detail::put_element(c, target, k, v);
         }
         context::property_descriptor wanted;
         wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable =
@@ -99,7 +98,7 @@ void install_array(context & cx) {
                 return value::undefined();
             }
         }
-        detail::put_length(c, out, len);
+        if (!detail::put_length(c, out, len)) { return value::undefined(); }
         return out;
     });
     // 23.1.2.2 Array.fromAsync - WRITTEN IN JAVASCRIPT, compiled on first
@@ -249,7 +248,7 @@ void install_array(context & cx) {
                     }
                     k += 1.0;
                 }
-                detail::put_length(c, out, k);
+                if (!detail::put_length(c, out, k)) { return value::undefined(); }
                 return out;
             }
             // Steps 7-12, the array-like path: ToObject, LengthOfArrayLike, then
@@ -275,7 +274,7 @@ void install_array(context & cx) {
                 const context::rooted keep_mapped(c, mapped);
                 if (!create_element(c, out, k, mapped)) { return value::undefined(); }
             }
-            detail::put_length(c, out, len);
+            if (!detail::put_length(c, out, len)) { return value::undefined(); }
             return out;
         });
     cx.define_global("Array", value::object(array_ctor));
@@ -307,7 +306,9 @@ void install_array(context & cx) {
         // coerces the undefined to 0 and fills nothing.
         const double raw_end = has_index(a, 2) ? integer_arg(c, a, 2) : len;
         const double end = raw_end < 0 ? std::max(len + raw_end, 0.0) : std::min(raw_end, len);
-        for (; k < end; k += 1.0) { detail::put_element(c, self, k, filler); }
+        for (; k < end; k += 1.0) {
+            if (!detail::put_element(c, self, k, filler)) { return self; }
+        }
         return self;
     });
     // 23.1.3.13, GENERIC, and its depth goes through ToIntegerOrInfinity.
@@ -466,10 +467,10 @@ void install_array(context & cx) {
             return value::number(len);
         }
         for (const value & item : a) {
-            detail::put_element(c, self, len, item);
+            if (!detail::put_element(c, self, len, item)) { return value::number(0); }
             len += 1.0;
         }
-        detail::put_length(c, self, len);
+        if (!detail::put_length(c, self, len)) { return value::number(0); }
         return value::number(len);
     });
     // 23.1.3.22. An EMPTY receiver still writes `length` back - that is step
@@ -495,7 +496,7 @@ void install_array(context & cx) {
         if (!detail::mutable_receiver(c, self, "pop")) { return value::undefined(); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) {
-            detail::put_length(c, self, 0);
+            if (!detail::put_length(c, self, 0)) { return value::undefined(); }
             return value::undefined();
         }
         const value out = detail::element_at(c, self, len - 1);
@@ -503,8 +504,8 @@ void install_array(context & cx) {
         // code - a Proxy trap, a `length` setter - and the value being returned
         // is by then held only by this C++ local.
         const context::rooted keep(c, out);
-        detail::delete_element(c, self, len - 1);
-        detail::put_length(c, self, len - 1);
+        if (!detail::delete_element(c, self, len - 1)) { return value::undefined(); }
+        if (!detail::put_length(c, self, len - 1)) { return value::undefined(); }
         return out;
     });
     // 23.1.3.25. Every element moves DOWN one, a hole moving down deletes what
@@ -531,7 +532,7 @@ void install_array(context & cx) {
         if (!detail::mutable_receiver(c, self, "shift")) { return value::undefined(); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) {
-            detail::put_length(c, self, 0);
+            if (!detail::put_length(c, self, 0)) { return value::undefined(); }
             return value::undefined();
         }
         if (!detail::generic_walk_ok(c, len)) { return value::undefined(); }
@@ -539,13 +540,15 @@ void install_array(context & cx) {
         const context::rooted keep(c, out);
         for (double k = 1; k < len; k += 1.0) {
             if (detail::has_element(c, self, k)) {
-                detail::put_element(c, self, k - 1, detail::element_at(c, self, k));
+                if (!detail::put_element(c, self, k - 1, detail::element_at(c, self, k))) {
+                    return value::undefined();
+                }
             } else {
-                detail::delete_element(c, self, k - 1);
+                if (!detail::delete_element(c, self, k - 1)) { return value::undefined(); }
             }
         }
-        detail::delete_element(c, self, len - 1);
-        detail::put_length(c, self, len - 1);
+        if (!detail::delete_element(c, self, len - 1)) { return value::undefined(); }
+        if (!detail::put_length(c, self, len - 1)) { return value::undefined(); }
         return out;
     });
     // 23.1.3.32. The tail moves UP, walked from the top down so that an
@@ -574,16 +577,20 @@ void install_array(context & cx) {
                 const double from = k - 1;
                 const double to = k + count - 1;
                 if (detail::has_element(c, self, from)) {
-                    detail::put_element(c, self, to, detail::element_at(c, self, from));
+                    if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
+                        return value::number(0);
+                    }
                 } else {
-                    detail::delete_element(c, self, to);
+                    if (!detail::delete_element(c, self, to)) { return value::number(0); }
                 }
             }
             for (std::size_t i = 0; i < a.size(); ++i) {
-                detail::put_element(c, self, static_cast<double>(i), a[i]);
+                if (!detail::put_element(c, self, static_cast<double>(i), a[i])) {
+                    return value::number(0);
+                }
             }
         }
-        detail::put_length(c, self, len + count);
+        if (!detail::put_length(c, self, len + count)) { return value::number(0); }
         return value::number(len + count);
     });
     method(cx, array_proto, "slice", 2, [](context & c, std::span<value> a) {
@@ -674,29 +681,35 @@ void install_array(context & cx) {
         if (inserted < skipped) {
             for (double k = start; k < len - skipped; k += 1.0) {
                 if (detail::has_element(c, self, k + skipped)) {
-                    detail::put_element(c, self, k + inserted,
-                                        detail::element_at(c, self, k + skipped));
+                    if (!detail::put_element(c, self, k + inserted,
+                                             detail::element_at(c, self, k + skipped))) {
+                        return removed;
+                    }
                 } else {
-                    detail::delete_element(c, self, k + inserted);
+                    if (!detail::delete_element(c, self, k + inserted)) { return removed; }
                 }
             }
             for (double k = len; k > len - skipped + inserted; k -= 1.0) {
-                detail::delete_element(c, self, k - 1);
+                if (!detail::delete_element(c, self, k - 1)) { return removed; }
             }
         } else if (inserted > skipped) {
             for (double k = len - skipped; k > start; k -= 1.0) {
                 if (detail::has_element(c, self, k + skipped - 1)) {
-                    detail::put_element(c, self, k + inserted - 1,
-                                        detail::element_at(c, self, k + skipped - 1));
+                    if (!detail::put_element(c, self, k + inserted - 1,
+                                             detail::element_at(c, self, k + skipped - 1))) {
+                        return removed;
+                    }
                 } else {
-                    detail::delete_element(c, self, k + inserted - 1);
+                    if (!detail::delete_element(c, self, k + inserted - 1)) { return removed; }
                 }
             }
         }
         for (std::size_t i = 2; i < a.size(); ++i) {
-            detail::put_element(c, self, start + static_cast<double>(i - 2), a[i]);
+            if (!detail::put_element(c, self, start + static_cast<double>(i - 2), a[i])) {
+                return removed;
+            }
         }
-        detail::put_length(c, self, len - skipped + inserted);
+        if (!detail::put_length(c, self, len - skipped + inserted)) { return removed; }
         return removed;
     });
     // `fromIndex`, WHICH BOTH SEARCHES ACCEPTED AND NEITHER READ. `xs.indexOf(v,
@@ -869,14 +882,14 @@ void install_array(context & cx) {
             const value upper_value =
                 upper_there ? detail::element_at(c, self, upper) : value::undefined();
             if (lower_there && upper_there) {
-                detail::put_element(c, self, lower, upper_value);
-                detail::put_element(c, self, upper, lower_value);
+                if (!detail::put_element(c, self, lower, upper_value)) { return self; }
+                if (!detail::put_element(c, self, upper, lower_value)) { return self; }
             } else if (upper_there) {
-                detail::put_element(c, self, lower, upper_value);
-                detail::delete_element(c, self, upper);
+                if (!detail::put_element(c, self, lower, upper_value)) { return self; }
+                if (!detail::delete_element(c, self, upper)) { return self; }
             } else if (lower_there) {
-                detail::delete_element(c, self, lower);
-                detail::put_element(c, self, upper, lower_value);
+                if (!detail::delete_element(c, self, lower)) { return self; }
+                if (!detail::put_element(c, self, upper, lower_value)) { return self; }
             }
         }
         return self;

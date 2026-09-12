@@ -408,9 +408,11 @@ int main() {
     js_expect("'abc'.split({[Symbol.split](s, l){return [s, l];}}, 2).join()", "abc,2");
     js_expect("'abc'.matchAll({[Symbol.matchAll](s){return s.length;}})", "3");
     js_expect("'abc'.match({get [Symbol.match]() { throw new Error('poison'); }})", "THREW");
-    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW");   // GetMethod: not callable
-    js_expect("'abc'.match({[Symbol.match]: null})", "null"); // GetMethod: null is absent
-    js_expect("'abc'.match(/b/)[0]", "b");                    // a real RegExp is unchanged
+    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW"); // GetMethod: not callable
+    // GetMethod: null is absent, so RegExpCreate(ToString(obj)) runs - a class
+    // of the characters in "[object Object]" matches the b.
+    js_expect("'abc'.match({[Symbol.match]: null})[0]", "b");
+    js_expect("'abc'.match(/b/)[0]", "b"); // a real RegExp is unchanged
     js_expect("'a-b'.split('-').length", "2");
 
     REPORT("string_basics");
