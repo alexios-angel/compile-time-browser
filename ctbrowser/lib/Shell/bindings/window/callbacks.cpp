@@ -3,10 +3,42 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include "../events/internal.hpp" // initialised_property, for readystatechange
+
 namespace ctbrowser::shell {
 
 void dom_bindings::set_alert_hook(std::function<void(const std::string &)> hook) {
     on_alert_ = std::move(hook);
+}
+
+// `document.readyState`, HTML 3.1.3: "loading" while the parser's scripts
+// run, "interactive" before DOMContentLoaded, "complete" before load - and
+// `readystatechange` at the document for each change, not bubbling.
+void dom_bindings::set_ready_state(std::string_view state) {
+    if (cx_ == nullptr) { return; }
+    auto * doc = document_object();
+    if (doc == nullptr) { return; }
+    if (const value * held = doc->find("readyState");
+        held != nullptr && held->is_string() && cx_->to_string(*held) == state) {
+        return;
+    }
+    doc->set("readyState", cx_->string(std::string{state}));
+    value event = make_event_object(*cx_, "readystatechange", false, false);
+    static_cast<script::object_object *>(event.as_heap())
+        ->set(std::string{detail::initialised_property}, value::boolean(true));
+    (void)dispatch_event("readystatechange", node_id{}, event);
+}
+
+// `document.currentScript`, HTML 4.12.1: the <script> whose classic script
+// is running, null between scripts and inside every callback - a timer, a
+// listener, a microtask that outlived its script. The browser sets it around
+// each parser-inserted script's run; a data property because nothing but the
+// browser writes it and a page reads it.
+void dom_bindings::set_current_script(node_id script) {
+    if (cx_ == nullptr) { return; }
+    if (auto * doc = document_object()) {
+        doc->set("currentScript", script ? wrap(*cx_, script) : value::null());
+    }
 }
 
 std::size_t dom_bindings::run_due_callbacks() {

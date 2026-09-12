@@ -156,6 +156,7 @@ void browser::run_scripts() {
     // script to a function declared in a LATER one. Chrome makes that a
     // ReferenceError; this engine used to make it work.
     std::vector<std::string> classic_scripts;
+    std::vector<node_id> classic_elements; // beside each, for document.currentScript
     // MODULES ARE COLLECTED SEPARATELY AND RUN SEPARATELY, because that is the
     // one thing they cannot share with a classic script: its top level is the
     // global scope and theirs is not. Concatenating them all - which is what
@@ -236,6 +237,7 @@ void browser::run_scripts() {
                     // that built an image for it would be building one nothing
                     // will ever look up.
                     classic_scripts.push_back(std::move(classic_text));
+                    classic_elements.push_back(at);
                 }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
@@ -264,7 +266,13 @@ void browser::run_scripts() {
     // full and never overwrite it, so every later parse error and uncaught
     // throw was silently discarded.
     bool a_script_failed = false;
-    for (const std::string & text : classic_scripts) {
+    bindings_->set_current_script(node_id{});
+    // THE PARSER'S SCRIPTS SEE "loading". The document is parsed whole before
+    // any of them runs here, so this is the one point where the state a
+    // parser-inserted script observes can be set.
+    bindings_->set_ready_state("loading");
+    for (std::size_t index = 0; index < classic_scripts.size(); ++index) {
+        const std::string & text = classic_scripts[index];
         // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
         // times faster on every corpus measured. Two things make it safe, and
@@ -301,7 +309,9 @@ void browser::run_scripts() {
         if (script_prepared_hook_) { script_prepared_hook_(*compiled, text); }
         const script::program & running = *compiled;
         classic_programs_.push_back(std::move(compiled));
+        bindings_->set_current_script(classic_elements[index]);
         const script::run_result result = script_->run(running);
+        bindings_->set_current_script(node_id{});
         // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
         // belongs to a document that is being replaced, so it does not run -
         // and the replacement happens in load_html, after this returns, rather

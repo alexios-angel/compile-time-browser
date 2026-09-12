@@ -1894,6 +1894,14 @@ private:
     // node, the document's own for a Document, else this. The EventTarget
     // methods route through it so a second document's nodes get a path.
     [[nodiscard]] dom_bindings & target_owner(value self);
+
+public:
+    // What the browser tells the document as a load progresses.
+    // `document.currentScript`: the <script> running now, or none.
+    void set_current_script(node_id script);
+    // `document.readyState`, with `readystatechange` at the document when it
+    // changes.
+    void set_ready_state(std::string_view state);
 };
 
 } // namespace ctbrowser::shell

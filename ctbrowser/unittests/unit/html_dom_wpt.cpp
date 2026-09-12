@@ -148,6 +148,34 @@ void test_a_located_document_resolves_its_url_attributes() {
              "file:///srv/pages/cat.png");
 }
 
+void test_the_document_knows_its_running_script_and_its_ready_state() {
+    // Document.currentScript.html and document-readyState.html: the <script>
+    // running is `currentScript` - inside eval too - and null in a timer;
+    // readyState is "loading" while the parser's scripts run, "interactive"
+    // at DOMContentLoaded and "complete" at load, each announced.
+    browser page{browser_options{400, 300}};
+    page.load_html(
+        "<!DOCTYPE html><html><body><script id=a>var seen = [document.readyState];"
+        " document.onreadystatechange = function () { seen.push(document.readyState); };"
+        " document.addEventListener('DOMContentLoaded', function () {"
+        " seen.push('dcl:' + document.readyState); });"
+        " window.onload = function () { seen.push('load:' + document.readyState);"
+        " console.log(seen.join()); };"
+        " console.log(document.currentScript.id + ',' + eval('document.currentScript.id'));"
+        " setTimeout(function () { console.log(String(document.currentScript)); }, 0);"
+        "</script><script id=b>console.log(document.currentScript.id);</script></body></html>");
+    (void)page.tick(16.0);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{4});
+    if (logged.size() == 4) {
+        CHECK_EQ(logged[0], std::string{"a,a"});
+        CHECK_EQ(logged[1], std::string{"b"});
+        CHECK_EQ(logged[2],
+                 std::string{"loading,interactive,dcl:interactive,complete,load:complete"});
+        CHECK_EQ(logged[3], std::string{"null"});
+    }
+}
+
 // --- the translate attribute --------------------------------------------------
 
 void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
@@ -226,6 +254,7 @@ int main() {
     test_the_rows_the_element_tables_name_are_all_there();
     test_an_anchor_reports_the_parts_of_its_url();
     test_a_located_document_resolves_its_url_attributes();
+    test_the_document_knows_its_running_script_and_its_ready_state();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
     test_inner_text_reads_the_inline_style_it_can_see();
