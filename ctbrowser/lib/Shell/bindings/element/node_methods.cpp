@@ -346,29 +346,42 @@ void dom_bindings::install_node_methods(context & cx) {
     // Text that is not a selector at all is a SyntaxError, exactly as on the
     // document; an UNSUPPORTED selector still answers null, a missing answer
     // rather than a wrong one.
-    method(parent_node, "querySelector", 1, [this](context & c, std::span<value> args) {
-        bool invalid = false;
-        const std::string selector = arg_string(c, args, 0);
-        const std::vector<node_id> found = query(selector, receiver(c), &invalid, true);
-        if (invalid) {
-            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
-            return value::undefined();
-        }
-        return found.empty() ? value::null() : wrap(c, found.front());
-    });
-    method(parent_node, "querySelectorAll", 1, [this](context & c, std::span<value> args) {
-        bool invalid = false;
-        const std::string selector = arg_string(c, args, 0);
-        const std::vector<node_id> found = query(selector, receiver(c), &invalid);
-        if (invalid) {
-            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
-            return value::undefined();
-        }
-        value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
-        return out;
-    });
+    // ONE REQUIRED ARGUMENT, and the arity TypeError is a subtest by name in
+    // `ParentNode-querySelector-All.html` for an element and a fragment alike.
+    const auto needs_selector = [](context & c, std::span<value> args, const char * who) {
+        if (!args.empty()) { return true; }
+        c.throw_error("TypeError", std::string{who} + ": 1 argument required, but only 0 present");
+        return false;
+    };
+    method(parent_node, "querySelector", 1,
+           [this, needs_selector](context & c, std::span<value> args) {
+               if (!needs_selector(c, args, "querySelector")) { return value::undefined(); }
+               bool invalid = false;
+               const std::string selector = arg_string(c, args, 0);
+               const std::vector<node_id> found = query(selector, receiver(c), &invalid, true);
+               if (invalid) {
+                   throw_dom_exception(c, "SyntaxError",
+                                       "'" + selector + "' is not a valid selector");
+                   return value::undefined();
+               }
+               return found.empty() ? value::null() : wrap(c, found.front());
+           });
+    method(parent_node, "querySelectorAll", 1,
+           [this, needs_selector](context & c, std::span<value> args) {
+               if (!needs_selector(c, args, "querySelectorAll")) { return value::undefined(); }
+               bool invalid = false;
+               const std::string selector = arg_string(c, args, 0);
+               const std::vector<node_id> found = query(selector, receiver(c), &invalid);
+               if (invalid) {
+                   throw_dom_exception(c, "SyntaxError",
+                                       "'" + selector + "' is not a valid selector");
+                   return value::undefined();
+               }
+               value out = c.make_array();
+               auto * items = static_cast<script::array_object *>(out.as_heap());
+               for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
+               return out;
+           });
     // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
     // did not, so a page that scoped its search to a subtree found the method
     // missing. p5's XML module walks a parsed document with exactly this.
