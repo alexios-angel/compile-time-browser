@@ -41,9 +41,16 @@ The **320-step devbox build**, final no-op rebuild and **4/4 focused CTests in
 in **32.43 seconds**. Stable clang-format **22.1.8** passes **795 files**;
 the actual bundled-23 check retains the same **nine byte-identical baseline
 differences**. All **1240 frozen input hashes** match the devbox.
-The full standard **530-test gate is pending**; no full pass or fresh Bootstrap
-count is claimed yet. Evidence: `/tmp/ctcompile-chain-{build,focused,full}.log`,
-`/tmp/ctcompile-chain-frozen.json`, `/tmp/ctcompile-key-chain-tests-static.json`.
+The full standard gate passes **530/530 CTests in 769.26 seconds**, including
+all **158 browser tests** and **168/168 lit cases in 527.53 seconds**. All
+**1240 frozen inputs** still match locally/remotely after the gate. Fresh full
+Bootstrap remains **19/574 native functions** in both modes; exact Data stays
+**0/7 CommonJS, 0/7 browser and 0/8 AMD**. No bundle-count increase is claimed.
+Evidence: `/tmp/ctcompile-chain-{build,focused,full}.log`,
+`/tmp/ctcompile-chain-full-{detail.log,summary.json}`,
+`/tmp/ctcompile-chain-frozen.json`, `/tmp/ctcompile-key-chain-tests-static.json`,
+and `/tmp/ctcompile-chain-measured/summary.json`. The latter separates fixture
+and compiled-input hashes: the existing import helper appends one newline.
 
 **Next: caller-owned Map payloads**, unchanged **ca0f13c2**
 (`object_argument_global_object_payload`, four functions/five calls/trace=1)
