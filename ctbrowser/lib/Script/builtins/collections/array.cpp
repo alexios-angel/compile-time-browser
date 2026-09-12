@@ -5,10 +5,9 @@
 // One of four files carved out of a 1,824-line builtins/collections.cpp on
 // 2026-09-08 - which was itself one of five carved out of builtins.cpp on
 // 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// these functions' declarations - is in ../internal.hpp.
 
-#include "internal.hpp"
+#include "../internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 

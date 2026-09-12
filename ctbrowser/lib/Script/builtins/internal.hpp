@@ -1569,6 +1569,11 @@ namespace builtins_detail {
 
 void install_math(context & cx, std::uint64_t seed);
 void install_array(context & cx);
+// The second half of install_array. One function of 1,212 lines was split at
+// the seam before the callback-taking methods; the halves share only the two
+// objects passed here, and install_array calls this at exactly the point the
+// code used to continue, so every property lands in the order it always did.
+void install_array_iteration(context & cx, native_object * array_ctor, object_object * array_proto);
 void install_string(context & cx);
 void install_base64(context & cx);
 void install_uri(context & cx);
