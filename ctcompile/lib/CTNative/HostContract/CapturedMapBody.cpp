@@ -332,6 +332,22 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         }
         return true;
     };
+    const auto invalidateAliases = [&](mlir::Value origin) {
+        if (origin == capturedOrigin) { return true; }
+        for (auto & [other, state] : mapStates) {
+            if (!step()) { return false; }
+            if (other == capturedOrigin || other == origin ||
+                (origin.getDefiningOp<ctjs::ConstructOp>() &&
+                 other.getDefiningOp<ctjs::ConstructOp>())) {
+                continue;
+            }
+            // A returned owner may alias another child, including a child
+            // published on only one branch. Fresh constructors alone are
+            // disjoint. Keep saved identities, discard unproved mutable facts.
+            state = {};
+        }
+        return true;
+    };
     ctjs::ReturnOp returned;
     // SSA scalar facts and the complete use census are immutable across paths.
     // Mutable contents are copied for each arm and intersected only after both
@@ -658,6 +674,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (key == "size" || invoke.getArgs().size() != arity) { return false; }
                 const auto origin = maps.lookup(invoke.getReceiver());
                 if (!origin) { return false; }
+                if ((key == "set" || key == "delete" || key == "clear") &&
+                    !invalidateAliases(origin)) {
+                    return false;
+                }
                 auto & state = mapStates[origin];
                 for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
                     if (!step()) { return false; }
@@ -734,7 +754,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                                          mlir::TypeID::get<ctjs::UndefinedAttr>()));
                             continue;
                         }
-                        for (const auto & entry : state.entries) {
+                        for (auto & entry : state.entries) {
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0],
                                                         keyEvidence(entry.key),
@@ -745,11 +765,24 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
                                 } else if (entry.present && entry.map) {
                                     maps.try_emplace(invoke.getResult(), entry.map);
+                                    result.returnedChildMaps.push_back(invoke.getResult());
                                 } else if (entry.present && entry.object) {
                                     objects.try_emplace(invoke.getResult(), entry.object);
+                                } else if (entry.present && origin == capturedOrigin &&
+                                           result.childMapContents) {
+                                    // The actual returned owner is an SSA origin,
+                                    // not a constructor from an earlier call. Its
+                                    // contents start unknown. An unchanged outer
+                                    // entry can subsequently return this same owner.
+                                    entry.map = invoke.getResult();
+                                    maps.try_emplace(invoke.getResult(), invoke.getResult());
+                                    result.returnedChildMaps.push_back(invoke.getResult());
                                 }
                                 break;
                             }
+                        }
+                        if (maps.lookup(invoke.getResult()) == invoke.getResult()) {
+                            mapStates.try_emplace(invoke.getResult());
                         }
                     }
                 }

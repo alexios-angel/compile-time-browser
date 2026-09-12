@@ -568,6 +568,65 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         });
         if (census.wasInterrupted() || exhausted) { return {}; }
     }
+    // Positive child-kind authority is independent of invocation results. Only
+    // a complete census of outer writes can establish it; membership and the
+    // mere presence of a constructor cannot. The body proof below still checks
+    // every operation/use, including aliases and all structural continuations.
+    result.childMapContents = true;
+    for (const auto & parameters : result.parameters) {
+        auto member = parameters.function;
+        auto & memberBody = member.getBody().front();
+        const auto outer = memberBody.getArgument(prepared ? 3 : 2);
+        const auto mapOrigin = [&](auto && self, mlir::Value value,
+                                   unsigned depth = 0) -> mlir::Value {
+            if (!value || depth > 32 || !step()) { return {}; }
+            if (prepared && value == outer) { return outer; }
+            if (auto load = value.getDefiningOp<ctjs::LoadUpvalueOp>();
+                !prepared && load && load.getIndex() == 0 && load.getClosure() == outer) {
+                return outer;
+            }
+            if (auto made = value.getDefiningOp<ctjs::ConstructOp>()) {
+                auto intrinsic = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (intrinsic && intrinsic.getName() == "Map" && globals["Map"].empty() &&
+                    made.getNewTarget() == made.getCallee() && made.getArgs().empty() &&
+                    dominance.dominates(made.getCallee(), made)) {
+                    return value;
+                }
+                return {};
+            }
+            auto invoke = value.getDefiningOp<ctjs::CallOp>();
+            auto read = invoke ? invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                               : ctjs::GetPropertyOp{};
+            if (!read || read.getObject() != invoke.getReceiver()) { return {}; }
+            const auto receiver = self(self, invoke.getReceiver(), depth + 1);
+            const auto action = keyOf(read.getKey());
+            if (action == "set" && invoke.getArgs().size() == 2) { return receiver; }
+            // This role may be used only as a child receiver, never as evidence
+            // that an outer payload is a fresh constructor. The completed write
+            // census and body-use proof together exclude a root stored in itself.
+            if (action == "get" && invoke.getArgs().size() == 1 && receiver == outer) {
+                return value;
+            }
+            return {};
+        };
+        const auto census = member.getBody().walk([&](ctjs::CallOp invoke) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!read || keyOf(read.getKey()) != "set") { return mlir::WalkResult::advance(); }
+            const auto receiver = mapOrigin(mapOrigin, invoke.getReceiver());
+            if (read.getObject() != invoke.getReceiver() || invoke.getArgs().size() != 2 ||
+                !receiver) {
+                result.childMapContents = false;
+            } else if (receiver == outer) {
+                const auto payload = mapOrigin(mapOrigin, invoke.getArgs()[1]);
+                if (!payload || !payload.getDefiningOp<ctjs::ConstructOp>()) {
+                    result.childMapContents = false;
+                }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (census.wasInterrupted() || exhausted) { return {}; }
+    }
     // Establish invocation results before joining the complete method census.
     // Two calls to one method may have an acyclic result dependency even when
     // a method-level worklist would wait for its own unpublished result. Each
@@ -598,6 +657,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 }
                 // Provisional reads/calls never escape into the family plan.
                 HostCapturedMap scratch;
+                scratch.childMapContents = result.childMapContents;
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives)) {
