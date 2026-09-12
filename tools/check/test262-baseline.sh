@@ -3,7 +3,7 @@
 # another, into /tmp/t262/. Sequential on purpose - four workers is the cap the
 # whole box shares, and two of these at once is eight.
 #
-#   tools/check/test262-baseline.sh            # ~15 minutes on an idle devbox
+#   tools/check/test262-baseline.sh            # ~10 minutes on an idle devbox
 #   OUT=/tmp/t262 tools/check/test262-baseline.sh
 #
 # It exists because the alternative is ten hand-typed commands whose flags drift
@@ -21,17 +21,19 @@ out="${OUT:-/tmp/t262}"
 binary="${BINARY:-build/tools/ct262}"
 mkdir -p "$out"
 
+# THE WHOLE OF ECMAScript, since 2026-09-12: test/language, test/built-ins and
+# test/annexB, which together are every file the corpus holds for the language
+# and its standard library (intl402 is ECMA-402 and staging is not yet the
+# specification; neither is run). Before this the list was test/language and
+# nine hand-picked built-ins directories, and the number it gave was the score
+# over 33,000 of 48,600 files - so RegExp at 24%, Promise at 34% and
+# TypedArray at 0.1% were invisible. The docs' per-area table is read out of
+# the built-ins JSON by directory (docs/test262.md says how), so the old rows
+# remain comparable.
 areas=(
   test/language
-  test/built-ins/Array
-  test/built-ins/Object
-  test/built-ins/Number
-  test/built-ins/Math
-  test/built-ins/String
-  test/built-ins/Boolean
-  test/built-ins/Function
-  test/built-ins/Error
-  test/built-ins/JSON
+  test/built-ins
+  test/annexB
 )
 
 failed=0
