@@ -105,7 +105,7 @@ constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
                                                            "format"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit) {
-    return in_list(length_units, unit) || in_list(more_length_units, unit);
+    return ascii_iequals_any(unit, length_units) || ascii_iequals_any(unit, more_length_units);
 }
 
 // A function token's name, without the `(` the tokenizer keeps on it.
@@ -302,11 +302,6 @@ enum class position_axis : std::uint8_t {
 
 namespace detail {
 
-[[nodiscard]] bool in_list(std::span<const std::string_view> list, std::string_view name) {
-    return std::any_of(list.begin(), list.end(),
-                       [&](std::string_view one) { return ascii_iequals(one, name); });
-}
-
 // A space-separated keyword set, matched ASCII case-insensitively. Written as
 // one string rather than an array per property because there are ~90 of them
 // and a `std::array` each would be ~90 more symbols for a linear scan either
@@ -346,9 +341,9 @@ namespace detail {
             // performed by css/substitute.cpp against the sheet's @function
             // rules.
             const bool custom = fn.starts_with("--");
-            if (custom || in_list(substitution_functions, fn)) { out.substituted = true; }
-            if (!custom && !in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
-                !in_list(value_functions, fn)) {
+            if (custom || ascii_iequals_any(fn, substitution_functions)) { out.substituted = true; }
+            if (!custom && !ascii_iequals_any(fn, performed_substitutions) &&
+                !ascii_iequals_any(fn, math_functions) && !ascii_iequals_any(fn, value_functions)) {
                 out.unknown_function = true;
             }
             ++depth;
@@ -398,7 +393,7 @@ namespace detail {
                                                             "grid",
                                                             "text-combine-upright",
                                                             "initial-letter"};
-    if (!in_list(integer_only, property)) { return true; }
+    if (!ascii_iequals_any(property, integer_only)) { return true; }
     bool number_first = ascii_iequals(property, "initial-letter");
     int depth = 0;
     int math_until = -1; // the depth a math function opened at, or -1 outside one
@@ -410,7 +405,7 @@ namespace detail {
                             t.type == token_type::close_square || t.type == token_type::close_curly;
         if (opens) {
             if (math_until < 0 && t.type == token_type::function &&
-                in_list(math_functions, function_name(ts, t))) {
+                ascii_iequals_any(function_name(ts, t), math_functions)) {
                 math_until = depth;
             }
             ++depth;
@@ -501,7 +496,7 @@ namespace detail {
     if (found.significant.empty()) { return false; }
     const css_token & first = ts.tokens[found.significant.front()];
     if (first.type != token_type::function) { return false; }
-    if (!in_list(math_functions, function_name(ts, first))) { return false; }
+    if (!ascii_iequals_any(function_name(ts, first), math_functions)) { return false; }
     // AN EMPTY ARGUMENT LIST IS NOT A MATH FUNCTION. `round()` is the corpus's
     // own example of an invalid value (`css/css-values/round-mod-rem-invalid`),
     // and without this test it was accepted as "a math function over the whole
@@ -672,8 +667,8 @@ namespace detail {
     case token_type::dimension: {
         const std::string_view unit = ts.unit_of(t);
         const bool ok = (takes_length && is_length_unit(unit)) ||
-                        (p.kind == k::angle && in_list(angle_units, unit)) ||
-                        (p.kind == k::time && in_list(time_units, unit));
+                        (p.kind == k::angle && ascii_iequals_any(unit, angle_units)) ||
+                        (p.kind == k::time && ascii_iequals_any(unit, time_units));
         if (!ok) { return false; }
         out = number_text(t.number) + ascii_lower_copy(unit);
         return true;
@@ -765,7 +760,7 @@ namespace detail {
         if (t.type != token_type::function) { return std::string_view::npos; }
         const std::string name = ascii_lower_copy(function_name(ts, t));
         // A substitution among the modifiers is read once it has been made.
-        if (in_list(substitution_functions, name)) { return std::string_view::npos - 1; }
+        if (ascii_iequals_any(name, substitution_functions)) { return std::string_view::npos - 1; }
         const std::string key = name + '(';
         if (std::ranges::find(seen, key) != seen.end()) { return std::string_view::npos; }
         seen.push_back(key);
@@ -856,7 +851,7 @@ namespace detail {
         if (t.type == token_type::function) {
             skip = default_counter_style_in(ts, i);
             ++depth;
-            if (math_from == 0 && in_list(math_functions, function_name(ts, t))) {
+            if (math_from == 0 && ascii_iequals_any(function_name(ts, t), math_functions)) {
                 math_from = depth;
             }
         } else if (t.type == token_type::open_paren) {

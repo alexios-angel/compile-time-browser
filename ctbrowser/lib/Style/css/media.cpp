@@ -294,11 +294,9 @@ namespace {
         return q;
     }
     const std::string_view type = s.text_of(s.tokens[i]);
-    for (const std::string_view reserved : {"not", "only", "and", "or", "layer"}) {
-        if (ascii_iequals(type, reserved)) {
-            q.malformed = true;
-            return q;
-        }
+    if (ascii_iequals_any(type, {"not", "only", "and", "or", "layer"})) {
+        q.malformed = true;
+        return q;
     }
     if (ascii_iequals(type, "all")) {
         q.type = media_type::all;

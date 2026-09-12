@@ -10,6 +10,11 @@ bool ascii_iequals(std::string_view a, std::string_view b) noexcept {
     return std::ranges::equal(a, b, {}, ascii_lower, ascii_lower);
 }
 
+bool ascii_iequals_any(std::string_view text, std::span<const std::string_view> names) noexcept {
+    return std::ranges::any_of(names,
+                               [text](std::string_view one) { return ascii_iequals(text, one); });
+}
+
 std::vector<std::string_view> split_top_level(std::string_view text, std::string_view separators) {
     std::vector<std::string_view> out;
     std::size_t at = 0;

@@ -48,13 +48,10 @@ namespace {
 // The words CSS has already spoken for. A family name that IS one of them can
 // only be said as a string, because unquoting it would change what it means.
 [[nodiscard]] bool is_reserved_family_word(std::string_view name) {
-    for (const std::string_view reserved :
-         {"inherit", "initial", "unset", "revert", "revert-layer", "default", "serif", "sans-serif",
-          "monospace", "cursive", "fantasy", "system-ui", "math", "fangsong", "ui-serif",
-          "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji"}) {
-        if (ascii_iequals(name, reserved)) { return true; }
-    }
-    return false;
+    return ascii_iequals_any(name, {"inherit", "initial", "unset", "revert", "revert-layer",
+                                    "default", "serif", "sans-serif", "monospace", "cursive",
+                                    "fantasy", "system-ui", "math", "fangsong", "ui-serif",
+                                    "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji"});
 }
 
 [[nodiscard]] bool family_can_drop_its_quotes(std::string_view name) {

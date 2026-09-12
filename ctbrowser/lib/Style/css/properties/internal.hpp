@@ -81,7 +81,6 @@ struct scan {
 // external linkage when that file was split, and nothing else: the bodies are
 // where they were, in grammar.cpp, and this declares them.
 
-[[nodiscard]] bool in_list(std::span<const std::string_view> list, std::string_view name);
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word);
 [[nodiscard]] scan scan_tokens(const token_stream & ts);
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts);

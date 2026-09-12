@@ -237,23 +237,17 @@ public:
     // what they are rather than by where they sit - unlike the side lists, which are
     // positional.
     [[nodiscard]] static bool is_border_style(std::string_view part) {
-        for (const std::string_view name : {"none", "hidden", "dotted", "dashed", "solid", "double",
-                                            "groove", "ridge", "inset", "outset"}) {
-            if (ascii_iequals(part, name)) { return true; }
-        }
-        return false;
+        return ascii_iequals_any(part, {"none", "hidden", "dotted", "dashed", "solid", "double",
+                                        "groove", "ridge", "inset", "outset"});
     }
     // A `background` component that names a longhand OTHER than the colour or
     // the image: repeat, attachment, position, size, clip/origin boxes.
     [[nodiscard]] static bool is_background_keyword(std::string_view part) {
-        for (const std::string_view name :
-             {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
-              "round",      "scroll",      "fixed",       "local",    "center",    "top",
-              "bottom",     "left",        "right",       "cover",    "contain",   "auto",
-              "border-box", "padding-box", "content-box", "text"}) {
-            if (ascii_iequals(part, name)) { return true; }
-        }
-        return false;
+        return ascii_iequals_any(
+            part, {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
+                   "round",      "scroll",      "fixed",       "local",    "center",    "top",
+                   "bottom",     "left",        "right",       "cover",    "contain",   "auto",
+                   "border-box", "padding-box", "content-box", "text"});
     }
     [[nodiscard]] static bool is_border_width(std::string_view part) {
         if (ascii_iequals(part, "thin") || ascii_iequals(part, "medium") ||
@@ -463,12 +457,9 @@ public:
             const std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
             if (parts.empty() || parts.size() > 2) { return {}; }
             const auto valid = [](std::string_view part) {
-                for (const std::string_view keyword :
-                     {"visible", "hidden", "clip", "scroll", "auto", "overlay", "inherit",
-                      "initial", "unset", "revert"}) {
-                    if (ascii_iequals(part, keyword)) { return true; }
-                }
-                return false;
+                return ascii_iequals_any(part,
+                                         {"visible", "hidden", "clip", "scroll", "auto", "overlay",
+                                          "inherit", "initial", "unset", "revert"});
             };
             if (!valid(parts[0]) || (parts.size() == 2 && !valid(parts[1]))) { return {}; }
             // CSS-wide keywords apply to the whole shorthand and cannot be
