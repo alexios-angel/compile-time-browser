@@ -98,7 +98,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // identity across reads while its contents are read out of the document
     // every time. See refresh_attribute_map for why it is an array-like object
     // and not a proxy.
-    auto * map = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * map = cx.allocate<script::object_object>();
     // WHOSE MAP IT IS, for the methods on NamedNodeMap.prototype - see
     // install_named_node_map. A symbol key, which getOwnPropertyNames does not
     // report: attributes.html reads the map's own names and expects the
@@ -140,7 +140,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // BOTH traps canonicalise the name, because `backgroundColor` and
     // `background-color` are two spellings of ONE property. Storing them as
     // written put both in the attribute and made a read miss a write.
-    auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * held = cx.allocate<script::object_object>();
     // AND IT IS RE-SEEDED, not seeded once. The store was filled from the
     // `style` attribute at wrapper construction and never again, so
     // `el.setAttribute("style", "color: red")` - which writes the attribute
@@ -180,7 +180,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     };
     reseed(cx, *held);
     const value target = value::object(held);
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = cx.allocate<script::object_object>();
     const auto trap = [&](std::string name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
@@ -800,7 +800,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // setAttribute or by the style engine is seen by all of them.
     const auto make_token_list = [this, &cx, id](std::string_view attribute,
                                                  std::string_view supported) {
-        auto * list = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * list = cx.allocate<script::object_object>();
         if (const value proto = interface_prototype("DOMTokenList"); proto.is_object()) {
             list->prototype = proto;
         }
@@ -993,7 +993,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // `classList[i]` - the indexed getter, which only a proxy can keep live.
         // The same shape as make_live_collection's, and only `get`: an index is
         // read-only and everything else falls through to the list itself.
-        auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * handler = cx.allocate<script::object_object>();
         handler->set("get", value::object(cx.allocate<script::native_object>(
                                 "get", [tokens_now](context & c, std::span<value> args) {
                                     if (args.size() < 2) { return value::undefined(); }

@@ -589,7 +589,7 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
 
 value dom_bindings::make_event_object(context & cx, std::string_view type, bool bubbles,
                                       bool cancelable) {
-    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * event = cx.allocate<script::object_object>();
     const value self = value::object(event);
     // THE PROTOTYPE FIRST, so a collection triggered by the writes below finds
     // an object that is already an Event - and because everything a page calls

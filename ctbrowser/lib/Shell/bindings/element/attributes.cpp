@@ -134,7 +134,7 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
             if (known == key) { return value::object(obj); }
         }
     }
-    auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * attr = cx.allocate<script::object_object>();
     attr->set("name", cx.string(qualified));
     attr->set("nodeName", cx.string(qualified));
     attr->set("localName", cx.string(local));

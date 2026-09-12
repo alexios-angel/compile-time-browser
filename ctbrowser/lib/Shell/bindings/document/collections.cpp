@@ -307,7 +307,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
     // Array, which Node-childNodes.html asserts of `list.keys()`.
     const auto live_iterator = [&native](const char * name, int kind) {
         return native(name, 0, [kind](context & c, std::span<value>) {
-            auto * it = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * it = c.allocate<script::object_object>();
             it->define("@@sym:ctbrowser:iterated", c.current_this(), script::attr_configurable);
             it->define("@@sym:ctbrowser:index", value::number(0), script::attr_configurable);
             it->define("next",
@@ -315,8 +315,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                            "next",
                            [kind](context & inner, std::span<value>) {
                                const value self = inner.current_this();
-                               auto * result = static_cast<script::object_object *>(
-                                   inner.make_object().as_heap());
+                               auto * result = inner.allocate<script::object_object>();
                                result->set("value", value::undefined());
                                result->set("done", value::boolean(true));
                                if (!self.is_object()) { return value::object(result); }
@@ -392,8 +391,8 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
 value dom_bindings::make_live_collection(context & cx,
                                          std::function<std::vector<node_id>()> members,
                                          std::string_view interface_name) {
-    auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * target = cx.allocate<script::object_object>();
+    auto * handler = cx.allocate<script::object_object>();
     // The table is built lazily on the first `wrap()`, and a page can ask for a
     // collection before it has touched a single element - `document.images`
     // reaches here without wrapping anything. Without this the prototype was

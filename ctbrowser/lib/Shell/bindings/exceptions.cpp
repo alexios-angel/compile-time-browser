@@ -126,7 +126,7 @@ constexpr std::array<legacy_code, 25> constants{{
 } // namespace
 
 value dom_bindings::make_dom_exception(context & cx, std::string_view name, std::string message) {
-    auto * made = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * made = cx.allocate<script::object_object>();
     // The prototype FIRST, so a collection triggered by the writes below finds
     // an object that is already a DOMException.
     made->prototype = dom_exception_prototype_;
@@ -144,7 +144,7 @@ void dom_bindings::throw_dom_exception(context & cx, std::string_view name, std:
 }
 
 void dom_bindings::install_dom_exception(context & cx) {
-    auto * proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * proto = cx.allocate<script::object_object>();
     dom_exception_prototype_ = value::object(proto);
     // DOMException.prototype INHERITS FROM Error.prototype (WebIDL §3.14), so
     // `e instanceof Error` is true and `e.toString()` is Error.prototype's -

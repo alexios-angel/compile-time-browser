@@ -116,7 +116,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     //
     // On the prototype rather than on each event, which is where the
     // specification puts it and is also seven fewer allocations per event.
-    auto * event_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * event_proto = cx.allocate<script::object_object>();
     event_prototype_ = value::object(event_proto);
     phase_constants(event_proto);
 
@@ -352,7 +352,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     };
     const auto interface_of = [&cx, &constructor_for](const char * name, value parent_prototype,
                                                       member_writer write_members) {
-        auto * proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * proto = cx.allocate<script::object_object>();
         proto->prototype = parent_prototype;
         const value prototype_value = value::object(proto);
         (void)constructor_for(name, prototype_value, std::move(write_members));
@@ -535,7 +535,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // that indexes one writes `touches[0]`. Both spellings, then - indexed
     // properties beside the method - which is the shape NamedNodeMap already
     // has here.
-    auto * touch_list_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * touch_list_proto = cx.allocate<script::object_object>();
     const value touch_list_prototype = value::object(touch_list_proto);
     method_on(touch_list_proto, "item", [](context & c, std::span<value> a) {
         const value self = c.current_this();
@@ -570,7 +570,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // rather than a list of numbers. WebIDL raises a TypeError for a missing
     // required member, so a Touch with no target is refused rather than made
     // with a null one.
-    auto * touch_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * touch_proto = cx.allocate<script::object_object>();
     const value touch_prototype = value::object(touch_proto);
     {
         auto * touch_ctor = cx.allocate<script::native_object>(
@@ -846,7 +846,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // the interface chain is `HTMLDivElement -> ... -> Node -> EventTarget` -
     // so `step_of` asks which target the receiver names rather than assuming
     // the object bucket, which no dispatch through the tree ever visits.
-    auto * target_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * target_proto = cx.allocate<script::object_object>();
     const auto target_method = [&](const char * name, script::native_fn fn) {
         method_on(target_proto, name, std::move(fn));
     };

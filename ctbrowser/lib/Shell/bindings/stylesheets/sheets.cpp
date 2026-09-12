@@ -175,7 +175,7 @@ value dom_bindings::style_sheet_list(context & cx) {
         obj->define("length", value::number(0), script::attr_none);
     }
     internals->set("list", target);
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = cx.allocate<script::object_object>();
     const auto trap = [&](const char * name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
@@ -452,7 +452,7 @@ void dom_bindings::install_style_sheets(context & cx) {
                 if (const value * held = internals->find("adopted_view")) { return *held; }
                 const value target = c.make_array();
                 internals->set("adopted", target);
-                auto * handler = static_cast<script::object_object *>(c.make_object().as_heap());
+                auto * handler = c.allocate<script::object_object>();
                 const auto trap = [&](const char * name, script::native_fn fn) {
                     handler->set(name, value::object(
                                            c.allocate<script::native_object>(name, std::move(fn))));

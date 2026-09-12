@@ -1328,7 +1328,7 @@ private:
     [[nodiscard]] value make_response(context & cx, const std::string & url, int status,
                                       const std::string & content_type,
                                       std::vector<std::byte> body) {
-        auto * response = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * response = cx.allocate<script::object_object>();
         response->set("url", cx.string(url));
         response->set("status", value::number(status));
         response->set("ok", value::boolean(status >= 200 && status < 300));
@@ -1341,7 +1341,7 @@ private:
         // knows is the content type - so it answers that one and reports every
         // other as absent rather than pretending.
         {
-            auto * headers = static_cast<script::object_object *>(cx.make_object().as_heap());
+            auto * headers = cx.allocate<script::object_object>();
             headers->set("__contentType", cx.string(content_type));
             const auto header_method = [&](std::string name, script::native_fn fn) {
                 headers->set(
@@ -1405,7 +1405,7 @@ private:
             // The shape install_typed_arrays recognises: an object carrying
             // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
             // storage rather than a copy of it.
-            auto * buffer = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * buffer = c.allocate<script::object_object>();
             buffer->set("byteLength", value::number(static_cast<double>(body.size())));
             buffer->set("length", value::number(static_cast<double>(body.size())));
             buffer->set("__bytes", byte_array(c, body));
@@ -1415,7 +1415,7 @@ private:
             // A minimal Blob: its size, its type and its bytes. Enough for a
             // page that hands one to URL.createObjectURL, which is the only
             // thing anything here does with one.
-            auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * blob = c.allocate<script::object_object>();
             // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
             // probe only ever read as passing because the throw in its
             // `.then` was lost rather than delivered as a rejection.

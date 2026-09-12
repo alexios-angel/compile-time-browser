@@ -476,7 +476,7 @@ void dom_bindings::install_navigation(context & cx) {
 }
 
 value dom_bindings::make_location(context & cx) {
-    auto * loc = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * loc = cx.allocate<script::object_object>();
     const auto method = [&](std::string name, script::native_fn fn) {
         loc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };

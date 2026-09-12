@@ -22,7 +22,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // global cannot collect it.
     const auto interface = [&](const char * name, const char * inherits,
                                script::native_fn construct) -> script::object_object * {
-        auto * proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * proto = cx.allocate<script::object_object>();
         if (inherits != nullptr) {
             if (const value * parent = internals->find(std::string{inherits} + ".prototype")) {
                 proto->prototype = *parent;

@@ -29,7 +29,7 @@
 namespace ctbrowser::shell {
 
 void dom_bindings::install_css_interface(context & cx) {
-    auto * css = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * css = cx.allocate<script::object_object>();
     // `length` is the number of REQUIRED arguments - one for both, `supports`
     // being an overload pair whose shorter form takes one. `escape.html`
     // asserts it beside the TypeError a call with no argument throws.
@@ -140,7 +140,7 @@ void dom_bindings::install_css_interface(context & cx) {
     // re-evaluation when a page needs the event.
     cx.define_native("matchMedia", [this](context & c, std::span<value> args) {
         const std::string text = args.empty() ? std::string{} : c.to_string(args[0]);
-        auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * list = c.allocate<script::object_object>();
         list->set("media", c.string(detail::serialize_media_query_list(
                                detail::parse_media_query_list(text))));
         list->set("matches",

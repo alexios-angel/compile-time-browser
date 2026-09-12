@@ -317,8 +317,8 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // windowFor(root).DOMException, ...)`, and with that constructor undefined
     // testharness took it for the function to call - 272 subtests reporting
     // "`call` is undefined" about a method that had thrown correctly.
-    auto * frame_window = static_cast<script::object_object *>(cx.make_object().as_heap());
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * frame_window = cx.allocate<script::object_object>();
+    auto * handler = cx.allocate<script::object_object>();
     const auto trap = [&](const char * name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };

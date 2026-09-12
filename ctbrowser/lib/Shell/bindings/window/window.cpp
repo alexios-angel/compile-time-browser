@@ -7,7 +7,7 @@
 namespace ctbrowser::shell {
 
 void dom_bindings::install_window(context & cx) {
-    auto * window = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * window = cx.allocate<script::object_object>();
     window->set("innerWidth", value::number(viewport_width_));
     window->set("innerHeight", value::number(viewport_height_));
     window->set("devicePixelRatio", value::number(1));
@@ -69,8 +69,8 @@ void dom_bindings::install_window(context & cx) {
     // store that starts empty every time, which is what the API promises minus
     // the durability.
     const auto storage = [&](const char * name) {
-        auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
-        auto * items = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * store = cx.allocate<script::object_object>();
+        auto * items = cx.allocate<script::object_object>();
         const value backing = value::object(items);
         store->set("__items", backing);
         const auto method = [&](std::string method_name, script::native_fn fn) {
@@ -125,8 +125,8 @@ void dom_bindings::install_window(context & cx) {
     // does not overlap with anything. A page that aborts one gets a request
     // that already finished, which is a difference worth knowing about.
     cx.define_native("AbortController", [this](context & c, std::span<value>) {
-        auto * controller = static_cast<script::object_object *>(c.make_object().as_heap());
-        auto * signal = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * controller = c.allocate<script::object_object>();
+        auto * signal = c.allocate<script::object_object>();
         signal->set("aborted", value::boolean(false));
         signal->set("reason", value::undefined());
         const value signal_value = value::object(signal);
@@ -182,12 +182,12 @@ void dom_bindings::install_window(context & cx) {
     // exactly that - `if (!(saveData instanceof Blob)) saveData = new Blob([data])`
     // - and got the wrong branch, wrapping a Blob in another Blob and copying
     // every byte of an exported image for nothing.
-    auto * blob_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * blob_proto = cx.allocate<script::object_object>();
     blob_prototype_ = value::object(blob_proto);
     const value blob_prototype = blob_prototype_;
     auto * blob_ctor = cx.allocate<script::native_object>(
         "Blob", [blob_prototype](context & c, std::span<value> a) {
-            auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * blob = c.allocate<script::object_object>();
             blob->prototype = blob_prototype;
             // `new Blob([parts], { type })`. A part is a string or something with
             // bytes - a typed array, another Blob - which is what a page actually
@@ -246,7 +246,7 @@ void dom_bindings::install_window(context & cx) {
     // CanvasRenderingContext2D()` throws in a browser too, and saying so is
     // better than handing back an object that is not a context.
     const auto interface_object = [&cx](const char * name, value & prototype_out) {
-        auto * prototype = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * prototype = cx.allocate<script::object_object>();
         prototype_out = value::object(prototype);
         auto * ctor =
             cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
@@ -308,7 +308,7 @@ void dom_bindings::install_window(context & cx) {
         // walks one with `for (const f of files)` or `files[0]`, and both of those
         // an array already answers.
         cx.define_native("FileList", [](context & c, std::span<value>) {
-            auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * list = c.allocate<script::object_object>();
             list->set("length", value::number(0));
             list->set("item", value::object(c.allocate<script::native_object>(
                                   "item", [](context & inner, std::span<value> a) {
@@ -323,7 +323,7 @@ void dom_bindings::install_window(context & cx) {
         // `readAsText`, and a reader that delivered synchronously would fire before
         // the handler existed.
         cx.define_native("FileReader", [this](context & c, std::span<value>) {
-            auto * reader = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * reader = c.allocate<script::object_object>();
             reader->set("result", value::null());
             reader->set("error", value::null());
             reader->set("readyState", value::number(0)); // EMPTY
@@ -377,7 +377,7 @@ void dom_bindings::install_window(context & cx) {
         // to nearly every page, and the setters, `searchParams` and the
         // percent-encoding of what location_parts leaves as written are the
         // next things to add when a page reaches for them.
-        auto * url_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * url_proto = cx.allocate<script::object_object>();
         const value url_prototype = value::object(url_proto);
         auto * url = cx.allocate<script::native_object>("URL", [url_prototype](context & c,
                                                                                std::span<value> a) {
@@ -504,7 +504,7 @@ void dom_bindings::install_window(context & cx) {
     // are the callers that found DOMParser missing in the first place. Any
     // other type is a TypeError (the WebIDL enumeration).
     cx.define_native("DOMParser", [this](context & c, std::span<value>) {
-        auto * parser = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * parser = c.allocate<script::object_object>();
         parser->set("parseFromString",
                     value::object(c.allocate<script::native_object>(
                         "parseFromString", [this](context & inner, std::span<value> a) {
@@ -535,7 +535,7 @@ void dom_bindings::install_window(context & cx) {
     // than a C++ type: nothing but the canvas replay reads them, the GC already
     // traces arrays, and `new Path2D(other)` is then a copy of one vector.
     cx.define_native("Path2D", [](context & c, std::span<value> args) {
-        auto * path = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * path = c.allocate<script::object_object>();
         value commands = c.make_array();
         auto * steps = static_cast<script::array_object *>(commands.as_heap());
         // `new Path2D(other)` starts as a copy. p5 makes separate fill and
@@ -667,7 +667,7 @@ void dom_bindings::install_window(context & cx) {
     // rather than mutating in place - which is p5.js's own convention - needs
     // to be able to make one.
     cx.define_native("ImageData", [](context & c, std::span<value> args) {
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         // The array form comes FIRST, and the size arguments shift along - the
         // two overloads are told apart by whether argument 0 is a buffer.
         const bool given = !args.empty() && args[0].is_array();
@@ -712,7 +712,7 @@ void dom_bindings::install_window(context & cx) {
     // sniffs for Chrome will not find it, which is correct: this is not Chrome,
     // and a page taking a Chrome-only path here would be worse served by a lie.
     {
-        auto * navigator = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * navigator = cx.allocate<script::object_object>();
         navigator->set("userAgent", cx.string("Mozilla/5.0 (compatible; ctbrowser)"));
         navigator->set("appVersion", cx.string("5.0 (compatible; ctbrowser)"));
         navigator->set("platform", cx.string("ctbrowser"));
@@ -733,7 +733,7 @@ void dom_bindings::install_window(context & cx) {
 
     // `screen`. One window, and it is the viewport.
     {
-        auto * screen = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * screen = cx.allocate<script::object_object>();
         screen->set("width", value::number(viewport_width_));
         screen->set("height", value::number(viewport_height_));
         screen->set("availWidth", value::number(viewport_width_));
@@ -766,7 +766,7 @@ void dom_bindings::install_window(context & cx) {
     // The other direction matters just as much: `_globalInit` reads
     // `window.setup` to decide whether the sketch is in global mode, and a
     // sketch writes `function setup() {}` at its top level, which is a global.
-    auto * window_handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * window_handler = cx.allocate<script::object_object>();
     const value window_target = window_;
     const auto window_trap = [&](std::string name, script::native_fn fn) {
         window_handler->set(name,

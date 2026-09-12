@@ -129,7 +129,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
 }
 
 value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo) {
-    auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * held = cx.allocate<script::object_object>();
 
     // THE ENTRIES, NOW: the element's, or its pseudo-element's - resolved on
     // demand through the engine against the element's own resolved style, so a

@@ -27,7 +27,7 @@ value dom_bindings::wrap(context & cx, node_id id) {
     if (const auto it = adopted_away_.find(pack(id)); it != adopted_away_.end()) {
         return value::object(it->second);
     }
-    auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * obj = cx.allocate<script::object_object>();
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
     // WHICH INTERFACE THIS NODE IS. `HTMLCanvasElement.prototype` for a canvas,

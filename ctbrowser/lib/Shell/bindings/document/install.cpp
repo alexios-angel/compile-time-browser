@@ -8,7 +8,7 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::install_document(context & cx) {
-    auto * doc = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * doc = cx.allocate<script::object_object>();
     const auto method = [&](std::string name, script::native_fn fn) {
         doc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
@@ -626,7 +626,7 @@ void dom_bindings::install_document(context & cx) {
     // `hasFeature()` makes two hundred lines above: the DOM defines it as a
     // question every browser now answers yes to.
     {
-        auto * fonts = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * fonts = cx.allocate<script::object_object>();
         const auto font_method = [&](std::string name, script::native_fn fn) {
             fonts->set(name,
                        value::object(cx.allocate<script::native_object>(name, std::move(fn))));
@@ -794,7 +794,7 @@ void dom_bindings::install_document(context & cx) {
     // `.apply(...)` on it reported "`apply` is not a function" - forty lines
     // from the cause and about a method nobody was missing.
     {
-        auto * implementation = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * implementation = cx.allocate<script::object_object>();
         const auto method = [&](std::string name, script::native_fn fn) {
             implementation->set(
                 name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
