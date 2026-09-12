@@ -27,21 +27,27 @@ from .driver_object_maps import (
 def check_object_argument_observations(args, node, reference):
     cases = object_argument_cases()
 
-    def observe(name, source, value):
+    def observe(name, source, value, undefined_globals=()):
         js = args.work / f'{name}-object-observed.js'
         js.write_text(source)
-        expected = f'trace={value}\n'
-        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
+        names = sorted(['trace', *undefined_globals])
+        expected = ''.join(f'{key}={value if key == "trace" else "undefined"}\n'
+                           for key in names)
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), json.dumps(names)]).stdout != expected:
             raise RuntimeError(f'{name}: typed Node object-key observation changed')
         if reference:
             result = host.run([str(reference), str(js)])
             if (result.stdout != expected
-                    or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
-                raise RuntimeError(f'{name}: interpreter lost object-key Number observation')
+                    or f'(1 number, 0 boolean, 0 string, 0 null, {len(undefined_globals)} undefined)'
+                    not in result.stderr):
+                raise RuntimeError(f'{name}: interpreter object-key observations changed\n'
+                                   f'{result.stdout}\n{result.stderr}')
         return expected
 
     for name, row in cases.items():
-        observe(name, row['source'], row['expected_trace'])
+        undefined_globals = row.get('undefined_globals', ())
+        assert not undefined_globals or not row['admitted']
+        observe(name, row['source'], row['expected_trace'], undefined_globals)
     named, value = object_argument_observer_source(
         cases['object_argument_global']['source'], global_key=True)
     expected_named = observe('object_argument_global_future', named, value)
@@ -55,6 +61,23 @@ def check_object_argument_observations(args, node, reference):
                                 capture_output=True, text=True, timeout=30)
         if not result.returncode and result.stdout == expected_named:
             raise RuntimeError(f'global key observer cannot distinguish {replacement}')
+    alias_mutations = 0
+    for name, observer, mutations in (
+            ('object_argument_global_alias', object_argument_observer_source,
+             (('var alias = key;', 'var alias = {};'),)),
+            ('object_argument_siblings_global', retained_key_observer_source,
+             (('alias = key,', 'alias = {},'), ('other = {};', 'other = key;')))):
+        aliased, value = observer(cases[name]['source'], global_alias=True)
+        expected_alias = observe(name + '_future', aliased, value)
+        for index, (old, replacement) in enumerate(mutations):
+            assert aliased.count(old) == 1, old
+            js = args.work / f'{name}-blinded-{index}.js'
+            js.write_text(aliased.replace(old, replacement))
+            result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                    capture_output=True, text=True, timeout=30)
+            if not result.returncode and result.stdout == expected_alias:
+                raise RuntimeError(f'{name}: alias observer cannot distinguish {replacement}')
+            alias_mutations += 1
     source, value = object_argument_observer_source(cases['object_argument_exact']['source'])
     expected = observe('object_argument_future', source, value)
     mutations = (
@@ -101,8 +124,9 @@ def check_object_argument_observations(args, node, reference):
                             capture_output=True, text=True, timeout=30)
     if not result.returncode and result.stdout == 'trace=1\n':
         raise RuntimeError('historical object setter observation cannot distinguish a skipped write')
-    return dict(sources=len(cases), observations=len(cases) + 3,
-                mutations=len(mutations) + len(retained_mutations) + len(named_mutations) + 1)
+    return dict(sources=len(cases), observations=len(cases) + 5,
+                mutations=len(mutations) + len(retained_mutations) + len(named_mutations)
+                + alias_mutations + 1)
 
 
 def check_object_argument_census(args, ir, name):
@@ -121,6 +145,22 @@ def check_object_argument_census(args, ir, name):
             raise RuntimeError(f'{name}: preparation changed the live {operation} census')
     if raw.count('cf.cond_br') != prepared.count('scf.if'):
         raise RuntimeError(f'{name}: preparation lost an object-key result branch')
+    if row.get('global_alias'):
+        arguments = re.findall(r'host\.slot\.\w+\((key|alias|other)[,)]', row['source'])
+        for text in (raw, prepared):
+            entry = text.split('\n  }', 1)[0]
+            created = re.findall(r'(%[-\w.$]+) = ctjs\.create_object', entry)[1:]
+            loads = re.findall(r'(%[-\w.$]+) = ctjs\.load_global "(key|alias|other)"', entry)
+            stores = re.findall(r'ctjs\.store_global "(key|alias|other)", (%[-\w.$]+)', entry)
+            actuals = re.findall(r'ctjs\.call %[-\w.$]+\(%[-\w.$]+, (%[-\w.$]+)(?:, %[-\w.$]+)?\)', entry)
+            expected_stores = [('key', created[0]), ('alias', loads[0][0])]
+            if len(created) == 2:
+                expected_stores.append(('other', created[1]))
+            # The raw factory invocation has a closure argument before the key calls.
+            actuals = [value for value in actuals if value in dict(loads)]
+            if (stores != expected_stores or [binding for _, binding in loads] != ['key', *arguments]
+                    or actuals != [value for value, _ in loads[1:]]):
+                raise RuntimeError(f'{name}: changed the exact global alias initializer or actual edges')
 
 
 def check_object_argument_preparation(text, original, name):
@@ -161,15 +201,24 @@ def check_object_argument_controls(args, saved):
     check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
     ir, config, _ = saved['object_argument_global']
     check_budgets(args, ir, config, 'object_argument_global', functions=4)
-    observation = json.loads(config.read_text())
-    observation['observations'] = ['trace', 'key']
-    invalid = args.work / 'object_argument_global-object-observation.contract.json'
-    invalid.write_text(json.dumps(observation, indent=2) + '\n')
-    for mode, options in (('default', ''), ('disabled', 'optimize=false')):
-        name = 'object_argument_global-object-observation-' + mode
-        failed = methods.refused(args, ir, name, invalid, options=options, admitted=0,
-            reason='object key global cannot be a scalar observation')
-        check_call_preservation(ir.read_text(), failed.read_text(), name)
+    ir, config, _ = saved['object_argument_global_alias']
+    check_budgets(args, ir, config, 'object_argument_global_alias', functions=4)
+    ir, config, _ = saved['object_argument_siblings_global']
+    check_budgets(args, ir, config, 'object_argument_siblings_global', functions=7)
+    for case, bindings in (('object_argument_global', ('key',)),
+                           ('object_argument_global_alias', ('key', 'alias')),
+                           ('object_argument_siblings_global', ('key', 'alias', 'other'))):
+        ir, config, _ = saved[case]
+        for binding in bindings:
+            observation = json.loads(config.read_text())
+            observation['observations'] = ['trace', binding]
+            invalid = args.work / f'{case}-{binding}-object-observation.contract.json'
+            invalid.write_text(json.dumps(observation, indent=2) + '\n')
+            for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+                name = f'{case}-{binding}-object-observation-{mode}'
+                failed = methods.refused(args, ir, name, invalid, options=options, admitted=0,
+                    reason='object key global cannot be a scalar observation')
+                check_call_preservation(ir.read_text(), failed.read_text(), name)
     ir, config, _ = saved['object_argument_siblings_named']
     check_budgets(args, ir, config, 'object_argument_siblings_named', functions=7)
     ir, config, _ = saved['parameter_object']

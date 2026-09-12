@@ -197,7 +197,8 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             auto read = edge.read;
             flow.join(object.getResult(), read.getResult());
             reads.insert(read);
-            keyInitializations[edge.initialization] = object.getResult();
+            auto initialization = edge.initialization;
+            keyInitializations[initialization] = initialization.getValue();
         }
     }
     module.walk([&](ctjs::CreateClosureOp made) {

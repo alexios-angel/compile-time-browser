@@ -703,7 +703,27 @@ var trace = host.slot.get({});
     add('global_second_store', named.replace('var trace =', 'key = {}; var trace ='))
     add('global_late_store', named + 'key = {};\n')
     add('global_alias', named.replace('var trace = host.slot.get(key);',
-        'var alias = key; var trace = host.slot.get(alias);'))
+        'var alias = key; var trace = host.slot.get(alias);'), admitted=True)
+    aliased = rows['object_argument_global_alias']['source']
+    add('global_alias_early_root', aliased.replace('var key = {}; var alias = key;',
+        'var alias = key; var key = {};'))
+    add('global_alias_early_read', aliased.replace(
+        'var alias = key; var trace = host.slot.get(alias);',
+        'var trace = host.slot.get(alias); var alias = key;'))
+    add('global_alias_late_root', aliased + 'key = {};\n')
+    add('global_alias_late_alias', aliased + 'alias = {};\n')
+    add('global_alias_chain', aliased.replace('var trace = host.slot.get(alias);',
+        'var copy = alias; var trace = host.slot.get(copy);'))
+    add('global_alias_cycle', aliased.replace('var key = {};', 'var key = alias;'))
+    rows['object_argument_global_alias_early_root']['undefined_globals'] = ('alias',)
+    rows['object_argument_global_alias_cycle']['undefined_globals'] = ('alias', 'key')
+    add('global_alias_nonentry',
+        'function initialize() { alias = key; }\n' + aliased.replace(
+            'var alias = key;', 'var alias; initialize();'), 5, functions=5)
+    add('global_alias_foreign_consumer',
+        'function consume(value) { return 0; }\n' + aliased.replace(
+            'var trace =', 'consume(alias); var trace ='), 5, functions=5)
+    add('global_alias_unused', aliased.replace('host.slot.get(alias)', 'host.slot.get(key)'))
     add('global_field_write', named.replace('var trace =', 'key.value = 1; var trace ='))
     add('global_unknown_consumer',
         'function consume(value) { return 0; }\n' + named.replace(
@@ -736,11 +756,12 @@ var trace = host.slot.get({});
     host.slot.set(key, 11);
     var trace = host.slot.get(alias);
 }''')
-    # d99ddf7b keeps these block consts local; ordinary var/global key arguments
-    # retain their separate ownership boundary.
+    # Keep both the original block-const source and its true-global companion.
     add('siblings_named', siblings, 15, 11, True, functions=7)
     add('siblings_global', siblings.replace('    const key =', '    var key ='),
-        15, 11, functions=7)
+        15, 11, True, functions=7)
+    for name in ('global_alias', 'siblings_global'):
+        rows['object_argument_' + name]['global_alias'] = True
     siblings = siblings.replace('    const key = {}, alias = key, other = {};\n', '')
     for actual in ('key', 'alias', 'other'):
         siblings = siblings.replace('(' + actual + ',', '({},').replace(
@@ -763,6 +784,8 @@ var trace = host.slot.get({});
         '600b8fb69ef191ed02c4f4fb9db9a9d204a011aeb516a072025d81c2edd15882')
     assert rows['object_argument_global']['sha256'] == (
         '7573e89b9f576f9d433b7003b033e0aa8525b2fff97c6991ea5325d669f4ab81')
+    assert rows['object_argument_global_alias']['sha256'] == (
+        'abbf4b9c87939c11c4fa1ea57a27dbe9c1d8140bef4b8a39d931956a3be3745c')
     assert rows['object_argument_exact']['sha256'] == (
         '20d4806e4f39a2defadcfa9e66380d8d4b680d62ae08a371ce6d870382cbc7a9')
     assert rows['object_argument_evaluated_number']['sha256'] == (

@@ -5,7 +5,8 @@
 
 namespace ctcompile::ctnative::host_detail {
 
-std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read) {
+std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read,
+                                                               bool allowAlias) {
     if (!step() || read->getParentOp() != entry || !llvm::hasSingleElement(entry.getBody())) {
         return std::nullopt;
     }
@@ -14,15 +15,82 @@ std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalO
     const auto & stores = globals[read.getName()];
     if (stores.size() != 1) { return std::nullopt; }
     auto store = stores.front();
-    auto made = store.getValue().getDefiningOp<ctjs::CreateObjectOp>();
-    if (!made || store->getParentOp() != entry || made->getParentOp() != entry ||
-        !dominance.properlyDominates(made.getOperation(), store.getOperation()) ||
+    if (store->getParentOp() != entry ||
         !dominance.properlyDominates(store.getOperation(), read.getOperation())) {
+        return std::nullopt;
+    }
+    auto made = store.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+    if (!made) {
+        auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!allowAlias || !source ||
+            !dominance.properlyDominates(source.getOperation(), store.getOperation())) {
+            return std::nullopt;
+        }
+        const auto predecessor = objectGlobalRead(source, false);
+        if (!predecessor) { return std::nullopt; }
+        made = predecessor->object;
+    }
+    if (made->getParentOp() != entry ||
+        !dominance.properlyDominates(made.getOperation(), store.getOperation())) {
         return std::nullopt;
     }
     // This is structural evidence only. The family-use and environment
     // proofs must complete before any public HostObjectGlobalRead exists.
     return HostObjectGlobalRead{store, read, made};
+}
+
+std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
+    ctjs::CreateObjectOp made) {
+    if (!step()) { return std::nullopt; }
+    ctjs::StoreGlobalOp initialization;
+    for (mlir::OpOperand & use : made.getResult().getUses()) {
+        if (!step()) { return std::nullopt; }
+        auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
+        if (!store) { continue; }
+        if (initialization || use.getOperandNumber() != 0) { return std::nullopt; }
+        initialization = store;
+    }
+    if (!initialization) { return std::nullopt; }
+    llvm::StringMap<ctjs::StoreGlobalOp> bindings;
+    bindings.try_emplace(initialization.getName(), initialization);
+    // Discover one-hop alias bindings before validating their reads. A bad
+    // early or unused read cannot disappear from the census just because its
+    // individual structural proof fails. Alias chains are never followed.
+    const auto stores = module.walk([&](ctjs::StoreGlobalOp store) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!source || source.getName() != initialization.getName()) {
+            return mlir::WalkResult::advance();
+        }
+        const auto predecessor = objectGlobalRead(source, false);
+        const auto & writes = globals[store.getName()];
+        if (!predecessor || predecessor->object != made || store->getParentOp() != entry ||
+            writes.size() != 1 || writes.front() != store ||
+            !dominance.properlyDominates(source.getOperation(), store.getOperation()) ||
+            !bindings.try_emplace(store.getName(), store).second) {
+            return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (stores.wasInterrupted()) { return std::nullopt; }
+    std::vector<HostObjectGlobalRead> reads;
+    llvm::DenseSet<mlir::Operation *> readInitializations;
+    const auto census = module.walk([&](ctjs::LoadGlobalOp read) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        const auto found = bindings.find(read.getName());
+        if (found == bindings.end()) { return mlir::WalkResult::advance(); }
+        const auto edge = objectGlobalRead(read);
+        if (!edge || edge->object != made || edge->initialization != found->second) {
+            return mlir::WalkResult::interrupt();
+        }
+        reads.push_back(*edge);
+        readInitializations.insert(edge->initialization);
+        return mlir::WalkResult::advance();
+    });
+    if (census.wasInterrupted() || readInitializations.size() != bindings.size()) {
+        return std::nullopt;
+    }
+    return reads;
 }
 
 bool analyzer::capturedMapParameters(
@@ -56,24 +124,16 @@ bool analyzer::capturedMapParameters(
                     return false;
                 }
                 llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+                llvm::DenseSet<mlir::Operation *> initializations;
                 if (global) {
-                    // A named key has one initialization and no other global
-                    // aliases. Inspect all same-name loads, even unused or
-                    // inactive ones, before permitting any actual call.
-                    const auto census = module.walk([&](ctjs::LoadGlobalOp read) {
-                        if (!step()) { return mlir::WalkResult::interrupt(); }
-                        if (read.getName() != global->read.getName()) {
-                            return mlir::WalkResult::advance();
-                        }
-                        const auto edge = objectGlobalRead(read);
-                        if (!edge || edge->initialization != global->initialization ||
-                            edge->object != made) {
-                            return mlir::WalkResult::interrupt();
-                        }
+                    const auto reads = objectGlobalReads(made);
+                    if (!reads) { return false; }
+                    for (const HostObjectGlobalRead & edge : *reads) {
+                        if (!step()) { return false; }
+                        auto read = edge.read;
                         aliases.push_back(read.getResult());
-                        return mlir::WalkResult::advance();
-                    });
-                    if (census.wasInterrupted()) { return false; }
+                        initializations.insert(edge.initialization);
+                    }
                 }
                 // Every use must be an explicit argument in this Map's exact
                 // invocation census. Every sibling body independently permits
@@ -85,9 +145,9 @@ bool analyzer::capturedMapParameters(
                             return false;
                         }
                         if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                            (global && alias == made.getResult() &&
-                             use.getOwner() == global->initialization.getOperation() &&
-                             use.getOperandNumber() == 0)) {
+                            (initializations.contains(use.getOwner()) &&
+                             use.getOperandNumber() == 0 &&
+                             llvm::cast<ctjs::StoreGlobalOp>(use.getOwner()).getValue() == alias)) {
                             continue;
                         }
                         auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
@@ -374,7 +434,8 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
     }
     std::vector<HostScalarGlobalRead> scalarReads;
     std::vector<HostObjectGlobalRead> objectReads;
-    llvm::StringMap<ctjs::CreateObjectOp> objectGlobals;
+    llvm::SmallVector<ctjs::CreateObjectOp> objectOrigins;
+    llvm::DenseSet<mlir::Operation *> seenOrigins;
     if (refusal.empty()) {
         // Reconstruct named-key origins from completed callable edges only.
         // Failed/provisional family attempts cannot publish global evidence.
@@ -388,26 +449,37 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
                     refusal = "named object key lacks its completed source initialization";
                     break;
                 }
-                objectGlobals.try_emplace(read.getName(), argument.object);
+                if (seenOrigins.insert(argument.object).second) {
+                    objectOrigins.push_back(argument.object);
+                }
             }
             if (analysis.exhausted || !refusal.empty()) { break; }
         }
         if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
     }
     if (refusal.empty()) {
+        // Publish predecessor loads too, even when only an alias is passed
+        // to a method. They still execute to initialize its owning binding.
+        for (ctjs::CreateObjectOp object : objectOrigins) {
+            if (!analysis.step()) { break; }
+            const auto edges = analysis.objectGlobalReads(object);
+            if (!edges) {
+                refusal = "named object key reads lack their completed source initializations";
+                break;
+            }
+            for (const HostObjectGlobalRead & edge : *edges) {
+                if (!analysis.step()) { break; }
+                objectReads.push_back(edge);
+            }
+        }
+        if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
+    }
+    if (refusal.empty()) {
         module.walk([&](ctjs::LoadGlobalOp read) {
-            if (analysis.exhausted || !refusal.empty()) { return; }
+            if (analysis.exhausted) { return; }
             if (auto edge = analysis.scalarGlobalRead(read)) {
                 scalarReads.push_back(std::move(*edge));
             }
-            const auto found = objectGlobals.find(read.getName());
-            if (found == objectGlobals.end()) { return; }
-            const auto edge = analysis.objectGlobalRead(read);
-            if (!edge || edge->object != found->second) {
-                refusal = "named object key read lacks its completed source initialization";
-                return;
-            }
-            objectReads.push_back(*edge);
         });
         if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
     }

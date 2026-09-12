@@ -487,7 +487,7 @@ int main() {
                            f"{result.stdout}{result.stderr}")
 
 
-def object_argument_observer_source(source, global_key=False):
+def object_argument_observer_source(source, global_key=False, global_alias=False):
     # Capture the actual Map in a separate interpreter observer. The native
     # source and its standard intrinsic contract remain untouched.
     observed = source + '''
@@ -525,9 +525,9 @@ def object_argument_observer_source(source, global_key=False):
             (typeof g === 'number' && g === 0 ? 64 : 0) | (future ? 128 : 0);
 })();
 '''
-    if not global_key:
+    if not global_key and not global_alias:
         return observed, 255
-    return observed.replace('const first = {}, alias = first, other = {};',
+    observed = observed.replace('const first = {}, alias = first, other = {};',
         'const first = key, alias = first, other = {};').replace(
         '    trace = (typeof a', '''    const startup = key === first;
     captured.set(key, 17);
@@ -536,7 +536,17 @@ def object_argument_observer_source(source, global_key=False):
     captured.clear();
     const cleared = get(first) === 0;
     trace = (typeof a''').replace('(future ? 128 : 0);',
-        '(future ? 128 : 0) | (startup ? 256 : 0) | (distinct ? 512 : 0) | (cleared ? 1024 : 0);'), 2047
+        '(future ? 128 : 0) | (startup ? 256 : 0) | (distinct ? 512 : 0) | (cleared ? 1024 : 0);')
+    if global_alias:
+        observed = observed.replace('(function() {', '(function(globalAlias) {').replace(
+            'const first = key, alias = first, other = {};',
+            'const first = key, alias = globalAlias, other = {};').replace(
+            'const startup = key === first;',
+            'const startup = key === first && first === globalAlias;').replace(
+            'key !== first && get(first) === 1',
+            'key !== first && get(globalAlias) === 1 && get(first) === 1').replace(
+            '})();', '})(alias);')
+    return observed, 2047
 
 
 def check_object_argument_calls(cpp, name, mode):
@@ -570,9 +580,26 @@ def check_object_argument_calls(cpp, name, mode):
                 or len(created) != 1 or stores != created
                 or len(loads) != source.count('host.slot.get(key)') or actuals != loads):
             raise RuntimeError(f'{name}/{mode}: lost the sole global allocation/store/load/call identity')
+    if object_argument_cases()[name].get('global_alias'):
+        created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
+        loads = re.findall(r'\b(\w+) = g_(key|alias|other);', entry[1])
+        stores = re.findall(r'\bg_(key|alias|other) = (\w+);', entry[1])
+        actuals = re.findall(r'ctnative::invoke_callable\(\w+, (\w+)(?:, \w+)?\);', entry[1])
+        arguments = re.findall(r'host\.slot\.\w+\((key|alias|other)[,)]', source)
+        bindings = ['key', 'alias'] + (['other'] if len(created) == 2 else [])
+        expected_stores = [('key', created[0]), ('alias', loads[0][0])]
+        if len(created) == 2:
+            expected_stores.append(('other', created[1]))
+        if (stores != expected_stores or [binding for _, binding in loads] != ['key', *arguments]
+                or actuals != [value for value, _ in loads[1:]]
+                or any(not re.search(r'std::shared_ptr<ctnative::identity_object>\s+g_'
+                                     + binding + r'\s*;', cpp) for binding in bindings)
+                or not (entry[1].index('g_key = ') < entry[1].index(' = g_key;')
+                        < entry[1].index('g_alias = ') < entry[1].index('ctnative::invoke_callable('))):
+            raise RuntimeError(f'{name}/{mode}: lost the original global alias/store/load/call edges')
 
 
-def object_argument_lifetime_cpp(cpp, global_key=False):
+def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False):
     changed = instrument_leaf_objects(cpp) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
@@ -619,9 +646,9 @@ int main() {
     return 0;
 }
 '''
-    if not global_key:
+    if not global_key and not global_alias:
         return changed
-    return changed.replace('!ctn_test_objects[0].expired()',
+    changed = changed.replace('!ctn_test_objects[0].expired()',
         'ctn_test_objects[0].expired() || !g_key || g_key != ctn_test_objects[0].lock()').replace(
         '    auto other = std::make_shared<ctnative::identity_object>();', '''    std::weak_ptr original_key = g_key;
     ctnative::map_set(map, g_key, js_num{9});
@@ -640,15 +667,32 @@ int main() {
         '''    if (!ctn_test_maps[1].expired() || ctn_test_objects[1].expired()) { return 209; }
     g_key.reset();
     if (!ctn_test_objects[1].expired()) { return 242; }''')
+    if global_alias:
+        changed = changed.replace('g_key != ctn_test_objects[0].lock()',
+            'g_key != ctn_test_objects[0].lock() || g_alias != g_key').replace(
+            '    ctnative::map_set(map, g_key, js_num{9});', '''    g_key.reset();
+    if (original_key.expired() || !g_alias || g_alias != original_key.lock()) { return 243; }
+    g_key = g_alias;
+    ctnative::map_set(map, g_key, js_num{9});''').replace(
+            '    if (original_key.expired() || get(g_key) != 0)',
+            '    g_alias.reset();\n    if (original_key.expired() || get(g_key) != 0)').replace(
+            'g_key != ctn_test_objects[1].lock()',
+            'g_key != ctn_test_objects[1].lock() || g_alias != g_key').replace(
+            '    g_key.reset();\n    if (!ctn_test_objects[1].expired())',
+            '    g_alias.reset();\n    g_key.reset();\n    if (!ctn_test_objects[1].expired())')
+    return changed
 
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f'{name}.{mode}.lifetime.cpp'
     observer = (retained_key_lifetime_cpp if name in {
-                    'object_argument_siblings', 'object_argument_siblings_named'}
+                    'object_argument_siblings', 'object_argument_siblings_named',
+                    'object_argument_siblings_global'}
                 else parameter_object_lifetime_cpp if name == 'parameter_object'
                 else object_argument_lifetime_cpp)
     source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
+                      else observer(cpp, global_alias=True) if name == 'object_argument_global_alias'
+                      else observer(cpp, 2, 0, global_alias=True) if name == 'object_argument_siblings_global'
                       else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
                       else observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
@@ -663,8 +707,8 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
                            f'{result.returncode}: {result.stdout}{result.stderr}')
 
 
-def retained_key_observer_source(source):
-    return source + '''
+def retained_key_observer_source(source, global_alias=False):
+    observed = source + '''
 (function() {
     const get = host.slot.get, set = host.slot.set;
     const erase = host.slot.erase, clear = host.slot.clear;
@@ -689,11 +733,18 @@ def retained_key_observer_source(source):
     trace = (a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) |
             (d ? 8 : 0) | (e ? 16 : 0) | (future ? 32 : 0);
 })();
-''', 63
+'''
+    if not global_alias:
+        return observed, 63
+    return observed.replace('(function() {', '(function(first, alias, other) {').replace(
+        'const first = {}, alias = first, other = {};',
+        'const startup = first === alias && first !== other;').replace(
+        '(future ? 32 : 0);', '(future ? 32 : 0) | (startup ? 64 : 0);').replace(
+        '})();', '})(key, alias, other);'), 127
 
 
-def retained_key_lifetime_cpp(cpp, allocations=6, retained=4):
-    return (instrument_leaf_objects(cpp, allocations=allocations) + r'''
+def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False):
+    changed = (instrument_leaf_objects(cpp, allocations=allocations) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -758,6 +809,24 @@ int main() {
     return 0;
 }
 ''').replace('CTN_ALLOCATIONS', str(allocations)).replace('CTN_RETAINED', str(retained))
+    if not global_alias:
+        return changed
+    assert (allocations, retained) == (2, 0)
+    return changed.replace('    for (std::size_t index = 0; index < 2; ++index)', '''    if (!g_key || g_key != g_alias || g_key != ctn_test_objects[0].lock() ||
+        !g_other || g_other != ctn_test_objects[1].lock() || g_key == g_other) { return 244; }
+    g_key.reset();
+    if (ctn_test_objects[0].expired() || !g_alias) { return 245; }
+    g_alias.reset(); g_other.reset();
+    for (std::size_t index = 0; index < 2; ++index)''').replace(
+        '    other.reset();\n    set = {};', '''    if (ctn_test_objects.size() != 4 || !g_key || g_key != g_alias ||
+        g_key != ctn_test_objects[2].lock() || !g_other ||
+        g_other != ctn_test_objects[3].lock() || g_key == g_other) { return 246; }
+    g_key.reset();
+    if (ctn_test_objects[2].expired() || !g_alias) { return 247; }
+    g_alias.reset(); g_other.reset();
+    if (ctn_test_objects[2].expired() || !ctn_test_objects[3].expired()) { return 248; }
+    other.reset();
+    set = {};''')
 
 
 def parameter_object_lifetime_cpp(cpp):

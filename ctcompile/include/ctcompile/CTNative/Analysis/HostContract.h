@@ -124,9 +124,11 @@ struct HostScalarGlobalRead {
     std::vector<mlir::Value> dependencies;
 };
 
-// A fresh empty object stored once in an ordinary entry global. Every read
-// follows that initialization, and all allocation/read uses belong to the
-// completed captured-Map family as keys. The actual load remains live.
+// A fresh empty object stored once in an ordinary entry global, or one alias
+// initialized from a load of that direct binding. Initialization belongs to
+// this read's binding; object remains the original allocation. Every read
+// follows its store, and all uses are checked initializations or keys in the
+// completed captured-Map family. The actual loads and stores remain live.
 struct HostObjectGlobalRead {
     ctjs::StoreGlobalOp initialization;
     ctjs::LoadGlobalOp read;

@@ -49,7 +49,9 @@ struct analyzer {
         mlir::Operation * consumer = nullptr, unsigned depth = 0,
         std::vector<mlir::Value> * dependencies = nullptr);
     std::optional<HostScalarGlobalRead> scalarGlobalRead(ctjs::LoadGlobalOp read);
-    std::optional<HostObjectGlobalRead> objectGlobalRead(ctjs::LoadGlobalOp read);
+    std::optional<HostObjectGlobalRead> objectGlobalRead(ctjs::LoadGlobalOp read,
+                                                         bool allowAlias = true);
+    std::optional<std::vector<HostObjectGlobalRead>> objectGlobalReads(ctjs::CreateObjectOp made);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
                          PrimitiveAlternatives & returnAlternatives);

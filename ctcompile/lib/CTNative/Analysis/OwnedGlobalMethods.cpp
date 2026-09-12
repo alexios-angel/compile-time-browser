@@ -392,10 +392,23 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (!argumentObjects.contains(made) || made->getParentOp() != entry ||
             store->getParentOp() != entry || read->getParentOp() != entry ||
-            store.getName() != read.getName() || store.getValue() != made.getResult() ||
-            !made->isBeforeInBlock(store) || !store->isBeforeInBlock(read)) {
+            store.getName() != read.getName() || !made->isBeforeInBlock(store) ||
+            !store->isBeforeInBlock(read)) {
             reject("object global read disagrees with the complete key ownership proof");
             return;
+        }
+        if (store.getValue() != made.getResult()) {
+            auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
+            const auto * predecessor = source ? host.objectRead(source) : nullptr;
+            auto original = predecessor ? predecessor->initialization : ctjs::StoreGlobalOp{};
+            // The predecessor is revalidated by this same complete census.
+            // Requiring its direct allocation also bounds aliases to one hop.
+            if (!predecessor || predecessor->object != made ||
+                original.getValue() != made.getResult() || source->getParentOp() != entry ||
+                !source->isBeforeInBlock(store)) {
+                reject("object key alias lacks its direct source global initialization");
+                return;
+            }
         }
         for (mlir::Operation * operation : operations) {
             if (!spend()) { return; }
@@ -417,9 +430,19 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         for (mlir::Value value : {made.getResult(), read.getResult()}) {
             for (mlir::OpOperand & use : value.getUses()) {
                 if (!spend()) { return; }
-                if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                    (use.getOwner() == store.getOperation() && value == made.getResult())) {
-                    continue;
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                if (auto initialization = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
+                    initialization && use.getOperandNumber() == 0) {
+                    bool checked = false;
+                    for (const HostObjectGlobalRead & candidate : host.objectReads()) {
+                        if (!spend()) { return; }
+                        if (candidate.initialization == initialization &&
+                            candidate.object == made) {
+                            checked = true;
+                            break;
+                        }
+                    }
+                    if (checked) { continue; }
                 }
                 const auto * call = host.callable(use.getOwner());
                 if (!call || !methodCalls.contains(use.getOwner()) ||
