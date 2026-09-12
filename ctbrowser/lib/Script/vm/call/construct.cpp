@@ -33,6 +33,36 @@
 
 namespace ctbrowser::script {
 
+namespace {
+// The callee's name for "X is not a constructor", or "the value" when it has none.
+[[nodiscard]] std::string describe_new_target(value callee) {
+    std::string name;
+    if (callee.is_kind(heap_kind::native)) {
+        name = static_cast<const native_object *>(callee.as_heap())->name;
+    } else if (callee.is_kind(heap_kind::function)) {
+        const function_proto * p = static_cast<const closure_object *>(callee.as_heap())->proto;
+        if (p != nullptr) { name = p->display_name(); }
+    }
+    return name.empty() ? std::string{"the value"} : name;
+}
+} // namespace
+
+bool is_constructor(value v) {
+    if (v.is_kind(heap_kind::native)) {
+        return static_cast<const native_object *>(v.as_heap())->is_constructor;
+    }
+    if (v.is_kind(heap_kind::function)) {
+        const function_proto * p = static_cast<const closure_object *>(v.as_heap())->proto;
+        // A method (`{ m() {} }`) is not one either, but the bytecode does not
+        // record that - the compiler's, not this file's.
+        return p == nullptr || !(p->is_arrow || p->is_generator || p->is_async);
+    }
+    if (v.is_kind(heap_kind::proxy)) {
+        return is_constructor(static_cast<const proxy_object *>(v.as_heap())->target);
+    }
+    return false;
+}
+
 // EVERY FUNCTION HAS A `prototype`, and JavaScript relies on it far beyond
 // classes: `function F() {}; new F() instanceof F` is the constructor-function
 // pattern every transpiler emits, and Babel's own `_classCallCheck` guard is
@@ -96,6 +126,10 @@ value context::construct(value callee, std::span<const value> args) {
     }
     if (!callee.is_callable()) {
         raise("attempted to construct a non-function");
+        return value::undefined();
+    }
+    if (!is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
         return value::undefined();
     }
     const value self = make_instance(callee);
@@ -184,6 +218,10 @@ value context::construct_new(value callee, std::span<const value> args,
     // and duplicating either is what let the two disagree.
     if (callee.is_kind(heap_kind::proxy) || callee.is_kind(heap_kind::native)) {
         return construct(callee, args);
+    }
+    if (callee.is_kind(heap_kind::function) && !is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
+        return value::undefined();
     }
     const value self = make_instance(callee);
     // ROOTED FOR THE REASON BOTH OTHER SPELLINGS ROOT IT: the instance is in a

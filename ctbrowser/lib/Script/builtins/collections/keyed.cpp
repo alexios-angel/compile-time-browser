@@ -234,12 +234,12 @@ void install_collections(context & cx) {
     }
     map_proto->define_accessor(
         "size",
-        value::object(cx.allocate<native_object>(
-            "size",
-            [entries_of](context & c, std::span<value>) {
-                array_object * e = entries_of(c);
-                return value::number(e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
-            })),
+        detail::accessor_fn(cx, "size",
+                            [entries_of](context & c, std::span<value>) {
+                                array_object * e = entries_of(c);
+                                return value::number(
+                                    e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
+                            }),
         value::undefined());
 
     // --- Set ---------------------------------------------------------------
@@ -315,12 +315,12 @@ void install_collections(context & cx) {
     });
     set_proto->define_accessor(
         "size",
-        value::object(cx.allocate<native_object>(
-            "size",
-            [entries_of](context & c, std::span<value>) {
-                array_object * e = entries_of(c);
-                return value::number(e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
-            })),
+        detail::accessor_fn(cx, "size",
+                            [entries_of](context & c, std::span<value>) {
+                                array_object * e = entries_of(c);
+                                return value::number(
+                                    e == nullptr ? 0.0 : static_cast<double>(e->items.size()));
+                            }),
         value::undefined());
 
     // Strong, under a weak name - see the note at the top.

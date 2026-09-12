@@ -537,14 +537,25 @@ inline void install_arity(context & cx, native_object * fn, double arity) {
 // The arity-less form installs `name` and NOT `length`, which is the honest
 // answer for a built-in whose specified arity has not been checked at its
 // install site: an absent property is a gap, a wrong one is a wrong answer.
-inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+// A BUILT-IN METHOD HAS NO [[Construct]] (clause 17): `new Math.abs()` is a
+// TypeError, and isConstructor.js asks Reflect.construct exactly that.
+[[nodiscard]] inline native_object * method_native(context & cx, std::string name, native_fn fn) {
     auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    made->is_constructor = false;
+    return made;
+}
+// A getter or setter, for define_accessor: a function that is not a constructor.
+[[nodiscard]] inline value accessor_fn(context & cx, std::string name, native_fn fn) {
+    return value::object(method_native(cx, std::move(name), std::move(fn)));
+}
+inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, object_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }
@@ -552,13 +563,13 @@ inline void method(context & cx, object_object * table, std::string name, double
 // `Object(x)` coerces and `Object.keys` is a static - has to be a native
 // carrying properties, and its statics are installed exactly like a table's.
 inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, native_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }

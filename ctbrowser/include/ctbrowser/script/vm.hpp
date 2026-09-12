@@ -156,6 +156,11 @@ struct native_object final : heap_object {
     // 400 others - has no own entry and still has to answer.
     bool name_erased = false;
     value proto_link = value::null();
+    // IsConstructor (7.2.4) for a native: a built-in METHOD, a getter and a
+    // promise reaction have no [[Construct]], so `new Math.abs()` is a
+    // TypeError. True by default because every native an embedder defines
+    // (`Image`, `DOMParser`, ...) is constructed and has no other way to say so.
+    bool is_constructor = true;
 
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
@@ -2216,5 +2221,9 @@ private:
     bool failed_ = false;
     std::string error_;
 };
+
+// IsConstructor, 7.2.4: a native with [[Construct]], a non-arrow, non-generator
+// closure, or a proxy whose target is one. Defined in vm/call/construct.cpp.
+[[nodiscard]] bool is_constructor(value v);
 
 } // namespace ctbrowser::script

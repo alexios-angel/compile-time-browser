@@ -105,10 +105,24 @@ void install_proxy(context & cx) {
     method(cx, reflect, "has", 2, [](context & c, std::span<value> a) {
         return value::boolean(c.has_property(arg_at(a, 0), arg_at(a, 1)));
     });
+    // 28.1.2: target and newTarget must both be constructors, and the
+    // argument list must be an object (CreateListFromArrayLike step 2).
     method(cx, reflect, "construct", 2, [](context & c, std::span<value> a) {
+        if (!is_constructor(arg_at(a, 0))) {
+            c.throw_error("TypeError", "Reflect.construct: target is not a constructor");
+            return value::undefined();
+        }
+        if (a.size() > 2 && !is_constructor(a[2])) {
+            c.throw_error("TypeError", "Reflect.construct: newTarget is not a constructor");
+            return value::undefined();
+        }
+        if (!arg_at(a, 1).is_object_like()) {
+            c.throw_error("TypeError", "Reflect.construct: arguments list must be an object");
+            return value::undefined();
+        }
         std::vector<value> args;
-        if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
-        return c.construct(arg_at(a, 0), args);
+        if (a[1].is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
+        return c.construct(a[0], args);
     });
     method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         std::vector<value> args;

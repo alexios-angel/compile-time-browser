@@ -331,6 +331,7 @@ void install_string(context & cx) {
                         return detail::list_iterator(c, list, "String Iterator");
                     }));
         detail::install_arity(cx, iterator_fn, 0);
+        iterator_fn->is_constructor = false;
         string_proto->define("@@iterator", value::object(iterator_fn), attr_builtin);
     }
     method(cx, string_proto, "valueOf", 0, [](context & c, std::span<value>) {

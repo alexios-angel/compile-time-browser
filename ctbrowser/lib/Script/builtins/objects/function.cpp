@@ -176,6 +176,7 @@ void install_function(context & cx) {
             return value::boolean(c.instance_of(arg_at(a, 0), c.current_this()));
         });
     detail::install_arity(cx, has_instance, 1);
+    has_instance->is_constructor = false;
     function_proto->define("@@hasInstance", value::object(has_instance), attr_none);
     cx.set_prototype(context::proto_kind::function, function_proto);
 }

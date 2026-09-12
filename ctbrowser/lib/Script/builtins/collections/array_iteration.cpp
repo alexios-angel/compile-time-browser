@@ -39,7 +39,7 @@ namespace ctbrowser::script::detail {
     it->define("__at", value::number(0), attr_builtin);
     it->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
     const auto method_on = [&](const char * name, native_fn fn) {
-        it->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
+        it->define(name, value::object(detail::method_native(cx, name, std::move(fn))),
                    attr_builtin);
     };
     // Reads its state off the RECEIVER rather than out of the closure, so the

@@ -119,6 +119,7 @@ void install_symbol(context & cx) {
             return made;
         });
     symbol_for->retained.push_back(registry);
+    symbol_for->is_constructor = false;
     symbol->define("for", value::object(symbol_for), attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
     // one that never went through the registry.
@@ -132,6 +133,7 @@ void install_symbol(context & cx) {
             return value::undefined();
         });
     symbol_key_for->retained.push_back(registry);
+    symbol_key_for->is_constructor = false;
     symbol->define("keyFor", value::object(symbol_key_for), attr_builtin);
     // `Symbol.prototype` is reachable from the constructor, like every other
     // built-in's - a page that walks it found undefined.

@@ -457,35 +457,36 @@ void install_object(context & cx) {
     // member is.
     object_proto->define_accessor(
         "__proto__",
-        value::object(cx.allocate<native_object>(
-            "get __proto__",
-            [](context & c, std::span<value>) {
-                const value self = c.current_this();
-                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
-                    return value::undefined();
-                }
-                return prototype_of(c, self);
-            })),
-        value::object(cx.allocate<native_object>(
-            "set __proto__",
-            [](context & c, std::span<value> a) {
-                const value self = c.current_this();
-                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
-                    return value::undefined();
-                }
-                // B.2.2.1.2 steps 2-3: a non-object prototype and a primitive
-                // receiver are each a silent no-op, NOT the TypeError
-                // Object.setPrototypeOf raises - and an object literal's
-                // `__proto__: 5` relies on the first.
-                const value proto = arg_at(a, 0);
-                if (!proto.is_object_like() && !proto.is_null()) { return value::undefined(); }
-                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
-                if (!set_prototype_of(c, self, proto)) {
-                    c.throw_error("TypeError",
-                                  "Cyclic __proto__ value or object is not extensible");
-                }
-                return value::undefined();
-            })),
+        detail::accessor_fn(cx, "get __proto__",
+                            [](context & c, std::span<value>) {
+                                const value self = c.current_this();
+                                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                                    return value::undefined();
+                                }
+                                return prototype_of(c, self);
+                            }),
+        detail::accessor_fn(cx, "set __proto__",
+                            [](context & c, std::span<value> a) {
+                                const value self = c.current_this();
+                                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                                    return value::undefined();
+                                }
+                                // B.2.2.1.2 steps 2-3: a non-object prototype and a primitive
+                                // receiver are each a silent no-op, NOT the TypeError
+                                // Object.setPrototypeOf raises - and an object literal's
+                                // `__proto__: 5` relies on the first.
+                                const value proto = arg_at(a, 0);
+                                if (!proto.is_object_like() && !proto.is_null()) {
+                                    return value::undefined();
+                                }
+                                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
+                                if (!set_prototype_of(c, self, proto)) {
+                                    c.throw_error(
+                                        "TypeError",
+                                        "Cyclic __proto__ value or object is not extensible");
+                                }
+                                return value::undefined();
+                            }),
         attr_configurable);
     cx.set_prototype(context::proto_kind::object, object_proto);
 
