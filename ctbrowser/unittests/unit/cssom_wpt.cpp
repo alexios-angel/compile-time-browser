@@ -217,7 +217,7 @@ void test_flat_tree_and_pseudo_arguments() {
 void test_sticky_insets() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body style="margin: 0">
-        <div style="height: 500px; overflow: hidden; padding: 10px 0; border: 5px solid">
+        <div style="height: 500px; overflow: hidden">
           <div style="height: 400px">
             <div id="t" style="height: 100px; position: sticky; left: 0; top: 50%;
                                bottom: calc(10% - 1px);"></div>
