@@ -57,6 +57,42 @@ void install_json(context & cx) {
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
         return detail::internalize_json(c, wrapper, "", reviver, 0);
     });
+    // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
+    // null-prototype object whose `rawJSON` is the text, serialised verbatim
+    // by stringify. [[IsRawJSON]] is the private key; the text must be a JSON
+    // primitive - no object or array, no surrounding whitespace.
+    method(cx, json, "rawJSON", 1, [](context & c, std::span<value> a) {
+        const std::string text = string_arg(c, arg_at(a, 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto edge = [](char ch) {
+            return ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ';
+        };
+        bool ok = !text.empty() && text[0] != '[' && text[0] != '{' && !edge(text.front()) &&
+                  !edge(text.back());
+        if (ok) {
+            detail::json_reader reader{c, text};
+            (void)reader.parse_text();
+            ok = reader.ok;
+        }
+        if (!ok) {
+            c.throw_error("SyntaxError", "Invalid JSON text for JSON.rawJSON");
+            return value::undefined();
+        }
+        const value made = c.make_object();
+        auto * obj = static_cast<object_object *>(made.as_heap());
+        obj->prototype = value::undefined(); // an explicit null - object_object::prototype
+        // Frozen (step 6): the one property { false, true, false }, and no more.
+        obj->define("rawJSON", c.string(text), attr_enumerable);
+        obj->define(std::string{detail::raw_json_slot}, value::boolean(true), attr_none);
+        c.prevent_extensions(made);
+        return made;
+    });
+    method(cx, json, "isRawJSON", 1, [](context &, std::span<value> a) {
+        const value v = arg_at(a, 0);
+        return value::boolean(
+            v.is_object() &&
+            static_cast<object_object *>(v.as_heap())->find(detail::raw_json_slot) != nullptr);
+    });
     cx.define_global("JSON", value::object(json));
 }
 

@@ -844,6 +844,9 @@ inline value settle_with(context & cx, value on_ok, value on_err,
 
 // --- JSON -----------------------------------------------------------------
 
+// [[IsRawJSON]] (25.5.3): the private slot JSON.rawJSON's objects carry.
+inline constexpr std::string_view raw_json_slot = "@#IsRawJSON";
+
 // QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
 // of its rows were missing: U+0008 and U+000C have the short forms \b and \f
 // and were being written as the six-character \u0008 and \u000c forms by the
@@ -957,6 +960,16 @@ struct json_writer {
         if (v.is_null()) {
             out += "null";
             return true;
+        }
+        // 25.5.2.2 step 4.a: a rawJSON object is its text, verbatim.
+        if (v.is_object()) {
+            auto * obj = static_cast<object_object *>(v.as_heap());
+            if (obj->find(raw_json_slot) != nullptr) {
+                if (const value * raw = obj->find("rawJSON"); raw != nullptr && raw->is_string()) {
+                    out += static_cast<const string_object *>(raw->as_heap())->text;
+                    return true;
+                }
+            }
         }
         if (v.is_boolean()) {
             out += v.as_boolean() ? "true" : "false";
