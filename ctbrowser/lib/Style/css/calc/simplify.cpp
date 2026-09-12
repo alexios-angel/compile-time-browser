@@ -461,11 +461,26 @@ std::string canonical_random(std::string_view value, std::string_view property) 
             value.substr(at + name.size(), span.end - at - name.size() - (span.closed ? 1 : 0));
         at = span.end;
         std::vector<std::string_view> args = top_level_arguments(inner);
-        // The sharing head: a first argument made of identifiers, or `fixed`.
+        // The sharing head: a first argument that is `fixed <number>` or made
+        // of the sharing words alone. `infinity` and `NaN` are identifiers too
+        // and are the first BOUND, not a head (random-computed).
         std::string head;
+        const auto is_head = [](std::string_view text) {
+            if (ascii_istarts_with(text, "fixed")) { return true; }
+            bool any = false;
+            for (const std::string_view word : split_top_level(text, " \t\n\r\f")) {
+                any = true;
+                if (!word.starts_with("--") && !ascii_iequals(word, "auto") &&
+                    !ascii_istarts_with(word, "ua-") && !ascii_iequals(word, "element-scoped") &&
+                    !ascii_iequals(word, "property-scoped") &&
+                    !ascii_iequals(word, "property-index-scoped")) {
+                    return false;
+                }
+            }
+            return any;
+        };
         if (!args.empty()) {
-            const token_stream first = tokenize(trim(args.front(), html_whitespace));
-            if (!first.tokens.empty() && first.tokens.front().type == token_type::ident) {
+            if (is_head(trim(args.front(), html_whitespace))) {
                 const std::string_view text = trim(args.front(), html_whitespace);
                 if (ascii_istarts_with(text, "fixed")) {
                     head = "fixed " + simplify_math(trim(text.substr(5), html_whitespace));
