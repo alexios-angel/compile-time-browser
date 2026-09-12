@@ -7,29 +7,13 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
-#include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
-#include <ctbrowser/script/vm.hpp>
-#include <functional>
-#include <optional>
-#include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
 #include <vector>
 
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
+#include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
 
@@ -149,10 +133,10 @@ context::property_descriptor context::to_property_descriptor(value from) {
 }
 
 void context::delete_named(value target, const std::string & name) {
-    // TODO(strict): a false answer here is a TypeError under "use strict". The
-    // engine has no strict mode, and sloppy `delete` evaluates to false without
-    // throwing - which is what the compiler emits today (a constant `true`; see
-    // the note on delete_own_property).
+    // TODO(strict): a false answer here is a TypeError under "use strict",
+    // and strict `delete` does not throw yet - the answer is discarded and
+    // the compiler emits a constant `true` (see the note on
+    // delete_own_property).
     (void)delete_own_property(target, name);
 }
 
@@ -209,12 +193,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = obj->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         // A STRING WRAPPER'S OWN `length` AND INDICES (10.4.3.1), the same two
@@ -256,12 +235,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             if ((a & array_object::elem_hole) != 0) { return false; }
             if ((a & array_object::elem_accessor) != 0 && arr->named) {
                 if (accessor_entry * entry = arr->named->find_accessor(name)) {
-                    out.has_get = out.has_set = true;
-                    out.getter = entry->getter;
-                    out.setter = entry->setter;
-                    out.has_enumerable = out.has_configurable = true;
-                    out.enumerable = (a & attr_enumerable) != 0;
-                    out.configurable = (a & attr_configurable) != 0;
+                    out = property_descriptor::accessor(entry->getter, entry->setter, a);
                     return true;
                 }
             }
@@ -305,12 +279,7 @@ bool context::own_property(value target, const std::string & name, property_desc
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
         if (accessor_entry * entry = fn->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         if (value * held = fn->find(name)) {
@@ -344,12 +313,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = closure->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         if (name == "prototype") {

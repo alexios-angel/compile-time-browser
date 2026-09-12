@@ -13,9 +13,9 @@
 // The walk is structural rather than generic. A generic walk over a node's four
 // fixed slots cannot be used unaccompanied, because the parser reuses `c` and
 // `d` as BITFIELDS on the kinds that carry flags - `update` keeps prefix/postfix
-// in `b`, which as a node index is node 1 - so `slots()` (in expressions.cpp) says which slots
-// of which kinds are really children, and every construct that opens a SCOPE is
-// handled by name.
+// in `b`, which as a node index is node 1 - so `child_slots()` (compile/child_slots.hpp,
+// the one table the compiler's own walks use) says which slots of which kinds are
+// really children, and every construct that opens a SCOPE is handled by name.
 //
 // PRIVATE to lib/Script/compile/early_errors/, and in no file set: early_errors.hpp
 // beside the directory declares find_early_error() whole, and this exists only so

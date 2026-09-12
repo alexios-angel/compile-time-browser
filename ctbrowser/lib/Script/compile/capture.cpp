@@ -12,56 +12,6 @@
 
 namespace ctbrowser::script::detail {
 
-std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
-    switch (n.kind) {
-    // a = the default expression, b = a destructuring pattern; d = the rest
-    // flag
-    case vp::nk::param: return {n.a, n.b, -1, -1};
-    // a = the body; c = async/generator bits
-    case vp::nk::func_decl:
-    case vp::nk::func_expr:
-    case vp::nk::arrow: return {n.a, -1, -1, -1};
-    // a = a computed key, b = the value or method; c and d are both flags
-    case vp::nk::class_member:
-    case vp::nk::prop:
-    case vp::nk::pattern_prop: return {n.a, n.b, -1, -1};
-    // a = the callee, the arguments are the list; d says whether there were
-    // parentheses at all
-    case vp::nk::new_expr: return {n.a, -1, -1, -1};
-    // a = the target, b = the iterable, c = the body; d carries `const` and
-    // whether there is anything to declare
-    case vp::nk::forof_stmt: return {n.a, n.b, n.c, -1};
-    // a = the operand; d = 1 says `yield*`
-    case vp::nk::yield_expr: return {n.a, -1, -1, -1};
-    // a = the test, the statements are the list; d marks `default:`
-    case vp::nk::case_clause: return {n.a, -1, -1, -1};
-    // ES MODULES. `c` IS A FLAG ON ALL OF THESE - which binding form an
-    // import_spec is, whether an export is `default` or `*` - and the
-    // default branch below would follow it as a NODE INDEX. It did: walking
-    // `export default 42` segfaulted, because `c = 1` sent the tour into
-    // node 1 and off from there.
-    //
-    // The bindings live in `list`, which every walk handles separately, and
-    // `a` is the only real child: the declaration an export wraps, the
-    // specifier a dynamic import takes, or the str node holding the
-    // original name of a renamed binding.
-    case vp::nk::import_decl:
-    case vp::nk::import_meta: return {-1, -1, -1, -1};
-    case vp::nk::import_spec:
-    case vp::nk::export_decl:
-    case vp::nk::export_spec: return {n.a, -1, -1, -1};
-    case vp::nk::dynamic_import:
-        return {n.a, n.b, -1, -1}; // b: the options argument
-    // `++x` / `x++`: a is the operand and b IS THE PREFIX FLAG (1 or 0). The
-    // default arm followed b as a node index; a program whose update node
-    // is node 1 - `++x;` as the first statement, which is what
-    // `eval("++x")` compiles - toured itself forever and overflowed the
-    // stack. test262's eval-code/direct/cptn-* found it.
-    case vp::nk::update: return {n.a, -1, -1, -1};
-    default: return {n.a, n.b, n.c, n.d};
-    }
-}
-
 bool compiler_impl::is_function_node(const vp::node & n) {
     return n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow;
 }
@@ -172,32 +122,6 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
             collect_declared_names(slot);
         }
     }
-}
-
-// The `var`s of a script (16.1.7's VarDeclaredNames): every `var` at any
-// depth of block, loop or branch, and nothing inside a function - and NOT
-// `let`/`const`, which are lexical (a top-level `let` before its line is a
-// TDZ ReferenceError in every engine, and a block's `const` is nobody's
-// global). Distinct from collect_declared_names, whose list also feeds the
-// function-body pre-declaration and so keeps the lexical names.
-void compiler_impl::collect_hoisted_vars(std::int32_t body, std::vector<std::string> & out) const {
-    if (body < 0) { return; }
-    const vp::node & n = at(body);
-    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
-    if (n.kind == vp::nk::var_decl) {
-        if (n.text != "var") { return; }
-        for (const std::int32_t d : kids(n)) {
-            const vp::node & decl = at(d);
-            if (decl.b >= 0) {
-                pattern_names(decl.b, out);
-            } else {
-                out.emplace_back(decl.text);
-            }
-        }
-        return;
-    }
-    for (const std::int32_t slot : child_slots(n)) { collect_hoisted_vars(slot, out); }
-    for (const std::int32_t k : kids(n)) { collect_hoisted_vars(k, out); }
 }
 
 void compiler_impl::predeclare_locals(std::int32_t body) {

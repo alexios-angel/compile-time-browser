@@ -13,11 +13,10 @@
 //
 // SLOPPY MODE IS THE CONTRACT HERE. A write to a non-writable property, a
 // delete of a non-configurable one and an addition to a non-extensible object
-// are each SILENT in sloppy mode and a TypeError under "use strict". This
-// engine has no strict mode at all - see docs/test262.md, which counts the 678
-// onlyStrict tests it silently runs sloppy - so every case below asserts the
-// silent answer. The TODO(strict) comments in lib/Script/vm/objects/store.cpp mark
-// the three `return`s where the throw belongs when a strict mode arrives.
+// are each SILENT in sloppy mode and a TypeError under "use strict". Every
+// case below is sloppy and asserts the silent answer; the strict throw comes
+// off store_rejected_ (the three `return`s in lib/Script/vm/objects/store.cpp)
+// in the run loop's strict_store_check.
 
 #include "js_expect.hpp"
 

@@ -32,6 +32,8 @@
 
 #include <ctjs/vparse.hpp>
 
+#include "child_slots.hpp"
+
 #include <ctbrowser/script/value.hpp>
 
 namespace ctbrowser::script {
@@ -364,16 +366,6 @@ public:
 
     [[nodiscard]] int add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc);
 
-    // WHICH OF A NODE'S FOUR FIXED SLOTS ARE ACTUALLY CHILDREN.
-    //
-    // The parser reuses `c` and `d` as BITFIELDS on the kinds that need flags:
-    // a rest parameter is `d == 1`, an async function is `c & 1`, a static class
-    // member is `d & 1`, an object-literal accessor is `c == 3`. Nothing on a
-    // node says which reading applies, so a generic walk over {a, b, c, d}
-    // treats those flags as node indices - and index 1 is a real node, so the
-    // walk goes back round the tree and never terminates.
-    [[nodiscard]] static std::array<std::int32_t, 4> child_slots(const vp::node & n);
-
     // The `${...}` HOLES of a template literal, as raw text.
     //
     // A template is ONE node carrying its whole source, holes included - the
@@ -469,16 +461,14 @@ public:
     [[nodiscard]] static std::uint32_t read_hex(std::string_view s, std::size_t & at,
                                                 std::size_t count);
 
-    [[nodiscard]] static std::string encode_code_point(std::uint32_t code);
-
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
     // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
 
-    // Names a nested function might close over. Collected BEFORE the body is
-    // compiled, because function declarations hoist and are therefore compiled
-    // before the `let` that a closure would capture has been reached - without
-    // this pre-scan the enclosing-local check simply never fires.
+    // The names a SCRIPT declares with var/let/const, at any block depth and
+    // outside any function. Only the script frame's list is read - the strict
+    // assignment probe in compile_assign consults it - so only compile_program
+    // collects.
     void collect_declared_names(std::int32_t body);
 
     // Hoist this body's own `let`/`const`/`var` names into registers before
@@ -530,8 +520,7 @@ public:
     //      the cell on the floor and the closure would see the wrong variable.
     //   3. a temporary allocated for a default expression must be released, or
     //      every default permanently widens the frame.
-    void compile_parameter_prologue(std::span<const std::int32_t> params,
-                                    const std::function<bool(std::uint16_t)> & is_boxed);
+    void compile_parameter_prologue(std::span<const std::int32_t> params);
     // THE PARAMETERS STILL UNINITIALISED WHILE A DEFAULT RUNS (10.2.11 step
     // 21-28: each parameter's binding is initialised in order, and a default
     // reading a later one - or its own - is the ReferenceError of an
@@ -602,11 +591,6 @@ public:
     // and then widen; a double is exact up to 2^53, which is further than any
     // of these literals reach.
     [[nodiscard]] static double number_literal(std::string_view text);
-
-    // What a node kind is CALLED. Only the kinds the compiler can refuse need
-    // a name; anything else falls back to the number, which is still better
-    // than nothing when a new kind appears in the parser.
-    [[nodiscard]] static std::string kind_name(vp::nk kind);
 
     // --- the operand limits, said out loud ----------------------------------
     //
@@ -698,15 +682,6 @@ public:
     // Bind `pattern` to the value sitting in `src`. Every name it mentions
     // already exists by the time this runs - see compile_pattern_binding.
     void compile_pattern(std::int32_t pat, std::uint16_t src);
-
-    // Bind an array or object LITERAL, read in expression position, as if it
-    // had been parsed as a pattern. Assigning, never declaring - every name in
-    // it already exists.
-    void compile_literal_as_pattern(std::int32_t literal, std::uint16_t src);
-
-    // One target inside a literal-as-pattern: a name, a member, or a nested
-    // literal that is itself a pattern.
-    void compile_literal_target(std::int32_t target, std::uint16_t src);
 
     // `[a, ...rest] = xs` - rest is everything from `from` onward.
 
@@ -994,8 +969,6 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
-    // program::hoisted_vars - see the definition.
-    void collect_hoisted_vars(std::int32_t body, std::vector<std::string> & out) const;
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
     // The start of a catch clause in a generator - see the definition.

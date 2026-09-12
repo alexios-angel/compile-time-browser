@@ -4,30 +4,17 @@
 // members of `context`, declared in include/ctbrowser/script/vm.hpp - so
 // they split across translation units with nothing to declare.
 
-#include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
-#include <vector>
 
 #include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
-
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
 
 namespace ctbrowser::script {
 
@@ -322,22 +309,6 @@ bool context::loose_equals(value a, value b) {
     return to_number(a) == to_number(b); // the coercing cases
 }
 
-// Abstract Relational Comparison, 7.2.13.
-//
-// THIS USED TO BE `to_number(a) < to_number(b)` AND NOTHING ELSE, which makes
-// every relational comparison between two strings FALSE - `"a" < "b"`, `"b" >
-// "a"`, `"abc" < "abd"`, all of them - because ToNumber of a non-numeric string
-// is NaN and every comparison against NaN is false. It is not a small corner:
-// `["b","a","c"].sort((x, y) => x < y ? -1 : 1)` returned its input untouched,
-// and any page ordering names, keys or dates as text got silence rather than an
-// error. `===` was unaffected, which is why it survived so long.
-//
-// Returning an ordering rather than a bool is what lets all four operators
-// share one comparison: `unordered` is the specification's `undefined` result,
-// and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
-// exactly the required NaN behaviour.
-// The bigint half of every arithmetic opcode. See the declaration for why
-// mixing throws rather than coercing.
 // THE SEVEN NON-RE-ENTERING BINARY OPERATIONS. Phase 5's extraction, and the
 // row in aot_helpers.def names this function by name.
 //
@@ -369,13 +340,6 @@ value context::binary_op_static(op kind, value lhs, value rhs) {
     return value::undefined();
 }
 
-// THE SEVEN RE-ENTERING BINARY OPERATIONS. Phase 5's second extraction, and its
-// row names this function.
-//
-// Every arm below is the handler it came from, unchanged. What is worth reading
-// twice is what is NOT uniform: concat never consults the BigInt arm, and
-// add_generic consults it only after both sides are primitive and only when
-// neither is a string.
 // UNARY MINUS. The body is VM_CASE(negate) unchanged, in the order it had.
 // Both arms matter and neither is the other's fast path: the BigInt arm
 // allocates and cannot throw catchably; the Number arm re-enters through
@@ -400,6 +364,13 @@ value context::bit_not_value(value v) {
     return value::number(~to_int32(v));
 }
 
+// THE SEVEN RE-ENTERING BINARY OPERATIONS. Phase 5's second extraction, and its
+// row names this function.
+//
+// Every arm below is the handler it came from, unchanged. What is worth reading
+// twice is what is NOT uniform: concat never consults the BigInt arm, and
+// add_generic consults it only after both sides are primitive and only when
+// neither is a string.
 value context::binary_op(op kind, value lhs, value rhs) {
     // CONCAT FIRST, because it is the one that must not reach bigint_binary at
     // all: coerce.cpp's switch has no case for it, so `${1n}` would fall to the
@@ -494,6 +465,20 @@ bool context::bigint_binary(op kind, value a, value b, value & out) {
     return true;
 }
 
+// Abstract Relational Comparison, 7.2.13.
+//
+// THIS USED TO BE `to_number(a) < to_number(b)` AND NOTHING ELSE, which makes
+// every relational comparison between two strings FALSE - `"a" < "b"`, `"b" >
+// "a"`, `"abc" < "abd"`, all of them - because ToNumber of a non-numeric string
+// is NaN and every comparison against NaN is false. It is not a small corner:
+// `["b","a","c"].sort((x, y) => x < y ? -1 : 1)` returned its input untouched,
+// and any page ordering names, keys or dates as text got silence rather than an
+// error. `===` was unaffected, which is why it survived so long.
+//
+// Returning an ordering rather than a bool is what lets all four operators
+// share one comparison: `unordered` is the specification's `undefined` result,
+// and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
+// exactly the required NaN behaviour.
 std::partial_ordering context::compare_relational(value a, value b) {
     // ToPrimitive with the NUMBER hint, LEFT OPERAND FIRST. The order is
     // observable because `valueOf` can have side effects, and it stays

@@ -34,8 +34,11 @@ void compiler_impl::compile_program() {
     // became a throw. Recorded on the program rather than emitted - a call
     // at the top of every script was a global read no native pipeline could
     // type - and context::run binds them before the first instruction.
+    // VarDeclaredNames is `var` only - a `let`/`const` is lexical, and a
+    // block's `const` is nobody's global - which is what hoist_nested_vars keeps.
     if (!module_scope_) {
-        collect_hoisted_vars(ast_.root, out_.hoisted_vars);
+        hoist_nested_vars(ast_.root,
+                          [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());

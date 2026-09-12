@@ -7,30 +7,13 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
-#include <array>
-#include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/builtins.hpp>
-#include <ctbrowser/script/number_format.hpp>
-#include <ctbrowser/script/vm.hpp>
-#include <functional>
-#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
-#include <vector>
 
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
+#include <ctbrowser/script/builtins.hpp>
+#include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
 
@@ -181,17 +164,10 @@ value context::return_marker_value(value marker) const {
 }
 
 value context::generator_resume(value generator, value sent, resume_mode how) {
-    const auto record = [&](value v, bool done) {
-        value out = make_object();
-        auto * obj = static_cast<object_object *>(out.as_heap());
-        obj->set("value", v);
-        obj->set("done", value::boolean(done));
-        return out;
-    };
-    if (!generator.is_object()) { return record(value::undefined(), true); }
+    if (!generator.is_object()) { return iter_result(value::undefined(), true); }
     value * held = static_cast<object_object *>(generator.as_heap())->find("__co");
     if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     }
     auto * saved = static_cast<coroutine_object *>(held->as_heap());
 
@@ -200,7 +176,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // each other's locals; the spec makes it a TypeError and so does this.
     if (saved->running) {
         throw_error("TypeError", "this generator is already running");
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     }
     // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
     // not an error and must not run the body again.
@@ -216,9 +192,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         if (how == resume_mode::thrown) {
             thrown_ = sent;
             if (!unwind_to_handler()) { raise("uncaught exception from a finished generator"); }
-            return record(value::undefined(), true);
+            return iter_result(value::undefined(), true);
         }
-        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+        return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
     // `.throw()` / `.return()` BEFORE THE BODY EVER RAN never enter it: there is
     // no `yield` to throw at, so the generator simply finishes.
@@ -228,7 +204,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             thrown_ = sent;
             if (!unwind_to_handler()) { raise("uncaught exception from a generator"); }
         }
-        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+        return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
     // A `yield*` IN PROGRESS (sync only): `.throw(e)` and `.return(v)` go to
     // the inner iterator first (14.4.14 steps 7.b and 7.c), and only what
@@ -320,7 +296,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // async generator still finishes on the spot.
     if (how == resume_mode::returned && saved->async_gen) {
         saved->done = true;
-        return record(sent, true);
+        return iter_result(sent, true);
     }
     if (how == resume_mode::returned) {
         sent = make_return_marker(sent);
@@ -342,33 +318,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     }
     const std::size_t fence_mark = handlers_.size();
 
-    const std::size_t base = registers_.size();
-    registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
-    // Slack above the window, for the same reason a call reserves it: an
-    // expression allocates scratch registers past the frame's declared size.
-    registers_.resize(registers_.size() + 8u, value::undefined());
-
-    call_frame frame;
-    frame.proto = saved->proto;
-    frame.ip = saved->ip;
-    frame.base = base;
-    frame.result_reg = 0;
-    frame.argc = saved->argc;
-    frame.closure = saved->closure;
-    frame.receiver = saved->receiver;
-    frame.handler_base = handlers_.size();
-    frame.generator = saved;
-    // An async generator's frame settles the REQUEST'S promise, so an await
-    // inside it parks on that one rather than minting another.
-    if (saved->async_gen) { frame.async_promise = saved->promise; }
-    frames_.push_back(frame);
-    const std::size_t index = frames_.size() - 1;
-    for (handler restored : saved->handlers) {
-        restored.frame = index;
-        restored.reg_top += base; // relative while saved; absolute again here
-        handlers_.push_back(restored);
-    }
-    saved->handlers.clear();
+    const std::size_t base = restore_frame(saved);
 
     // WHERE THE VALUE PASSED TO `.next(v)` LANDS: the destination register of
     // the `yield` that suspended, which is what makes `var x = yield y` see it.
@@ -390,10 +340,10 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         saved->done = true;
         saved->delegate = value::undefined();
         registers_.resize(base);
-        if (is_return_marker(thrown)) { return record(return_marker_value(thrown), true); }
+        if (is_return_marker(thrown)) { return iter_result(return_marker_value(thrown), true); }
         thrown_ = thrown;
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     };
     const auto pop_fence = [&] {
         if (fenced && handlers_.size() >= fence_mark) { handlers_.resize(fence_mark - 1); }
@@ -413,7 +363,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             registers_.resize(base);
             saved->running = false;
             saved->done = true;
-            return record(value::undefined(), true);
+            return iter_result(value::undefined(), true);
         }
         if (fence_took()) {
             const value thrown = fence_thrown_;
@@ -439,7 +389,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         if (!saved->async_gen && saved->delegate.is_object() && produced.is_object()) {
             return produced;
         }
-        return record(produced, false);
+        return iter_result(produced, false);
     }
     saved->delegate = value::undefined();
     // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
@@ -454,7 +404,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // those finish the generator; a further `.next()` answers done for ever.
     saved->done = true;
     registers_.resize(base);
-    return record(produced, true);
+    return iter_result(produced, true);
 }
 
 // --- async generators ---------------------------------------------------------
@@ -522,12 +472,7 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
         return;
     }
     value record = outcome;
-    if (raw_return) {
-        record = make_object();
-        auto * obj = static_cast<object_object *>(record.as_heap());
-        obj->set("value", outcome);
-        obj->set("done", value::boolean(true));
-    }
+    if (raw_return) { record = iter_result(outcome, true); }
     if (record.is_object()) {
         if (value * v = static_cast<object_object *>(record.as_heap())->find("value")) {
             if (value * reason = rejection_of(*v)) {
@@ -539,10 +484,30 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
     promise_settler_(*this, promise, record, false);
 }
 
-void context::resume(value coroutine, value with, bool rejected) {
-    if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
-    auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
+    const call_frame & frame = frames_.back();
+    const std::size_t base = frame.base;
+    saved->proto = frame.proto;
+    saved->ip = frame.ip;
+    saved->await_reg = await_reg;
+    saved->argc = frame.argc;
+    saved->closure = frame.closure;
+    saved->receiver = frame.receiver;
+    saved->constructing = frame.constructing;
+    saved->promise = frame.async_promise;
+    saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base), registers_.end());
+    saved->handlers.clear();
+    for (std::size_t i = frame.handler_base; i < handlers_.size(); ++i) {
+        handler moved = handlers_[i];
+        moved.reg_top -= base;
+        saved->handlers.push_back(moved);
+    }
+    handlers_.resize(frame.handler_base);
+    registers_.resize(base);
+    frames_.pop_back();
+}
 
+std::size_t context::restore_frame(coroutine_object * saved) {
     const std::size_t base = registers_.size();
     registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
     // Slack above the window, for the same reason a call reserves it: an
@@ -559,20 +524,32 @@ void context::resume(value coroutine, value with, bool rejected) {
     frame.receiver = saved->receiver;
     frame.constructing = saved->constructing;
     frame.handler_base = handlers_.size();
+    // A generator's frame keeps its coroutine, and an async generator's
+    // settles the REQUEST'S promise, so an await inside it parks on that
+    // one rather than minting another; a sync generator's is undefined.
+    frame.generator = saved->generator ? saved : nullptr;
     frame.async_promise = saved->promise;
-    // An async generator comes back as a GENERATOR frame, so its next `yield`
-    // finds the coroutine to park in.
-    if (saved->generator) {
-        frame.generator = saved;
-        saved->awaiting = false;
-        saved->running = true;
-    }
     frames_.push_back(frame);
     const std::size_t index = frames_.size() - 1;
     for (handler restored : saved->handlers) {
         restored.frame = index;
         restored.reg_top += base; // relative while saved; absolute again here
         handlers_.push_back(restored);
+    }
+    saved->handlers.clear();
+    return base;
+}
+
+void context::resume(value coroutine, value with, bool rejected) {
+    if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
+    auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+
+    const std::size_t base = restore_frame(saved);
+    // An async generator comes back as a GENERATOR frame, so its next `yield`
+    // finds the coroutine to park in.
+    if (saved->generator) {
+        saved->awaiting = false;
+        saved->running = true;
     }
 
     registers_[base + saved->await_reg] = with;
@@ -618,10 +595,7 @@ void context::resume(value coroutine, value with, bool rejected) {
         if (failed_) { return; }
         if (yielded_) {
             yielded_ = false;
-            value record = make_object();
-            auto * obj = static_cast<object_object *>(record.as_heap());
-            obj->set("value", returned);
-            obj->set("done", value::boolean(false));
+            const value record = iter_result(returned, false);
             settle_async_generator(saved, record, /*raw_return*/ false);
         } else {
             saved->done = true;

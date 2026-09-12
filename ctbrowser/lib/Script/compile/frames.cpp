@@ -342,8 +342,7 @@ void compiler_impl::fail(std::string message) {
     }
 }
 
-void compiler_impl::compile_parameter_prologue(
-    std::span<const std::int32_t> params, const std::function<bool(std::uint16_t)> & is_boxed) {
+void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> params) {
     for (std::size_t i = 0; i < params.size(); ++i) {
         const vp::node & p = at(params[i]);
         if (p.d == 1) {
@@ -354,9 +353,14 @@ void compiler_impl::compile_parameter_prologue(
     // BOX THE CAPTURED PARAMETERS HERE, between the rest gather (a raw write)
     // and the defaults (which read earlier parameters by name, i.e. through
     // the cell). See compile_function_body.
+    //
+    // Parameter i IS local i: they are declared first, in order, into a fresh
+    // frame. Only the parameters are boxed here - a pattern name is declared
+    // and boxed below as it binds, and boxing it twice wrapped a cell in a
+    // cell (a captured `{ space }` parameter read as an empty object).
     std::vector<bool> boxed(params.size(), false);
     for (std::size_t i = 0; i < params.size(); ++i) {
-        boxed[i] = is_boxed(static_cast<std::uint16_t>(i));
+        boxed[i] = fn().locals[i].boxed;
         if (boxed[i]) { proto().emit(instruction{op::new_cell, static_cast<std::uint16_t>(i)}); }
     }
     for (std::size_t i = 0; i < params.size(); ++i) {
@@ -415,20 +419,6 @@ void compiler_impl::emit_throw(std::string_view kind, std::string message) {
     proto().emit(instruction{op::construct, ctor, 1});
     proto().emit(instruction{op::throw_value, ctor});
     release_to(mark);
-}
-
-std::string compiler_impl::kind_name(vp::nk kind) {
-    switch (kind) {
-    case vp::nk::spread: return "spread in a call, `f(...args)`";
-    case vp::nk::seq: return "the comma operator";
-    case vp::nk::regex: return "a regular expression literal";
-    case vp::nk::yield_expr: return "`yield`";
-    case vp::nk::tagged: return "a tagged template literal";
-    case vp::nk::arrow: return "an arrow function";
-    case vp::nk::class_decl: return "a class declaration";
-    case vp::nk::func_expr: return "a function expression";
-    default: return "AST kind " + std::to_string(static_cast<int>(kind));
-    }
 }
 
 } // namespace ctbrowser::script::detail

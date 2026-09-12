@@ -330,6 +330,14 @@ public:
     }
     [[nodiscard]] value make_object() { return value::object(allocate<object_object>()); }
     [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
+    // CreateIterResultObject (7.4.14): `{value, done}`, in that order.
+    [[nodiscard]] value iter_result(value v, bool done) {
+        const value out = make_object();
+        auto * obj = static_cast<object_object *>(out.as_heap());
+        obj->set("value", v);
+        obj->set("done", value::boolean(done));
+        return out;
+    }
 
     void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
     // `delete globalThis.x`: the binding is a table entry, and every global
@@ -1258,16 +1266,23 @@ public:
 
         [[nodiscard]] bool is_accessor() const noexcept { return has_get || has_set; }
         [[nodiscard]] bool is_data() const noexcept { return has_value || has_writable; }
-        [[nodiscard]] std::uint8_t attrs() const noexcept {
-            return static_cast<std::uint8_t>((writable ? attr_writable : 0) |
-                                             (enumerable ? attr_enumerable : 0) |
-                                             (configurable ? attr_configurable : 0));
-        }
         static property_descriptor data(value v, std::uint8_t a) {
             property_descriptor d;
             d.has_value = d.has_writable = d.has_enumerable = d.has_configurable = true;
             d.held = v;
             d.writable = (a & attr_writable) != 0;
+            d.enumerable = (a & attr_enumerable) != 0;
+            d.configurable = (a & attr_configurable) != 0;
+            return d;
+        }
+        // `a` is the entry's attrs, or for an array element the element's -
+        // freeze/seal on an array flips the element bits and never rewrites
+        // the accessor table.
+        static property_descriptor accessor(value get, value set, std::uint8_t a) {
+            property_descriptor d;
+            d.has_get = d.has_set = d.has_enumerable = d.has_configurable = true;
+            d.getter = get;
+            d.setter = set;
             d.enumerable = (a & attr_enumerable) != 0;
             d.configurable = (a & attr_configurable) != 0;
             return d;
@@ -1601,6 +1616,16 @@ public:
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
+    // LIFT THE TOP FRAME INTO A COROUTINE (await and yield are the same
+    // suspension): its register window is copied out, its handlers travel
+    // with it with reg_top made RELATIVE - it comes back somewhere else in
+    // the stack - and the frame is popped. `await_reg` is where the resuming
+    // value lands.
+    void suspend_frame(coroutine_object * saved, std::uint16_t await_reg);
+    // The mirror: the window back on the register stack with slack above it,
+    // a frame rebuilt from the coroutine and pushed, the handlers absolute
+    // again. Returns the frame's base.
+    std::size_t restore_frame(coroutine_object * saved);
 
     // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
     // yields or finishes, and answers the `{value, done}` record the iterator
@@ -2210,11 +2235,8 @@ private:
     value global_this_ = value::undefined();
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
-    // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null. NOT BEHIND THE #if:
-    // `context` is a public type, and a member that exists in one build and
-    // not another compiles this library against one layout and its consumers
-    // against a second. CTBROWSER_SCRIPT_RECORD_TYPES gates the CALL, in
-    // run_loop.cpp.
+    // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the
+    // run_loop instantiation with no hook in it (run_loop.cpp).
     type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;

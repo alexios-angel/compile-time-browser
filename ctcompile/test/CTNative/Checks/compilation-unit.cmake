@@ -61,7 +61,8 @@
 #
 #   * A lone surrogate is stored as WTF-8 and is NOT VALID UTF-8. `"\uD800"`
 #     with no low surrogate after it becomes the three bytes ED A0 80
-#     (ctbrowser/lib/Script/compile/strings.cpp, encode_code_point). Any
+#     (ctbrowser/lib/Script/compile/strings.cpp, through core/algorithms.hpp
+#     append_utf8). Any
 #     escaping that decoded to code points first would have to agree with the
 #     other side about how to repair those bytes. Percent-encoding is per byte,
 #     so ED A0 80 is `%ED%A0%80` on both sides with no decoder in the loop.

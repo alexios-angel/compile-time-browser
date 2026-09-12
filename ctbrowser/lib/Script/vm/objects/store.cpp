@@ -7,29 +7,12 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
-#include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
-#include <ctbrowser/script/vm.hpp>
-#include <functional>
-#include <optional>
-#include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
-#include <vector>
 
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
+#include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
 
@@ -206,11 +189,9 @@ void context::store_property(value target, const std::string & name, value v) {
         // through every instance. And a fresh property needs the receiver to be
         // extensible.
         //
-        // TODO(strict): each of these three is a TypeError under "use strict".
-        // This engine has no strict mode at all (docs/test262.md names the gap
-        // and the 678 onlyStrict tests it silently runs sloppy), so the write
-        // is DISCARDED, which is exactly what sloppy mode does. When a strict
-        // mode arrives, these three `return`s are where it throws.
+        // Each of the three `return`s below sets store_rejected_: sloppy code
+        // discards the write, and strict code throws the TypeError from
+        // strict_store_check in the run loop, off that flag.
         // ONE HASH LOOKUP ON THE HIT PATH, not two: `find` then `set` would
         // hash the name twice, and this is the hottest write in the engine.
         obj->normalise();
@@ -331,8 +312,8 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             return;
         }
-        // The same three checks as an object's - see above, TODO(strict) and
-        // all. `Array.prototype = x` is the one every page tries by accident.
+        // The same three checks as an object's - see above, store_rejected_
+        // and all. `Array.prototype = x` is the one every page tries by accident.
         if (fn->find(name) != nullptr) {
             if ((fn->attrs_of(name) & attr_writable) == 0) {
                 store_rejected_ = true;
