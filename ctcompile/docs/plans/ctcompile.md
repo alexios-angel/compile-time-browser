@@ -1,32 +1,18 @@
 # ctcompile: an application directory in, a native executable out
 
-**Where it is. The repository is a monorepo, `ctcompile` builds beside the
-engine, and PHASE 0 IS COMPLETE: six inventories the build checks, two
-differential comparators written before the things they will accept, and a
-recorded startup baseline. PHASE 2'S GATE IS MET - a hand-authored
-compiled function runs through the real ABI, and doing it falsified a row. PHASE
-15 IS WORKING: a page is handed its scripts
-already compiled, one per `<script>`, which is **71% of a p5 page load** and
-**3.5x on the edit-one-script case that used to cost a full recompile**. It compiles nothing
-of its own yet. 97 of 97 tests pass.**
+**Where it is.** This is the ladder actually climbed, measured at each rung,
+in the shape `docs/plans/bootstrap.md` uses: Phase -1 through Phase 10, the
+program image (Phase 15) and the two PDLL rungs, each with what it cost and
+what it falsified. It is
+history plus the reasoning behind every decision, not the status board -
+**current status, the newest gate numbers and what lands next are in
+`docs/HANDOFF.md`**, whose top entry is the latest. Since these rungs were
+written the native EmitC backend has run whole applications with no
+interpreter (`docs/plans/launcher.md`), and the pin is LLVM 23.1.0
+(`cmake/LLVMVersion.cmake`); dated figures below are as measured on the day.
 
-**Done:** Phase -1, the repository restructure — sibling projects, `ctbrowser/`
-as the configure root, the suite split three ways, `third-party/` at repository
-scope, presets that make a runtime-only build an *enforced* configuration, and a
-stub behind a real command line · **Phase 0's bytecode, program-representation,
-call-path and GC-root inventories**, each an X-macro table or a wall of
-`static_assert`s rather than prose.
-
-**Next:** Phases 1–6, the runtime preparation — and the one everything
-downstream reads is Phase 2's AOT ABI: the shared runtime helpers, declared once
-in `ctbrowser` in a dependency-free X-macro so that drift between the runtime
-that defines them and the compiler that emits calls to them is a *compile
-error*.
-
-The master plan is 21 files under `ctcompile-plan/`, and
-`01-objective-and-ground-truth.md` overrides the rest of it. This document is
-the ladder actually climbed, measured at each rung, in the shape
-`docs/plans/bootstrap.md` uses.
+The master plan is `../ctcompile-plan/` (outside the repository), and
+`01-objective-and-ground-truth.md` overrides the rest of it.
 
 ---
 

@@ -7,8 +7,8 @@
 # it at configure time, and an upgrade is its own change rather than a surprise
 # in the middle of a feature.
 #
-# 22 rather than the 20 the master plan names: 20 is not installable on the
-# devbox. apt ships MLIR 18 and brew ships 22.1.8, and the project's package
+# 23 rather than the 20 the master plan names: 20 is not installable on the
+# devbox. apt ships MLIR 18 and brew ships 23, and the project's package
 # policy has been brew-first since 2026-08-01 - so the pin is what the build
 # machine can actually have. Every ODS/PDLL construct the plan spells has to be
 # verified against THIS revision before it is relied on; see
