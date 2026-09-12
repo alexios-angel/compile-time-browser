@@ -72,6 +72,8 @@ struct node {
     return std::nullopt;
 }
 
+[[nodiscard]] std::string number_text(double value);
+
 // Recursive descent over the tokens of one <calc-sum>, CSS Values 4 §10.1.
 // `ok` latches false at the first token that is not arithmetic.
 class reader {
@@ -179,8 +181,16 @@ private:
             out.unit = ascii_lower_copy(unit);
             // A context-free unit is written in its family's canonical one:
             // `1in` is `96px` (§10.12); against bases, so is a relative one.
+            //
+            // ...WHEN THAT LOSES NOTHING. The text this writes is parsed again
+            // by the cascade, and `100dpi` as `1.041667dppx` is six digits of
+            // a number that had more: `calc(100dpi + 20dpi * sign(38px -
+            // 2em))` came out 0.833334dppx instead of 0.833333dppx
+            // (signs-abs-computed). A conversion the printed number cannot
+            // carry keeps the author's unit.
             if (context_free_unit(unit)) {
-                if (const std::optional<term> fixed = canonical_term(tok.number, unit, {})) {
+                if (const std::optional<term> fixed = canonical_term(tok.number, unit, {});
+                    fixed && std::stod(number_text(fixed->value)) == fixed->value) {
                     out.value = fixed->value;
                     out.unit = std::string{canonical_unit(fixed->type())};
                 }
@@ -379,10 +389,14 @@ private:
 
 [[nodiscard]] std::string serialize_leaf(const node & leaf, bool absolute) {
     const double v = absolute ? std::fabs(leaf.value) : leaf.value;
+    // A NEGATIVE ZERO KEEPS ITS SIGN: `sign(-0em / 1px)` is -0 and `sign(0em /
+    // 1px)` is 0, and signs-abs-computed reads the difference back through
+    // `1 / sign(...)`.
+    const std::string sign = v == 0.0 && std::signbit(v) ? "-" : "";
     switch (leaf.what) {
-    case node::kind::number: return number_text(v);
-    case node::kind::percent: return number_text(v) + "%";
-    case node::kind::dimension: return number_text(v) + leaf.unit;
+    case node::kind::number: return sign + number_text(v);
+    case node::kind::percent: return sign + number_text(v) + "%";
+    case node::kind::dimension: return sign + number_text(v) + leaf.unit;
     default: return leaf.text;
     }
 }

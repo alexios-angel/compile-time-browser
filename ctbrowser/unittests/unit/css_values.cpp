@@ -560,6 +560,13 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
        "max(10px + (2 * (10px + min(10%, 30px))), 5% + 5em)");
     // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers.
     ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(pow(2, sign(1em - 18px)) * 1px)");
+    // A signed zero keeps its sign through the tree, and a unit whose
+    // canonical spelling would lose digits keeps the author's: the cascade
+    // parses this text again (signs-abs-computed, typed_arithmetic).
+    ok("scale", "clamp(-1, 1 / sign(-0em / 1px), 1)", "clamp(-1, 1 / sign(-0em / 1px), 1)");
+    ok("margin-left", "calc(1px * 10em / -0em)", "calc(1px * 10em / -0em)");
+    ok("image-resolution", "calc(100dpi + 20dpi * sign(38px - 2em))",
+       "calc(100dpi + (20dpi * sign(-2em + 38px)))");
 }
 
 // ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.
