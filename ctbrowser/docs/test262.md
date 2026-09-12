@@ -745,3 +745,61 @@ library, and nothing in this session touched it.
 `docs/script.md` is the engine's own account of what it implements and what it
 refuses by name; this file is the independent measurement of the same thing.
 Where they disagree, this one was measured.
+
+## Measured at `0e5cfbef` — 2026-09-12, before the day's runtime work
+
+The 09-10 sessions moved the VM (block scoping, `__proto__`, proxy traps,
+`for-in` over proxies, label chains) without re-running this suite. Same
+instrument (`tools/check/test262-baseline.sh`, 4 workers, 10 s, 2 GB), corpus
+at the pinned commit, engine at `0e5cfbef` on `ctbrowser-wpt`:
+
+| area | tests | pass 2026-09-07 | pass 2026-09-12 | delta | fail | crash |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 7,310 | **8,754** | +1,444 | 14,943 | 4 (+4 host) |
+| `built-ins/Array` | 3,082 | 1,905 | **1,983** | +78 | 1,078 | 4 (+1 timeout) |
+| `built-ins/Object` | 3,411 | 1,997 | **2,459** | +462 | 950 | 0 |
+| `built-ins/Number` | 340 | 239 | **260** | +21 | 79 | 0 |
+| `built-ins/Math` | 327 | 271 | **274** | +3 | 53 | 0 |
+| `built-ins/String` | 1,223 | 730 | **860** | +130 | 360 | 0 |
+| `built-ins/Boolean` | 51 | 25 | **27** | +2 | 23 | 0 |
+| `built-ins/Function` | 509 | 193 | **231** | +38 | 265 | 0 |
+| `built-ins/Error` | 93 | 30 | **35** | +5 | 53 | 0 |
+| `built-ins/JSON` | 165 | 45 | **98** | +53 | 65 | 0 |
+| **total** | **32,927** | **12,745** | **14,981** | **+2,236** | | |
+
+**14,981 of the 32,927 (45.5%).** `test/language` is where the work is; its top
+causes, counted from the JSON and named by what they are:
+
+| count | cause | what it is |
+|---:|---|---|
+| 2,225 | `X is undefined, not a function` | 1,501 of them `then`: **async generators** ran as plain generators, so `.next()` answered a record, not a promise; 571 `eval`; 242 `with` |
+| 1,801 | negative parse: got runtime | early errors the checker does not know (class 491, regexp literals 181, dynamic-import 86, object literals 86, strings 35) |
+| 1,201 | `parse error: (` | 1,142 of them `for await` — not parsed |
+| 1,211 | Expected a ReferenceError | reading an undeclared name is `undefined` here, not a throw (`get_global`'s row says may_throw 0 — an ABI change) |
+| 924 | `parse error: expression` | 861 in class tests: `\u{6F}`-escaped identifiers and private names |
+| 959 | Expected a TypeError | strict-mode writes to non-writable properties (no strict mode), destructuring `null`, private-name access on the wrong object |
+| 466 | descriptor should not be enumerable | class methods were enumerable |
+
+## What moved on 2026-09-12 (to be re-measured at the day's tip)
+
+Landed on `ctbrowser-wpt`, each named so the next run's delta can be read:
+
+- **async functions reject** instead of throwing synchronously or faulting
+  after an `await` (the compiler's fence; `05ece7bc..ad116e42`).
+- **async generators** — `%AsyncGeneratorPrototype%`, the request queue,
+  `yield`/`return` awaiting their operands.
+- **`for await (x of y)`** — parsed (ctjs `8980c01`), lowered to the async
+  iteration protocol.
+- **class members are non-enumerable**; static fields initialise after the
+  methods; `static x;` exists.
+- **a property of `null`/`undefined` throws** TypeError (was undefined).
+- **`eval`**, as an indirect eval with a completion value.
+- **arrays have named own properties**; `for-in` over a function sees its
+  enumerable statics.
+- **identifiers with unicode escapes** decode (ctjs `8eb3375`).
+- **a throw crossing a native is thrown once**, at the native's call site;
+  a throwing promise reaction rejects the next promise.
+- **a captured parameter is boxed before its default runs** — this one was a
+  wrong answer, not a missing feature (`f(cls, p = cls.name)` read undefined).
+- collection inside a turn (the reflection TIMEOUTs), with a native's own
+  allocations pinned and a native's C++-held arguments rooted.
