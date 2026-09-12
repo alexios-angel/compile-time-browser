@@ -493,6 +493,27 @@ void test_the_window_keeps_both_spellings() {
        "1");
 }
 
+void test_a_sheets_onload_attribute_has_run_by_the_windows_load() {
+    // css/cssom/HTMLStyleElement-load-event: three `<style onload="++N">`,
+    // counted from a `window` load listener. HTML delays the document's load
+    // until its subresources have settled, so the count is three and not - as
+    // it was with the sheets queued beside the timers - zero.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><head><script>var N = 0;</script>"
+                   "<style onload='++N'></style><style onload='++N'>p{}</style>"
+                   "<link rel=stylesheet href='data:text/css,*{}' onload='++N'>"
+                   "<script>console.log('sync=' + N);"
+                   "window.addEventListener('load', function () { console.log('load=' + N); });"
+                   "</script></head><body></body></html>");
+    (void)page.tick(16.0);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{2});
+    if (logged.size() == 2) {
+        CHECK_EQ(logged[0], std::string{"sync=0"});
+        CHECK_EQ(logged[1], std::string{"load=3"});
+    }
+}
+
 } // namespace
 
 int main() {
@@ -516,5 +537,6 @@ int main() {
     test_an_animation_event_can_be_constructed();
     test_a_synthetic_touch_event_is_not_cancelable();
     test_the_window_keeps_both_spellings();
+    test_a_sheets_onload_attribute_has_run_by_the_windows_load();
     REPORT("event_handlers");
 }
