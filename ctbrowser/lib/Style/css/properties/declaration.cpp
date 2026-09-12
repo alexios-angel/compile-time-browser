@@ -3,6 +3,9 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/core/atom.hpp>
+#include <ctbrowser/style/css/parser.hpp>
+
 namespace ctbrowser::style::css {
 
 using namespace detail;
@@ -54,6 +57,16 @@ constexpr std::array<std::string_view, 5> wide_keywords{"inherit", "initial", "u
         find_top_level(body, "or", 0) != std::string_view::npos) {
         return condition(body, depth + 1);
     }
+    // `selector( <complex-selector> )`, CSS Conditional 4 §6.2: supported when
+    // it parses. A SYNTAX error and a selector this engine cannot match are
+    // different answers, and only the first is "not supported".
+    if (ascii_istarts_with(body, "selector(") && body.back() == ')') {
+        atom_table atoms;
+        bool invalid = false;
+        const stylesheet parsed =
+            parse_selector_text(body.substr(9, body.size() - 10), atoms, invalid);
+        return !invalid && !parsed.selectors.empty();
+    }
     const std::size_t colon = body.find(':');
     if (colon == std::string_view::npos) { return false; }
     // `!important` is part of a <declaration> and does not change the answer, so
@@ -80,6 +93,8 @@ bool condition(std::string_view text, int depth) {
         const bool right = condition(body.substr(at + op.size()), depth + 1);
         return op == "and" ? (left && right) : (left || right);
     }
+    // `selector()` is a <supports-condition> of its own, parentheses or not.
+    if (ascii_istarts_with(body, "selector(")) { return leaf(body, depth); }
     if (body.front() != '(' || body.back() != ')') { return false; }
     return leaf(body.substr(1, body.size() - 2), depth);
 }

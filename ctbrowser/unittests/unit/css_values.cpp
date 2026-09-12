@@ -686,6 +686,11 @@ void test_css_supports() {
     CHECK(!supports_condition("(width: 10px) and (display: flexx)"));
     CHECK(supports_condition("(width: 10px) or (display: flexx)"));
     CHECK(supports_condition("((width: 10px))"));
+    // `selector()` is supported when it parses (if-conditionals 176, 177).
+    CHECK(supports_condition("selector(h2 > p)"));
+    CHECK(supports_condition("(selector(h2 > p))"));
+    CHECK(!supports_condition("selector(h2 >)"));
+    CHECK(supports_condition("not selector(h2 >)"));
     // A bare declaration with no parentheses is not a <supports-condition>.
     CHECK(!supports_condition("width: 10px"));
     CHECK(!supports_condition(""));
