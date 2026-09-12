@@ -124,32 +124,6 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
     }
 }
 
-// The `var`s of a script (16.1.7's VarDeclaredNames): every `var` at any
-// depth of block, loop or branch, and nothing inside a function - and NOT
-// `let`/`const`, which are lexical (a top-level `let` before its line is a
-// TDZ ReferenceError in every engine, and a block's `const` is nobody's
-// global). Distinct from collect_declared_names, whose list also feeds the
-// function-body pre-declaration and so keeps the lexical names.
-void compiler_impl::collect_hoisted_vars(std::int32_t body, std::vector<std::string> & out) const {
-    if (body < 0) { return; }
-    const vp::node & n = at(body);
-    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
-    if (n.kind == vp::nk::var_decl) {
-        if (n.text != "var") { return; }
-        for (const std::int32_t d : kids(n)) {
-            const vp::node & decl = at(d);
-            if (decl.b >= 0) {
-                pattern_names(decl.b, out);
-            } else {
-                out.emplace_back(decl.text);
-            }
-        }
-        return;
-    }
-    for (const std::int32_t slot : child_slots(n)) { collect_hoisted_vars(slot, out); }
-    for (const std::int32_t k : kids(n)) { collect_hoisted_vars(k, out); }
-}
-
 void compiler_impl::predeclare_locals(std::int32_t body) {
     // A PROGRAM'S top level counts too, not only a function's block. It
     // never used to: a classic script's top-level declarations are globals,
