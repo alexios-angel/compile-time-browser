@@ -128,13 +128,15 @@ void checker::check_class(std::int32_t idx) {
         const bool is_generator = is_method && (bits & 2) != 0;
         const bool is_async = is_method && (bits & 1) != 0;
         // THE PROPERTY NAME AS WRITTEN. The parser files a string-literal
-        // key (`'constructor'`) as a computed key holding a str node, and
-        // 15.7.1's PropName rules are about the literal, so it is read back
-        // here without its quotes. A real computed key has no PropName.
+        // key (`'constructor'`) as a computed key holding a str node but
+        // keeps the quoted text, and 15.7.1's PropName rules are about the
+        // literal, so it is read back here without its quotes. A bracketed
+        // key has no text and no PropName (`static ['prototype']` is the
+        // runtime TypeError, not this).
         std::string_view literal = member.text;
         bool computed = (member.d & 2) != 0;
-        if (computed && at(member.a).kind == nk::str && at(member.a).text.size() >= 2) {
-            literal = at(member.a).text;
+        if (computed && !literal.empty() && literal.size() >= 2 &&
+            (literal.front() == '\'' || literal.front() == '"')) {
             literal = literal.substr(1, literal.size() - 2);
             computed = literal.find('\\') != std::string_view::npos; // an escape: not read
         }
