@@ -285,7 +285,11 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // THE GLOBALS. A READ HAS AN EDGE since 2026-09-12: a name that is
     // neither a binding nor a property of the global object is an
     // unresolvable reference and ct_aot_global_get throws ReferenceError
-    // (may_throw 1, status and out-slot like every other throwing row). A
+    // (may_throw 1, status and out-slot like every other throwing row) -
+    // EXCEPT the operand of `typeof` (13.5.3 step 2), which the interpreter
+    // recognises as get_global immediately followed by type_of and which is
+    // here a load_global whose only use is a typeof: that one goes through
+    // ct_aot_global_get_soft and reads undefined, as the run loop does. A
     // write is still (0, 0, 0) - defining a global cannot fail - so it stays
     // one call.
     //
@@ -295,14 +299,26 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // at it.
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
         const llvm::StringRef name = global.getName();
+        const mlir::Value text = literal(build, where, pointer_to(build.getContext(), "const char"),
+                                         c_string_literal(name));
+        const mlir::Value length = literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                           std::to_string(name.size()));
+        const bool only_typeof = [&] {
+            if (!global.getResult().hasOneUse()) { return false; }
+            auto unary = mlir::dyn_cast<UnaryOp>(*global.getResult().getUsers().begin());
+            return unary && unary.getKind() == UnaryKind::TypeOf;
+        }();
+        if (only_typeof) {
+            mapping.map(global.getResult(),
+                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                                 callee("ct_aot_global_get_soft"),
+                                                 mlir::ValueRange{scope.frame, text, length})
+                            .getResult(0));
+            return true;
+        }
         mapping.map(global.getResult(),
                     status_call(scope, build, where, callee("ct_aot_global_get"),
-                                {scope.frame,
-                                 literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(name)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(name.size()))},
-                                value));
+                                {scope.frame, text, length}, value));
         return true;
     }
     if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {

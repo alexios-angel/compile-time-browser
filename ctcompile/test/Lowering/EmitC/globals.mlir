@@ -25,6 +25,10 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
   %g = ctjs.load_global "Math"
+  // `typeof exports` - a load_global whose ONLY use is typeof - is the one
+  // read that must not throw for an unbound name, so it takes the soft row.
+  %e = ctjs.load_global "exports"
+  %t = ctjs.unary typeof %e
   // A NAME THAT IS NOT AN IDENTIFIER, which is legal JavaScript:
   // `globalThis["odFd"] = 1`. The importer carries whatever the source
   // said, so the backend cannot assume otherwise.
@@ -37,6 +41,7 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // is emitted rather than left to strlen because the name is BYTES: a global
 // whose name contains a zero byte is legal and strlen would stop at it.
 // CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "Math", 4, {{v[0-9]+}});
+// CHECK: ctbrowser::aot::ct_aot_global_get_soft({{v[0-9]+}}, "exports", 7);
 
 // AND THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE. `od`, byte 0x01, `Fd` -
 // five characters. Written "od\x01Fd" the C++ compiler reads the escape as
