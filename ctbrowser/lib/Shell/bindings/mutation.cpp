@@ -395,7 +395,34 @@ void dom_bindings::record_mutations() {
                 now_children.clear();
                 for (const node_id child : txn.children(at)) { now_children.push_back(child); }
                 if (now_children != was.children) {
-                    common_subsequence(was.children, now_children, kept_before, kept_after);
+                    // THE NODE THE INSERTION MOVED IS KNOWN, not guessed: an
+                    // ordinary insertion of a connected node records it in
+                    // moved_by_mutation_, and a swap of siblings is otherwise
+                    // ambiguous - `insertBefore(b, a)` and `appendChild(b)` both
+                    // leave a tie the common subsequence cannot break the same
+                    // way (MutationObserver-childList.html's n32 and n42). The
+                    // subsequence is the fallback for everything else.
+                    bool known = false;
+                    for (const node_id moved : moved_by_mutation_) {
+                        if (std::ranges::find(was.children, moved) != was.children.end() &&
+                            std::ranges::find(now_children, moved) != now_children.end()) {
+                            known = true;
+                        }
+                    }
+                    if (known) {
+                        kept_before.assign(was.children.size(), 1);
+                        kept_after.assign(now_children.size(), 1);
+                        for (const node_id moved : moved_by_mutation_) {
+                            for (std::size_t i = 0; i < was.children.size(); ++i) {
+                                if (was.children[i] == moved) { kept_before[i] = 0; }
+                            }
+                            for (std::size_t j = 0; j < now_children.size(); ++j) {
+                                if (now_children[j] == moved) { kept_after[j] = 0; }
+                            }
+                        }
+                    } else {
+                        common_subsequence(was.children, now_children, kept_before, kept_after);
+                    }
                     const auto present_in = [](const std::vector<node_id> & list, node_id want) {
                         return std::ranges::find(list, want) != list.end();
                     };
