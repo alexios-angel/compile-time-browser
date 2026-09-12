@@ -24,6 +24,45 @@ namespace {
 [[nodiscard]] value make_promise(context & cx, value v, bool rejected);
 void settle(context & cx, value promise, value with, bool rejected);
 
+// A PROMISE THAT HAS NOT SETTLED: what `then` hands back, what `await`
+// suspends on, what `new Promise` and the combinators settle later.
+[[nodiscard]] value pending_promise(context & cx) {
+    const value made = make_promise(cx, value::undefined(), false);
+    static_cast<object_object *>(made.as_heap())
+        ->define("__settled", value::boolean(false), attr_builtin);
+    return made;
+}
+
+// RESOLVE AND REJECT FOR ONE PROMISE, as `new Promise(executor)` hands them to
+// the executor and `Promise.withResolvers` hands them back.
+//
+// RETAINED, not merely captured: a `value` captured by a C++ lambda is
+// invisible to the collector, and these two hold the only reference to the
+// promise that outlives the call - a page keeps `resolve`, not the promise -
+// so it was collected out from under them and a later resolve() settled
+// freed memory, SILENTLY, because settle() checks is_object() and a recycled
+// cell is usually not one. The cost was an async function that could suspend
+// exactly ONCE. `native_object::retained` is a traced list that is not a
+// property, so it costs no name and is not visible to
+// Object.getOwnPropertyNames(resolve), which the `__promise` property that
+// first fixed this was.
+[[nodiscard]] std::pair<native_object *, native_object *> resolvers_for(context & cx,
+                                                                        value promise) {
+    auto * resolve_fn =
+        cx.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
+            settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
+            return value::undefined();
+        });
+    auto * reject_fn =
+        cx.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
+            settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
+            return value::undefined();
+        });
+    resolve_fn->retained.push_back(promise);
+    reject_fn->retained.push_back(promise);
+    return {resolve_fn, reject_fn};
+}
+
 // Run one registered handler and settle the promise it produced.
 void deliver(context & cx, value handler_record, value settled, bool rejected) {
     auto * record = static_cast<object_object *>(handler_record.as_heap());
@@ -159,9 +198,7 @@ value settle_with(context & cx, value on_ok, value on_err, value on_finally = va
     if (!self.is_object()) { return self; }
     auto * promise = static_cast<object_object *>(self.as_heap());
 
-    const value next = make_promise(cx, value::undefined(), false);
-    static_cast<object_object *>(next.as_heap())
-        ->define("__settled", value::boolean(false), attr_builtin);
+    const value next = pending_promise(cx);
     object_object * record = new_table(cx);
     record->set("ok", on_ok);
     record->set("err", on_err);
@@ -226,17 +263,10 @@ value settle_with(context & cx, value on_ok, value on_err, value on_finally = va
 
 namespace ctbrowser::script::builtins_detail {
 
-namespace {
+using detail::pending_promise;
+using detail::resolvers_for;
 
-// A PROMISE THAT HAS NOT SETTLED. Three of the combinators below hand one back
-// and settle it later, which is the whole difference between them and
-// `Promise.resolve`.
-[[nodiscard]] value pending_promise(context & cx) {
-    const value made = detail::make_promise(cx, value::undefined(), false);
-    static_cast<object_object *>(made.as_heap())
-        ->define("__settled", value::boolean(false), attr_builtin);
-    return made;
-}
+namespace {
 
 // ATTACH A REACTION THE WAY `then` ATTACHES ONE, and for the same reason it has
 // to be the same way: a combinator is specified over arbitrary values, so all
@@ -436,12 +466,7 @@ void install_promise(context & cx) {
     // What `await` needs to suspend: a promise that has not settled, and a way
     // to settle one. The VM can READ a promise - it always could - but making
     // and settling run this library's own logic, queue included.
-    cx.set_pending_promise_factory([](context & c) {
-        const value made = detail::make_promise(c, value::undefined(), false);
-        static_cast<object_object *>(made.as_heap())
-            ->define("__settled", value::boolean(false), attr_builtin);
-        return made;
-    });
+    cx.set_pending_promise_factory(pending_promise);
     cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
         detail::settle(c, promise, with, rejected);
     });
@@ -538,11 +563,31 @@ void install_promise(context & cx) {
     cx.define_native(std::string{promise_reject_name}, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
     });
-    object_object * promise_ctor = new_table(cx);
-    method(cx, promise_ctor, "resolve", 1, [](context & c, std::span<value> a) {
+    // `new Promise(executor)`. The executor runs IMMEDIATELY and is handed
+    // resolve and reject; a promise it does not settle stays pending until
+    // something later calls one of them. That is the whole of what was missing,
+    // and p5.js opens with it:
+    //
+    //   new Promise((resolve) => {
+    //     if (document.readyState === 'complete') { resolve(); }
+    //     else { window.addEventListener('load', resolve, false); }
+    //   })
+    //
+    // Callable AND a namespace: the statics are installed on it directly with
+    // detail::method, so each is { writable, enumerable: FALSE, configurable }
+    // as clause 27.2.4 has them (a copy through `set` made them enumerable).
+    auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
+        const value promise = pending_promise(c);
+        if (a.empty() || !a[0].is_callable()) { return promise; }
+        const auto [resolve_fn, reject_fn] = resolvers_for(c, promise);
+        const value args[2] = {value::object(resolve_fn), value::object(reject_fn)};
+        (void)c.call(a[0], args);
+        return promise;
+    });
+    method(cx, promise_new, "resolve", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);
     });
-    method(cx, promise_ctor, "reject", 1, [](context & c, std::span<value> a) {
+    method(cx, promise_new, "reject", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
     });
     // `Promise.all` - 27.2.4.1. The first rejection wins; otherwise the result
@@ -564,7 +609,7 @@ void install_promise(context & cx) {
     // whose backend fetches a CDN URL. If that promise never settles headless
     // then p5 never boots, where before it booted on a wrong answer - so the p5
     // ratchet is the thing to watch on this change.
-    method(cx, promise_ctor, "all", 1, [](context & c, std::span<value> a) {
+    method(cx, promise_new, "all", 1, [](context & c, std::span<value> a) {
         const std::vector<value> entries = entries_of(a);
         const value out = pending_promise(c);
         const value results = c.make_array();
@@ -586,7 +631,7 @@ void install_promise(context & cx) {
     //
     // LIKE `all` ABOVE, this one waits: all four go through `react`, which is
     // the same path `then` takes. `all` was the last one that did not.
-    method(cx, promise_ctor, "allSettled", 1, [](context & c, std::span<value> a) {
+    method(cx, promise_new, "allSettled", 1, [](context & c, std::span<value> a) {
         const std::vector<value> entries = entries_of(a);
         const value out = pending_promise(c);
         const value results = c.make_array();
@@ -605,7 +650,7 @@ void install_promise(context & cx) {
     });
     // `Promise.any` - 27.2.4.3. The first FULFILMENT wins; if every input
     // rejects it rejects with an AggregateError carrying `errors` in order.
-    method(cx, promise_ctor, "any", 1, [](context & c, std::span<value> a) {
+    method(cx, promise_new, "any", 1, [](context & c, std::span<value> a) {
         const std::vector<value> entries = entries_of(a);
         const value out = pending_promise(c);
         const value errors = c.make_array();
@@ -624,7 +669,7 @@ void install_promise(context & cx) {
     });
     // `Promise.race` - 27.2.4.5. An EMPTY list stays pending forever, which is
     // the specified answer and not an oversight.
-    method(cx, promise_ctor, "race", 1, [](context & c, std::span<value> a) {
+    method(cx, promise_new, "race", 1, [](context & c, std::span<value> a) {
         const std::vector<value> entries = entries_of(a);
         const value out = pending_promise(c);
         const value state = value::object(combinator_state(c, out, value::undefined(), 0));
@@ -638,24 +683,9 @@ void install_promise(context & cx) {
     // `new Promise(executor)` turned inside out - the same promise and the same
     // two functions, handed back as an object instead of to a callback, so a
     // page does not have to smuggle them out of the executor's scope.
-    method(cx, promise_ctor, "withResolvers", 0, [](context & c, std::span<value>) {
+    method(cx, promise_new, "withResolvers", 0, [](context & c, std::span<value>) {
         const value promise = pending_promise(c);
-        // RETAINED, not merely captured. These two hold the only reference to
-        // the promise that outlives this call - a page keeps `resolve` - and a
-        // C++ lambda capture is not a root. See `new Promise` below, where the
-        // same omission cost an async function that could suspend exactly once.
-        auto * resolve_fn =
-            c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
-                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
-                return value::undefined();
-            });
-        auto * reject_fn =
-            c.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
-                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
-                return value::undefined();
-            });
-        resolve_fn->retained.push_back(promise);
-        reject_fn->retained.push_back(promise);
+        const auto [resolve_fn, reject_fn] = resolvers_for(c, promise);
         const value out = c.make_object();
         auto * fields = static_cast<object_object *>(out.as_heap());
         fields->set("promise", promise);
@@ -663,65 +693,6 @@ void install_promise(context & cx) {
         fields->set("reject", value::object(reject_fn));
         return out;
     });
-    // `new Promise(executor)`. The executor runs IMMEDIATELY and is handed
-    // resolve and reject; a promise it does not settle stays pending until
-    // something later calls one of them. That is the whole of what was missing,
-    // and p5.js opens with it:
-    //
-    //   new Promise((resolve) => {
-    //     if (document.readyState === 'complete') { resolve(); }
-    //     else { window.addEventListener('load', resolve, false); }
-    //   })
-    //
-    // Callable AND a namespace, so `Promise.resolve` still reads off it.
-    auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
-        const value promise = detail::make_promise(c, value::undefined(), false);
-        auto * made = static_cast<object_object *>(promise.as_heap());
-        made->define("__settled", value::boolean(false),
-                     attr_builtin); // pending until told otherwise
-        if (a.empty() || !a[0].is_callable()) { return promise; }
-        // A `value` CAPTURED BY A C++ LAMBDA IS INVISIBLE TO THE COLLECTOR.
-        //
-        // These two hold the only reference to the promise that outlives the
-        // constructor: a page keeps `resolve`, not the promise. The lambda
-        // capture is not a root, so the promise was collected out from under it
-        // and calling resolve() later settled freed memory - which failed
-        // SILENTLY, because settle() checks is_object() and a recycled cell is
-        // usually not one.
-        //
-        // The cost was an async function that could suspend exactly ONCE. The
-        // first await's promise was still in a live frame's registers; the
-        // second one's existed only inside these captures and in the awaited
-        // promise's handler list - a cycle with no root - so it went, and the
-        // frame never came back. Every p5 loader awaits twice.
-        //
-        // The fix is to make the reference REACHABLE rather than to stop
-        // capturing. That was first done with a PROPERTY, `__promise`, because
-        // a native's props are traced - and the mechanism it asked for in this
-        // comment now exists: `native_object::retained` is a traced list that
-        // is not a property, so it costs no name, is not walked by `find` on
-        // every lookup, and - the reason this migrated rather than being left
-        // alone - is not visible to `Object.getOwnPropertyNames(resolve)`,
-        // which `__promise` was.
-        auto * resolve_fn =
-            c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
-                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
-                return value::undefined();
-            });
-        auto * reject_fn =
-            c.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
-                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
-                return value::undefined();
-            });
-        resolve_fn->retained.push_back(promise);
-        reject_fn->retained.push_back(promise);
-        const value resolve = value::object(resolve_fn);
-        const value reject = value::object(reject_fn);
-        const value args[2] = {resolve, reject};
-        (void)c.call(a[0], args);
-        return promise;
-    });
-    for (const auto & [key, item] : promise_ctor->props) { promise_new->set(key, item); }
     detail::constant(promise_new, "prototype", value::object(detail::promise_prototype(cx)));
     cx.define_global("Promise", value::object(promise_new));
 
