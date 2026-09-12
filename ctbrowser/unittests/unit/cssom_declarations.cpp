@@ -125,6 +125,16 @@ void test_reads_and_all() {
     CHECK_EQ(declaration_value(block, "width"), std::string{"unset"});
     CHECK_EQ(declaration_value(block, "all"), std::string{"unset"});
     CHECK(!set_declaration(block, "all", "10px", false));
+    // A shorthand this table cannot split still answers from its longhands
+    // when `all` set them, and its whole entry is gone.
+    block.clear();
+    parse_declaration_block(block, "font: 12px serif; all: revert");
+    CHECK_EQ(declaration_value(block, "font"), std::string{"revert"});
+    CHECK_EQ(serialize_declaration_block(block), std::string{"all: revert;"});
+    block.clear();
+    parse_declaration_block(block, "font: 12px serif");
+    CHECK_EQ(block.size(), std::size_t{1});
+    CHECK_EQ(declaration_value(block, "font"), std::string{"12px serif"});
 
     // A value this table cannot split stays whole, and a whole shorthand
     // still reads back - shorthand-serialization's `background: var(--a)`.
@@ -133,7 +143,7 @@ void test_reads_and_all() {
     CHECK_EQ(block.size(), std::size_t{1});
     CHECK_EQ(declaration_value(block, "margin"), std::string{"var(--a)"});
     CHECK_EQ(declaration_value(block, "margin-top"), std::string{});
-    CHECK(longhands_of("background").empty());
+    CHECK(longhands_of("grid").empty());
     CHECK_EQ(longhands_of("border").size(), std::size_t{17});
 
     // variable-names.html: a custom property's name is decoded by the

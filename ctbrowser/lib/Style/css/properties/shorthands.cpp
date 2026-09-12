@@ -36,6 +36,8 @@ enum class shape : std::uint8_t {
     border, // `bar` over width/style/color, applied to four sides, plus
             // border-image reset to its initial values
     all,    // every longhand; CSS-wide keywords only
+    whole,  // a grammar this table does not split: only a CSS-wide keyword
+            // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -89,6 +91,22 @@ constexpr shorthand_syntax table[] = {
     {"inset-block", shape::pair, "inset-block-start inset-block-end", ""},
     {"overflow", shape::pair, "overflow-x overflow-y", ""},
     {"gap", shape::pair, "row-gap column-gap", ""},
+    {"font", shape::whole,
+     "font-style font-variant font-weight font-stretch font-size line-height font-family", ""},
+    {"background", shape::whole,
+     "background-color background-image background-position background-size "
+     "background-repeat background-attachment background-origin background-clip",
+     ""},
+    {"text-decoration", shape::whole,
+     "text-decoration-line text-decoration-style text-decoration-color", ""},
+    {"transition", shape::whole,
+     "transition-property transition-duration transition-timing-function transition-delay", ""},
+    {"animation", shape::whole,
+     "animation-name animation-duration animation-delay animation-iteration-count", ""},
+    {"border-radius", shape::whole,
+     "border-top-left-radius border-top-right-radius border-bottom-right-radius "
+     "border-bottom-left-radius",
+     ""},
 };
 
 struct expansion {
@@ -349,6 +367,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
         return split::ok;
     }
     if (e.syntax->kind == shape::all) { return split::invalid; }
+    if (e.syntax->kind == shape::whole) { return split::whole; }
     const std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
     switch (e.syntax->kind) {
     case shape::sides:
@@ -356,7 +375,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
-    case shape::all: break;
+    case shape::all:
+    case shape::whole: break;
     }
     return split::invalid;
 }
@@ -404,7 +424,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     if (all_wide) { return v.front(); }
     if (any_wide) { return {}; }
     switch (e.syntax->kind) {
-    case shape::all: return {};
+    case shape::all:
+    case shape::whole: return {};
     case shape::sides: return fold_sides(v);
     case shape::pair: return v[0] == v[1] ? v[0] : join(v);
     case shape::bar: return fold_bar(e, v);
@@ -508,6 +529,17 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
         return changed;
     }
     bool changed = erase_named(block, std::array<std::string_view, 1>{name});
+    // ...and every whole entry of another shorthand these longhands belong to:
+    // `all: revert` after `font: 12px serif` speaks for `font` now.
+    for (const expansion & other : expansions()) {
+        if (&other == e || index_of(block, other.syntax->name) == block.size()) { continue; }
+        for (const std::string_view longhand : other.longhands) {
+            if (!in_list(e->longhands, longhand)) { continue; }
+            changed =
+                erase_named(block, std::array<std::string_view, 1>{other.syntax->name}) || changed;
+            break;
+        }
+    }
     for (std::size_t i = 0; i < e->longhands.size(); ++i) {
         changed = add(block, e->longhands[i], values[i], important) || changed;
     }
