@@ -32,12 +32,17 @@ class keeps its statics, its `prototype` and the `__home` that makes `super`
 resolve against the class a method was WRITTEN in rather than against `this`
 (three-deep hierarchies recurse forever otherwise).
 
-**Promises are SETTLED-ONLY**, like the previous engine's: no job queue, no `new Promise(executor)`,
-`then` runs its callback immediately. `async function` returns a settled promise
-(`op::wrap_promise`, through a factory hook the standard library installs — the
-VM cannot build a promise by itself). Enough for `await fetch(url)` and
-`.then(r => r.json())`; NOT enough for code that depends on ordering between a
-`then` and the statements around it.
+**Promises** — this paragraph used to say "settled-only, `then` runs its
+callback immediately", which stopped being true on 2026-08-09 (a job queue,
+`new Promise(executor)`, `await` on a pending promise suspends the frame; see
+"A `value` captured by a native lambda" below). Since 2026-09-12 the rest of
+the standard's shape is in as well: a throwing `then` handler rejects the next
+promise (`call_fenced` in `deliver`), an async body's uncaught throw rejects
+the promise it returned (the compiler's fence), async generators queue their
+requests, `for await` runs the async iteration protocol, and `Array.fromAsync`
+is written over it. `async function` returns a promise through `op::wrap_promise`,
+via a factory hook the standard library installs — the VM cannot build a
+promise by itself.
 
 **`===` compares STRINGS BY CONTENT** — it compared the NaN-boxed words, which
 is right for objects (identity) and singletons and wrong for strings, since two
@@ -557,14 +562,18 @@ which is precisely what a pawl that records the blocker is for:
   loop over the inner iterator and is not written because nothing asks.
 * **`.return(v)` does not run `finally` blocks.** It marks the generator done
   and answers `{value: v, done: true}`. The spec resumes the body to run any
-  pending `finally`, which needs the unwinder rather than the resumer.
+  pending `finally`, which needs the unwinder rather than the resumer. (The
+  same for an async generator's `.return()`.)
 * **`for (x of gen())` MATERIALIZES.** `op::iterable` hands back an array by
   construction, so the generator is drained - up to 2^20 values - rather than
   pulled lazily. An INFINITE generator hangs there instead of looping for ever,
   which is a bounded failure rather than a silent one. Laziness means a real
   iterator protocol in the loop opcodes, which no corpus has asked for.
-* **Async generators** (`async function*`) parse and run as plain generators;
-  `for await` is not implemented.
+* **Async generators and `for await` exist since 2026-09-12** — the request
+  queue lives on `coroutine_object`, `yield`/`return` await their operands,
+  and `for await` lowers to the real protocol (see `docs/test262.md`). Still
+  not done: `yield*`, and closing the iterator on `break`/throw in either
+  loop.
 
 ## THE TWO INSTRUMENTS, AND WHY BOTH
 
