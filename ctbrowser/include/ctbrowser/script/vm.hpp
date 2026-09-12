@@ -736,6 +736,14 @@ public:
     // through, so a host that drives callbacks must ask.
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
+    // See store_rejected_: a store from strict code asks this afterwards.
+    void clear_store_rejected() noexcept { store_rejected_ = false; }
+    void strict_store_check(std::string_view name) {
+        if (!store_rejected_) { return; }
+        store_rejected_ = false;
+        throw_error("TypeError",
+                    "Cannot assign to read only property '" + std::string{name} + "' of object");
+    }
     // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s and is
     // parked for rethrow at its call site, or the run has failed outright.
     // Every further `call` would answer undefined without running anything.
@@ -2175,6 +2183,13 @@ private:
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;
+    // WHETHER THE LAST [[Set]] WAS REJECTED - a non-writable or inherited
+    // non-writable property, a non-extensible receiver, a getter with no
+    // setter, a primitive receiver. store_property/store_index set it and
+    // carry on silently, which is sloppy mode; the run loop and the AOT
+    // bridge read it after a store from STRICT code and throw the TypeError
+    // (10.1.9.2 / 13.15.2 PutValue step 6.b).
+    bool store_rejected_ = false;
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;

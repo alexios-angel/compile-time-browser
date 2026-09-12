@@ -67,12 +67,18 @@ void context::store_index(value target, value key, value v) {
                 // FROZEN MEANS FROZEN. Silently in sloppy mode - TODO(strict):
                 // this is a TypeError under "use strict", which the engine does
                 // not have (docs/test262.md names the gap).
-                if (!arr->elements_writable) { return; }
+                if (!arr->elements_writable) {
+                    store_rejected_ = true;
+                    return;
+                }
                 arr->items[static_cast<std::size_t>(index)] = v;
                 return;
             }
             // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS.
-            if (!arr->extensible) { return; }
+            if (!arr->extensible) {
+                store_rejected_ = true;
+                return;
+            }
             // HOW MANY SLOTS THIS ONE WRITE WOULD MATERIALISE. `a[4294967295]
             // = "x"` asked for 34 GB and std::bad_alloc ended the process; the
             // test is on the SIZE OF THE JUMP so that a sequential fill, whose
@@ -139,19 +145,28 @@ void context::store_property(value target, const std::string & name, value v) {
         // hash the name twice, and this is the hottest write in the engine.
         obj->normalise();
         if (const auto it = obj->index.find(name); it != obj->index.end()) {
-            if ((obj->attrs_at(it->second) & attr_writable) == 0) { return; }
+            if ((obj->attrs_at(it->second) & attr_writable) == 0) {
+                store_rejected_ = true;
+                return;
+            }
             obj->props[it->second].second = v;
             return;
         }
         for (value up = obj->prototype; up.is_object();) {
             auto * parent = static_cast<object_object *>(up.as_heap());
             if (parent->find(name) != nullptr) {
-                if ((parent->attrs_of(name) & attr_writable) == 0) { return; }
+                if ((parent->attrs_of(name) & attr_writable) == 0) {
+                    store_rejected_ = true;
+                    return;
+                }
                 break;
             }
             up = parent->prototype;
         }
-        if (!obj->extensible) { return; }
+        if (!obj->extensible) {
+            store_rejected_ = true;
+            return;
+        }
         obj->set(name, v);
         return;
     }
@@ -187,12 +202,18 @@ void context::store_property(value target, const std::string & name, value v) {
                     return;
                 }
                 if (arr->named->find(name) != nullptr) {
-                    if ((arr->named->attrs_of(name) & attr_writable) == 0) { return; }
+                    if ((arr->named->attrs_of(name) & attr_writable) == 0) {
+                        store_rejected_ = true;
+                        return;
+                    }
                     arr->named->set(name, v);
                     return;
                 }
             }
-            if (!arr->extensible) { return; }
+            if (!arr->extensible) {
+                store_rejected_ = true;
+                return;
+            }
             arr->named_table().set(name, v);
             return;
         }
@@ -223,8 +244,12 @@ void context::store_property(value target, const std::string & name, value v) {
         // The same three checks as an object's - see above, TODO(strict) and
         // all. `Array.prototype = x` is the one every page tries by accident.
         if (fn->find(name) != nullptr) {
-            if ((fn->attrs_of(name) & attr_writable) == 0) { return; }
+            if ((fn->attrs_of(name) & attr_writable) == 0) {
+                store_rejected_ = true;
+                return;
+            }
         } else if (!fn->extensible) {
+            store_rejected_ = true;
             return;
         }
         fn->set(name, v);
@@ -238,15 +263,21 @@ void context::store_property(value target, const std::string & name, value v) {
             (void)call(entry->setter, args, target);
         } else {
             if (closure->find(name) != nullptr) {
-                if ((closure->attrs_of(name) & attr_writable) == 0) { return; }
+                if ((closure->attrs_of(name) & attr_writable) == 0) {
+                    store_rejected_ = true;
+                    return;
+                }
             } else if (!closure->extensible) {
+                store_rejected_ = true;
                 return;
             }
             closure->set(name, v);
         }
+        return;
     }
     // A write to a number, a string or undefined is silently dropped, which is
-    // what non-strict JavaScript does.
+    // what non-strict JavaScript does - and a TypeError in strict code.
+    store_rejected_ = true;
 }
 
 bool context::assign_through_accessor(value target, const std::string & name, value v) {
@@ -262,9 +293,10 @@ bool context::assign_through_accessor(value target, const std::string & name, va
                 (void)call(entry->setter, args, target);
                 return true;
             }
-            // Getter with no setter: the write is DISCARDED, as in strict-mode
-            // JavaScript minus the throw. Silently defining a data property
-            // over it would shadow the getter forever.
+            // Getter with no setter: the write is DISCARDED (a TypeError in
+            // strict code). Silently defining a data property over it would
+            // shadow the getter forever.
+            store_rejected_ = true;
             return true;
         }
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())

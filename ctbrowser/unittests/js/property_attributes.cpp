@@ -115,6 +115,33 @@ int main() {
     js_expect("(function(){var o={a:1};Object.freeze(o);o.a=2;return o.a;})()", "1");
     js_expect("(function(){var o={a:1};Object.freeze(o);o.b=3;return o.b;})()", "undefined");
     js_expect("(function(){var o={a:1};Object.freeze(o);delete o.a;return o.a;})()", "1");
+    // ...AND IN STRICT CODE EVERY ONE OF THOSE REJECTED WRITES IS A TypeError
+    // (13.15.2 step 6.b): a directive, a class body and a module are strict;
+    // a nested function inherits it. An assignment to an unresolvable name is
+    // a ReferenceError there too - in a script, not in a module (a deliberate
+    // leniency, see emit_store).
+    const auto kind = [](const char * body) {
+        return std::string{"(function(){ try { "} + body +
+               "; return 'no'; } catch (e) { return e.constructor.name; } })()";
+    };
+    js_expect(kind("'use strict'; var o = {a: 1}; Object.freeze(o); o.a = 2"), "TypeError");
+    js_expect(kind("'use strict'; var o = {}; Object.preventExtensions(o); o.b = 1"), "TypeError");
+    js_expect(kind("'use strict'; var o = { get g() { return 1; } }; o.g = 2"), "TypeError");
+    js_expect(kind("'use strict'; var o = Object.create({ get g() { return 1; } }); o.g = 2"),
+              "TypeError");
+    js_expect(kind("'use strict'; var a = [1]; Object.freeze(a); a[0] = 2"), "TypeError");
+    js_expect(kind("'use strict'; 'str'.x = 1"), "TypeError");
+    js_expect(kind("'use strict'; noSuchGlobalAnywhere = 1"), "ReferenceError");
+    js_expect(kind("'use strict'; var f = function () { arguments.callee; frozen.a = 2; };"
+                   " var frozen = Object.freeze({a: 1}); f()"),
+              "TypeError");
+    js_expect(kind("class C { m() { var o = Object.freeze({a: 1}); o.a = 2; } } new C().m()"),
+              "TypeError");
+    // Sloppy code keeps dropping the write; a function nested in strict code
+    // inherits the strictness.
+    js_expect(kind("var o = Object.freeze({a: 1}); o.a = 2"), "no");
+    js_expect(kind("'use strict'; (0, function () { var o = Object.freeze({a: 1}); o.a = 2; })()"),
+              "TypeError");
     js_expect("(function(){var o={a:1};Object.freeze(o);return Object.isFrozen(o);})()", "true");
     js_expect("(function(){var o={a:1};Object.freeze(o);return Object.isSealed(o);})()", "true");
     js_expect("(function(){var o={a:1};return Object.isFrozen(o);})()", "false");

@@ -113,6 +113,7 @@ public:
         std::uint32_t high_water = 0;
         bool is_async = false;     // `return v` hands back a settled promise of v
         bool is_generator = false; // `function*` - calling it does not run it
+        bool is_strict = false;    // see function_proto::is_strict
         // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
         // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
         // names a function mentions. The index lives HERE rather than on the
@@ -128,6 +129,13 @@ public:
     // compiler::compile from the script_kind; see the note on that enum for why
     // the distinction is not cosmetic.
     bool module_scope_ = false;
+    // How many class bodies are open: everything inside one is strict code
+    // (15.7.1 note), whatever the surrounding script says.
+    std::size_t class_body_depth_ = 0;
+    // Whether `body` (a block or a program) opens with a "use strict"
+    // directive (11.2.1): a leading expression statement that is exactly
+    // that string literal, before any other statement.
+    [[nodiscard]] bool has_use_strict_directive(std::int32_t body) const;
     // `eval`: a trailing expression statement is the program's return value.
     // See compiler::compile_for_eval.
     bool completion_value_ = false;

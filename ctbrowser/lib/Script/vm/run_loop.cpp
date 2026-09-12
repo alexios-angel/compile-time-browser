@@ -566,7 +566,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does is an
         // own data property defined - store_property has the whole rule.
         VM_CASE(set_prop) do {
+            // STRICT CODE THROWS WHERE SLOPPY CODE DROPS: store_property says
+            // which through store_rejected_ (13.15.2 PutValue step 6.b).
+            store_rejected_ = false;
             store_property(reg(in.a), vm_proto->names[in.b], reg(in.c));
+            if (vm_proto->is_strict) { strict_store_check(vm_proto->names[in.b]); }
             break;
         }
         while (0);
@@ -578,7 +582,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(set_index) do {
+            store_rejected_ = false;
             store_index(reg(in.a), reg(in.b), reg(in.c));
+            if (vm_proto->is_strict && store_rejected_) {
+                strict_store_check(to_string(reg(in.b)));
+            }
             break;
         }
         while (0);

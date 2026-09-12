@@ -290,6 +290,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
     }
     release_to(mark);
+    --class_body_depth_;
     // Closed AFTER every method is compiled, so they capture the name, and
     // before anything else in the enclosing scope is - so nothing else sees
     // it. The register stays allocated, which is what a scope pop means here.

@@ -369,6 +369,12 @@ struct function_proto {
     // An arrow does not get its own `this`; it sees the one where it was
     // WRITTEN, and the VM cannot tell an arrow from a function at run time.
     bool is_arrow = false;
+    // STRICT MODE CODE (11.2.2): a "use strict" directive in this body or an
+    // enclosing one, a module, or a class body. What it changes here: an
+    // assignment [[Set]] rejected - non-writable, non-extensible, getter with
+    // no setter, a primitive receiver - is a TypeError instead of a silent
+    // drop, and an assignment to an unresolvable name is a ReferenceError.
+    bool is_strict = false;
     // `function*`. Calling one does NOT run the body: it builds a generator
     // object over a suspended frame and hands that back, so the first
     // instruction runs on the first `.next()` - unless eager_prologue.

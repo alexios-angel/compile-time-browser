@@ -67,8 +67,16 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     out_.functions[index].source_begin = n.begin;
     out_.functions[index].source_end = n.end;
 
+    // STRICTNESS IS INHERITED, and a class body or a directive of its own
+    // adds it (11.2.2). Decided before the frame is pushed, off the enclosing
+    // one.
+    const bool strict =
+        fn().is_strict || class_body_depth_ > 0 ||
+        (n.a >= 0 && at(n.a).kind == vp::nk::block && has_use_strict_directive(n.a));
     frames_.emplace_back();
     frames_.back().proto = index;
+    frames_.back().is_strict = strict;
+    out_.functions[index].is_strict = strict;
     push_scope();
     // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
     //

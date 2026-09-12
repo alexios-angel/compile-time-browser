@@ -18,6 +18,9 @@ void compiler_impl::compile_program() {
     push_scope();
 
     const vp::node & root = at(ast_.root);
+    // A module is strict code; a script is when it says so (11.2.1, 16.2.1).
+    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root);
+    out_.functions[script].is_strict = fn().is_strict;
     build_capture_index();
     fn().captures = range_of(ast_.root);
     collect_declared_names(ast_.root);
@@ -80,6 +83,20 @@ void compiler_impl::compile_program() {
     finish_frame(fn().proto, 0);
     pop_scope();
     frames_.pop_back();
+}
+
+bool compiler_impl::has_use_strict_directive(std::int32_t body) const {
+    if (body < 0) { return false; }
+    for (const std::int32_t s : kids(at(body))) {
+        const vp::node & stmt = at(s);
+        if (stmt.kind != vp::nk::expr_stmt || stmt.a < 0) { return false; }
+        const vp::node & e = at(stmt.a);
+        if (e.kind != vp::nk::str) { return false; } // the prologue ended
+        // The lexeme keeps its quotes, and escapes are not allowed to spell
+        // it (11.2.1: "the exact code point sequence").
+        if (e.text == "\"use strict\"" || e.text == "'use strict'") { return true; }
+    }
+    return false;
 }
 
 } // namespace ctbrowser::script::detail

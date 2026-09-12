@@ -307,6 +307,21 @@ TypeError now, in `lookup_property`/`store_property` so both tiers agree:
 "Cannot read properties of undefined (reading 'x')". `?.` is the way to ask
 without one.
 
+### Strict mode, the part that changes what runs (since 2026-09-12)
+
+`function_proto::is_strict` is set by a `"use strict"` directive, inherited by
+nested functions, and always on inside a class body or a module. What it
+changes: a rejected [[Set]] - non-writable, inherited non-writable,
+non-extensible receiver, getter without setter, primitive receiver - is a
+TypeError (`store_rejected_`, read by `set_prop`/`set_index` and by the AOT
+bridge off the frame's proto) instead of the silent drop sloppy code gets, and
+an assignment to an unresolvable name is a ReferenceError (the compiler emits
+a `get_global` probe before the `set_global`). NOT in a module's top level,
+deliberately: ctcompile's module fixtures publish to their host through
+`OUT = ...` and rely on the write. Still sloppy everywhere: `this` in a plain
+call (undefined, not globalThis - the AOT contract pins it), `arguments`
+aliasing, `delete` of a non-configurable property, the early errors.
+
 ### Reading an unresolvable name throws (since 2026-09-12)
 
 A bare identifier that is neither a local, a global binding nor a property of

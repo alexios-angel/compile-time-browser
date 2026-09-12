@@ -143,7 +143,11 @@ std::uint64_t aot_bridge::new_string(aot::ct_aot_frame * f, const aot::ct_aot_si
 std::int32_t aot_bridge::set_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
                                    std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
+    cx.clear_store_rejected();
     cx.store_index(value::from_bits(obj), value::from_bits(key), value::from_bits(v));
+    // The same strict-mode TypeError VM_CASE(set_index) throws, decided by the
+    // frame's own proto - the image keeps the real one.
+    if (strict_frame(f)) { cx.strict_store_check(cx.to_string(value::from_bits(key))); }
     return check(f);
 }
 
@@ -334,7 +338,9 @@ std::int32_t aot_bridge::get_prop(aot::ct_aot_frame * f, std::uint64_t obj,
 std::int32_t aot_bridge::set_prop(aot::ct_aot_frame * f, std::uint64_t obj,
                                   const aot_name_record * name, std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
+    cx.clear_store_rejected();
     cx.store_property(value::from_bits(obj), name->text, value::from_bits(v));
+    if (strict_frame(f)) { cx.strict_store_check(name->text); }
     return check(f);
 }
 

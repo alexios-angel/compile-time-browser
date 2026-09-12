@@ -127,6 +127,15 @@ struct aot_name_record {
 struct aot_bridge {
     static context & ctx_of(aot::ct_aot_ctx * c) { return *reinterpret_cast<context *>(c); }
 
+    // Whether the compiled body behind `f` is strict mode code - the frame
+    // carries the real proto, so the answer is the interpreter's.
+    static bool strict_frame(aot::ct_aot_frame * f) {
+        const aot_frame_storage & held = frame_of(f);
+        const context & cx = *held.ctx;
+        return held.frame_index < cx.frames_.size() &&
+               cx.frames_[held.frame_index].proto != nullptr &&
+               cx.frames_[held.frame_index].proto->is_strict;
+    }
     static aot_frame_storage & frame_of(aot::ct_aot_frame * f) {
         return *reinterpret_cast<aot_frame_storage *>(f);
     }
