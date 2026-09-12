@@ -97,6 +97,18 @@ struct font_face {
     std::uint32_t declaration_count = 0;
 };
 
+// @property and @function, collected the same way - descriptors are a
+// declaration range - plus the prelude, which is not a selector: `--name`
+// for @property, `--name(<params>) returns <type>` for @function. Only
+// top-level rules are collected; the engine reads the prelude and decides
+// what registers.
+struct at_rule_block {
+    std::uint32_t prelude_first = 0; // into stylesheet::values
+    std::uint32_t prelude_count = 0;
+    std::uint32_t first_declaration = 0;
+    std::uint32_t declaration_count = 0;
+};
+
 // One `@namespace` rule. An empty prefix is the DEFAULT namespace, which is not
 // the same as a namespace whose prefix is the empty string - CSS has no such thing.
 struct namespace_declaration {
@@ -128,6 +140,8 @@ struct stylesheet {
     std::vector<raw_declaration> declarations;
     std::vector<raw_rule> rules;
     std::vector<font_face> font_faces;
+    std::vector<at_rule_block> properties;
+    std::vector<at_rule_block> functions;
     // The `@media` conditions this sheet's rules are gated on. Entry 0 is the
     // unconditional one; nesting is a parent index, so truth ANDs up the chain
     // without the tree being flattened.
@@ -162,6 +176,15 @@ struct stylesheet {
         if (f.declaration_count == 0) { return {}; }
         return std::span<const raw_declaration>{declarations}.subspan(f.first_declaration,
                                                                       f.declaration_count);
+    }
+    [[nodiscard]] std::span<const raw_declaration> declarations_of(const at_rule_block & r) const {
+        if (r.declaration_count == 0) { return {}; }
+        return std::span<const raw_declaration>{declarations}.subspan(r.first_declaration,
+                                                                      r.declaration_count);
+    }
+    [[nodiscard]] std::span<const component_value> prelude_of(const at_rule_block & r) const {
+        if (r.prelude_count == 0) { return {}; }
+        return std::span<const component_value>{values}.subspan(r.prelude_first, r.prelude_count);
     }
     [[nodiscard]] std::span<const compiled_selector> selectors_of(const raw_rule & r) const {
         if (r.selector_count == 0) { return {}; }

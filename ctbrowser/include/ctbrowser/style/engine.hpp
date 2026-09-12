@@ -1648,13 +1648,13 @@ private:
     [[nodiscard]] static std::string_view unquoted(std::string_view text);
 
     std::vector<page_font> fonts_;
-    // The `@property` rules of one sheet's text, registered. Defined in engine.cpp.
-    void register_at_property_rules(std::string_view sheet_text);
+    // The `@property` rules a parsed sheet collected, registered. Defined in engine.cpp.
+    void register_at_property_rules(const css::stylesheet & sheet);
     // The registered custom properties, by atom id.
     flat_map<std::uint32_t, css::property_registration> registrations_;
-    // The `@function` rules of one sheet's text, likewise; and the functions,
-    // by the atom id of their `--name`.
-    void register_at_function_rules(std::string_view sheet_text, std::uint8_t origin);
+    // The `@function` rules, likewise; and the functions, by the atom id of
+    // their `--name`.
+    void register_at_function_rules(const css::stylesheet & sheet, std::uint8_t origin);
     // ...with the origin of the sheet that declared each, because a function
     // lives in its sheet: clear_origin drops it with the sheet's rules, where
     // an @property registration outlives them.

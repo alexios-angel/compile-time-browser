@@ -35,6 +35,8 @@ enum class at_kind {
     media,
     media_like,
     font_face,
+    property,
+    function,
     statement,
     skip
 };
@@ -59,6 +61,8 @@ enum class at_kind {
         return at_kind::media_like;
     }
     if (ascii_iequals(name, "font-face")) { return at_kind::font_face; }
+    if (ascii_iequals(name, "property")) { return at_kind::property; }
+    if (ascii_iequals(name, "function")) { return at_kind::function; }
     if (ascii_iequals(name, "import") || ascii_iequals(name, "charset") ||
         ascii_iequals(name, "namespace")) {
         return at_kind::statement;
@@ -255,7 +259,9 @@ private:
             const std::uint32_t saved = condition_;
             condition_ = static_cast<std::uint32_t>(sheet_.conditions.size() - 1);
             ++at_; // the `{`
+            ++nesting_;
             consume_rule_list(/*top_level=*/false);
+            --nesting_;
             if (here().type == token_type::close_curly) { ++at_; }
             condition_ = saved;
             return;
@@ -267,7 +273,9 @@ private:
             // answering nothing, because a feature-detecting page would then pick the
             // grid path. That is its own rung.
             ++at_; // the `{`, so the nested rules are parsed in place
+            ++nesting_;
             consume_rule_list(/*top_level=*/false);
+            --nesting_;
             if (here().type == token_type::close_curly) { ++at_; }
             return;
         }
@@ -281,7 +289,23 @@ private:
             if (f.declaration_count != 0) { sheet_.font_faces.push_back(f); }
             return;
         }
-        // @keyframes, @page, @property, @container, @scope, ... Their block is
+        if (kind == at_kind::property || kind == at_kind::function) {
+            // Collected like @font-face, prelude included, and only at the top
+            // level: one inside a conditional group is discarded as before.
+            const component_value block = consume_component_value();
+            if (nesting_ != 0) { return; }
+            at_rule_block r;
+            r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
+            r.prelude_count = static_cast<std::uint32_t>(prelude.size());
+            sheet_.values.insert(sheet_.values.end(), prelude.begin(), prelude.end());
+            r.first_declaration = static_cast<std::uint32_t>(sheet_.declarations.size());
+            emit_declarations(sheet_.children_of(block));
+            r.declaration_count =
+                static_cast<std::uint32_t>(sheet_.declarations.size()) - r.first_declaration;
+            (kind == at_kind::property ? sheet_.properties : sheet_.functions).push_back(r);
+            return;
+        }
+        // @keyframes, @page, @container, @scope, ... Their block is
         // consumed and discarded. @keyframes is CAPTURED by a later rung - nothing
         // reads it today, so capturing it now would be storage with no consumer.
         (void)consume_component_value();
@@ -575,6 +599,9 @@ private:
     std::int32_t order_ = 0;
     // The `@media` a rule being parsed sits inside. 0 is the unconditional entry.
     std::uint32_t condition_ = 0;
+    // How many conditional groups deep the parse is; @property and @function
+    // are only collected at 0.
+    std::uint32_t nesting_ = 0;
 };
 
 } // namespace
