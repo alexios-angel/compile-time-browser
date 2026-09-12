@@ -252,6 +252,10 @@ void test_calc_mix() {
     CHECK_EQ(specified("scale", "calc(sign(calc-mix(1 50%, 3 50%)) + 10)"),
              std::string{"calc(11)"});
     CHECK_EQ(specified("scale", "calc-mix(1px 50%, 3 50%)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 150%, 3)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 -50%, 3)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 * sibling-index() 0%, 3 100%)"),
+             std::string{"calc(3)"});
 
     length_context ctx;
     ctx.font_size = 10.0f;

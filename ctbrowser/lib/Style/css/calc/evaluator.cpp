@@ -1014,11 +1014,13 @@ private:
         for (;;) {
             const std::optional<term> one = sum();
             if (!one) { return std::nullopt; }
-            if (basis_ == basis::symbolic && !one->symbols.empty()) { return unresolvable(); }
             values.push_back(*one);
             skip_whitespace();
             std::optional<double> weight;
             if (peek().type == token_type::percentage) {
+                // A literal weight outside [0%, 100%] is a syntax error; only
+                // a computed one is clamped (calc-mix-invalid).
+                if (peek().number < 0.0 || peek().number > 100.0) { return fail(); }
                 weight = peek().number;
                 ++at_;
             } else if (peek().type == token_type::function) {
@@ -1064,15 +1066,23 @@ private:
         for (std::size_t i = 0; i < values.size(); ++i) {
             const double w = weights[i].value_or(share) / total;
             if (w == 0.0) { continue; }
+            // A value with no magnitude yet - `3em`, `sibling-index()` - keeps
+            // the specified value a calc-mix(); one weighing nothing does not.
+            if (basis_ == basis::symbolic && !values[i].symbols.empty()) { return unresolvable(); }
             const term part = scaled(values[i], w);
             out = out ? add(*out, part, false) : std::optional<term>{part};
             if (!out) { return fail(); }
         }
         if (out) { return out; }
-        // Every weight zero: nought, of the first value's kind.
+        // Every weight zero: nought, of the first value's kind - which in a
+        // symbolic sum is a `0px` term of its own, so `calc(10% +
+        // calc-mix(1px 0%, 3% 0%))` keeps its `0px`.
         term zero;
         zero.dims = values.front().dims;
         zero.has_percent = values.front().has_percent && values.front().symbols.empty();
+        if (basis_ == basis::symbolic && !zero.has_percent && !zero.is_number()) {
+            add_symbol(zero, canonical_unit(zero.type()), 0.0);
+        }
         return zero;
     }
 
