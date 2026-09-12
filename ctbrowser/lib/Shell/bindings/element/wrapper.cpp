@@ -194,6 +194,11 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
         case node_kind::document_type:
             obj.set("nodeName", cx.string(std::string{atoms_->text(txn.name(id))}));
             obj.set("nodeType", value::number(10));
+            // The DocumentType interface's three attributes. Data properties
+            // rather than accessors because none of the three can change.
+            obj.set("name", cx.string(std::string{atoms_->text(txn.name(id))}));
+            obj.set("publicId", cx.string(std::string{txn.public_id(id)}));
+            obj.set("systemId", cx.string(std::string{txn.system_id(id)}));
             break;
         case node_kind::processing_instruction:
             obj.set("nodeName", cx.string(std::string{atoms_->text(txn.name(id))}));

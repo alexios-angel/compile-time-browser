@@ -37,9 +37,8 @@ using namespace detail;
 //     nothing left to be. So `removeChild(documentElement)` and
 //     `replaceChildren()` are NotSupportedError; `replaceChild(el,
 //     documentElement)` works because the new element takes the slot.
-//   * `cloneNode` needs a second Document and answers NotSupportedError.
-//   * A node from ANOTHER document is refused by `handle_of` before it gets
-//     here - adoption does not cross documents yet, see second_document.cpp.
+//   * A node from ANOTHER document is adopted on the way in, by `node_from`,
+//     and checked afterwards - see may_become_a_child.
 //
 // `Node-lookupNamespaceURI.html`'s twelve document subtests and
 // `Document-createAttribute.html`'s HTML half are answered from here, plus
@@ -271,8 +270,14 @@ void dom_bindings::normalize_subtree(node_id root) {
 
 void dom_bindings::install_document_as_node(context & cx, script::object_object & doc) {
     const auto method = [&](std::string name, script::native_fn fn) {
-        const value native = value::object(cx.allocate<script::native_object>(name, std::move(fn)));
-        doc.set(name, native);
+        auto * native = cx.allocate<script::native_object>(name, std::move(fn));
+        // `length` IS READ: dom/nodes' pre-insertion-validation-hierarchy.js
+        // passes an explicit null reference child only when the method says it
+        // takes two arguments, and the two that do have to say so.
+        if (name == "insertBefore" || name == "replaceChild") {
+            native->define("length", value::number(2), script::attr_configurable);
+        }
+        doc.set(name, value::object(native));
     };
     // READ-ONLY, not a data property. `document.textContent = "x"` and
     // `document.firstChild = x` are both defined to do nothing, and a data
@@ -815,21 +820,73 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         mutated();
         return value::undefined();
     });
-    method("cloneNode", [this](context & c, std::span<value>) {
-        throw_dom_exception(c, "NotSupportedError",
-                            "cloneNode on the document needs a second Document, which this engine "
-                            "does not have - see document.implementation");
-        return value::undefined();
+    // `cloneNode(deep)`: a SECOND DOCUMENT of the same kind - the flags, the
+    // content type and the prototype copied - holding, when deep, a clone of
+    // every child of the Document node: doctype, element and all. Made by the
+    // same route `createDocument` takes and then re-flagged, because that route
+    // is the one that links a document into the realm. The primary's
+    // `implementation` is not on a made document (see install.cpp), so the
+    // clone is not a full HTMLDocument; what a page reads off one - doctype,
+    // documentElement, childNodes - is there.
+    method("cloneNode", [this](context & c, std::span<value> args) {
+        const bool deep = !args.empty() && context::truthy(args[0]);
+        const value made = make_xml_document(c, {}, {}, false);
+        if (secondary_documents_.empty()) { return made; }
+        dom_bindings & fresh = *secondary_documents_.back();
+        fresh.doc_->set_xml(doc_->xml());
+        fresh.doc_->set_quirks(doc_->quirks());
+        fresh.content_type_ = content_type_;
+        if (auto * mine = document_object();
+            mine != nullptr && fresh.document_object() != nullptr) {
+            fresh.document_object()->prototype = mine->prototype;
+        }
+        if (!deep) { return made; }
+        std::vector<node_id> kids;
+        {
+            const auto txn = doc_->read();
+            const std::span<const node_id> held = txn.children(txn.document_node());
+            kids.assign(held.begin(), held.end());
+        }
+        const auto from = doc_->read();
+        for (const node_id child : kids) {
+            const node_id copied = fresh.clone_node(from, child, true, this);
+            if (from.kind(child).value_or(node_kind::comment) == node_kind::element) {
+                fresh.doc_->set_document_element(copied);
+            } else {
+                (void)fresh.doc_->append_child(fresh.doc_->document_node(), copied);
+            }
+        }
+        return made;
     });
-    // ONE DOCUMENT, so the only node this one is equal to, or the same as, is
-    // itself. `isEqualNode` compares type and then children pairwise in
-    // general; with a second Document impossible the general case has exactly
-    // one true answer and is not an approximation of anything.
-    for (const char * spelling : {"isEqualNode", "isSameNode"}) {
-        method(spelling, [this](context &, std::span<value> args) {
-            return value::boolean(is_the_document(arg(args, 0)));
-        });
-    }
+    // `isEqualNode` compares type and then children pairwise in general; the
+    // document has nothing of its own to compare, so two documents are equal
+    // when their children are - and `isSameNode` is identity.
+    method("isSameNode", [this](context &, std::span<value> args) {
+        return value::boolean(is_the_document(arg(args, 0)));
+    });
+    method("isEqualNode", [this](context &, std::span<value> args) {
+        const value other = arg(args, 0);
+        if (is_the_document(other)) { return value::boolean(true); }
+        dom_bindings * theirs = nullptr;
+        dom_bindings * top = primary_ == nullptr ? this : primary_;
+        if (top != this && top->is_the_document(other)) { theirs = top; }
+        for (const auto & made : top->secondary_documents_) {
+            if (made.get() != this && made->is_the_document(other)) { theirs = made.get(); }
+        }
+        if (theirs == nullptr) { return value::boolean(false); }
+        // Children pairwise, across the two slabs: a node of theirs is cloned
+        // into ours only to be compared, and left detached for collect().
+        const auto mine = doc_->read();
+        const auto txn = theirs->doc_->read();
+        const std::span<const node_id> ours = mine.children(mine.document_node());
+        const std::span<const node_id> other_kids = txn.children(txn.document_node());
+        if (ours.size() != other_kids.size()) { return value::boolean(false); }
+        for (std::size_t i = 0; i < ours.size(); ++i) {
+            const node_id copied = clone_node(txn, other_kids[i], true, theirs);
+            if (!nodes_are_equal(mine, ours[i], copied)) { return value::boolean(false); }
+        }
+        return value::boolean(true);
+    });
 }
 
 } // namespace ctbrowser::shell

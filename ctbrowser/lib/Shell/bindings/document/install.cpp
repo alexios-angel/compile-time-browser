@@ -549,7 +549,14 @@ void dom_bindings::install_document(context & cx) {
     doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
     doc->set("nodeType", value::number(9));
     doc->set("nodeName", cx.string("#document"));
-    doc->set("nodeValue", value::null());
+    // NULL, AND IT STAYS NULL: `document.nodeValue = "x"` is defined to do
+    // nothing, which a data property gets backwards - Node-nodeValue.html
+    // writes and reads back.
+    doc->define_accessor(
+        "nodeValue",
+        value::object(cx.allocate<script::native_object>(
+            "nodeValue", [](context &, std::span<value>) { return value::null(); })),
+        value::undefined());
     doc->set("ownerDocument", value::null());
     // `doctype` IS THE DocumentType CHILD, re-read on every access: the parser
     // put one there for `<!DOCTYPE html>`, `createDocument` for its third

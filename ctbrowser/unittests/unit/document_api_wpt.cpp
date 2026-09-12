@@ -221,12 +221,13 @@ void test_tree_walker_defaults_and_moves() {
        " { acceptNode: function (n) { return n.id === 'box' ? 2 : 1; } });"
        " return w.firstChild().id; })()",
        "tpl");
-    // Rooted at the document itself: the first node is <html> and its parent
-    // is the document.
+    // Rooted at the document itself: the first node is the doctype - this
+    // page begins `<!DOCTYPE html>` - then <html>, and each one's parent is the
+    // document.
     is("(function () { var w = document.createTreeWalker(document);"
-       " var first = w.nextNode(); return first.tagName + ',' + (w.parentNode() === document) +"
-       " ',' + w.parentNode(); })()",
-       "HTML,true,null");
+       " var first = w.nextNode(); var second = w.nextNode(); return first.nodeType + ',' +"
+       " second.tagName + ',' + (w.parentNode() === document) + ',' + w.parentNode(); })()",
+       "10,HTML,true,null");
     // A filter that re-enters its own walker is an InvalidStateError - and it
     // is NOT pinned here: the throw is raised inside the nested call, unwinds
     // to the page's `try`, and the OUTER nextNode then calls the filter again

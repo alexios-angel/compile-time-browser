@@ -241,11 +241,21 @@ void test_append_and_prepend_on_the_document() {
     is("document.removeChild(document.body)", "threw:NotFoundError");
     is("document.removeChild(document.documentElement)", "threw:NotSupportedError");
     is("document.replaceChild(document.createElement('x'), document.body)", "threw:NotFoundError");
-    is("document.cloneNode()", "threw:NotSupportedError");
+    // `cloneNode` is a second document: empty when shallow, the doctype and
+    // the tree when deep - and equal to this one only then.
+    is("(function () { var d = document.cloneNode(); return d.nodeType + ',' + d.childNodes.length"
+       " + ',' + (d !== document) + ',' + d.contentType + ',' + d.compatMode; })()",
+       "9,0,true,text/html,CSS1Compat");
+    is("(function () { var d = document.cloneNode(true); return d.childNodes.length + ',' +"
+       " d.doctype.name + ',' + d.documentElement.tagName + ',' + (d.body !== document.body) +"
+       " ',' + d.getElementById('p1').textContent; })()",
+       "2,html,HTML,true,one");
     is("document.isSameNode(document)", "true");
     is("document.isSameNode(document.body)", "false");
     is("document.isEqualNode(document)", "true");
     is("document.isEqualNode(document.body)", "false");
+    is("document.isEqualNode(document.cloneNode(true))", "true");
+    is("document.isEqualNode(document.cloneNode())", "false");
 }
 
 // --- normalize --------------------------------------------------------------
