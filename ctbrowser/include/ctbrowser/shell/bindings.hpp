@@ -395,7 +395,11 @@ private:
     // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
-    [[nodiscard]] node_id node_from(context & cx, value v);
+    // Another document's node is ADOPTED - cloned into this slab, its wrapper
+    // rebound - except a fragment, whose children come and which itself stays
+    // where it was, as insertion has it; `adoptNode` asks for the fragment too
+    // with `whole_fragment`.
+    [[nodiscard]] node_id node_from(context & cx, value v, bool whole_fragment = false);
     // "Convert nodes into a node", DOM 4.2.5: the arguments of one of those
     // methods as ONE node - the node itself for one argument, a fragment holding
     // them all (which MOVES each out of the tree) for several.

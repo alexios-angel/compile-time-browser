@@ -233,7 +233,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
             type = parse_data_url(src, stated) ? stated.mime : "text/plain";
         }
         if (assets_ != nullptr) {
-            const std::vector<std::byte> loaded = assets_->load(src);
+            // WITHOUT THE FRAGMENT: `page.html#target` names page.html to a
+            // server and to the registry alike - a fragment never leaves the
+            // client - and the registry matches names literally. A data: URL
+            // goes over whole, as it always did; parse_data_url owns its shape.
+            const std::size_t hash = is_data_url(src) ? std::string::npos : src.find('#');
+            const std::vector<std::byte> loaded = assets_->load(src.substr(0, hash));
             bytes.resize(loaded.size());
             for (std::size_t i = 0; i < loaded.size(); ++i) {
                 bytes[i] = static_cast<char>(loaded[i]);

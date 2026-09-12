@@ -172,7 +172,7 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         if (owner != this) {
-            (void)node_from(c, given);
+            (void)node_from(c, given, true);
             return given;
         }
         if (doc_->read().parent(node)) {

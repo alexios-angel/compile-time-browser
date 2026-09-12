@@ -9,13 +9,27 @@ using namespace detail;
 
 node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id parent) {
     node_id made;
-    if (from.kind(node).value_or(node_kind::element) == node_kind::text) {
-        made = doc_->create_text(from.text(node));
-    } else {
+    // Every kind the parser produces. A comment used to arrive as an element
+    // with no tag - `p.innerHTML = '<!--x-->'` made a `<>` - and a PI was one.
+    switch (from.kind(node).value_or(node_kind::element)) {
+    case node_kind::text: made = doc_->create_text(from.text(node)); break;
+    case node_kind::comment: made = doc_->create_comment(from.text(node)); break;
+    case node_kind::cdata_section: made = doc_->create_cdata_section(from.text(node)); break;
+    case node_kind::processing_instruction:
+        made = doc_->create_processing_instruction(from.name(node), from.text(node));
+        break;
+    case node_kind::document_type:
+        made =
+            doc_->create_document_type(from.name(node), from.public_id(node), from.system_id(node));
+        break;
+    case node_kind::document:
+    case node_kind::document_fragment:
+    case node_kind::element:
         made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node),
                                     from.prefixed(node));
         // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
+        break;
     }
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
@@ -134,7 +148,7 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
 // it. What does not travel: event listeners and custom-element state, both
 // keyed by the old handle in the old document's tables. ponytail: a shadow
 // root is refused rather than moved, as importNode refuses it.
-node_id dom_bindings::node_from(context & cx, value v) {
+node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
     if (const node_id held = handle_of(v)) { return held; }
     dom_bindings * owner = owner_of(v);
     if (owner == nullptr || owner == this || is_a_document(v)) {
@@ -142,16 +156,19 @@ node_id dom_bindings::node_from(context & cx, value v) {
     }
     const node_id source = owner->handle_of(v);
     if (!source) { return node_id{}; }
-    // A SHADOW ROOT STAYS WITH ITS HOST: inserting one moves its CHILDREN,
-    // as any fragment's, and the root itself is never adopted (DOM 4.2.3 -
-    // adoption.window.js "appendChild() and ShadowRoot"). They arrive in a
-    // fragment of this document so the caller's flattening still applies.
-    const bool shadow = owner->shadow_tree_of(source) != nullptr;
+    // A FRAGMENT STAYS WHERE IT WAS: inserting one moves its CHILDREN and the
+    // fragment itself is never adopted - `df.ownerDocument` is still the
+    // document that made it, emptied (DOM 4.2.3 "insert" steps 1-2), and a
+    // shadow root stays with its host the same way (adoption.window.js,
+    // "appendChild() and DocumentFragment" / "...and ShadowRoot"). They arrive
+    // in a fragment of this document so the caller's flattening still applies.
     node_id made;
     std::vector<node_id> moved;
     {
         const auto from = owner->doc_->read();
-        made = shadow ? doc_->create_fragment() : clone_node(from, source, true, owner);
+        const bool fragment = !whole_fragment && from.kind(source).value_or(node_kind::element) ==
+                                                     node_kind::document_fragment;
+        made = fragment ? doc_->create_fragment() : clone_node(from, source, true, owner);
         const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
             if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
@@ -175,7 +192,7 @@ node_id dom_bindings::node_from(context & cx, value v) {
                 self(self, olds[i], news[i]);
             }
         };
-        if (shadow) {
+        if (fragment) {
             for (const node_id child : from.children(source)) {
                 const node_id copy = clone_node(from, child, true, owner);
                 (void)doc_->append_child(made, copy);
@@ -220,6 +237,17 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     };
     find_body(find_body, from.root());
     if (!body) { return; }
+    // A COMMENT OR PROCESSING INSTRUCTION AHEAD OF ANY CONTENT lands on the
+    // scratch document's own node - the "before html" rule - and it is part
+    // of the fragment all the same: `div.innerHTML = '<?t a="b"?>'` and
+    // `= '<!--x-->'` both name one child. The Document node's children come
+    // first because that is where they were.
+    for (const node_id child : from.children(from.document_node())) {
+        const node_kind kind = from.kind(child).value_or(node_kind::element);
+        if (kind == node_kind::comment || kind == node_kind::processing_instruction) {
+            copy_subtree(from, child, target);
+        }
+    }
     for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
     mutated();
 }

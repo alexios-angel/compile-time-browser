@@ -250,7 +250,7 @@ void test_a_frame_document_is_a_full_member_of_the_realm() {
         var parsed = new DOMParser().parseFromString('<iframe></iframe>', 'text/html');
         return [d.isConnected, d.ownerDocument === f.contentDocument,
                 inner.contentDocument !== null && inner.contentDocument.body.nodeName,
-                parsed.querySelector('iframe').contentDocument].join();
+                String(parsed.querySelector('iframe').contentDocument)].join();
     })())JS",
        "true,true,BODY,null");
 }
