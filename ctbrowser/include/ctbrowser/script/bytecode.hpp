@@ -517,6 +517,12 @@ struct program {
         std::string from;
     };
     std::vector<reexport> reexports;
+    // A CLASSIC SCRIPT'S HOISTED `var` NAMES (16.1.7 GlobalDeclarationInstantiation
+    // step 12): context::run binds each one that is not already a global to
+    // undefined before the first instruction, so `use(x); var x = 1` reads
+    // undefined rather than throwing. Data on the program, not bytecode, so
+    // nothing that reads the instructions sees it. Empty for a module.
+    std::vector<std::string> hoisted_vars;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

@@ -245,6 +245,7 @@ load_result load_image(std::span<const std::byte> bytes,
             in.fail("the re-export list claims more entries than the image holds");
         }
     }
+    read_list(result.hoisted_vars, "hoisted var");
     result.source = in.text();
     result.kind = out.kind;
 

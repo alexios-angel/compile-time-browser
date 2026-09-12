@@ -31,25 +31,14 @@ void compiler_impl::compile_program() {
     // step 12: CreateGlobalVarBinding for each, undefined unless it already
     // exists): `use(x); var x = 1;` reads undefined, and since 2026-09-12 an
     // unbound name is a ReferenceError, so without this the hoisting gap
-    // became a throw. One hidden native call with the names, at entry, before
-    // the function declarations - which then overwrite their own names.
-    if (!module_scope_ && !fn().declared.empty()) {
-        const std::uint32_t mark = reg_mark();
-        const std::uint16_t callee = alloc_reg();
-        proto().emit(instruction::with_bx(op::get_global, callee,
-                                          intern_name(std::string{declare_vars_name})));
-        std::vector<std::string> names = fn().declared;
-        std::sort(names.begin(), names.end());
-        names.erase(std::unique(names.begin(), names.end()), names.end());
-        std::uint16_t argc = 0;
-        for (const std::string & name : names) {
-            if (argc == 200) { break; } // the register window is the limit; see limits.cpp
-            const std::uint16_t arg = alloc_reg();
-            emit_string(arg, name);
-            ++argc;
-        }
-        proto().emit(instruction{op::call, callee, argc});
-        release_to(mark);
+    // became a throw. Recorded on the program rather than emitted - a call
+    // at the top of every script was a global read no native pipeline could
+    // type - and context::run binds them before the first instruction.
+    if (!module_scope_) {
+        out_.hoisted_vars = fn().declared;
+        std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
+        out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
+                                out_.hoisted_vars.end());
     }
     if (module_scope_) {
         predeclare_locals(ast_.root);
