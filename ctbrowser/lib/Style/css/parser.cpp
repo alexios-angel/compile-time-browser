@@ -8,6 +8,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/media.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/selector.hpp>
 
 // CSS Syntax Level 3 §5, over the §4 tokens.
@@ -553,8 +554,15 @@ private:
         for (std::uint32_t i = first_index; i <= last_index; ++i) {
             // Copied out before the append: the pool is what text() reads from, so
             // appending to it while holding a view into it would dangle.
-            std::string piece{text(sheet_.tokens[i])};
-            if (sheet_.tokens[i].type == token_type::url) { piece = "url(" + piece + ")"; }
+            const css_token & tok = sheet_.tokens[i];
+            std::string piece{text(tok)};
+            if (tok.type == token_type::url) { piece = "url(" + piece + ")"; }
+            // A REBUILT IDENTIFIER IS DECODED TEXT, and is written back as an
+            // identifier: `\33 myident` decoded is `3myident`, which reads as
+            // a dimension the second time round (ident-function-computed).
+            if (tok.text >= sheet_.source_length && tok.type == token_type::ident) {
+                piece = serialize_identifier(piece);
+            }
             sheet_.pool += piece;
         }
         return {static_cast<std::uint32_t>(start),

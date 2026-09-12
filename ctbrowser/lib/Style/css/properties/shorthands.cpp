@@ -619,7 +619,12 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
     const expansion * e = name.starts_with("--") ? nullptr : expansion_of(name);
     if (e == nullptr) { return add(block, name, checked.serialized, important); }
     std::vector<std::string> values;
-    const split result = checked.substituted ? split::whole : split_value(*e, text, values);
+    // The SERIALISED shorthand is what is split, not the author's text: a
+    // `random()` in it has had its key spelled against the shorthand's name -
+    // `margin: random(property-index-scoped, ...)` is `ua-margin-1` on every
+    // side, not `ua-margin-top-1` on one of them (random-computed).
+    const split result =
+        checked.substituted ? split::whole : split_value(*e, checked.serialized, values);
     if (result == split::invalid) { return false; }
     if (result == split::whole) {
         bool changed = erase_named(block, e->longhands);

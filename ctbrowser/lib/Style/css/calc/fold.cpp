@@ -323,44 +323,31 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
     std::string out;
     bool ok = true;
     std::size_t at = 0;
-    // WHERE IN THE VALUE A FUNCTION SITS, for `random()`: its position is the
-    // top-level component it is in - `margin: random(..) random(..)` is two
-    // positions, `a, random(..)` puts one at the second - so two elements with
-    // the same declaration share by position and two positions never share.
+    // WHICH random() THIS IS, for its automatic key: the ordinal among the
+    // value's random() functions in source order - `margin: random(..)
+    // random(..)` is two, `a, random(..)` holds the first - so two elements
+    // with the same declaration share by ordinal and two ordinals never share.
+    // The evaluator counts the ones inside each function and reports back.
     length_context ctx = given;
-    int depth = 0;
-    std::uint32_t position = 0;
-    bool in_component = false;
+    std::uint32_t ordinal = 0;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
-            in_component = true;
             continue;
         }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
-            const char c = value[at];
-            if (c == '(') { ++depth; }
-            if (c == ')') { --depth; }
-            const bool separator =
-                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
-            if (separator) {
-                if (in_component) { ++position; }
-                in_component = false;
-            } else {
-                in_component = true;
-            }
-            out.push_back(c);
+            out.push_back(value[at]);
             ++at;
             continue;
         }
-        in_component = true;
-        ctx.random_index = position;
+        ctx.random_index = ordinal;
         const function_span span = span_of(value, at, name);
         const std::string_view whole = value.substr(at, span.end - at);
         const bool is_calc = ascii_iequals(name, "calc(");
         const math_answer answer = evaluate_math(body_of(value, at, name, span), ctx);
+        ordinal += answer.randoms;
         // A NUMBER WHERE THE PROPERTY WANTS A LENGTH IS A SYNTAX ERROR. This is
         // the guard that makes it safe for the evaluator to answer with numbers
         // at all: `width: calc(2 * 3)` stays invalid, as CSS says and as this
@@ -407,6 +394,7 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                 std::signbit(computed.px) != std::signbit(computed.percent)) {
                 computed.px = 0.0;
                 computed.percent = 0.0;
+                computed.has_percent = false;
             }
             computed.px = clamped(computed.px);
             computed.percent = clamped(computed.percent);
@@ -522,10 +510,31 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                     }
                     return text;
                 }
+                // A sum around a comparison with no answer is simplified over
+                // its tree against the bases (tree.cpp): `5em + 5%` is `5% +
+                // 80px` and `(min(10%, 30px) + 10px) * 2 + 10px` is `10px + (2
+                // * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+                if (arg.outcome == math_outcome::unresolved &&
+                    math_name_at(trim(one, html_whitespace), 0).empty()) {
+                    if (const std::optional<std::string> tree = simplify_sum_text(one, &ctx)) {
+                        return *tree;
+                    }
+                }
                 return fold_math(one, ctx).text;
             }));
             at = span.end;
             continue;
+        }
+        if (is_calc && answer.outcome == math_outcome::unresolved) {
+            // The same tree for a calc() the bases cannot finish:
+            // `calc(min(1%, 2%) + max(3%, 4%) + 10%)` computes to `calc(10% +
+            // min(1%, 2%) + max(3%, 4%))` (minmax-percentage-serialize).
+            if (const std::optional<std::string> tree =
+                    simplify_sum_text(body_of(value, at, name, span), &ctx)) {
+                out.append("calc(").append(*tree).append(")");
+                at = span.end;
+                continue;
+            }
         }
         if (!is_calc || answer.outcome == math_outcome::unresolved) {
             out.append(whole);

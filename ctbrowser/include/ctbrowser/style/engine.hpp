@@ -5,10 +5,12 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -16,6 +18,7 @@
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/boolean.hpp>
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
@@ -102,7 +105,24 @@ class engine {
 public:
     explicit engine(atom_table & atoms)
         : atoms_(&atoms), font_size_(atoms.intern_lower("font-size")),
-          line_height_(atoms.intern_lower("line-height")) {}
+          line_height_(atoms.intern_lower("line-height")),
+          font_family_(atoms.intern_lower("font-family")),
+          font_weight_(atoms.intern_lower("font-weight")),
+          font_style_(atoms.intern_lower("font-style")) {}
+
+    // HOW WIDE A RUN OF TEXT IS IN A FACE, for the `ch` unit. CSS Values 4
+    // §6.1.1: `ch` is the advance of the `0` glyph in the element's font, and
+    // only a font backend knows it - which the style engine deliberately does
+    // not (layout/values.hpp says measurement is injected). So the shell hands
+    // the measurement in, with the same arguments as raster's
+    // `font_backend::advance`; without one `ch` takes CSS's own fallback of
+    // half an em (line-break-ch-unit).
+    using text_measure = std::function<float(std::string_view text, float font_size,
+                                             std::string_view family, bool bold, bool italic)>;
+    void set_text_measure(text_measure measure) {
+        measure_ = std::move(measure);
+        zero_advances_.clear();
+    }
 
     // Interactive state, matching ctcss's pseudo_state bits so a compiled
     // selector's requirement and an element's actual state are the same
@@ -162,6 +182,12 @@ public:
     [[nodiscard]] const css::property_registration * registration_of(atom name) const {
         const auto it = registrations_.find(name.id);
         return it == registrations_.end() ? nullptr : &it->second;
+    }
+    // A CUSTOM FUNCTION from a sheet's `@function` rule, CSS Functions and
+    // Mixins 1 §2, or null. The first rule for a name stands, like @property.
+    [[nodiscard]] const css::custom_function * function_of(atom name) const {
+        const auto it = functions_.find(name.id);
+        return it == functions_.end() ? nullptr : &it->second.function;
     }
 
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
@@ -697,6 +723,20 @@ public:
         const auto put = [&out, &parent, this](const declaration & d) {
             std::string value = d.value;
             const std::string_view property = atoms_->text(d.property);
+            // `revert` IS THE USER-AGENT ORIGIN'S ANSWER (CSS Cascade 4 §7.3):
+            // the value the cascade would have had with no author declaration
+            // at all, which is the last UA rule that matched and declared this
+            // property - `em { font-style: italic }` under an author
+            // `font-style: revert`. With none it is `unset`. Scanned when it
+            // happens rather than remembered per property: a revert is rare
+            // and the matched rules are a handful (attr-css-wide-keywords).
+            if (value == "revert") {
+                for (const rule & r : matches_) {
+                    if (r.origin != 0) { continue; } // 0 is the user-agent origin (ua.hpp)
+                    const declaration & ua = declarations_[r.declaration];
+                    if (ua.property == d.property) { value = ua.value; }
+                }
+            }
             if (value == "inherit") {
                 value = std::string{parent ? parent->get(d.property) : std::string_view{}};
             } else if (value == "unset" || value == "revert") {
@@ -781,9 +821,50 @@ public:
         // PASS ONE: the custom properties, stored verbatim. A custom property's value
         // is never parsed and never validated - it is a token stream that means
         // whatever the var() reading it makes of it.
+        //
+        // ...EXCEPT FOR AN `inherit()` IN ONE, which is replaced NOW (CSS Values
+        // 5 §inherit-notation): it names the PARENT's computed value, and the
+        // parent's cascade has just produced it - a lazy reading later would
+        // have to re-run the parent's substitution in the parent's scope, and
+        // its grandparent's, which is how `--v: e2 inherit(--v)` under `--v:
+        // e1` failed to accumulate (inherit-function-basic). A var() in the
+        // same value stays lazy, as every var() in a custom property is.
         fold([&](const declaration & d) {
             if (!atoms_->text(d.property).starts_with("--")) { return; }
-            put(d);
+            if (d.value.find("inherit(") == std::string::npos) {
+                put(d);
+                return;
+            }
+            const css::token_stream s = css::tokenize(d.value);
+            std::string value;
+            for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
+                const css::css_token & t = s.tokens[i];
+                if (t.type != css::token_type::function ||
+                    !ascii_iequals(s.text_of(t), "inherit(")) {
+                    value += s.text_of(t);
+                    continue;
+                }
+                const std::size_t close = css::end_of_block(s, i);
+                const std::size_t last =
+                    s.tokens[close - 1].type == css::token_type::close_paren ? close - 1 : close;
+                std::string inner;
+                for (std::size_t v = i + 1; v < last; ++v) { inner += s.text_of(s.tokens[v]); }
+                const std::size_t comma = inner.find(',');
+                const std::string_view name =
+                    trim(std::string_view{inner}.substr(0, comma), html_whitespace);
+                const std::string_view held =
+                    parent && name.starts_with("--") ? parent->get(atoms_->intern(name)) : "";
+                if (!held.empty() && held != guaranteed_invalid) {
+                    value += held;
+                } else if (comma != std::string::npos) {
+                    value += trim(std::string_view{inner}.substr(comma + 1), html_whitespace);
+                } else {
+                    value = std::string{guaranteed_invalid};
+                    break;
+                }
+                i = close - 1;
+            }
+            put(declaration{d.property, std::move(value)});
         });
 
         // `nullopt` means NOT DEFINED, which is what makes `var()` take its
@@ -853,6 +934,9 @@ public:
         conditions.registered = [this](std::string_view name) {
             return registration_of(atoms_->intern(name));
         };
+        conditions.functions = [this](std::string_view name) {
+            return function_of(atoms_->intern(name));
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -893,6 +977,20 @@ public:
             root_font_size_ = 16.0f;
             root_line_height_ = parent_line_height;
         }
+        // THE PARENT'S `0` ADVANCE, for `ch` in `font-size` and the other font-*
+        // properties, where it is the parent's like `em` (CSS Values 4 §6.1.1):
+        // the parent's inherited font-family, font-weight and font-style at the
+        // parent's size. Measured only when the shell injected a measurement;
+        // otherwise zero, and `ch` takes its half-em fallback.
+        std::string_view face_family =
+            parent && parent->inherited ? parent->inherited->get(font_family_) : std::string_view{};
+        std::string_view face_weight =
+            parent && parent->inherited ? parent->inherited->get(font_weight_) : std::string_view{};
+        std::string_view face_style =
+            parent && parent->inherited ? parent->inherited->get(font_style_) : std::string_view{};
+        const float parent_zero_advance =
+            measure_ ? zero_advance_of(face_family, face_weight, face_style, parent_font_size)
+                     : 0.0f;
         float own_font_size = parent_font_size;
         std::vector<atom> cyclic_registered;
         std::vector<atom> read; // what the font-size's substitution looked at
@@ -909,7 +1007,8 @@ public:
             // A PERCENTAGE IN A FONT SIZE IS OF THE PARENT'S, and the evaluator
             // can be told so: `calc(50% + 1px)` folds here rather than waiting
             // for a containing block it will never be measured against.
-            css::length_context ctx = font_context(parent_font_size, parent_line_height);
+            css::length_context ctx =
+                font_context(parent_font_size, parent_line_height, parent_zero_advance);
             ctx.percent_basis = parent_font_size;
             conditions.lengths = ctx;
             conditions.property = "font-size";
@@ -973,6 +1072,24 @@ public:
         // The root's size is what every `rem` in the document resolves against, so it
         // is recorded as the tree is descended rather than looked up per element.
         if (!parent) { root_font_size_ = own_font_size; }
+        // ...AND THE ELEMENT'S OWN `0` ADVANCE, now that its font size is known:
+        // its own winning font-family/weight/style declarations over the
+        // parent's face (a value still holding a var() is the parent's).
+        float own_zero_advance = 0.0f;
+        if (measure_) {
+            fold([&](const declaration & d) {
+                if (d.property != font_family_ && d.property != font_weight_ &&
+                    d.property != font_style_) {
+                    return;
+                }
+                if (css::may_have_var(d.value)) { return; }
+                (d.property == font_family_   ? face_family
+                 : d.property == font_weight_ ? face_weight
+                                              : face_style) = d.value;
+            });
+            own_zero_advance = zero_advance_of(face_family, face_weight, face_style, own_font_size);
+            if (!parent) { root_zero_advance_ = own_zero_advance; }
+        }
         // PASS ONE AND THREE QUARTERS: LINE HEIGHT, for `lh` in everything else.
         // The winning `line-height` declaration, substituted and folded against
         // the PARENT's `lh` and the element's own `em`, then resolved to px. An
@@ -982,7 +1099,8 @@ public:
             parent && parent->inherited ? parent->inherited->get(line_height_) : "", own_font_size);
         // ...and a percentage in a line-height is of the element's own font size,
         // so `calc(10% / 1px)` is the number 1 here (typed_arithmetic).
-        css::length_context line_height_lengths = font_context(own_font_size, parent_line_height);
+        css::length_context line_height_lengths =
+            font_context(own_font_size, parent_line_height, own_zero_advance);
         line_height_lengths.percent_basis = own_font_size;
         {
             const css::length_context & ctx = line_height_lengths;
@@ -1020,7 +1138,8 @@ public:
             });
         }
         if (!parent) { root_line_height_ = own_line_height; }
-        const css::length_context lengths = font_context(own_font_size, own_line_height);
+        const css::length_context lengths =
+            font_context(own_font_size, own_line_height, own_zero_advance);
         // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
         // `line-height: 2lh` folded against its own answer would double it -
         // and `line_height_lengths` above is what that property folds with; and
@@ -1028,7 +1147,8 @@ public:
         // font size as it is in `font-size`: `font-weight: calc(1em / 1px)`
         // under a 10px parent is 10 whatever the element's own size
         // (using-font-relative-units-in-font-properties, CSS Values 4 §6.1.1).
-        const css::length_context font_lengths = font_context(parent_font_size, parent_line_height);
+        const css::length_context font_lengths =
+            font_context(parent_font_size, parent_line_height, parent_zero_advance);
         const auto lengths_for = [&](atom property) -> const css::length_context & {
             if (property == line_height_) { return line_height_lengths; }
             return atoms_->text(property).starts_with("font-") ? font_lengths : lengths;
@@ -1054,6 +1174,12 @@ public:
             for (declaration & d : out) {
                 if (d.property == name) { own = &d; }
             }
+            // A `random()` in a registered property is keyed on THAT property
+            // (CSS Values 5 §random-caching): `--x` and `--y` on one element
+            // draw differently, and `--len-scoped: random(property-scoped, ...)`
+            // draws the same on every element (random-computed).
+            css::length_context registered_lengths = lengths;
+            registered_lengths.property = atoms_->text(name);
             std::optional<std::string> computed;
             const bool cyclic =
                 std::ranges::find(cyclic_registered, name) != cyclic_registered.end();
@@ -1085,7 +1211,8 @@ public:
                     if (!held.empty()) { computed = std::string{held}; }
                 } else if (substituted && !ascii_iequals(word, "initial") &&
                            !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
-                    computed = css::compute_registered(text, registration.syntax, lengths);
+                    computed =
+                        css::compute_registered(text, registration.syntax, registered_lengths);
                 }
             } else if (own == nullptr && registration.inherits && parent) {
                 continue;
@@ -1215,6 +1342,20 @@ public:
                     known != nullptr && known->nonnegative) {
                     value = css::non_negative(value);
                 }
+                // ...AND A SUBSTITUTED VALUE IS VALIDATED once its math has an
+                // answer, as the path without math was above: `font-style:
+                // attr(data-foo type(<angle>), calc(10 + 20))` falls back to
+                // the number 30, which font-style cannot take, and is invalid
+                // at computed-value time (attr-all-types). A value that is
+                // still a function - `min(10px, 5%)` - is valid as it stands.
+                if (had_var && !css::may_have_math(value)) {
+                    const css::value_check checked = css::check_declaration(property, value);
+                    if (!checked.valid) {
+                        unset();
+                        return;
+                    }
+                    value = std::move(checked.serialized);
+                }
             }
             // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
             // every `em` in every other declaration needed the answer first. Emit
@@ -1301,13 +1442,15 @@ public:
     // The bases every relative length in this document resolves against. `em` is
     // the caller's, because it differs between font-size and everything else; the
     // rest are facts about the document and the window.
-    [[nodiscard]] css::length_context font_context(float em_basis,
-                                                   float lh_basis = 20.0f) const noexcept {
+    [[nodiscard]] css::length_context font_context(float em_basis, float lh_basis = 20.0f,
+                                                   float ch_basis = 0.0f) const noexcept {
         css::length_context ctx;
         ctx.font_size = em_basis;
         ctx.root_font_size = root_font_size_;
         ctx.line_height = lh_basis;
         ctx.root_line_height = root_line_height_;
+        ctx.zero_advance = ch_basis;
+        ctx.root_zero_advance = root_zero_advance_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
         ctx.sibling_index = sibling_index_;
@@ -1518,6 +1661,17 @@ private:
     void register_at_property_rules(std::string_view sheet_text);
     // The registered custom properties, by atom id.
     flat_map<std::uint32_t, css::property_registration> registrations_;
+    // The `@function` rules of one sheet's text, likewise; and the functions,
+    // by the atom id of their `--name`.
+    void register_at_function_rules(std::string_view sheet_text, std::uint8_t origin);
+    // ...with the origin of the sheet that declared each, because a function
+    // lives in its sheet: clear_origin drops it with the sheet's rules, where
+    // an @property registration outlives them.
+    struct sheet_function {
+        std::uint8_t origin = 0;
+        css::custom_function function;
+    };
+    flat_map<std::uint32_t, sheet_function> functions_;
 
     // Does this text carry a unit that resolves against the element's own font -
     // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?
@@ -1875,6 +2029,52 @@ private:
     // declaration, and interning takes a shared_mutex.
     atom font_size_;
     atom line_height_;
+    atom font_family_, font_weight_, font_style_;
+    text_measure measure_;
+    // The advance of `0` per face and size already measured: a page has a
+    // handful of faces and thousands of elements, and the backend's lookup is
+    // not free.
+    std::unordered_map<std::string, float> zero_advances_;
+    // The ROOT's `0` advance, `rch`'s basis: set as the tree is descended like
+    // root_font_size_, read by font_context(). Zero when nothing measures,
+    // which is the half-em fallback.
+    float root_zero_advance_ = 0.0f;
+
+    // THE FACE AN ELEMENT'S TEXT IS MEASURED IN, from its own winning
+    // `font-family`, `font-weight` and `font-style` declarations and the
+    // parent's inherited ones for whatever it did not declare - the same
+    // reading layout's box_builder::face_of makes: the first family of the
+    // list, 600 and up is bold, `italic` and `oblique` are italic. A value
+    // still holding a var() is left to the parent's. Returns the advance of
+    // `0` at `font_size`, or zero with no measurement injected.
+    [[nodiscard]] float zero_advance_of(std::string_view family_list, std::string_view weight,
+                                        std::string_view style_text, float font_size) {
+        if (!measure_) { return 0.0f; }
+        std::string_view family = trim(family_list, html_whitespace);
+        if (const std::size_t comma = family.find(','); comma != std::string_view::npos) {
+            family = trim(family.substr(0, comma), html_whitespace);
+        }
+        if (family.size() >= 2 && (family.front() == '"' || family.front() == '\'') &&
+            family.back() == family.front()) {
+            family = family.substr(1, family.size() - 2);
+        }
+        int numeric = 0;
+        const auto parsed = std::from_chars(weight.data(), weight.data() + weight.size(), numeric);
+        const bool bold = parsed.ec == std::errc{}
+                              ? numeric >= 600
+                              : ascii_iequals(weight, "bold") || ascii_iequals(weight, "bolder");
+        const bool italic =
+            ascii_iequals(style_text, "italic") || ascii_istarts_with(style_text, "oblique");
+        std::string key{family};
+        key += bold ? "|b|" : "|r|";
+        key += italic ? "i|" : "u|";
+        key += std::to_string(font_size);
+        const auto found = zero_advances_.find(key);
+        if (found != zero_advances_.end()) { return found->second; }
+        const float advance = measure_("0", font_size, family, bold, italic);
+        zero_advances_.emplace(std::move(key), advance);
+        return advance;
+    }
     // The ROOT element's computed font size, which is what every `rem` in the
     // document resolves against. Recorded as the tree is descended - the root is
     // resolved first, so by the time anything else asks, it is right. The root's

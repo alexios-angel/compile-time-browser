@@ -330,7 +330,7 @@ public:
 
     [[nodiscard]] math_answer run() {
         const std::optional<term> value = settle();
-        if (!value) { return math_answer{outcome_, {}}; }
+        if (!value) { return math_answer{outcome_, {}, randoms_}; }
         calc_result out;
         // A NUMBER IS AN ANSWER. CSS Values 3 §8.1 says a math function may
         // resolve to a <number>; whether the PROPERTY accepts one is a separate
@@ -340,7 +340,7 @@ public:
         out.px = value->value;
         out.percent = value->percent;
         out.has_percent = value->has_percent;
-        return math_answer{math_outcome::resolved, out};
+        return math_answer{math_outcome::resolved, out, randoms_};
     }
 
     // The SYMBOLIC evaluation's answer, which is the term itself: a
@@ -920,6 +920,14 @@ private:
     // optional step of the same type.
     [[nodiscard]] std::optional<term> random_of() {
         ++at_; // the function token, `(` included
+        // ITS ORDINAL AMONG THE VALUE'S random() FUNCTIONS, in source order,
+        // which is what `property-index-scoped` and the automatic key count
+        // by: `a, random()` shares with `random(), random()`'s first and not
+        // its second, and two inside one calc() are two (random-computed,
+        // random-in-if). The caller's `random_index` is where this expression
+        // starts counting; `randoms_` is how far it got.
+        length_context keyed = ctx_;
+        keyed.random_index = ctx_.random_index + randoms_++;
         // A SPECIFIED VALUE KEEPS ITS random(): the draw happens at
         // computed-value time and nowhere earlier (random-serialize).
         if (basis_ == basis::symbolic) { return unresolvable(); }
@@ -996,7 +1004,7 @@ private:
             if (peek().type != token_type::comma) { return fail(); }
             ++at_;
         }
-        if (!fixed) { base = random_base(options, ctx_); }
+        if (!fixed) { base = random_base(options, keyed); }
         // A, B, and the optional step - which may be spelled `by <step>`.
         std::vector<term> args;
         for (;;) {
@@ -1222,6 +1230,7 @@ private:
     std::size_t at_ = 0;
     bool ok_ = true;
     bool unresolved_ = false;
+    std::uint32_t randoms_ = 0; // the random() functions read so far
     // Whether a <percentage-token> was read ANYWHERE in the expression, which is
     // not the same question as whether the ANSWER carries one: `sign(50%)` is a
     // plain number and has nothing left to resolve, but the percentage was still

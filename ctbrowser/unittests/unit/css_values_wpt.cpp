@@ -67,9 +67,10 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
     CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
     CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
-    // Two infinities that cancel for any basis are a NaN, and so zero.
+    // Two infinities that cancel for any basis are a NaN, and so zero - a
+    // plain zero length, with nothing left for a basis to resolve.
     CHECK_EQ(fold_math("calc(infinity * 1px - infinity * 1%)", ctx, math_context::length).text,
-             std::string{"0%"});
+             std::string{"0px"});
     CHECK_EQ(fold_math("calc(infinity * 1px + infinity * 1%)", ctx, math_context::length).text,
              std::string{"calc(33554432% + 33554432px)"});
     // ...and only when computed: `el.style` reads the calc() back.
@@ -241,6 +242,12 @@ void test_calc_mix() {
              std::string{"calc-mix(10px 25%, 3em 25%, 5em 25%, 7em 25%)"});
     CHECK_EQ(specified("text-indent", "calc(10px + calc-mix(1% 0%, 3px 0%))"),
              std::string{"calc(0% + 10px)"});
+    // ...and the zero length beside a percentage is kept the same way; only
+    // two zeros of one unit add up to nothing to keep.
+    CHECK_EQ(specified("text-indent", "calc(10% + calc-mix(1px 0%, 3% 0%))"),
+             std::string{"calc(10% + 0px)"});
+    CHECK_EQ(specified("text-indent", "calc(10% + calc-mix(1% 0%, 3px 0%))"),
+             std::string{"calc(10%)"});
     CHECK_EQ(specified("text-indent", "calc-mix(1% 0%, 3% 0%, 5% * sibling-index() 0%)"),
              std::string{"calc(0%)"});
     CHECK_EQ(specified("scale", "calc-mix(1 * sibling-index() 50%, 3 50%, 5, 7)"),
@@ -372,8 +379,14 @@ void test_attr_substitution() {
         if (name == "data-nested") { return "attr(data-foo type(*), 2px)"; }
         if (name == "data-ring") { return "attr(data-ring2 type(*), 2px)"; }
         if (name == "data-ring2") { return "attr(data-ring type(*), 3px)"; }
+        if (name == "data-raw-ring") { return "attr(data-raw-ring2 type(*))"; }
+        if (name == "data-raw-ring2") { return "attr(data-raw-ring)"; }
+        if (name == "data-unclosed") { return "attr(data-unclosed"; }
+        if (name == "data-hz") { return "3kHz"; }
+        if (name == "data-via-var") { return "attr(data-str, 11) var(--raw, 3)"; }
         return std::nullopt;
     };
+
     const auto sub = [&](std::string_view value) {
         return substitute_var(value, none, atoms, attrs).value_or("<invalid>");
     };
@@ -383,6 +396,24 @@ void test_attr_substitution() {
     CHECK_EQ(sub("attr(data-nested type(*), 1px)"), std::string{"10"});
     CHECK_EQ(sub("attr(data-ring type(*), 1px)"), std::string{"1px"});
     CHECK_EQ(sub("attr(data-ring type(*))"), std::string{"<invalid>"});
+    // ...and a ring closed by a BARE attr(), which reads the attribute as a
+    // string, is a ring all the same - as is an attribute naming itself in
+    // an attr() the tokenizer has to close for it (attr-cycle 3, 28).
+    CHECK_EQ(sub("attr(data-raw-ring type(*))"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-unclosed type(*), abc)"), std::string{"abc"});
+    CHECK_EQ(sub("attr(data-hz type(<frequency>))"), std::string{"3khz"});
+    // ...but a custom property read through var() computes its own attr()s
+    // as the strings they are, whatever attribute is being substituted
+    // around it (attr-cycle 26).
+    {
+        const custom_lookup raw = [&atoms](atom name) -> std::optional<std::string_view> {
+            if (atoms.text(name) == "--raw") { return "attr(data-via-var)"; }
+            return std::nullopt;
+        };
+        CHECK_EQ(
+            substitute_var("attr(data-via-var type(*))", raw, atoms, attrs).value_or("<invalid>"),
+            std::string{"\"ab\\\"c\" \"attr(data-str, 11) var(--raw, 3)\""});
+    }
     // No type: a string, whatever the text says.
     CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
     CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});

@@ -39,6 +39,13 @@ struct length_context {
     // pinned by the goldens.
     float line_height = 20.0f;
     float root_line_height = 20.0f;
+    // THE ADVANCE OF `0` IN THE ELEMENT'S FONT, and in the root's, which is
+    // what `ch` and `rch` measure (CSS Values 4 §6.1.1). Only a font backend
+    // knows it and the style engine has it injected (engine::set_text_measure);
+    // zero means nothing measured, and the unit takes CSS's own fallback of
+    // half an em.
+    float zero_advance = 0.0f;
+    float root_zero_advance = 0.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
@@ -58,8 +65,9 @@ struct length_context {
     // WHAT `random()` IS RANDOM PER (CSS Values 5 §random-caching): a value
     // with no name is shared by nothing - it differs per element, per property
     // and per position in the value - and the caller says which element and
-    // which property this is. `random_index` is the position, counted by the
-    // fold as it walks the value; zero everywhere else.
+    // which property this is. `random_index` is the ordinal of this
+    // expression's first random() among the value's, counted from zero in
+    // source order by the fold as it walks the value; zero everywhere else.
     std::uint64_t element_key = 0;
     std::string_view property;
     std::uint32_t random_index = 0;
@@ -137,6 +145,11 @@ enum class math_outcome : std::uint8_t {
 struct math_answer {
     math_outcome outcome = math_outcome::invalid;
     calc_result value;
+    // HOW MANY random() FUNCTIONS THE EXPRESSION HOLDS, whatever the outcome,
+    // so a caller walking a whole value can number the next one: the
+    // automatic sharing key is the function's ordinal in the value
+    // (`length_context::random_index`), and a calc() may hold several.
+    std::uint32_t randoms = 0;
 };
 
 // WHAT KIND OF NUMBER THE PROPERTY WILL TAKE. A `<number>` answer is a valid

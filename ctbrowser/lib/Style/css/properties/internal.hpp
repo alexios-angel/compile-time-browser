@@ -85,6 +85,7 @@ struct scan {
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word);
 [[nodiscard]] scan scan_tokens(const token_stream & ts);
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts);
+[[nodiscard]] bool integer_slots_ok(std::string_view property, const token_stream & ts);
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found);
 [[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
                                   std::string_view text);

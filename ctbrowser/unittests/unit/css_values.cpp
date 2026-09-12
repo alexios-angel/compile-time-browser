@@ -174,7 +174,7 @@ void test_what_a_math_function_may_not_be() {
     // time anything here sees it, so it belongs in the serialisation -
     // `calc-complex-unresolved-serialize` asks for it on all six of its values.
     ok("width", "calc(1px", "calc(1px)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
     // `calc-invalid-parsing` are one assertion per line and this is what they
@@ -397,7 +397,7 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // A comparison that is not ALONE inside the calc keeps it too: the root is
     // then a sum, not a Clamp.
     ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot
@@ -542,6 +542,31 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     ok("width", "calc(1 * min(NaN * 2px, NaN * 4em))", "calc(1 * min(NaN * 1px, NaN * 1em))");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
+
+    // A SUM AROUND SUCH A COMPARISON IS A TREE (CSS Values 4 §10.12, §10.13):
+    // what folds around the min() folds, a product's number comes first, a
+    // product inside a sum is parenthesised, and a sum's terms are sorted -
+    // numbers, percentages, dimensions by unit, then the rest in order
+    // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+    ok("width", "calc((min(10px, 20%) + max(1rem, 2%)) * 2)",
+       "calc(2 * (min(10px, 20%) + max(1rem, 2%)))");
+    ok("width", "calc(0px - (1 * (-10px + min(20%, 20px))))",
+       "calc(0px - (1 * (-10px + min(20%, 20px))))");
+    ok("width", "calc(min(1px, 1in) + max(100px + 1em, 10px + 1in) + 1px)",
+       "calc(2px + max(1em + 100px, 106px))");
+    ok("width", "calc(2 * (.2 * min(1em, 1px)) + 1px)", "calc(1px + (0.4 * min(1em, 1px)))");
+    ok("width", "calc(min(1%, 2%) + max(3%, 4%) + 10%)", "calc(10% + min(1%, 2%) + max(3%, 4%))");
+    ok("width", "max((min(10%, 30px) + 10px) * 2 + 10px, 5em + 5%)",
+       "max(10px + (2 * (10px + min(10%, 30px))), 5% + 5em)");
+    // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers.
+    ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(pow(2, sign(1em - 18px)) * 1px)");
+    // A signed zero keeps its sign through the tree, and a unit whose
+    // canonical spelling would lose digits keeps the author's: the cascade
+    // parses this text again (signs-abs-computed, typed_arithmetic).
+    ok("scale", "clamp(-1, 1 / sign(-0em / 1px), 1)", "clamp(-1, 1 / sign(-0em / 1px), 1)");
+    ok("margin-left", "calc(1px * 10em / -0em)", "calc(1px * 10em / -0em)");
+    ok("image-resolution", "calc(100dpi + 20dpi * sign(38px - 2em))",
+       "calc(100dpi + (20dpi * sign(-2em + 38px)))");
 }
 
 // ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.
@@ -933,6 +958,20 @@ void test_steps_takes_an_integer() {
     bad("animation-timing-function", "steps(1e1)");
     bad("animation-timing-function", "steps(10.1)");
     bad("transition-timing-function", "steps(1.1e1, start)");
+    // ...and so do the <integer> slots of the freeform properties: a counter's
+    // step, a grid line, repeat()'s count, a feature tag's value, and the
+    // second value of initial-letter - but not its first, which is a <number>.
+    ok("counter-increment", "foo 10", "foo 10");
+    CHECK(check_declaration("counter-increment", "foo calc(1e1)").valid);
+    bad("counter-increment", "foo 1e1");
+    bad("counter-reset", "foo 10.1");
+    bad("font-feature-settings", "\"liga\" 1.1e1");
+    bad("grid-row", "1e1");
+    ok("grid-template-rows", "repeat(10, 10px)", "repeat(10, 10px)");
+    bad("grid-template-rows", "repeat(10.1, 10px)");
+    ok("initial-letter", "1.1 10", "1.1 10");
+    bad("initial-letter", "1.1 10.1");
+    bad("text-combine-upright", "digits 1e1");
 }
 
 // A three-channel colour function takes three or four components.

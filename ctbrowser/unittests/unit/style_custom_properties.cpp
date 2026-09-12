@@ -224,6 +224,14 @@ void test_inherit_function() {
     expect_value(f, f.find_id("a"), "order", "3", "an ancestor's value");
     expect_value(f, f.find_id("b"), "z-index", "4", "the fallback");
     expect_value(f, f.find_id("b"), "order", "", "no value and no fallback");
+    // In a CUSTOM property the inherit() is replaced in the cascade, so a
+    // chain of them accumulates through the parent's already-computed value
+    // (inherit-function-basic).
+    expect_value(f, f.find_id("b"), "--w", "5", "a custom property's fallback");
+    fixture chain;
+    chain.load("<div id=e1><div id=e2><div id=e3></div></div></div>",
+               "#e1 { --v: e1 } #e2 { --v: e2 inherit(--v) } #e3 { --v: e3 inherit(--v) }");
+    expect_value(chain, chain.find_id("e3"), "--v", "e3 e2 e1", "accumulating values");
 }
 
 } // namespace

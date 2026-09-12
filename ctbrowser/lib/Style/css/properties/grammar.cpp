@@ -341,8 +341,13 @@ namespace detail {
         }
         if (t.type == token_type::function) {
             const std::string_view fn = function_name(ts, t);
-            if (in_list(substitution_functions, fn)) { out.substituted = true; }
-            if (!in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
+            // A DASHED FUNCTION is a custom function call, CSS Functions and
+            // Mixins 1 §2: an arbitrary substitution function like var(),
+            // performed by css/substitute.cpp against the sheet's @function
+            // rules.
+            const bool custom = fn.starts_with("--");
+            if (custom || in_list(substitution_functions, fn)) { out.substituted = true; }
+            if (!custom && !in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
                 !in_list(value_functions, fn)) {
                 out.unknown_function = true;
             }
@@ -364,6 +369,63 @@ namespace detail {
     // malformed, because there is no rule that invents an opener.
     out.unclosed = depth > 0 ? depth : 0;
     return out;
+}
+
+// <integer>-ONLY SLOTS IN GRAMMARS THIS TABLE DOES NOT MODEL. CSS Values 4
+// §5.2: `1e1` and `10.1` are <number-token>s, and a slot that takes an
+// <integer> refuses them where it accepts `calc(1e1)`, which rounds
+// (§10.10). The counter properties, the grid lines, `repeat()`'s count,
+// `font-feature-settings`' value and `text-combine-upright: digits N` are all
+// such slots and all in properties kept freeform - so the rule is asked of the
+// bare numbers in the value rather than of a grammar: outside a math function
+// every one must be an integer literal. `initial-letter`'s FIRST value is a
+// <number> and only its second an <integer> (calc-rounds-to-integer).
+[[nodiscard]] bool integer_slots_ok(std::string_view property, const token_stream & ts) {
+    constexpr std::array<std::string_view, 17> integer_only{"counter-increment",
+                                                            "counter-reset",
+                                                            "counter-set",
+                                                            "font-feature-settings",
+                                                            "grid-row",
+                                                            "grid-column",
+                                                            "grid-area",
+                                                            "grid-row-start",
+                                                            "grid-row-end",
+                                                            "grid-column-start",
+                                                            "grid-column-end",
+                                                            "grid-template-rows",
+                                                            "grid-template-columns",
+                                                            "grid-template",
+                                                            "grid",
+                                                            "text-combine-upright",
+                                                            "initial-letter"};
+    if (!in_list(integer_only, property)) { return true; }
+    bool number_first = ascii_iequals(property, "initial-letter");
+    int depth = 0;
+    int math_until = -1; // the depth a math function opened at, or -1 outside one
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::eof) { break; }
+        const bool opens = t.type == token_type::function || t.type == token_type::open_paren ||
+                           t.type == token_type::open_square || t.type == token_type::open_curly;
+        const bool closes = t.type == token_type::close_paren ||
+                            t.type == token_type::close_square || t.type == token_type::close_curly;
+        if (opens) {
+            if (math_until < 0 && t.type == token_type::function &&
+                in_list(math_functions, function_name(ts, t))) {
+                math_until = depth;
+            }
+            ++depth;
+        } else if (closes) {
+            --depth;
+            if (math_until >= 0 && depth <= math_until) { math_until = -1; }
+        } else if (t.type == token_type::number && math_until < 0) {
+            if (number_first) {
+                number_first = false;
+            } else if ((t.flags & flag_integer) == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts) {

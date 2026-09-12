@@ -189,6 +189,12 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
         if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
             if (std::string text = serialize_symbolic(sum); !text.empty()) { return text; }
         }
+        // A sum around a comparison layout has to decide is simplified over
+        // its tree (tree.cpp): `(min(10%, 30px) + 10px) * 2 + 10px` is
+        // `10px + (2 * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+        if (lone_math_function(trim(one, html_whitespace)).empty()) {
+            if (const std::optional<std::string> tree = simplify_sum_text(one)) { return *tree; }
+        }
         return simplify_math(one);
     });
 }
@@ -374,6 +380,21 @@ std::string simplify_math(std::string_view value) {
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {
+            // A PERCENTAGE BESIDE A LENGTH KEEPS THE LENGTH'S TERM EVEN AT
+            // ZERO: `calc(10% + calc-mix(1px 0%, 3% 0%))` is `calc(10% + 0px)`
+            // (§10.12 adds the terms of one unit and drops nothing), which
+            // the magnitude-and-percentage answer cannot say and the symbolic
+            // sum can (calc-mix-serialize).
+            if (answer.value.has_percent && answer.value.px == 0.0 &&
+                !ascii_iequals(name, "calc-mix(")) {
+                if (const auto [outcome, sum] = evaluate_symbolic(body);
+                    outcome == math_outcome::resolved && !sum.symbols.empty()) {
+                    if (const std::string text = serialize_symbolic(sum); !text.empty()) {
+                        out.append("calc(").append(text).append(")");
+                        continue;
+                    }
+                }
+            }
             out.append(specified_math(answer.value));
             continue;
         }
@@ -397,6 +418,16 @@ std::string simplify_math(std::string_view value) {
                 } else {
                     out.append("calc(").append(text).append(")");
                 }
+                continue;
+            }
+        }
+        // ...AND A calc() AROUND SUCH A COMPARISON IS STILL A TREE, simplified
+        // by §10.12 and written in §10.13's order: `calc((min(10px, 20%) +
+        // max(1rem, 2%)) * 2)` is `calc(2 * (min(10px, 20%) + max(1rem, 2%)))`
+        // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+        if (ascii_iequals(name, "calc(")) {
+            if (const std::optional<std::string> tree = simplify_sum_text(body)) {
+                out.append("calc(").append(*tree).append(")");
                 continue;
             }
         }
@@ -442,43 +473,45 @@ std::string canonical_random(std::string_view value, std::string_view property) 
     };
     std::string out;
     std::size_t at = 0;
-    int depth = 0;
-    bool in_component = false;
-    std::size_t position = 0; // the component this random() sits in - fold.cpp counts the same
+    // The ordinal of the random() being spelled, among the value's in source
+    // order - fold.cpp and the evaluator count the same way.
+    std::size_t position = 0;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
-            in_component = true;
             continue;
         }
         if (name_at(value, at, std::array<std::string_view, 1>{name}).empty()) {
-            const char c = value[at];
-            if (c == '(') { ++depth; }
-            if (c == ')') { --depth; }
-            const bool separator =
-                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
-            if (separator) {
-                if (in_component) { ++position; }
-                in_component = false;
-            } else {
-                in_component = true;
-            }
-            out.push_back(c);
+            out.push_back(value[at]);
             ++at;
             continue;
         }
-        in_component = true;
         const function_span span = span_of(value, at, name);
         const std::string_view inner =
             value.substr(at + name.size(), span.end - at - name.size() - (span.closed ? 1 : 0));
         at = span.end;
         std::vector<std::string_view> args = top_level_arguments(inner);
-        // The sharing head: a first argument made of identifiers, or `fixed`.
+        // The sharing head: a first argument that is `fixed <number>` or made
+        // of the sharing words alone. `infinity` and `NaN` are identifiers too
+        // and are the first BOUND, not a head (random-computed).
         std::string head;
+        const auto is_head = [](std::string_view text) {
+            if (ascii_istarts_with(text, "fixed")) { return true; }
+            bool any = false;
+            for (const std::string_view word : split_top_level(text, " \t\n\r\f")) {
+                any = true;
+                if (!word.starts_with("--") && !ascii_iequals(word, "auto") &&
+                    !ascii_istarts_with(word, "ua-") && !ascii_iequals(word, "element-scoped") &&
+                    !ascii_iequals(word, "property-scoped") &&
+                    !ascii_iequals(word, "property-index-scoped")) {
+                    return false;
+                }
+            }
+            return any;
+        };
         if (!args.empty()) {
-            const token_stream first = tokenize(trim(args.front(), html_whitespace));
-            if (!first.tokens.empty() && first.tokens.front().type == token_type::ident) {
+            if (is_head(trim(args.front(), html_whitespace))) {
                 const std::string_view text = trim(args.front(), html_whitespace);
                 if (ascii_istarts_with(text, "fixed")) {
                     head = "fixed " + simplify_math(trim(text.substr(5), html_whitespace));
@@ -530,6 +563,13 @@ std::string canonical_random(std::string_view value, std::string_view property) 
             out += bound(trim(arg, html_whitespace));
         }
         out += ')';
+        // The bounds were not walked, so the random() functions nested in
+        // them are counted here to keep step with the evaluator.
+        ++position;
+        for (std::size_t nested = inner.find(name); nested != std::string_view::npos;
+             nested = inner.find(name, nested + name.size())) {
+            if (nested == 0 || !is_name_char(inner[nested - 1])) { ++position; }
+        }
     }
     return out;
 }
