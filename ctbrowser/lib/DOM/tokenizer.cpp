@@ -50,6 +50,20 @@ bool tokenizer::is_alpha(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
+// THE INPUT STREAM'S NEWLINE NORMALISATION (HTML 13.2.3.5), applied where a
+// text run is built rather than to the whole input: CR LF and a lone CR are
+// both LF. `<pre>abc\rdef</pre>` has a newline in its Text node, and the
+// source spans still cover the bytes as written.
+void tokenizer::append_text(std::string & data) {
+    const char c = input_[at_++];
+    if (c != '\r') {
+        data += c;
+        return;
+    }
+    data += '\n';
+    if (at_ < input_.size() && input_[at_] == '\n') { ++at_; }
+}
+
 token tokenizer::in_data() {
     if (peek() == '<') {
         if (is_alpha(peek(1))) { return tag_open(); }
@@ -87,8 +101,7 @@ token tokenizer::characters() {
             out.data += decode_reference(false);
             continue;
         }
-        out.data += c;
-        ++at_;
+        append_text(out.data);
     }
     return out;
 }
@@ -96,8 +109,7 @@ token tokenizer::characters() {
 token tokenizer::rest_as_text() {
     token out;
     out.kind = token_kind::character;
-    out.data = input_.substr(at_);
-    at_ = input_.size();
+    while (at_ < input_.size()) { append_text(out.data); }
     return out;
 }
 
@@ -115,7 +127,7 @@ token tokenizer::in_text_until_close(bool decode_entities) {
             out.data += decode_reference(false);
             continue;
         }
-        out.data += input_[at_++];
+        append_text(out.data);
     }
     // Back to normal markup: the close tag itself is a tag again.
     model_ = content_model::data;
