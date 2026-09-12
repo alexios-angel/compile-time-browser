@@ -220,6 +220,33 @@ void test_replacing_the_children_is_one_record() {
              "n=1 removed=1 added=1");
 }
 
+// A SWAP NAMES THE NODE THAT MOVED FORWARD: `insertBefore(b, a)` is b's
+// removal (between a and c) then b's insertion ahead of a - and normalize is
+// one record per text node it removes, MutationObserver-childList.html's n32
+// and n21.
+void test_a_swap_and_a_normalize_are_the_records_the_dom_queues() {
+    CHECK_EQ(
+        said("<html><body><div id=host><i id=a></i><i id=b></i><i id=c></i></div>"
+             "<div id=n>x</div><script>"
+             "var host = document.getElementById('host'); var n = document.getElementById('n');"
+             "n.appendChild(document.createTextNode('y'));"
+             "n.appendChild(document.createTextNode('z'));"
+             "var m = new MutationObserver(function (records) {"
+             "  var out = [];"
+             "  for (var i = 0; i < records.length; i++) { var r = records[i];"
+             "    out.push((r.removedNodes.length ? 'rm:' + (r.removedNodes[0].id ||"
+             " r.removedNodes[0].data) : 'add:' + r.addedNodes[0].id) + '/' +"
+             " (r.previousSibling ? (r.previousSibling.id || r.previousSibling.data) : '-')"
+             " + '/' + (r.nextSibling ? (r.nextSibling.id || r.nextSibling.data) : '-')); }"
+             "  alert(out.join(' '));"
+             "});"
+             "m.observe(host, {childList: true}); m.observe(n, {childList: true});"
+             "host.insertBefore(document.getElementById('b'), document.getElementById('a'));"
+             "n.normalize(); host.appendChild(document.getElementById('a'));"
+             "</script></body></html>"),
+        "rm:b/a/c add:b/-/a rm:y/xyz/z rm:z/xyz/- rm:a/b/c add:a/c/-");
+}
+
 // takeRecords empties the queue, so the callback the delivery microtask would
 // have made never happens - and a second takeRecords answers with nothing.
 void test_take_records_empties_the_queue() {
@@ -299,6 +326,7 @@ int main() {
     test_attribute_filter_and_a_new_attribute();
     test_character_data_and_subtree();
     test_replacing_the_children_is_one_record();
+    test_a_swap_and_a_normalize_are_the_records_the_dom_queues();
     test_take_records_empties_the_queue();
     test_disconnect_drops_the_registrations_and_the_queue();
     test_observing_the_same_target_twice_replaces_it();

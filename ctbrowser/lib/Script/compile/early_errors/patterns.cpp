@@ -31,7 +31,9 @@ namespace ctbrowser::script::detail::early {
 void checker::check_pattern_target(std::int32_t idx) {
     if (idx < 0) { return; } // an elision: `[, a] = xs` skips a position
     switch (at(idx).kind) {
-    case nk::ident:
+    // 13.15.1: an identifier target is an assignment to that name, and in
+    // strict code `eval`/`arguments` may not be one.
+    case nk::ident: check_strict_binding(at(idx).text, idx); return;
     case nk::member:
     case nk::index:
     case nk::array:
@@ -47,6 +49,25 @@ void checker::check_pattern_target(std::int32_t idx) {
     default: break;
     }
     report("this is not something a value can be assigned to in a destructuring pattern", idx);
+}
+
+// `[...x,]` / `{...x,}`: the grammar has no trailing comma after a rest
+// element (13.2.4 / 13.2.5, 14.3.3), in a literal or in a pattern - and the
+// parser keeps no trace of the comma, so the SOURCE is asked. Only a target
+// whose last token is its own lexeme can be asked about - a name, or
+// `a.b` - and a nested pattern is a miss, never a refusal.
+[[nodiscard]] bool checker::comma_follows(std::int32_t target) const {
+    const vp::node & n = at(target);
+    if (n.kind != nk::ident && n.kind != nk::member && n.kind != nk::param) { return false; }
+    if (n.kind == nk::param && n.b >= 0) { return false; } // `...[a],`: a pattern
+    const std::size_t where = offset_of(target);
+    if (where == early_error::nowhere) { return false; }
+    for (std::size_t i = where + n.text.size(); i < source_.size(); ++i) {
+        const char c = source_[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f') { continue; }
+        return c == ',';
+    }
+    return false;
 }
 
 void checker::walk_pattern(std::int32_t idx) {
@@ -70,6 +91,9 @@ void checker::walk_pattern(std::int32_t idx) {
             if (rest && at(element.a).kind == nk::assign) {
                 report("a rest element may not have a default", elements[i]);
             }
+            if (rest && comma_follows(element.a)) {
+                report("a rest element may not be followed by a comma", element.a);
+            }
             if (literal) { check_pattern_target(rest ? element.a : elements[i]); }
             walk_pattern(elements[i]);
         }
@@ -87,6 +111,9 @@ void checker::walk_pattern(std::int32_t idx) {
                 }
                 if (at(entry.a).kind == nk::assign) {
                     report("a rest element may not have a default", entries[i]);
+                }
+                if (comma_follows(entry.a)) {
+                    report("a rest element may not be followed by a comma", entry.a);
                 }
                 if (literal) { check_pattern_target(entry.a); }
             } else if (literal && entry.kind == nk::prop) {
@@ -111,10 +138,17 @@ void checker::walk_pattern(std::int32_t idx) {
     }
     case nk::prop:
         if ((n.d & 1) != 0) { walk_expression(n.a); }
+        // A shorthand in a pattern - `({ eval } = o)`, `({ default } = o)` -
+        // is bound, not read.
+        if (n.c == 2 && (n.d & 1) == 0) { check_strict_binding(n.text, idx); }
         walk_pattern(n.b);
         return;
     case nk::pattern_prop:
         if ((n.d & 2) != 0) { walk_expression(n.a); }
+        // `const { #x: x } = this`: a private name is not a property name.
+        if ((n.d & 2) == 0 && n.text.starts_with('#')) {
+            report("the private name " + quoted(n.text) + " is not a property name", idx);
+        }
         walk_pattern(n.b);
         return;
     case nk::assign_pattern:
@@ -127,6 +161,10 @@ void checker::walk_pattern(std::int32_t idx) {
         return;
     case nk::rest_element:
     case nk::spread: walk_pattern(n.a); return;
+    // A NAME IN A BINDING POSITION - a declaration's, or an assignment
+    // pattern's target in a `for (... of` head, which the parser builds as a
+    // pattern too. Either way it is bound or assigned, and 13.1.1 applies.
+    case nk::ident: check_strict_binding(n.text, idx); return;
     default: walk_expression(idx); return;
     }
 }

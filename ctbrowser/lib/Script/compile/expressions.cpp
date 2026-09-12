@@ -73,7 +73,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         } else {
             compile_expr(n.a, dst);
         }
-        const std::uint16_t name = name_operand(std::string{n.text});
+        const std::uint16_t name = member_operand(n.text);
         proto().emit(instruction{op::get_prop, dst, dst, name});
         break;
     }
@@ -84,7 +84,13 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         break;
     case vp::nk::index: {
         const std::uint32_t mark = reg_mark();
-        compile_expr(n.a, dst);
+        // `super[k]`, like `super.x` above (13.3.7.1: the base first, then the
+        // key).
+        if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
+            emit_super_base(dst);
+        } else {
+            compile_expr(n.a, dst);
+        }
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, dst, key});
@@ -100,7 +106,12 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         proto().emit(instruction::with_bx(op::closure, dst, index));
         break;
     }
-    case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;
+    case vp::nk::this_lit:
+        // In a derived constructor (or an arrow in one), `this` before
+        // `super()` is the ReferenceError - see frame::derived_flag.
+        if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
+        proto().emit(instruction{op::load_this, dst});
+        break;
     // `new.target` - a meta-property, so it takes no operands and reads the
     // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
     // built on it) and Babylon.js uses it in its decorator metadata; it
@@ -126,6 +137,10 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
             // never be resumed.
             fail("`yield` outside a generator function");
             proto().emit(instruction{op::load_undef, dst});
+            break;
+        }
+        if (n.d == 1) {
+            compile_yield_delegate(n, dst);
             break;
         }
         const std::uint16_t sent = alloc_reg();
@@ -158,6 +173,12 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t spec = alloc_reg();
         compile_expr(n.a, spec);
+        // The options argument (13.3.10.1 step 4) is evaluated for its
+        // effects and its throw; import attributes themselves are not read.
+        if (n.b >= 0) {
+            const std::uint16_t options = alloc_reg();
+            compile_expr(n.b, options);
+        }
         proto().emit(instruction{op::dyn_import, dst, spec});
         release_to(mark);
         break;
@@ -183,43 +204,126 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
 }
 
 void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
-    if (const local * l = find_local_entry(fn(), name_text)) {
-        if (l->boxed) {
-            proto().emit(instruction{op::cell_set, l->reg, src});
-        } else {
-            proto().emit(instruction{op::move, l->reg, src});
-        }
+    // Inside a `with`: the object that binds the name takes the write.
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t obj = alloc_reg();
+    if (emit_with_object(name_text, obj)) {
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+        emit_plain_write(name_text, src);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::set_prop, obj, name_operand(std::string{name_text}), src});
+        patch_here(done);
+        release_to(mark);
         return;
     }
-    const int up = resolve_upvalue(frames_.size() - 1, name_text);
-    if (up >= 0) {
-        proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), src});
-        return;
-    }
-    proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name_text})));
+    release_to(mark);
+    emit_plain_write(name_text, src);
 }
 
 void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
-    if (const local * l = find_local_entry(fn(), n.text)) {
-        if (l->boxed) {
-            proto().emit(instruction{op::cell_get, dst, l->reg});
-        } else {
-            proto().emit(instruction{op::move, dst, l->reg});
+    if (tdz_frame_ == frames_.size() - 1 &&
+        std::find(tdz_names_.begin(), tdz_names_.end(), n.text) != tdz_names_.end()) {
+        emit_throw("ReferenceError",
+                   "Cannot access '" + std::string{n.text} + "' before initialization");
+        proto().emit(instruction{op::load_undef, dst});
+        return;
+    }
+    // Inside a `with`: the object that binds the name answers the read.
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t obj = alloc_reg();
+    if (emit_with_object(n.text, obj)) {
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+        emit_plain_read(n.text, dst);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::get_prop, dst, obj, name_operand(std::string{n.text})});
+        patch_here(done);
+        release_to(mark);
+        return;
+    }
+    release_to(mark);
+    emit_plain_read(n.text, dst);
+}
+
+// `yield* expr` (14.4.14): every value the inner iterator produces is
+// yielded by this generator, and the expression's own value is what the
+// inner iterator finally returned. GetIterator, the `next()` calls and the
+// result checks are the three natives named at yield_delegate_open_name; the
+// loop is here. A sync generator hands the inner RESULT OBJECT out untouched
+// (step 7.a.vii) - generator_resume knows from the record the settle native
+// leaves on the coroutine - and an async one awaits the result, then awaits
+// and yields its value like any other async yield. `.throw()`/`.return()`
+// while suspended here are generator_resume's, forwarded to the inner
+// iterator without resuming the frame.
+void compiler_impl::compile_yield_delegate(const vp::node & n, std::uint16_t dst) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t source = alloc_reg();
+    compile_expr(n.a, source);
+    const std::uint16_t record = alloc_reg();
+    emit_iterator_native(yield_delegate_open_name, record, source, fn().is_async ? 1 : 0);
+    const std::uint16_t sent = alloc_reg();
+    proto().emit(instruction{op::load_undef, sent});
+    const std::uint16_t step = alloc_reg();
+    const std::uint16_t done = alloc_reg();
+    const std::size_t top = proto().code.size();
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{yield_delegate_call_name})));
+        const std::uint16_t arg0 = alloc_reg();
+        proto().emit(instruction{op::move, arg0, record});
+        const std::uint16_t arg1 = alloc_reg();
+        proto().emit(instruction{op::move, arg1, sent});
+        proto().emit(instruction{op::call, callee, 2});
+        proto().emit(instruction{op::move, step, callee});
+        release_to(inner);
+    }
+    if (fn().is_async) { proto().emit(instruction{op::await_value, step, step}); }
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{yield_delegate_settle_name})));
+        const std::uint16_t arg0 = alloc_reg();
+        proto().emit(instruction{op::move, arg0, record});
+        const std::uint16_t arg1 = alloc_reg();
+        proto().emit(instruction{op::move, arg1, step});
+        proto().emit(instruction{op::call, callee, 2});
+        proto().emit(instruction{op::move, step, callee});
+        release_to(inner);
+    }
+    proto().emit(instruction{op::get_prop, done, record, name_operand("done")});
+    const std::size_t exit = proto().emit(instruction{op::jump_if_true, done});
+    if (fn().is_async) {
+        proto().emit(instruction{op::get_prop, step, step, name_operand("value")});
+        proto().emit(instruction{op::await_value, step, step});
+    }
+    proto().emit(instruction{op::yield_value, sent, step});
+    patch_jump(proto().emit(instruction{op::jump}), top);
+    patch_here(exit);
+    proto().emit(instruction{op::get_prop, dst, record, name_operand("value")});
+    release_to(mark);
+}
+
+void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name) {
+    if (idx >= 0 && !name.empty()) {
+        const vp::node & n = at(idx);
+        // A parenthesised function is still anonymous - the parser keeps no
+        // paren node, so `(function () {})` arrives as the function itself.
+        if ((n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow) && n.text.empty()) {
+            const std::uint32_t index = compile_function_body(idx, "");
+            out_.functions[index].inferred_name = std::string{name};
+            proto().emit(instruction::with_bx(op::closure, dst, index));
+            return;
         }
-        return;
+        if (n.kind == vp::nk::class_decl && n.text.empty()) {
+            compile_class(n, dst, false, name);
+            return;
+        }
     }
-    const int up = resolve_upvalue(frames_.size() - 1, n.text);
-    if (up >= 0) {
-        proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint16_t>(up)});
-        return;
-    }
-    // `arguments` is not synthesised here: compile_function_body made it a
-    // real local at entry, so it resolved above as a local or an upvalue.
-    // Reaching this point means the mention is at TOP LEVEL, where a script
-    // has no arguments and reading the name is an ordinary global lookup -
-    // which is what a browser does too.
-    const std::uint16_t name = name_operand(std::string{n.text});
-    proto().emit(instruction::with_bx(op::get_global, dst, name));
+    compile_expr(idx, dst);
 }
 
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
@@ -228,7 +332,7 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     if (target.kind == vp::nk::member) {
         const std::uint16_t object = alloc_reg();
         compile_expr(target.a, object);
-        proto().emit(instruction{op::delete_prop, object, name_operand(std::string{target.text})});
+        proto().emit(instruction{op::delete_prop, object, member_operand(target.text)});
         emit_const(dst, value::boolean(true));
     } else if (target.kind == vp::nk::index) {
         const std::uint16_t object = alloc_reg();
@@ -237,6 +341,19 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
         compile_expr(target.b, key);
         proto().emit(instruction{op::delete_index, object, key});
         emit_const(dst, value::boolean(true));
+    } else if (target.kind == vp::nk::ident) {
+        // `delete x` inside a `with` whose object binds x deletes the
+        // property (13.5.1.2 step 3.b through the object environment's
+        // DeleteBinding); any other name is undeletable here and answers
+        // false.
+        const std::uint16_t obj = alloc_reg();
+        emit_const(dst, value::boolean(false));
+        if (emit_with_object(target.text, obj)) {
+            const std::size_t unbound = proto().emit(instruction{op::jump_if_false, obj});
+            proto().emit(instruction{op::delete_prop, obj, name_operand(std::string{target.text})});
+            emit_const(dst, value::boolean(true));
+            patch_here(unbound);
+        }
     } else {
         emit_const(dst, value::boolean(false));
     }
@@ -247,7 +364,13 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t lhs = alloc_reg();
     const std::uint16_t rhs = alloc_reg();
-    compile_expr(n.a, lhs);
+    // `#x in o` (13.10.1): the private name is the KEY the brand is checked
+    // under, spelled as the class body resolved it - never a name to read.
+    if (n.text == "in" && at(n.a).kind == vp::nk::ident && at(n.a).text.starts_with('#')) {
+        emit_string(lhs, member_key(at(n.a).text));
+    } else {
+        compile_expr(n.a, lhs);
+    }
     compile_expr(n.b, rhs);
     const std::string_view o = n.text;
     op code = op::add_generic;
@@ -327,6 +450,29 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
     }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t operand = alloc_reg();
+    // `typeof x` ON AN UNRESOLVABLE NAME IS "undefined", NOT A THROW (13.5.3
+    // step 2). No special form is emitted: the pair get_global + type_of on
+    // one register is what the run loop and the AOT lowering recognise as
+    // the silent read - see op::get_global in bytecode_opcodes.def.
+    //
+    // Inside a `with` the pair has to stay adjacent on the fallback path, so
+    // the object's answer and the plain read each get their own type_of.
+    if (n.text == "typeof" && at(n.a).kind == vp::nk::ident) {
+        const std::uint16_t obj = alloc_reg();
+        if (emit_with_object(at(n.a).text, obj)) {
+            const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+            emit_plain_read(at(n.a).text, operand);
+            proto().emit(instruction{op::type_of, dst, operand});
+            const std::size_t done = proto().emit(instruction{op::jump});
+            patch_here(bound);
+            proto().emit(
+                instruction{op::get_prop, operand, obj, name_operand(std::string{at(n.a).text})});
+            proto().emit(instruction{op::type_of, dst, operand});
+            patch_here(done);
+            release_to(mark);
+            return;
+        }
+    }
     compile_expr(n.a, operand);
     if (n.text == "-") {
         proto().emit(instruction{op::negate, dst, operand});
@@ -362,6 +508,21 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
 compiler_impl::reference compiler_impl::prepare_reference(const vp::node & target) {
     reference out;
     if (target.kind == vp::nk::ident) {
+        // Inside a `with`, the binding is decided ONCE, here (13.15.2 step 1
+        // evaluates the reference before the right side): the object that
+        // binds the name, or undefined, sits in a register of its own for as
+        // long as the caller keeps the reference.
+        {
+            const std::uint32_t before = reg_mark();
+            const std::uint16_t obj = alloc_reg();
+            if (emit_with_object(target.text, obj)) {
+                out.with = true;
+                out.with_reg = obj;
+                out.with_name = name_operand(std::string{target.text});
+            } else {
+                release_to(before);
+            }
+        }
         if (const local * l = find_local_entry(fn(), target.text)) {
             out.what = l->boxed ? reference::kind::boxed_local : reference::kind::local;
             out.reg = l->reg;
@@ -376,18 +537,35 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.name = name_operand(std::string{target.text});
         return out;
     }
+    // `super.x = v` and `super[k] = v`: a Super Reference is PUT with `this`
+    // as the receiver (13.3.7.1 MakeSuperPropertyReference, 6.2.5.6 step
+    // 4), so a data property lands on `this` and a frozen prototype is the
+    // TypeError. The store goes to `this` - which also finds an inherited
+    // setter, since `this` sits below the home object. (A read starts above
+    // the home object; a compound assignment reads from `this`, a deviation
+    // that only a setter or shadowing property on the home object itself can
+    // observe.)
+    const bool on_super = target.a >= 0 && at(target.a).kind == vp::nk::super_lit;
     if (target.kind == vp::nk::member) {
         out.what = reference::kind::member;
         out.reg = alloc_reg();
-        compile_expr(target.a, out.reg);
-        out.name = name_operand(std::string{target.text});
+        if (on_super) {
+            proto().emit(instruction{op::load_this, out.reg});
+        } else {
+            compile_expr(target.a, out.reg);
+        }
+        out.name = member_operand(target.text);
         return out;
     }
     if (target.kind == vp::nk::index) {
         out.what = reference::kind::index;
         out.reg = alloc_reg();
         out.key = alloc_reg();
-        compile_expr(target.a, out.reg);
+        if (on_super) {
+            proto().emit(instruction{op::load_this, out.reg});
+        } else {
+            compile_expr(target.a, out.reg);
+        }
         compile_expr(target.b, out.key);
         return out;
     }
@@ -396,6 +574,17 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
 }
 
 void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
+    if (ref.with) {
+        reference plain = ref;
+        plain.with = false;
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, ref.with_reg});
+        emit_load(plain, dst);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::get_prop, dst, ref.with_reg, ref.with_name});
+        patch_here(done);
+        return;
+    }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, dst, ref.reg}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_get, dst, ref.reg}); break;
@@ -413,6 +602,17 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
 }
 
 void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
+    if (ref.with) {
+        reference plain = ref;
+        plain.with = false;
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, ref.with_reg});
+        emit_store(plain, src);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::set_prop, ref.with_reg, ref.with_name, src});
+        patch_here(done);
+        return;
+    }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
@@ -472,7 +672,38 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     const reference ref = prepare_reference(target);
 
     if (n.text == "=") {
-        compile_expr(n.b, dst);
+        // STRICT CODE MAY NOT CREATE A GLOBAL BY ASSIGNMENT (13.15.2 PutValue
+        // step 4.a / 9.1.1.4.5 SetMutableBinding step 3): a read of the same
+        // name throws the ReferenceError when it is unresolvable, and costs
+        // nothing new - set_global stays the one write. BEFORE the right side
+        // rather than after it, so `closure; set_global` stays adjacent for
+        // ctcompile's closure lift (the order is observable only when the
+        // right side has side effects AND the name is unresolvable). The
+        // compound and logical forms below read first anyway. NOT IN A
+        // MODULE, a deliberate leniency: a module's top-level `OUT = ...` is
+        // how ctcompile's module fixtures talk to their host
+        // (test/Runtime/Modules); the [[Set]] TypeErrors still apply there.
+        // A name the script DECLARES with var/let/const is resolvable from
+        // the start (hoisted, 16.1.7 GlobalDeclarationInstantiation) even
+        // when the assignment runs before the declaration's line, so it gets
+        // no probe - the top level has no hoisting pass to put it in the
+        // table early.
+        const auto declared_by_script = [&](std::string_view name) {
+            const std::vector<std::string> & names = frames_.front().declared;
+            return std::find(names.begin(), names.end(), name) != names.end();
+        };
+        if (ref.what == reference::kind::global && fn().is_strict && !module_scope_ &&
+            !declared_by_script(target.text)) {
+            const std::uint32_t probe_mark = reg_mark();
+            const std::uint16_t probe = alloc_reg();
+            proto().emit(instruction::with_bx(op::get_global, probe, ref.name));
+            release_to(probe_mark);
+        }
+        if (target.kind == vp::nk::ident) {
+            compile_named_expr(n.b, dst, target.text);
+        } else {
+            compile_expr(n.b, dst);
+        }
         emit_store(ref, dst);
         release_to(mark);
         return;
@@ -486,7 +717,11 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
                         : n.text == "?\?=" ? op::jump_if_not_nullish
                                            : op::jump_if_true;
         const std::size_t skip = proto().emit(instruction{test, dst});
-        compile_expr(n.b, dst);
+        if (target.kind == vp::nk::ident) {
+            compile_named_expr(n.b, dst, target.text);
+        } else {
+            compile_expr(n.b, dst);
+        }
         emit_store(ref, dst);
         patch_here(skip);
         release_to(mark);
@@ -639,6 +874,11 @@ bool call_has_receiver(const vp::node & callee) {
 }
 } // namespace
 
+bool compiler_impl::call_needs_receiver(const vp::node & callee) {
+    return call_has_receiver(callee) ||
+           (callee.kind == vp::nk::ident && !applicable_with_scopes(callee.text).empty());
+}
+
 void compiler_impl::emit_optional_guard(std::uint16_t value) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t nullish = alloc_reg();
@@ -662,14 +902,23 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         const std::string name = super_method ? std::string{callee.text} : "constructor";
         proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
         proto().emit(instruction{op::load_this, self});
+    } else if (callee.kind == vp::nk::ident && emit_with_object(callee.text, self)) {
+        // `f()` inside a `with`: the object that binds f is the receiver,
+        // and undefined when none does - which is what a plain call passes.
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, self});
+        emit_plain_read(callee.text, target);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(
+            instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+        patch_here(done);
     } else if (call_has_receiver(callee)) {
         compile_expr(callee.a, self);
         if (callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index) {
             emit_optional_guard(self);
         }
         if (callee.kind == vp::nk::member || callee.kind == vp::nk::opt_member) {
-            proto().emit(
-                instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+            proto().emit(instruction{op::get_prop, target, self, member_operand(callee.text)});
         } else {
             const std::uint32_t mark = reg_mark();
             const std::uint16_t key = alloc_reg();
@@ -690,14 +939,17 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t target = alloc_reg();
     const std::uint16_t self = alloc_reg();
     compile_call_target(n, target, self);
-    if (!call_has_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
+    if (!call_needs_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
     const std::uint16_t argv = alloc_reg();
     emit_argument_array(args, argv);
     // `super(...)` - NOT `super.m(...)` - carries new.target into the base
     // constructor. Babylon reads it there to hang decorator metadata off
     // the class actually being constructed, and got undefined.
+    const std::string * flag = callee.kind == vp::nk::super_lit ? derived_flag() : nullptr;
+    if (flag != nullptr) { emit_super_check(*flag, true); } // see compile_call
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
+    if (flag != nullptr) { emit_super_done(*flag); }
     proto().emit(instruction{op::move, dst, target});
     release_to(mark);
 }
@@ -716,14 +968,19 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     std::vector<std::uint16_t> arg_regs;
     arg_regs.reserve(args.size());
     for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
-    const bool receiver = call_has_receiver(callee);
+    const bool receiver = call_needs_receiver(callee);
     const std::uint16_t self = receiver ? alloc_reg() : base;
     compile_call_target(n, base, self);
     for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
+    // A second `super()` is the ReferenceError, judged after the arguments
+    // (10.2.1.3 BindThisValue, reached after the parent constructor ran).
+    const std::string * flag = callee.kind == vp::nk::super_lit ? derived_flag() : nullptr;
+    if (flag != nullptr) { emit_super_check(*flag, true); }
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{receiver ? op::call_receiver : op::call, base,
                              static_cast<std::uint16_t>(args.size()),
                              receiver ? self : std::uint16_t{0}});
+    if (flag != nullptr) { emit_super_done(*flag); }
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
@@ -803,7 +1060,7 @@ void compiler_impl::compile_optional(const vp::node & n, std::uint16_t dst) {
     const std::size_t skip = proto().emit(instruction{op::jump_if_true, test});
 
     if (n.kind == vp::nk::opt_member) {
-        proto().emit(instruction{op::get_prop, dst, object, name_operand(std::string{n.text})});
+        proto().emit(instruction{op::get_prop, dst, object, member_operand(n.text)});
     } else if (n.kind == vp::nk::opt_index) {
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
@@ -866,6 +1123,14 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
 void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
     proto().emit(instruction{op::new_array, dst});
     const std::uint32_t mark = reg_mark();
+    // An ELISION IS A HOLE (13.2.4.1): `[1, , 3]` has a length of 3 and no
+    // element 1, which forEach and `1 in` can tell from undefined. The slot
+    // is appended as undefined and marked afterwards, in one native call
+    // naming the positions - only while those positions are static, which
+    // a spread before the hole makes them not.
+    std::vector<std::uint32_t> holes;
+    bool positions_known = true;
+    std::uint32_t position = 0;
     for (const std::int32_t element : kids(n)) {
         const std::uint16_t v = alloc_reg();
         // A HOLE. `[, x]` and `[a, , b]` are legal, and an element list is
@@ -874,6 +1139,8 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
         if (element < 0) {
             proto().emit(instruction{op::load_undef, v});
             proto().emit(instruction{op::append, dst, v});
+            if (positions_known) { holes.push_back(position); }
+            ++position;
             release_to(mark);
             continue;
         }
@@ -882,10 +1149,27 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
             // index loop rather than an opcode, because that is all it is.
             compile_expr(at(element).a, v);
             emit_append_all(dst, v);
+            positions_known = false;
         } else {
             compile_expr(element, v);
             proto().emit(instruction{op::append, dst, v});
+            ++position;
         }
+        release_to(mark);
+    }
+    if (!holes.empty()) {
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{array_holes_name})));
+        const std::uint16_t arr = alloc_reg();
+        proto().emit(instruction{op::move, arr, dst});
+        std::uint16_t argc = 1;
+        for (const std::uint32_t at_index : holes) {
+            if (argc == 200) { break; }
+            emit_const(alloc_reg(), value::number(static_cast<double>(at_index)));
+            ++argc;
+        }
+        proto().emit(instruction{op::call, callee, argc});
         release_to(mark);
     }
 }
@@ -936,6 +1220,11 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         }
         if (prop.c == 3) {
             // An accessor, not a data property. `d` bit2 says which half.
+            if ((prop.d & 1) != 0 && prop.a >= 0) {
+                emit_computed_accessor(dst, prop.a, prop.b, (prop.d & 4) != 0);
+                release_to(mark);
+                continue;
+            }
             const std::uint16_t fnreg = alloc_reg();
             compile_expr(prop.b, fnreg);
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));
@@ -945,10 +1234,14 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             continue;
         }
         const std::uint16_t v = alloc_reg();
-        if (prop.b >= 0) {
-            compile_expr(prop.b, v);
-        } else {
+        if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
+        } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {
+            // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
+            // is a prototype assignment and names nothing.
+            compile_named_expr(prop.b, v, decode_string_literal(prop.text));
+        } else {
+            compile_expr(prop.b, v);
         }
         // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
         // which the parser routes the same way so quotes and escapes get

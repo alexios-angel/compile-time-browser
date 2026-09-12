@@ -14,7 +14,9 @@
 //
 // THE ORDERING IS THE POINT of the last two: a page's own `load` handler is
 // where a test reads `frame.contentDocument`, so the frame's document has to
-// exist BEFORE that event and the frame's own `load` has to arrive after it.
+// exist BEFORE that event - and the frame's own `load`, like a sheet's, is
+// settled just before it, since HTML delays the window's load until the
+// subresources have (bindings/events/input.cpp, dispatch).
 
 #include <ctbrowser.hpp>
 
@@ -52,12 +54,10 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     browser page{browser_options{400, 300}};
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
-    // A `setTimeout` INSIDE the window's load handler, and the nesting is the
-    // point. One tick does, in order: reconcile the frames, dispatch the page's
-    // own `load`, drain the frame load events, then run the timers. So a check
-    // written directly in the load handler runs BEFORE the frame's own `load`
-    // has been announced, and anything a frame listener sets is not there yet.
-    // The timer is the first moment both have happened.
+    // A `setTimeout` INSIDE the window's load handler. One tick does, in
+    // order: reconcile the frames, settle the frame and sheet loads, dispatch
+    // the page's own `load`, then run the timers - so the timer is a moment at
+    // which everything has happened, whichever way the middle two are ordered.
     const std::string html =
         "<!DOCTYPE html><html><head><title>the page</title></head><body>" + body +
         "<script>window.addEventListener('load', function () {"
@@ -94,11 +94,29 @@ void test_a_frame_has_a_document_of_its_own() {
     is(one_frame, "document.getElementById('f').contentWindow.frameElement.id", "f");
     is(one_frame, "document.getElementById('f').contentWindow.document.title", "inner");
     is(one_frame, "document.getElementById('f').contentWindow.parent === window", "true");
+    // THE FRAME'S WINDOW REACHES THE PAGE'S GLOBALS, because the realm is one:
+    // `assert_throws_dom` is handed `root.ownerDocument.defaultView
+    // .DOMException` and needs a constructor whose `.name` is "DOMException"
+    // and whose prototype an exception the frame's DOM threw is on.
+    is(one_frame,
+       "document.getElementById('f').contentDocument.defaultView === "
+       "document.getElementById('f').contentWindow",
+       "true");
+    is(one_frame, "document.getElementById('f').contentWindow.DOMException.name", "DOMException");
+    is(one_frame,
+       "(function () { var d = document.getElementById('f').contentDocument;"
+       " try { d.querySelector(''); } catch (e) {"
+       " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
+       "true");
+    is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
+    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame has no location of
+    // its own here, and the page's must not be reachable through it.
+    is(one_frame, "typeof document.getElementById('f').contentWindow.location", "undefined");
 }
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
     constexpr const char * xml_frame = "<iframe id=f src=inner.xml></iframe>";
-    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "text/xml");
+    is(xml_frame, "document.getElementById('f').contentDocument.contentType", "application/xml");
     // CASE IS PRESERVED, which is the whole reason the XML front end exists: the
     // HTML tree builder would answer `LEAF` here and lowercase `viewBox`.
     is(xml_frame, "document.getElementById('f').contentDocument.documentElement.tagName", "root");
@@ -116,9 +134,10 @@ void test_a_frame_with_no_source_is_still_a_document() {
        "text/html");
 }
 
-void test_a_source_that_resolves_to_nothing_reports_error() {
+void test_a_source_that_resolves_to_nothing_still_loads() {
     // A Document is still there - a browser shows its own error page in one -
-    // and it is `error` rather than `load` that the element hears.
+    // and it is `load` that the element hears, as for a 404: an iframe's
+    // navigation always ends in a document. An EMPTY file is the same case.
     is("<iframe id=f src=missing.html></iframe>",
        "document.getElementById('f').contentDocument.body.tagName", "BODY");
     // The listener is registered by a script in the markup, which runs while
@@ -127,10 +146,10 @@ void test_a_source_that_resolves_to_nothing_reports_error() {
     // is one moment too late for this.
     is("<iframe id=f src=missing.html></iframe><script>"
        "document.getElementById('f').addEventListener('error', function () {"
-       " window.__saw = (window.__saw || 0) + 1; });"
+       " window.__saw = 'error'; });"
        "document.getElementById('f').addEventListener('load', function () {"
        " window.__saw = 'load'; });</script>",
-       "String(window.__saw)", "1");
+       "String(window.__saw)", "load");
 }
 
 void test_the_load_event_arrives_at_the_frame() {
@@ -182,13 +201,86 @@ void test_a_frame_runs_no_script() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"undefined"}); }
 }
 
+void test_a_named_frame_is_its_window_on_the_window() {
+    // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
+    // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
+    // still names the element.
+    is("<iframe name=x src=inner.html id=y></iframe>",
+       "(x === document.getElementsByName('x')[0].contentWindow) + ',' + x.document.title + ','"
+       " + y.tagName",
+       "true,inner,IFRAME");
+}
+
+void test_the_frames_are_indexed_on_the_window() {
+    // Node-removeChild.html reads `frames[0].document`: `frames` is the
+    // window, `length` counts the child navigables, and an index is one's
+    // WindowProxy - and not a property past the end.
+    is("<iframe src=inner.html></iframe>",
+       "(frames === window) + ',' + window.length + ',' + frames[0].document.title + ','"
+       " + (0 in window) + ',' + (1 in window) + ',' + String(window[1]) + ','"
+       " + (new frames[0].Text('x').ownerDocument === frames[0].document) + ','"
+       " + (new frames[0].Comment('x') instanceof Comment)",
+       "true,1,inner,true,false,undefined,true,true");
+}
+
+void test_an_inserted_frame_has_its_window_at_once() {
+    // event-global-extra.window.js: `appendChild(iframe).contentWindow` in the
+    // same statement, before any tick has reconciled the frames.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var w = document.body.appendChild(document.createElement('iframe'))"
+                   ".contentWindow; console.log(w.document.body.nodeName + ',' +"
+                   " (w.frameElement === document.querySelector('iframe')));"
+                   "</script></body></html>");
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"BODY,true"});
+}
+
+void test_a_frame_document_is_a_full_member_of_the_realm() {
+    // Node-isConnected.html's iframe case: the page's node goes INTO a frame's
+    // document (adopted, connected there), and a frame inside a frame gets a
+    // document of its own - while a document with no browsing context does
+    // not give its <iframe> one.
+    is(one_frame,
+       R"JS((function () {
+        var f = document.getElementById('f');
+        var d = document.createElement('div');
+        f.contentDocument.body.appendChild(d);
+        var inner = f.contentDocument.createElement('iframe');
+        f.contentDocument.body.appendChild(inner);
+        var parsed = new DOMParser().parseFromString('<iframe></iframe>', 'text/html');
+        return [d.isConnected, d.ownerDocument === f.contentDocument,
+                inner.contentDocument !== null && inner.contentDocument.body.nodeName,
+                String(parsed.querySelector('iframe').contentDocument)].join();
+    })())JS",
+       "true,true,BODY,null");
+}
+
+void test_a_frame_loaded_at_a_fragment_has_a_target() {
+    // `:target` inside a frame loaded as `inner.html#greeting`, and the frame
+    // document's URL is the resolved src, fragment and all.
+    is("<iframe id=f src='inner.html#greeting'></iframe>",
+       R"JS((function () {
+        var d = document.getElementById('f').contentDocument;
+        var hit = d.querySelector(':target');
+        return [hit && hit.id, d.getElementById('greeting').matches(':target'),
+                document.querySelectorAll(':target').length,
+                /inner\.html#greeting$/.test(d.URL)].join();
+    })())JS",
+       "greeting,true,0,true");
+}
+
 } // namespace
 
 int main() {
+    test_the_frames_are_indexed_on_the_window();
+    test_a_frame_loaded_at_a_fragment_has_a_target();
+    test_an_inserted_frame_has_its_window_at_once();
+    test_a_frame_document_is_a_full_member_of_the_realm();
+    test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
     test_a_frame_with_no_source_is_still_a_document();
-    test_a_source_that_resolves_to_nothing_reports_error();
+    test_a_source_that_resolves_to_nothing_still_loads();
     test_the_load_event_arrives_at_the_frame();
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();

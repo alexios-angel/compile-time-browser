@@ -110,17 +110,23 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
             const auto [it, fresh] = seen.emplace(lex[i].name, i);
             if (fresh) { continue; }
             const binding & first = lex[it->second];
-            if (first.how == binding_kind::function_ && lex[i].how == binding_kind::function_) {
-                continue;
-            }
+            // B.3.2.4: the relaxation is for two PLAIN function declarations
+            // in sloppy code; a generator or an async function on either
+            // side, or strict code, is the duplicate 14.2.1 refuses.
+            const auto plain = [&](const binding & b) {
+                return b.how == binding_kind::function_ && at(b.node).c <= 0;
+            };
+            if (plain(first) && plain(lex[i]) && !strict()) { continue; }
             report(quoted(lex[i].name) + " has already been declared in this scope; a " +
                        kind_word(lex[i].how) + " may not redeclare a " + kind_word(first.how),
                    lex[i].node);
         }
     }
 
+    check_strict_bindings(lex);
     std::vector<binding> vars;
     for (const std::int32_t s : stmts) { walk_statement(s, kind, vars); }
+    check_strict_bindings(vars);
 
     if (!lex.empty() && !vars.empty()) {
         std::unordered_map<std::string_view, std::size_t> lexical;
@@ -149,6 +155,81 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
         }
     }
     return vars;
+}
+
+bool checker::has_use_strict_directive(std::int32_t body) const {
+    for (const std::int32_t st : kids(at(body))) {
+        const vp::node & stmt = at(st);
+        if (stmt.kind != nk::expr_stmt || stmt.a < 0) { return false; }
+        const vp::node & e = at(stmt.a);
+        if (e.kind != nk::str) { return false; }
+        if (e.text == "\"use strict\"" || e.text == "'use strict'") { return true; }
+    }
+    return false;
+}
+
+void checker::check_contextual_name(std::string_view name, std::int32_t node) {
+    if (frames_.empty()) { return; }
+    if (name == "await" && frames_.back().is_async) {
+        report("`await` is not an identifier in an async function", node);
+    } else if (name == "yield" && frames_.back().is_generator) {
+        report("`yield` is not an identifier in a generator", node);
+    }
+}
+
+// NOT `debugger`: the lexer has no such keyword, so `debugger;` reaches the
+// compiler as a reference to that name and throws a ReferenceError at the
+// line - a parser gap, which must stay a runtime throw and not become a
+// refusal of the whole script.
+bool checker::reserved_word(std::string_view name) {
+    for (const std::string_view word :
+         {"break",   "case", "catch",    "class", "const",  "continue", "default",
+          "delete",  "do",   "else",     "enum",  "export", "extends",  "false",
+          "finally", "for",  "function", "if",    "import", "in",       "instanceof",
+          "new",     "null", "return",   "super", "switch", "this",     "throw",
+          "true",    "try",  "typeof",   "var",   "void",   "while",    "with"}) {
+        if (name == word) { return true; }
+    }
+    return false;
+}
+
+void checker::check_identifier_reference(std::string_view name, std::int32_t node, bool trusted) {
+    if (trusted && reserved_word(name)) {
+        report(quoted(name) + " is a reserved word and cannot be an identifier", node);
+        return;
+    }
+    if (strict() && name != "eval" && name != "arguments") {
+        check_strict_binding(name, node, trusted);
+    } else {
+        check_contextual_name(name, node);
+    }
+}
+
+void checker::check_strict_binding(std::string_view name, std::int32_t node, bool trusted) {
+    // A BINDING named with a reserved word is one the parser took leniently
+    // (`var default`) or an escaped spelling; either is the SyntaxError, and
+    // no valid program declares one.
+    if (trusted && reserved_word(name)) {
+        report(quoted(name) + " is a reserved word and cannot be an identifier", node);
+        return;
+    }
+    check_contextual_name(name, node);
+    if (!strict()) { return; }
+    if (name == "eval" || name == "arguments") {
+        report(quoted(name) + " may not be bound or assigned in strict mode code", node);
+        return;
+    }
+    for (const std::string_view reserved : {"yield", "let", "static", "implements", "interface",
+                                            "package", "private", "protected", "public"}) {
+        if (name == reserved) {
+            report(quoted(name) + " is a reserved word in strict mode code", node);
+            return;
+        }
+    }
+}
+
+void checker::check_strict_bindings(const std::vector<binding> & names) {
+    for (const binding & b : names) { check_strict_binding(b.name, b.node); }
 }
 
 } // namespace ctbrowser::script::detail::early

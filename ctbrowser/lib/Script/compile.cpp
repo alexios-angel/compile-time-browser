@@ -68,7 +68,7 @@ program compile_source(std::string_view source, script_kind kind, bool completio
     // exactly that prefix to decide between phase `parse` and phase `refusal` -
     // a refusal being "the compiler does not implement this", which an early
     // error is emphatically not. See lib/Script/compile/early_errors.hpp.
-    if (const auto early = detail::find_early_error(tree, source)) {
+    if (const auto early = detail::find_early_error(tree, source, kind == script_kind::module_)) {
         out.ok = false;
         out.error = "parse error: " + early->message;
         if (early->offset != detail::early_error::nowhere) {

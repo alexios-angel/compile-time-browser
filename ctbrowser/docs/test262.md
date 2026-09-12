@@ -780,9 +780,45 @@ causes, counted from the JSON and named by what they are:
 | 959 | Expected a TypeError | strict-mode writes to non-writable properties (no strict mode), destructuring `null`, private-name access on the wrong object |
 | 466 | descriptor should not be enumerable | class methods were enumerable |
 
-## What moved on 2026-09-12 (to be re-measured at the day's tip)
+## Measured at `b570bd29` — 2026-09-12, after the day's runtime work
 
-Landed on `ctbrowser-wpt`, each named so the next run's delta can be read:
+Same instrument, same corpus, engine at `b570bd29` (browser gate 186/186):
+
+| area | tests | pass at `0e5cfbef` | pass at `b570bd29` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 8,754 | **12,624** | +3,870 | 11,075 | 0 / 6 |
+| `built-ins/Array` | 3,082 | 1,983 | **2,161** | +178 | 886 | 6 / 11 |
+| `built-ins/Object` | 3,411 | 2,459 | **2,519** | +60 | 890 | 0 |
+| `built-ins/Number` | 340 | 260 | **261** | +1 | 78 | 0 |
+| `built-ins/Math` | 327 | 274 | **275** | +1 | 52 | 0 |
+| `built-ins/String` | 1,223 | 860 | **893** | +33 | 327 | 0 |
+| `built-ins/Boolean` | 51 | 27 | **28** | +1 | 22 | 0 |
+| `built-ins/Function` | 509 | 231 | **286** | +55 | 210 | 0 |
+| `built-ins/Error` | 93 | 35 | **31** | -4 | 57 | 0 |
+| `built-ins/JSON` | 165 | 98 | **101** | +3 | 62 | 0 |
+| **total** | **32,927** | **14,981** | **19,179** | **+4,198** | | |
+
+**19,179 of the 32,927 (58.2%), from 45.5% in the morning** (19,190 = 58.3% at
+`d27d8f36` three hours later, with the `fromAsync` crashes fixed). `test/language`
+carries it: the async generators (+~1,500 files by themselves), `for await`
+(+~1,000), the class member attributes (+~450), the escaped identifiers
+(+~800 class files), `eval`, the null/undefined TypeError. The 6 `host` rows in
+`test/language` are `harness/deepEqual.js` (a parse error at 125:60 — the
+harness uses syntax the parser lacks) and `harness/testTypedArray.js`, and
+the 11 in `Array` are the same `testTypedArray.js` prelude, which now
+reaches a property of an undefined constructor (`BigInt64Array`) and throws
+where it used to read undefined. **`built-ins/Error` -4**: the four
+`prototype/stack/setter-*` files read `.set` off a descriptor the engine does
+not have (no `Error.prototype.stack` accessor) — a silent undefined until
+today, an honest TypeError now. The 6 crashes in `Array` are two
+`fromAsync` files running the box to `std::bad_alloc` under the 2 GB cap —
+fixed after this run (`30dcd8e0`: a constructor `this` with an unsettable
+element, and an array-like of length 2^53) — and the four `slice` files that
+were crashing before.
+
+## What moved on 2026-09-12
+
+Landed on `ctbrowser-wpt`, each named so the delta above can be read:
 
 - **async functions reject** instead of throwing synchronously or faulting
   after an `await` (the compiler's fence; `05ece7bc..ad116e42`).
@@ -803,3 +839,136 @@ Landed on `ctbrowser-wpt`, each named so the next run's delta can be read:
   wrong answer, not a missing feature (`f(cls, p = cls.name)` read undefined).
 - collection inside a turn (the reflection TIMEOUTs), with a native's own
   allocations pinned and a native's C++-held arguments rooted.
+
+## Measured at `15f47064` — 2026-09-12, evening
+
+Same instrument, same corpus, engine at `15f47064` on `ctbrowser-wpt`
+(browser gate 540/540 at that commit; `tools/check/test262-baseline.sh` on the
+devbox, 4 workers, 10 s timeout, 2 GB cap):
+
+| area | tests | pass at `d27d8f36` | pass at `15f47064` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 12,624 | **17,226** | +4,602 | 6,446 | 26 / 6 |
+| `built-ins/Array` | 3,082 | 2,167 | **2,624** | +457 | 426 | 4 / 11 |
+| `built-ins/Object` | 3,411 | 2,519 | **3,128** | +609 | 281 | 0 / 0 |
+| `built-ins/Number` | 340 | 261 | **273** | +12 | 66 | 0 / 0 |
+| `built-ins/Math` | 327 | 275 | **279** | +4 | 48 | 0 / 0 |
+| `built-ins/String` | 1,223 | 893 | **975** | +82 | 245 | 0 / 0 |
+| `built-ins/Boolean` | 51 | 28 | **42** | +14 | 8 | 0 / 0 |
+| `built-ins/Function` | 509 | 291 | **331** | +40 | 165 | 0 / 0 |
+| `built-ins/Error` | 93 | 31 | **72** | +41 | 16 | 0 / 0 |
+| `built-ins/JSON` | 165 | 101 | **101** | +0 | 62 | 0 / 0 |
+| **total** | **32,927** | **19,190** | **25,051** | **+5,861** | | |
+
+**25,051 of 32,927 (76.1%), from 58.3% at `d27d8f36`.** Not one PASS became
+a FAIL. `test/language` +4,602 is the compiler and VM work of the evening
+(the list below) plus agent B's built-ins round one; the built-ins columns
+are agent B (`d27d8f36..502c691f`: ArraySpeciesCreate, IsConstructor, the
+`Object` descriptors) — agent G's round two (+650 measured on its own
+branch: Date, encode/decodeURI, `@@toPrimitive`, JSON.rawJSON) merged AFTER
+this run and is in the next row.
+
+**The 30 crashes are all diagnosed and fixed after this run**, which is why
+they are named rather than left as a number: 13 `dynamic-import` files are
+`import('')` resolving to the test's directory, which ct262's loader opened
+and then aborted on (`9dd67566`); 13 `for-of`/`derived-class-return-override`
+files are a GC hole — `iterable_values` drained a page's `[Symbol.iterator]`
+into an array reachable from nothing while `next()` ran, and a collection
+under the call freed it (`e3344344`); the 4 `slice` files push 2^32 elements
+until the cap kills the process (`e5772310`, then agent G's ArraySpeciesCreate
+which throws the RangeError first).
+
+**What moved, by name** (`d27d8f36..15f47064`, `ctbrowser-wpt`):
+
+- **an unresolvable name is the ReferenceError** — `get_global` throws; the
+  `typeof x` case is silenced by a run-loop peek at the following opcode, and
+  the AOT bridge grew `ct_aot_global_get_soft` for the same case.
+- **strict mode, the runtime half**: a rejected write throws in strict code,
+  an assignment to an undeclared name throws (the probe runs before the RHS;
+  the three `toFixed` files that want RHS-then-ReferenceError are the cost).
+- **the early errors of strict code**: `eval`/`arguments` as bindings, the
+  reserved words, duplicate simple parameters, `delete x`, legacy octal.
+- **every `await` in a function takes a job**; a script's top level keeps the
+  synchronous read and drains the queue for a pending promise.
+- **`yield*`** (delegation through `__ctbrowser_delegate_*`, `.throw`/`.return`
+  forwarded), **generator `.return()` running `finally`** (the `{@#return}`
+  marker), the eager generator prologue.
+- **NamedEvaluation** (`function_proto::inferred_name`, image format 5), the
+  `name` of every anonymous function and class expression.
+- **array destructuring through the iterator protocol** (`__ctbrowser_iter_*`,
+  IteratorClose on the normal exit), empty and rest-first object patterns
+  throw on `null`/`undefined`, computed accessors, computed class methods.
+- **array literal elisions are holes**, `Object.keys([,1])` is `["1"]`.
+- **`var` hoists across the whole script** (`program::hoisted_vars`), for-in
+  walks the prototype chain, `iterable_values` honours `[Symbol.iterator]`.
+- **private names are one name** (`@#x`), never a property key.
+
+**The next clearest failures**, from the causes at this commit: 1,527
+"negative parse expected" files (early errors still missing: `arguments`
+in field initialisers, `await`/`yield` as names, `import()` arity — the
+next commits take the first three), 482 parse errors at `;` (the
+`for ([a, b] of xs)` and `catch ({x})` heads, 600 files, taken next), 350
+`with`-statement files, ~200 `using` declarations, the private brand checks
+(~150, taken next), `import.defer` (~150), TCO (30).
+
+## Measured at `00b5ab38` — 2026-09-12, night
+
+Same instrument, same corpus, engine at `00b5ab38` on `ctbrowser-wpt`
+(browser gate 540/541 at that commit — the one red is `ctcompile_lit`, repaired
+by Codex's `f57cab15`; `tools/check/test262-baseline.sh` on the devbox, 4
+workers, 10 s timeout, 2 GB cap):
+
+| area | tests | pass at `15f47064` | pass at `00b5ab38` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 17,226 | **18,350** | +1,124 | 5,348 | 0 / 6 |
+| `built-ins/Array` | 3,082 | 2,624 | **2,774** | +150 | 280 | 0 / 11 |
+| `built-ins/Object` | 3,411 | 3,128 | **3,275** | +147 | 134 | 0 / 0 |
+| `built-ins/Number` | 340 | 273 | **333** | +60 | 6 | 0 / 0 |
+| `built-ins/Math` | 327 | 279 | **326** | +47 | 1 | 0 / 0 |
+| `built-ins/String` | 1,223 | 975 | **1,096** | +121 | 124 | 0 / 0 |
+| `built-ins/Boolean` | 51 | 42 | **49** | +7 | 1 | 0 / 0 |
+| `built-ins/Function` | 509 | 331 | **410** | +79 | 86 | 0 / 0 |
+| `built-ins/Error` | 93 | 72 | **83** | +11 | 5 | 0 / 0 |
+| `built-ins/JSON` | 165 | 101 | **137** | +36 | 26 | 0 / 0 |
+| **total** | **32,927** | **25,051** | **26,833** | **+1,782** | | |
+
+**26,833 of 32,927 (81.5%), from 76.1% at `15f47064`.** Not one crash left:
+the 30 of the previous row are the fixes named there. The built-ins columns
+are agent G's round two (Date, `encodeURI`/`decodeURI`, `@@toPrimitive`,
+`JSON.rawJSON`, `Number`/`Math` edge cases), merged after the previous
+measurement; `test/language` +1,124 is `15f47064..00b5ab38`: the `for ([a, b]
+of xs)` and `catch ({x})` heads (`99879d88`, the 482 "parse error at `;`"
+files), the early errors of `516e7522` and `00b5ab38`, the private-name brand
+check (`308b8172`), `import()` arity (`11018eea`), `yield` as a name outside a
+generator (`6559e566`).
+
+**53 files went PASS -> FAIL**, two causes, both named so that they are not
+read as noise:
+
+- **12 early errors the new destructuring heads skip** —
+  `statements/for-{in,of}/dstr/{array-elem-target-simple-strict,
+  array-rest-before-elision, obj-id-init-simple-strict, obj-id-simple-strict,
+  obj-rest-before-comma-invalid}.js`, the `for-await-of` twin and
+  `statements/try/early-catch-duplicates.js`: the pattern checks (strict
+  `eval`/`arguments` targets, a rest element before an elision, duplicate
+  catch bindings) ran on declarations and not on a `for` head or a catch
+  parameter. The compiler's, and next.
+- **~40 bitwise and shift files** (`expressions/bitwise-*`, `left-shift`,
+  `right-shift`, `unsigned-right-shift`, `compound-assignment/S11.13.2_A4.*`,
+  `prefix-increment/S11.4.4_A4_T3`): `new String("1") & "1"` is 1 in the
+  specification and is 0 here since `new String()` became a real wrapper
+  object (agent B, `d27d8f36..502c691f`). `binary_op_static` converts with the
+  STATIC `to_int32`, which never runs `valueOf` — a documented deviation
+  carried in `include/ctbrowser/aot/aot_helpers.def` (the non-re-entering
+  family, `may_reenter 0`) as a contract with ctcompile's native backend. The
+  fix is to move the six bitwise opcodes (and `add`) to the re-entering
+  family, which is an ABI change made together with Codex and is proposed in
+  the journal, not made here.
+
+**The next clearest failures** at this commit (test/language, by cause):
+1,326 "negative parse expected" (`identifiers` 114, `literals/regexp` 179,
+class elements ~180, `module-code` 111), 350 `with` files, 139
+`eval-code/direct` "Expected a SyntaxError", the `dynamic-import` parse error
+at `import.` (154), `using`/`await-using` (~130). Built-ins: `Array` 280
+(60 are the BigInt typed arrays being absent, 41 "Expected a TypeError"),
+`Object` 134, `String` 124, `Function` 86.

@@ -62,11 +62,36 @@ context::context() {
         }
         return value::boolean(true);
     });
+    // THE WHOLE CHAIN, not the own table: `'toString' in globalThis` is true
+    // in every engine, and global_or_named asks this before it decides a
+    // bare identifier is unresolvable.
     trap("has", [](context & cx, std::span<value> args) {
-        auto * object = static_cast<object_object *>(args[0].as_heap());
+        return value::boolean(cx.has_property(args[0], args[1]) ||
+                              cx.has_global(cx.to_string(args[1])));
+    });
+    // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
+    // (this, "Array")` is how test262 verifies every global's attributes, and a
+    // binding in the table is what clause 17 describes - { writable: true,
+    // enumerable: false, configurable: true }. The target's own properties
+    // answer first, as `get` has them.
+    trap("getOwnPropertyDescriptor", [](context & cx, std::span<value> args) {
         const std::string name = cx.to_string(args[1]);
-        return value::boolean(object->find(name) != nullptr ||
-                              object->find_accessor(name) != nullptr || cx.has_global(name));
+        property_descriptor found;
+        if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
+        if (!cx.has_global(name)) { return value::undefined(); }
+        return cx.from_property_descriptor(
+            property_descriptor::data(cx.global(name), attr_writable | attr_configurable));
+    });
+    // `delete globalThis.x` reaches the binding table the way `set` does;
+    // an own property of the target deletes as one.
+    trap("deleteProperty", [](context & cx, std::span<value> args) {
+        const std::string name = cx.to_string(args[1]);
+        property_descriptor found;
+        if (cx.own_property(args[0], name, found)) {
+            return value::boolean(cx.delete_own_property(args[0], name));
+        }
+        (void)cx.erase_global(name);
+        return value::boolean(true);
     });
     set_global_this(value::object(allocate<proxy_object>(target, value::object(handler))));
 }

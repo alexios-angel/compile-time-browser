@@ -45,7 +45,12 @@ void compiler_impl::compile_try(const vp::node & n) {
     patch_here(guard);
     if (catch_clause >= 0) {
         push_scope();
+        emit_catch_filter(caught_reg);
         if (!caught_name.empty()) { declare_local_at(caught_name, caught_reg); }
+        // `catch ({message})`: the parameter is a pattern in `b` (14.15.3).
+        if (at(catch_clause).b >= 0) {
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+        }
         compile_stmt(at(catch_clause).a);
         pop_scope();
     }
@@ -107,6 +112,10 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
         // did not run f().
         const std::size_t catch_guard = proto().emit(instruction{op::push_handler, value_reg});
         ++handler_depth_;
+        emit_catch_filter(caught_reg); // inside the guard, so the finally still runs
+        if (at(catch_clause).b >= 0) {
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+        }
         compile_stmt(at(catch_clause).a);
         proto().emit(instruction{op::pop_handler});
         --handler_depth_;
@@ -129,6 +138,18 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     emit_finally_dispatch(open);
     (void)scratch;
     pop_scope();
+}
+
+// A CATCH CLAUSE NEVER SEES A GENERATOR'S RETURN COMPLETION. `.return(v)`
+// travels through the body as a thrown marker so that every finally runs
+// (see return_marker_key); the first thing a catch does is hand a marker
+// on. One native call on the exceptional path only.
+void compiler_impl::emit_catch_filter(std::uint16_t caught) {
+    if (!fn().is_generator) { return; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t scratch = alloc_reg();
+    emit_iterator_native(catch_filter_name, scratch, caught);
+    release_to(mark);
 }
 
 // The tail of a finally: do what the completion says, or fall through.

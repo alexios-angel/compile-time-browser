@@ -2,6 +2,7 @@
 // and the proxy that makes it the global object.
 
 #include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 namespace ctbrowser::shell {
 
@@ -367,10 +368,82 @@ void dom_bindings::install_window(context & cx) {
     }
 
     {
-        auto * url = static_cast<script::object_object *>(cx.make_object().as_heap());
+        // `new URL(url, base)` - the URL Standard's interface, over the same
+        // parser `location` reads through. It was a bare object carrying the
+        // two blob methods, so `new URL("/x", location.href)` was "`new` on an
+        // object" for every page that resolves an address before fetching it
+        // (Node-cloneNode-external-stylesheet-no-bc.sub.html is the corpus's).
+        // The parts are data properties written once: a URL object is a value
+        // to nearly every page, and the setters, `searchParams` and the
+        // percent-encoding of what location_parts leaves as written are the
+        // next things to add when a page reaches for them.
+        auto * url_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const value url_prototype = value::object(url_proto);
+        auto * url = cx.allocate<script::native_object>("URL", [url_prototype](context & c,
+                                                                               std::span<value> a) {
+            // THE INSTANCE `new` MADE, recognised by its prototype: called
+            // without `new` the receiver is the window or undefined, and the
+            // standard's answer to that is a TypeError rather than eight
+            // properties written onto the window.
+            const value self = c.current_this();
+            auto * made =
+                self.is_object() ? static_cast<script::object_object *>(self.as_heap()) : nullptr;
+            if (made == nullptr || !(made->prototype == url_prototype)) {
+                c.throw_error("TypeError", "URL constructor: 'new' is required");
+                return value::undefined();
+            }
+            const std::string given = arg_string(c, a, 0);
+            const std::string href =
+                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
+            const location_url parts = location_parts(href);
+            // No scheme is no URL: the standard's failure, a TypeError.
+            if (parts.protocol.empty()) {
+                c.throw_error("TypeError", "Invalid URL: '" + given + "'");
+                return value::undefined();
+            }
+            made->set("href", c.string(href));
+            made->set("protocol", c.string(parts.protocol));
+            made->set("host", c.string(parts.host));
+            made->set("hostname", c.string(parts.hostname));
+            made->set("port", c.string(parts.port));
+            made->set("pathname", c.string(parts.pathname));
+            made->set("search", c.string(parts.search));
+            made->set("hash", c.string(parts.hash));
+            made->set("origin", c.string(parts.origin));
+            return value::object(made);
+        });
+        {
+            const auto href_of = [](context & c, std::span<value>) {
+                return c.lookup_property(c.current_this(), "href");
+            };
+            for (const char * name : {"toString", "toJSON"}) {
+                url_proto->define(name,
+                                  value::object(cx.allocate<script::native_object>(name, href_of)),
+                                  script::attr_builtin);
+            }
+            url_proto->define("constructor", value::object(url), script::attr_builtin);
+            url->set("prototype", url_prototype);
+        }
         const auto url_method = [&](std::string name, script::native_fn fn) {
             url->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
         };
+        // `URL.canParse` and `URL.parse`: the constructor's answer without
+        // the throw.
+        url_method("canParse", [](context & c, std::span<value> a) {
+            const std::string given = arg_string(c, a, 0);
+            const std::string href =
+                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
+            return value::boolean(!location_parts(href).protocol.empty());
+        });
+        url_method("parse", [](context & c, std::span<value> a) {
+            const value ctor = c.global("URL");
+            const std::string given = arg_string(c, a, 0);
+            const std::string href =
+                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
+            if (location_parts(href).protocol.empty()) { return value::null(); }
+            const value args[1] = {c.string(href)};
+            return c.construct(ctor, args);
+        });
         url_method("createObjectURL", [this](context & c, std::span<value> a) {
             if (assets_ == nullptr || a.empty() || !a[0].is_object()) { return c.string(""); }
             const value held = c.lookup_property(a[0], "__bytes");
@@ -423,54 +496,30 @@ void dom_bindings::install_window(context & cx) {
         return wrapper;
     });
 
-    // `new DOMParser().parseFromString(text, type)`.
-    //
-    // p5's loadXML fetches the text and hands it to one of these, so an absent
-    // DOMParser made loadXML fail on its first line - and p5's SVG path and its
-    // FileReader-based XML loader use it too.
-    //
-    // Built on the fragment parse `innerHTML` already does: the markup is parsed
-    // into a DETACHED subtree hung off a synthetic root, and the root is wrapped
-    // like any other element. Everything p5.XML walks - children, attributes,
-    // textContent, tagName, getElementsByTagName, appendChild - is then the
-    // ordinary element surface, with nothing XML-specific to maintain.
-    //
-    // THE DEVIATION, and it is real: this is the HTML parser, not an XML one. Tag
-    // names are lowercased, HTML's implied elements apply, and a malformed
-    // document is repaired rather than rejected - where XML would report an error.
-    // For the documents p5 reads (a flat tree of elements with attributes and
-    // text) the two agree, and writing a second parser to disagree in different
-    // ways would be worse than saying this.
+    // `new DOMParser().parseFromString(text, type)`, HTML 8.6.2: a real SECOND
+    // document in the realm - this document's HTML parser for text/html, the
+    // XML parser for the four XML types (a `<parsererror>` element when the
+    // markup is not well-formed) - so `createElement`, `documentElement.tagName`
+    // and `contentType` answer as the type says. p5's loadXML and its SVG path
+    // are the callers that found DOMParser missing in the first place. Any
+    // other type is a TypeError (the WebIDL enumeration).
     cx.define_native("DOMParser", [this](context & c, std::span<value>) {
         auto * parser = static_cast<script::object_object *>(c.make_object().as_heap());
         parser->set("parseFromString",
                     value::object(c.allocate<script::native_object>(
                         "parseFromString", [this](context & inner, std::span<value> a) {
-                            // A synthetic root, so the result has ONE element to be the
-                            // document element even when the source has several - which is
-                            // what `documentElement` means and what p5 walks from.
-                            const node_id root =
-                                doc_->create_element(atoms_->intern("ctbrowser-document"));
-                            set_inner_html(root, arg_string(inner, a, 0));
-                            const value wrapper = wrap(inner, root);
-                            if (!wrapper.is_object()) { return wrapper; }
-                            auto * document_like =
-                                static_cast<script::object_object *>(wrapper.as_heap());
-                            // The document surface over the same node: `documentElement`
-                            // is the first child if there is one, and the root otherwise.
-                            value first = wrapper;
-                            {
-                                const auto txn = doc_->read();
-                                const std::span<const node_id> kids = txn.children(root);
-                                if (!kids.empty()) { first = wrap(inner, kids.front()); }
+                            const std::string markup = arg_string(inner, a, 0);
+                            const std::string type = a.size() > 1 ? arg_string(inner, a, 1) : "";
+                            for (const std::string_view known :
+                                 {"text/html", "text/xml", "application/xml",
+                                  "application/xhtml+xml", "image/svg+xml"}) {
+                                if (type == known) {
+                                    return parse_from_string(inner, markup, type);
+                                }
                             }
-                            document_like->set("documentElement", first);
-                            // A page checks this to decide whether the parse worked. It is
-                            // always empty here because the HTML parser repairs rather than
-                            // rejects - said in the comment above rather than pretended
-                            // otherwise.
-                            document_like->set("parsererror", value::null());
-                            return wrapper;
+                            inner.throw_error("TypeError", "DOMParser.parseFromString: '" + type +
+                                                               "' is not a supported type");
+                            return value::undefined();
                         })));
         return value::object(parser);
     });
@@ -731,7 +780,10 @@ void dom_bindings::install_window(context & cx) {
     //
     // The tag list is the specification's and not "any element with a name":
     // `<input name=q>` is NOT a named property of the window, and treating it as
-    // one would shadow a global a page had defined.
+    // one would shadow a global a page had defined. An <iframe name=x> is
+    // there as a CHILD NAVIGABLE, and what `window.x` answers for one is its
+    // WindowProxy - `contentWindow` - not the element (HTML 7.3.3, "determine
+    // the value of a named property"); nameditem-02.html reads it that way.
     //
     // IT WALKS THE DOCUMENT, and it is consulted on every `window.x` that is
     // neither an own property nor a global - which includes `window.hasOwnProperty`
@@ -749,6 +801,9 @@ void dom_bindings::install_window(context & cx) {
         const atom name_attribute = atoms_->intern("name");
         const auto exposes_name = [&](node_id node) {
             const atom tag = txn.tag(node).value_or(atom{});
+            // `a`, `area` and `frameset` are NOT in the specification's list;
+            // they stay because unittests/unit/tree_accessors.cpp pins
+            // `anchor1` resolving to an `<a name=anchor1>`.
             for (const std::string_view exposed :
                  {"a", "area", "embed", "form", "frame", "frameset", "iframe", "img", "object"}) {
                 if (tag == atoms_->intern_lower(exposed)) { return true; }
@@ -767,6 +822,29 @@ void dom_bindings::install_window(context & cx) {
         walk(walk, txn.root());
         return found;
     };
+    // One named property's value: a frame matched by its name is its window,
+    // one element is itself, several are a collection.
+    const auto named_value = [this, named_element](context & c, const std::string & name) {
+        const std::vector<node_id> found = named_element(name);
+        if (found.empty()) { return value::undefined(); }
+        {
+            const auto txn = doc_->read();
+            for (const node_id node : found) {
+                const atom tag = txn.tag(node).value_or(atom{});
+                if ((tag == atoms_->intern_lower("iframe") ||
+                     tag == atoms_->intern_lower("frame")) &&
+                    txn.attribute_value(node, atoms_->intern("name")) == name) {
+                    const value window = c.lookup_property(wrap(c, node), "contentWindow");
+                    if (window.is_object_like()) { return window; }
+                }
+            }
+        }
+        if (found.size() == 1) { return wrap(c, found.front()); }
+        return make_live_collection(c, [this, name, named_element] {
+            (void)this;
+            return named_element(name);
+        });
+    };
     // AND A BARE IDENTIFIER GETS THE SAME ANSWER, which is the half that was
     // missing. HTML 7.3.3 makes an element with an `id` a named property of the
     // global OBJECT, and a bare identifier resolves against that object - so
@@ -778,37 +856,39 @@ void dom_bindings::install_window(context & cx) {
     // ONLY THE NAMED ELEMENTS, not the whole trap: a bare identifier that
     // reaches Object.prototype - `toString` with no receiver - is a much larger
     // change and is not this one. See context::set_undeclared_name_hook.
-    cx.set_undeclared_name_hook([this, named_element](std::string_view name) {
+    cx.set_undeclared_name_hook([this, named_value](std::string_view name) {
         if (cx_ == nullptr) { return value::undefined(); }
-        const std::vector<node_id> found = named_element(name);
-        if (found.empty()) { return value::undefined(); }
-        if (found.size() == 1) { return wrap(*cx_, found.front()); }
-        const std::string wanted{name};
-        return make_live_collection(*cx_, [this, wanted, named_element] {
-            (void)this;
-            return named_element(wanted);
-        });
+        return named_value(*cx_, std::string{name});
     });
-    window_trap("get", [this, named_element](context & c, std::span<value> args) {
+    // `window[0]`, HTML 7.2.2.2: the child navigables in tree order, each
+    // answered as its WindowProxy - `frames[0].document` is how Node-removeChild
+    // reaches a frame's document. An index at or past `length` is not a
+    // property at all.
+    const auto frame_at = [this](context & c, std::string_view name) -> value {
+        if (name.empty() || name.size() > 9 ||
+            name.find_first_not_of("0123456789") != std::string_view::npos) {
+            return value::undefined();
+        }
+        const std::vector<node_id> frames = all_html_elements("iframe");
+        const std::size_t index = static_cast<std::size_t>(std::stoul(std::string{name}));
+        if (index >= frames.size()) { return value::undefined(); }
+        return c.lookup_property(wrap(c, frames[index]), "contentWindow");
+    };
+    window_trap("get", [named_value, frame_at](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             return c.lookup_property(args[0], name);
         }
+        if (const value frame = frame_at(c, name); !frame.is_undefined()) { return frame; }
         // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
         if (c.has_global(name)) { return c.global(name); }
         // ...then a named element, which comes BEFORE the prototype chain and
         // after everything a page defined for itself. Several of one name is an
         // HTMLCollection rather than the first of them, which is what makes
         // `window.radios.length` answer.
-        if (const std::vector<node_id> named = named_element(name); !named.empty()) {
-            if (named.size() == 1) { return wrap(c, named.front()); }
-            return make_live_collection(c, [this, name, named_element] {
-                (void)this;
-                return named_element(name);
-            });
-        }
+        if (const value named = named_value(c, name); !named.is_undefined()) { return named; }
         // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
         // object as well as the global scope, so `window.hasOwnProperty(...)`
         // has to reach Object.prototype like any other object's would. Stopping
@@ -832,15 +912,17 @@ void dom_bindings::install_window(context & cx) {
         }
         return value::boolean(true);
     });
-    window_trap("has", [named_element](context & c, std::span<value> args) {
+    window_trap("has", [named_element, frame_at](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
-        auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         // `'x' in window` has to agree with `window.x`, or a page's feature
-        // detection and its use of the feature disagree.
-        return value::boolean(target->find(name) != nullptr ||
-                              target->find_accessor(name) != nullptr || c.has_global(name) ||
-                              !named_element(name).empty());
+        // detection and its use of the feature disagree - and with a bare
+        // `x`: global_or_named asks this before deciding a name is
+        // unresolvable, so the WHOLE chain counts (`toString` is
+        // Object.prototype's, `addEventListener` is on the interface), and a
+        // named frame is a window property too.
+        return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
+                              !frame_at(c, name).is_undefined() || !named_element(name).empty());
     });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
@@ -890,6 +972,28 @@ void dom_bindings::install_window(context & cx) {
     window->set("top", window_view);
     window->set("opener", value::null());
     window->set("frameElement", value::null());
+    // `frames` IS the window (HTML 7.2.2.1), and `length` counts its child
+    // navigables - the frame_at trap above is how `frames[0]` reaches one.
+    window->set("frames", window_view);
+    window->define_accessor("length",
+                            value::object(cx.allocate<script::native_object>(
+                                "length",
+                                [this](context &, std::span<value>) {
+                                    return value::number(
+                                        static_cast<double>(all_html_elements("iframe").size()));
+                                })),
+                            value::undefined());
+    // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
+    // origin serialised - "null" for a file: page, as location.origin says.
+    window->define_accessor("origin",
+                            value::object(cx.allocate<script::native_object>(
+                                "origin",
+                                [this](context & c, std::span<value>) {
+                                    const std::string origin =
+                                        location_parts(location_href_).origin;
+                                    return c.string(origin.empty() ? "null" : origin);
+                                })),
+                            value::undefined());
 }
 
 } // namespace ctbrowser::shell

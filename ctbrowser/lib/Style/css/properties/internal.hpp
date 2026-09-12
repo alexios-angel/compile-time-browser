@@ -35,12 +35,15 @@ using k = value_kind;
 struct scan {
     std::vector<std::size_t> significant; // indices of the non-whitespace tokens
     bool malformed = false;               // a bad string/url, or unbalanced brackets
-    bool important = false;               // a `!` delim; `!important` is not a value
+    bool important = false;               // a top-level `!`; `!important` is not a value
     bool substituted = false;             // holds a var()/env()
     // A function whose NAME this engine does not implement. Only `CSS.supports`
     // reads it: `el.style` still stores such a value, because CSSOM says a page
     // may set a property this engine has never heard of and read it back.
     bool unknown_function = false;
+    // The blocks EOF closed: `attr(data-foo type(<color>)` is one short. A
+    // serialisation writes them, or the next declaration is swallowed.
+    int unclosed = 0;
 };
 
 // DOES A PERCENTAGE MEAN ANYTHING FOR THIS PROPERTY? It is the property that
@@ -60,6 +63,7 @@ struct scan {
     case k::number_length_percentage:
     case k::position:
     case k::freeform:
+    case k::color:
     case k::keyword_only: return true;
     case k::length:
     case k::number:
@@ -81,11 +85,18 @@ struct scan {
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word);
 [[nodiscard]] scan scan_tokens(const token_stream & ts);
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts);
+[[nodiscard]] bool integer_slots_ok(std::string_view property, const token_stream & ts);
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found);
-[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer);
+[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
+                                  std::string_view text);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
-[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
+// `invalid`, when given, is set for a value whose `url()` modifiers are wrong.
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
+                                                 bool * invalid = nullptr);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
+// Defined in color.cpp.
+[[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
+                               std::string_view normalized, std::string & out);
 
 } // namespace ctbrowser::style::css::detail

@@ -24,10 +24,10 @@
 //     materialise in `sparse` and raises `length` over it - so one assignment
 //     can make `length` four billion, and a loop to it is a hang rather than an
 //     answer. array_object's own comment names that deviation.
-//   * an Array has no HOLES. `delete a[0]` removes nothing (see
-//     context::delete_own_property), so nothing here can distinguish a hole
-//     from an undefined in a real array. The hole cases below are all written
-//     over a plain object, where HasProperty means something.
+//   * `delete a[0]` LEAVES A HOLE since 2026-09-12 (array_object::element_attrs
+//     records it beside a placeholder slot); the hole cases below were written
+//     over a plain object before that and stay there, where HasProperty means
+//     the same thing.
 //   * the copying methods build a plain Array whatever they were called on;
 //     there is no ArraySpeciesCreate and no `Symbol.species`.
 
@@ -152,6 +152,8 @@ int main() {
     js_expect("[1, 2].join(null)", "1null2");
     js_expect("[1, 2, 3].fill(0, 1, undefined).join(',')", "1,0,0");
     js_expect("[1, 2, 3].slice(1, undefined).join(',')", "2,3");
+    // ArrayCreate refuses a count past 2^32 - 1 (10.4.2.2) before any push.
+    js_expect("Array.prototype.slice.call({get length() { return 4294967296; }})", "THREW");
     js_expect("[1, 2, 3].fill(0).join(',')", "0,0,0");
     js_expect("[1, 2, 3].fill(0, -2).join(',')", "1,0,0");
 
@@ -338,14 +340,40 @@ int main() {
               "1");
 
     // --- concat (23.1.3.1): the RECEIVER spreads only if it IS an array ------
-    // There is no Symbol.isConcatSpreadable here, so `IsArray` is the whole
-    // test: an array-like receiver is ONE element of the result.
+    // ...or says it is: IsConcatSpreadable reads @@isConcatSpreadable first
+    // and IsArray (through a Proxy) otherwise, so an array-like receiver is
+    // ONE element of the result unless it carries the symbol.
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var r = Array.prototype.concat.call(o, 1, [2, 3]);"
               " return r.length + ':' + (r[0] === o) + ':' + r[1] + r[2] + r[3]; })()",
               "4:true:123");
     js_expect("[1].concat([2, 3], {length: 2, 0: 'x'}).length", "4");
     js_expect("[1].concat([2, 3]).join(',')", "1,2,3");
+    js_expect(
+        "(function () { var o = {length: 2, 0: 'x', 1: 'y'}; o[Symbol.isConcatSpreadable] = true;"
+        " return [1].concat(o).join(); })()",
+        "1,x,y");
+    js_expect("(function () { var a = [2, 3]; a[Symbol.isConcatSpreadable] = false;"
+              " var r = [1].concat(a); return r.length + ':' + (r[1] === a); })()",
+              "2:true");
+    js_expect("[1].concat(new Proxy([2, 3], {})).join()", "1,2,3");
+    js_expect("(function () { var h = Proxy.revocable([], {}); h.revoke();"
+              " try { [].concat(h.proxy); return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { var a = [1, 2, 3]; delete a[1]; var r = [0].concat(a);"
+              " return r.length + ':' + (2 in r) + ':' + r[3]; })()",
+              "4:false:3");
+    js_expect("[1].concat(Object('ab')).length", "2"); // a String wrapper is one element
+    // (A spread past detail::max_generic_walk is the RangeError ceiling that
+    // helper documents; the specification would walk 2^53-1 indices first.)
+    js_expect("(function () { try { [].concat({length: 2 ** 53 - 1, [Symbol.isConcatSpreadable]: "
+              "true}, 1);"
+              " return 'no'; } catch (e) { return e.name; } })()",
+              "RangeError");
+    js_expect("(function () { try { [1].concat({length: 2 ** 53 - 1, [Symbol.isConcatSpreadable]: "
+              "true});"
+              " return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
 
     // --- reverse (23.1.3.26) ------------------------------------------------
     js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
@@ -534,6 +562,140 @@ int main() {
     js_expect(
         "(function(){function f(){} f.a=1;var s=[];for(var k in f){s.push(k);}return s.join();})()",
         "a");
+
+    // ================================================================
+    // 11b. A PRIMITIVE RECEIVER IS BOXED (ToObject, step 1 of every method):
+    //      a Boolean wrapper takes a `length` and answers 0, a String
+    //      wrapper's indices refuse (10.4.3), and reads see the characters
+    // ================================================================
+    js_expect("Array.prototype.push.call(true)", "0");
+    js_expect("Array.prototype.push.call(false, 1)", "1");
+    js_expect("Array.prototype.pop.call(true)", "undefined");
+    js_expect("Array.prototype.shift.call(1)", "undefined");
+    js_expect("Array.prototype.unshift.call(true)", "0");
+    js_expect("Array.prototype.splice.call(true).length", "0");
+    js_expect("Array.prototype.join.call('abc', '-')", "a-b-c");
+    js_expect("Array.prototype.indexOf.call('abc', 'b')", "1");
+    js_expect("Array.prototype.map.call('ab', function (c) { return c + c; }).join()", "aa,bb");
+    js_expect("(function(){try{Array.prototype.push.call('abc', 1);return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    // `a.length = new Number(6)` runs the valueOf (10.4.2.4 ToNumber).
+    js_expect("(function(){var a=[1,2,3];a.length=new Number(6);return a.length;})()", "6");
+    js_expect("(function(){var a=[1,2,3];a.length={valueOf:function(){return 1;}};"
+              "return a.length;})()",
+              "1");
+    js_expect("(function(){var a=[];try{a.length=1.5;}catch(e){return e.name;}})()", "RangeError");
+
+    // ================================================================
+    // 12. Array.from AND Array.of, 23.1.2.1 / 23.1.2.3 (since 2026-09-12)
+    // ================================================================
+    // The iterator protocol, with the mapper's index and thisArg.
+    js_expect("Array.from((function*(){yield 1;yield 2;})()).join()", "1,2");
+    js_expect("Array.from(new Set([3,4]), function(v,i){return v+':'+i+':'+this.t;},{t:'T'})"
+              ".join()",
+              "3:0:T,4:1:T");
+    js_expect("Array.from({length:2,0:'a',1:'b'}).join()", "a,b");
+    js_expect("Array.from({length:2,0:'a',1:'b'}, function(v,i){return v+i;}).join()", "a0,b1");
+    js_expect("Array.from(5).length", "0");
+    js_expect("Array.from(null)", "THREW");
+    js_expect("Array.from([1], 'nope')", "THREW");
+    js_expect("Array.from({[Symbol.iterator]: 1})", "THREW");
+    js_expect("Array.from({get [Symbol.iterator]() { throw new Error('x'); }})", "THREW");
+    // A CONSTRUCTOR `this`: built through it, elements landed with
+    // CreateDataPropertyOrThrow, `length` set last.
+    js_expect("(function(){function C(n){this.n=n;}var r=Array.of.call(C,7,8);"
+              "return (r instanceof C)+','+r.n+','+r[1]+','+r.length;})()",
+              "true,2,8,2");
+    js_expect("(function(){function C(){}var r=Array.from.call(C,[1,2]);"
+              "return (r instanceof C)+','+r.length+','+r[1];})()",
+              "true,2,2");
+    js_expect("(function(){function C(n){this.n=n;}var r=Array.from.call(C,{length:1,0:'x'});"
+              "return r.n+','+r[0];})()",
+              "1,x");
+    js_expect("Array.from.call(Object, [1]).constructor === Object", "true");
+    // IsConstructor as near as a native can be told: a method has no `prototype`.
+    js_expect("Array.of.call(Math.cos, 1) instanceof Array", "true");
+    js_expect("Array.of.call(undefined, 1) instanceof Array", "true");
+    js_expect("(function(){function C(){Object.defineProperty(this,'0',{value:1,"
+              "writable:false,configurable:true});}return Array.of.call(C,2)[0];})()",
+              "2");
+    js_expect("(function(){function C(){Object.defineProperty(this,'0',{value:1,"
+              "configurable:false});}Array.of.call(C,2);})()",
+              "THREW");
+    js_expect("(function(){function C(){}Object.defineProperty(C.prototype,'length',"
+              "{set:function(){throw new Error('len');}});Array.of.call(C);})()",
+              "THREW");
+    // An abrupt mapper CLOSES the iterator before the throw reaches the page.
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){return {value:1,done:false};},return(){closed=true;return {};}};}};"
+              "try{Array.from(it,function(){throw new Error('m');});}catch(e){}"
+              "return closed;})()",
+              "true");
+    // String.prototype[Symbol.iterator] is a real String Iterator.
+    js_expect("typeof ''[Symbol.iterator]", "function");
+    js_expect("''[Symbol.iterator].length", "0");
+    js_expect("''[Symbol.iterator].name", "[Symbol.iterator]");
+    js_expect("(function(){var it='ab'[Symbol.iterator]();var a=it.next();var b=it.next();"
+              "var c=it.next();return a.value+b.value+','+c.done;})()",
+              "ab,true");
+    js_expect("Object.prototype.toString.call('a'[Symbol.iterator]())", "[object String Iterator]");
+    js_expect("String.prototype[Symbol.iterator].call(null)", "THREW");
+
+    // --- ArraySpeciesCreate, 10.4.2.3 ------------------------------------------
+    // The receiver's `constructor[Symbol.species]` builds the result of map,
+    // filter, slice, splice, concat and flatMap; Array's own says `this`.
+    js_expect("Array[Symbol.species] === Array", "true");
+    js_expect("(function(){ var calls = 0; var a = [1, 2, 3];"
+              "a.constructor = {}; a.constructor[Symbol.species] = function (n) {"
+              "  calls++; this.n = n; };"
+              "var r = a.map(function (x) { return x * 2; });"
+              "return [calls, r.n, r[0], r[1], r[2], r.length].join(); })()",
+              "1,3,2,4,6,");
+    js_expect("(function(){ var a = [1, 2, 3, 4]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.slice(1, 3); return [r.length, r[0], r[1]].join(); })()",
+              "2,2,3");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.filter(function (x) { return x > 1; }); return [r[0], r[1], r.length]"
+              ".join(); })()",
+              "2,3,");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.splice(1, 2); return [r.length, r[0], r[1], a.join()].join(); })()",
+              "2,2,3,1");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.concat([2, 3]); return [r.length, r[0], r[2]].join(); })()",
+              "3,1,3");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = null; return Array.isArray(a.map(x => x)); })()",
+              "true");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = parseInt; return a.map(x => x); })()",
+              "THREW");
+    js_expect("(function(){ var a = [1]; a.constructor = 1; return a.map(x => x); })()", "THREW");
+    // CreateDataPropertyOrThrow DEFINES over a non-writable slot on the species
+    // object; a revoked proxy receiver throws ONCE (the length read) and the
+    // method stops; a typed array is not an Array for species or isArray.
+    js_expect("(function(){ var a = [1, 2]; a.constructor = {}; a.constructor[Symbol.species] = "
+              "function () { Object.defineProperty(this, '0', {value: 'x', writable: false, "
+              "configurable: true}); }; var r = a.map(x => x * 10); return r[0] + ',' + r[1]; })()",
+              "10,20");
+    js_expect("(function(){ var o = Proxy.revocable([], {}); o.revoke(); try { "
+              "Array.prototype.map.call(o.proxy, x => x); return 'no'; } catch (e) { return "
+              "e.constructor.name; } })()",
+              "TypeError");
+    js_expect("(function(){ var ta = new Int32Array([1, 2]); Object.defineProperty(ta, "
+              "'constructor', {get() { throw 'no'; }}); var r = [].flatMap.call(ta, x => x); "
+              "return Array.isArray(r) + ',' + r.join() + ',' + Array.isArray(ta) + ',' + "
+              "[].concat(ta).length; })()",
+              "true,1,2,false,1");
+    js_expect("(function(){ var o = {0: 0, 1: 1, 2: 2, 3: 3, length: 4}; var r = "
+              "Array.prototype.splice.call(o, 0, 3); return r.length + ':' + r.join() + ':' + "
+              "o.length; })()",
+              "3:0,1,2:1");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

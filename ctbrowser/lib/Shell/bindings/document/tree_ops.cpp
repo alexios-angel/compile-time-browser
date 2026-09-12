@@ -9,12 +9,27 @@ using namespace detail;
 
 node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id parent) {
     node_id made;
-    if (from.kind(node).value_or(node_kind::element) == node_kind::text) {
-        made = doc_->create_text(from.text(node));
-    } else {
-        made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node));
+    // Every kind the parser produces. A comment used to arrive as an element
+    // with no tag - `p.innerHTML = '<!--x-->'` made a `<>` - and a PI was one.
+    switch (from.kind(node).value_or(node_kind::element)) {
+    case node_kind::text: made = doc_->create_text(from.text(node)); break;
+    case node_kind::comment: made = doc_->create_comment(from.text(node)); break;
+    case node_kind::cdata_section: made = doc_->create_cdata_section(from.text(node)); break;
+    case node_kind::processing_instruction:
+        made = doc_->create_processing_instruction(from.name(node), from.text(node));
+        break;
+    case node_kind::document_type:
+        made =
+            doc_->create_document_type(from.name(node), from.public_id(node), from.system_id(node));
+        break;
+    case node_kind::document:
+    case node_kind::document_fragment:
+    case node_kind::element:
+        made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node),
+                                    from.prefixed(node));
         // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
+        break;
     }
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
@@ -47,7 +62,8 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     // `<html>` the root and nothing sits above it.
     case node_kind::document:
     case node_kind::element:
-        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source));
+        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source),
+                                    from.prefixed(source));
         // AND ITS NAMESPACE, which is not on the node: a clone of an element
         // createElementNS made must report the same namespaceURI, and reading
         // it off `element_ns` alone would answer for the wrong one.
@@ -59,6 +75,11 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // reads the namespaceURI off the clone's attributes.
         for (const attribute & held : from.attributes(source)) {
             (void)doc_->set_attribute(made, held);
+        }
+        // HTML 4.12.1's cloning steps: the copy's `already started` is the
+        // source's - a script that never ran clones into one that will.
+        if (std::ranges::find(src.unstarted_scripts_, source) != src.unstarted_scripts_.end()) {
+            note_unstarted_script(made);
         }
         break;
     }
@@ -95,6 +116,12 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
         }
     }
     if (!fragment) { moving.push_back(child); }
+    if (!moving_) {
+        const auto txn = doc_->read();
+        for (const node_id one : moving) {
+            if (txn.parent(one) || one == txn.root()) { moved_by_mutation_.push_back(one); }
+        }
+    }
     for (const node_id one : moving) {
         if (before) {
             (void)doc_->insert_before(parent, one, before);
@@ -121,22 +148,32 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
 // it. What does not travel: event listeners and custom-element state, both
 // keyed by the old handle in the old document's tables. ponytail: a shadow
 // root is refused rather than moved, as importNode refuses it.
-node_id dom_bindings::node_from(context & cx, value v) {
+node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
     if (const node_id held = handle_of(v)) { return held; }
     dom_bindings * owner = owner_of(v);
     if (owner == nullptr || owner == this || is_a_document(v)) {
         return doc_->create_text(cx.to_string(v));
     }
     const node_id source = owner->handle_of(v);
-    if (!source || owner->shadow_tree_of(source) != nullptr) { return node_id{}; }
+    if (!source) { return node_id{}; }
+    // A FRAGMENT STAYS WHERE IT WAS: inserting one moves its CHILDREN and the
+    // fragment itself is never adopted - `df.ownerDocument` is still the
+    // document that made it, emptied (DOM 4.2.3 "insert" steps 1-2), and a
+    // shadow root stays with its host the same way (adoption.window.js,
+    // "appendChild() and DocumentFragment" / "...and ShadowRoot"). They arrive
+    // in a fragment of this document so the caller's flattening still applies.
     node_id made;
+    std::vector<node_id> moved;
     {
         const auto from = owner->doc_->read();
-        made = clone_node(from, source, true, owner);
+        const bool fragment = !whole_fragment && from.kind(source).value_or(node_kind::element) ==
+                                                     node_kind::document_fragment;
+        made = fragment ? doc_->create_fragment() : clone_node(from, source, true, owner);
         const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
             if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
                 owner->wrappers_.erase(it);
+                owner->adopted_away_[pack(old)] = obj;
                 obj->set(std::string{handle_property},
                          value::number(static_cast<double>(pack(fresh))));
                 wrappers_.emplace(pack(fresh), obj);
@@ -155,9 +192,19 @@ node_id dom_bindings::node_from(context & cx, value v) {
                 self(self, olds[i], news[i]);
             }
         };
-        rebind(rebind, source, made);
+        if (fragment) {
+            for (const node_id child : from.children(source)) {
+                const node_id copy = clone_node(from, child, true, owner);
+                (void)doc_->append_child(made, copy);
+                rebind(rebind, child, copy);
+                moved.push_back(child);
+            }
+        } else {
+            rebind(rebind, source, made);
+            moved.push_back(source);
+        }
     }
-    (void)owner->doc_->remove_child(source);
+    for (const node_id gone : moved) { (void)owner->doc_->remove_child(gone); }
     owner->mutated();
     return made;
 }
@@ -189,8 +236,21 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
         for (const node_id child : from.children(at)) { self(self, child); }
     };
     find_body(find_body, from.root());
-    if (!body) { return; }
-    for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    // A COMMENT OR PROCESSING INSTRUCTION AHEAD OF ANY CONTENT lands on the
+    // scratch document's own node - the "before html" rule - and it is part
+    // of the fragment all the same: `div.innerHTML = '<?t a="b"?>'` and
+    // `= '<!--x-->'` both name one child, and with nothing else there is no
+    // body at all. The Document node's children come first because that is
+    // where they were.
+    for (const node_id child : from.children(from.document_node())) {
+        const node_kind kind = from.kind(child).value_or(node_kind::element);
+        if (kind == node_kind::comment || kind == node_kind::processing_instruction) {
+            copy_subtree(from, child, target);
+        }
+    }
+    if (body) {
+        for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    }
     mutated();
 }
 
@@ -198,8 +258,9 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
 // the truth, and a page that appended a node after setting innerHTML expects to
 // see it.
 // HTML 13.2, "serializing HTML fragments". Text is escaped except inside the
-// raw-text elements, attribute values escape `&`, `"` and U+00A0, and a comment
-// is `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
+// raw-text elements, attribute values escape `&`, `"`, U+00A0 and - since the
+// 2025 change every engine shipped - `<` and `>` too, and a comment is
+// `<!--data-->` - it used to come out as `<></>`, an empty tag pair.
 namespace {
 [[nodiscard]] std::string escape_html(std::string_view text, bool attribute) {
     std::string out;
@@ -213,9 +274,9 @@ namespace {
             ++i;
         } else if (attribute && c == '"') {
             out += "&quot;";
-        } else if (!attribute && c == '<') {
+        } else if (c == '<') {
             out += "&lt;";
-        } else if (!attribute && c == '>') {
+        } else if (c == '>') {
             out += "&gt;";
         } else {
             out += c;
@@ -233,6 +294,57 @@ namespace {
 } // namespace
 
 std::string dom_bindings::inner_html(node_id target) const {
+    return serialize_html(target, false);
+}
+
+std::string dom_bindings::outer_html(node_id target) const {
+    return serialize_html(target, true);
+}
+
+// `outerHTML = markup`: the markup parsed as the PARENT's children would be,
+// then swapped in for the element. A parentless element is left alone, and
+// the Document as a parent is a NoModificationAllowedError - there is no
+// context to parse in. ONE `mutated()` for the swap, so an observer sees a
+// single childList record naming both the removed element and what replaced
+// it, which is what MutationObserver-inner-outer.html asserts.
+void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view markup) {
+    node_id parent;
+    {
+        const auto txn = doc_->read();
+        parent = dom_parent(txn, target);
+        if (!parent) { return; }
+        if (txn.kind(parent).value_or(node_kind::element) == node_kind::document) {
+            throw_dom_exception(cx, "NoModificationAllowedError",
+                                "outerHTML: the element's parent is a Document");
+            return;
+        }
+    }
+    document scratch{*atoms_};
+    (void)parse_html(scratch, markup);
+    const auto from = scratch.read();
+    const node_id fragment = doc_->create_fragment();
+    node_id body{};
+    const auto find_body = [&](auto && self, node_id at) -> void {
+        if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) { body = at; }
+        for (const node_id child : from.children(at)) { self(self, child); }
+    };
+    find_body(find_body, from.root());
+    if (body) {
+        for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
+    }
+    std::vector<node_id> moving;
+    {
+        const auto txn = doc_->read();
+        for (const node_id held : txn.children(fragment)) { moving.push_back(held); }
+    }
+    for (const node_id one : moving) { (void)doc_->insert_before(parent, one, target); }
+    (void)doc_->remove_child(target);
+    mutated();
+}
+
+// HTML 13.2, "serializing HTML fragments": the children of `target`, or with
+// `outer` the node itself, as markup.
+std::string dom_bindings::serialize_html(node_id target, bool outer) const {
     const auto txn = doc_->read();
     std::string out;
     const auto write = [&](auto && self, node_id node, bool raw) -> void {
@@ -290,6 +402,10 @@ std::string dom_bindings::inner_html(node_id target) const {
         out += tag;
         out += ">";
     };
+    if (outer) {
+        write(write, target, false);
+        return out;
+    }
     for (const node_id child : txn.children(target)) { write(write, child, false); }
     return out;
 }
@@ -379,6 +495,9 @@ style::engine & dom_bindings::selector_engine() {
 // either spelling. `document.getElementsByTagName("linearGradient")` has to
 // find it and `("lineargradient")` must not, which is exactly the six "Element
 // in non-HTML namespace" subtests of `Document-getElementsByTagName.html`.
+// In an XML document EVERY element matches exactly - the fold is the HTML
+// document's, not the HTML namespace's, and `Document-getElementsByTagName-
+// xhtml.xhtml` puts an <I> in an XHTML page to say so.
 std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     const auto txn = doc_->read();
     // "*" is every ELEMENT, which is how a page asks for the whole document.
@@ -387,9 +506,9 @@ std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     std::vector<node_id> found;
     const auto walk = [&](auto && self, node_id at) -> void {
         if (const auto tagged = txn.tag(at); tagged.has_value()) {
+            const bool folds = txn.element_ns(at) == node_ns::html && !doc_->xml();
             const bool matched =
-                every || (txn.element_ns(at) == node_ns::html ? *tagged == folded
-                                                              : atoms_->text(*tagged) == tag);
+                every || (folds ? *tagged == folded : atoms_->text(*tagged) == tag);
             if (matched) { found.push_back(at); }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }

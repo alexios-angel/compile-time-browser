@@ -32,7 +32,21 @@ void dom_bindings::define_operation(context & cx, std::initializer_list<const ch
         if (proto == nullptr) { continue; }
         auto * native = cx.allocate<script::native_object>(
             name, [this, index, name](context & c, std::span<value> args) {
-                dom_bindings * owner = owner_of(c.current_this());
+                const value self = c.current_this();
+                // A DOCUMENT AS THE RECEIVER - `Node.prototype.replaceChild
+                // .call(doc, ...)` - is a Node with no handle, and its own
+                // object carries the method: the document's answer is the
+                // right one, and pre-insertion-validation-notfound.js asks
+                // for it through the prototype.
+                if (is_a_document(self)) {
+                    if (auto * own = target_owner(self).document_object()) {
+                        if (const value * held = own->find(name);
+                            held != nullptr && held->is_callable()) {
+                            return c.call(*held, args, self);
+                        }
+                    }
+                }
+                dom_bindings * owner = owner_of(self);
                 dom_bindings & target = owner == nullptr ? *this : *owner;
                 if (target.operations_.empty()) { target.install_operations(c); }
                 // Every instance runs the same installers in the same order, so

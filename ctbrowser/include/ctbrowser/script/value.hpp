@@ -192,6 +192,17 @@ struct string_object final : heap_object {
 // the enumeration walk, the JSON writer and the code that mints them all
 // recognise it.
 inline constexpr std::string_view symbol_key_prefix = "@@sym:";
+// A PRIVATE NAME'S KEY. `#x` is a property of the object here, not a slot in
+// a per-class private environment - but its key is `@#x`, which no source
+// text can spell as a property name, so `o["#x"]`, `"#x" in o`,
+// hasOwnProperty, Object.keys/getOwnPropertyNames/getOwnPropertySymbols,
+// for-in and JSON.stringify never see it (7.3.28-ish: private elements are
+// not properties). What is NOT modelled is the brand: an instance of another
+// evaluation of the same class body answers rather than throwing TypeError.
+inline constexpr std::string_view private_key_prefix = "@#";
+[[nodiscard]] inline bool is_private_key(std::string_view key) noexcept {
+    return key.starts_with(private_key_prefix);
+}
 
 // A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
 //
@@ -245,6 +256,13 @@ struct bigint_object final : heap_object {
         return static_cast<const bigint_object *>(as_heap())->digits ==
                static_cast<const bigint_object *>(o.as_heap())->digits;
     }
+    // A SYMBOL'S IDENTITY IS ITS KEY (see symbol_object): the one
+    // Object.getOwnPropertySymbols rebuilds from a table key is the one the
+    // property was defined with.
+    if (is_kind(heap_kind::symbol) && o.is_kind(heap_kind::symbol)) {
+        return static_cast<const symbol_object *>(as_heap())->key ==
+               static_cast<const symbol_object *>(o.as_heap())->key;
+    }
     return false;
 }
 
@@ -293,6 +311,25 @@ enum class element_kind : std::uint8_t {
     f32,
     f64
 };
+
+// THE GLOBAL THAT CONSTRUCTS THIS KIND - `Uint8Array` for u8 - and therefore
+// where its own `prototype` object lives, which lookup and [[GetPrototypeOf]]
+// reach through the global rather than through a table of their own.
+[[nodiscard]] constexpr const char * typed_array_global_name(element_kind k) noexcept {
+    switch (k) {
+    case element_kind::i8: return "Int8Array";
+    case element_kind::u8: return "Uint8Array";
+    case element_kind::u8_clamped: return "Uint8ClampedArray";
+    case element_kind::i16: return "Int16Array";
+    case element_kind::u16: return "Uint16Array";
+    case element_kind::i32: return "Int32Array";
+    case element_kind::u32: return "Uint32Array";
+    case element_kind::f32: return "Float32Array";
+    case element_kind::f64: return "Float64Array";
+    case element_kind::none: return nullptr;
+    }
+    return nullptr;
+}
 
 // Coerce a number the way a store into that element type does.
 [[nodiscard]] inline double coerce_element(element_kind kind, double v) {
@@ -429,6 +466,9 @@ struct array_object final : heap_object {
         std::erase_if(sparse, [wanted](const std::pair<std::uint32_t, value> & e) {
             return e.first >= wanted;
         });
+        std::erase_if(element_attrs, [wanted](const std::pair<std::uint32_t, std::uint8_t> & e) {
+            return e.first >= wanted;
+        });
         if (wanted <= dense_limit) {
             // Growing pads with undefined, exactly as before.
             items.resize(static_cast<std::size_t>(wanted), value::undefined());
@@ -468,6 +508,32 @@ struct array_object final : heap_object {
     // indices stay where they are and never land here.
     std::unique_ptr<object_object> named;
     [[nodiscard]] object_object & named_table();
+
+    // --- PER-ELEMENT ATTRIBUTES, HOLES AND ACCESSOR ELEMENTS ---------------
+    //
+    // `items` stays a dense std::vector of VALUES; what an element cannot
+    // carry there - three attribute bits, "this index is a hole", "this index
+    // is an accessor" - lives here, indexed and sorted like `sparse`, and is
+    // EMPTY for every array a page builds by literal, push or assignment.
+    // That emptiness is the fast path: lookup_index and store_index test it
+    // once and touch nothing else. An entry's low three bits are the attr_*
+    // bits (absent entry = attr_default, still subject to the integrity
+    // bools above); `elem_hole` marks an index whose `items` slot is a
+    // placeholder and not a property (`delete a[i]`, 10.4.2.1); `elem_accessor`
+    // marks one whose getter/setter live in `named` under the index's
+    // canonical string. `length` has its own writable bit, separate from the
+    // elements': `Object.defineProperty(a, "length", {writable: false})` stops
+    // push and leaves `a[0] = x` alone.
+    static constexpr std::uint8_t elem_hole = 8;
+    static constexpr std::uint8_t elem_accessor = 16;
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> element_attrs;
+    bool length_writable = true;
+    [[nodiscard]] std::uint8_t * find_element_attrs(std::uint32_t i);
+    void set_element_attrs(std::uint32_t i, std::uint8_t a);
+    // The attributes an element at `i` has: the entry's, or the default, each
+    // masked by the integrity bools freeze and seal set.
+    [[nodiscard]] std::uint8_t element_attrs_at(std::uint32_t i);
+    [[nodiscard]] bool is_hole(std::uint32_t i);
     // Both out of line, after object_object: the unique_ptr needs the
     // complete type to destroy, and an inline constructor instantiates that.
     array_object();
@@ -626,6 +692,10 @@ struct accessor_table {
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
     string_flat_map<std::uint32_t> index;
+    // NULL MEANS THE IMPLICIT Object.prototype - every lookup falls through to
+    // it - and UNDEFINED means an EXPLICIT null [[Prototype]]: Object.create
+    // (null), setPrototypeOf(o, null), `__proto__ = null`. The chain walks in
+    // vm/objects/ stop at the second without the fallback.
     value prototype = value::null();
 
     accessor_table accessors;
@@ -773,7 +843,10 @@ struct object_object final : heap_object {
     // above, because those two report every own property by definition.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
-            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix)) { visit(key); }
+            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix) &&
+                !is_private_key(key)) {
+                visit(key);
+            }
         });
     }
     // AN EXISTING PROPERTY KEEPS ITS ATTRIBUTES; a new one gets `attr_default`.
@@ -818,7 +891,58 @@ inline object_object & array_object::named_table() {
     if (!named) { named = std::make_unique<object_object>(); }
     return *named;
 }
+inline std::uint8_t * array_object::find_element_attrs(std::uint32_t i) {
+    const auto it = std::lower_bound(element_attrs.begin(), element_attrs.end(), i,
+                                     [](const std::pair<std::uint32_t, std::uint8_t> & e,
+                                        std::uint32_t k) { return e.first < k; });
+    return it != element_attrs.end() && it->first == i ? &it->second : nullptr;
+}
+inline void array_object::set_element_attrs(std::uint32_t i, std::uint8_t a) {
+    const auto it = std::lower_bound(element_attrs.begin(), element_attrs.end(), i,
+                                     [](const std::pair<std::uint32_t, std::uint8_t> & e,
+                                        std::uint32_t k) { return e.first < k; });
+    if (it != element_attrs.end() && it->first == i) {
+        if (a == attr_default) {
+            element_attrs.erase(it);
+        } else {
+            it->second = a;
+        }
+        return;
+    }
+    if (a != attr_default) { element_attrs.insert(it, {i, a}); }
+}
+inline std::uint8_t array_object::element_attrs_at(std::uint32_t i) {
+    const std::uint8_t * entry = element_attrs.empty() ? nullptr : find_element_attrs(i);
+    std::uint8_t a = entry == nullptr ? attr_default : *entry;
+    if (!elements_writable) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
+    if (!elements_configurable) { a = static_cast<std::uint8_t>(a & ~attr_configurable); }
+    return a;
+}
+inline bool array_object::is_hole(std::uint32_t i) {
+    if (element_attrs.empty()) { return false; }
+    const std::uint8_t * entry = find_element_attrs(i);
+    return entry != nullptr && (*entry & elem_hole) != 0;
+}
+
 inline array_object::array_object() : heap_object(heap_kind::array) {}
 inline array_object::~array_object() = default;
+
+// --- PRIMITIVE WRAPPER OBJECTS ---------------------------------------------
+//
+// `new Number(5)`, `new Boolean(false)`, `Object("ab")`: an ordinary object
+// whose [[NumberData]] / [[BooleanData]] / [[StringData]] slot is one
+// PRIVATE-KEYED own property. A private key (`@#...`) is what no source text
+// can spell and what OwnPropertyKeys, for-in, JSON and hasOwnProperty already
+// skip, so the slot is exactly as invisible as an internal slot and the object
+// is otherwise the object_object every other path already handles. A String
+// wrapper's `length` and indices are answered by lookup_property, own_property
+// and own_property_names off this slot (10.4.3, the String exotic object).
+inline constexpr std::string_view primitive_slot_key = "@#PrimitiveValue";
+// The wrapped primitive, or null when `v` is not a wrapper.
+[[nodiscard]] inline value * primitive_slot(value v) noexcept {
+    if (!v.is_object()) { return nullptr; }
+    auto * obj = static_cast<object_object *>(v.as_heap());
+    return obj->props.empty() ? nullptr : obj->find(primitive_slot_key);
+}
 
 } // namespace ctbrowser::script

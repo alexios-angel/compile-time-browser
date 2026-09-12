@@ -14,6 +14,226 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-12, night
+
+**755 of the 1,090 tests that ran, which is 69.3%**, and still not one crash.
+Same instrument, engine at commit `00b5ab38` on `ctbrowser-wpt` — browser gate
+540/541 at that commit (the one red is `ctcompile_lit`'s `global-maps.test`,
+which Codex's `f57cab15` repairs and which is merged in as `aeb72dfb`); five
+suites one after another on the devbox, 4 workers, `CTBROWSER_GL_DRIVER=deterministic`,
+4 GB cap.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 244 | 53 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 146 | 71 | 2 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 140 | 42 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 144 | 110 | 8 | 0 | 9 | 237 | 508 |
+| **total** | **755** | **283** | **21** | **0** | **31** | **542** | **1,632** |
+
+Subtests: **79,714 PASS, 3,144 FAIL, 67 NOTRUN, 15 TIMEOUT.**
+
+Against `15f47064` (the row below): **+40 files, 1 lost.** Per suite:
+`css/css-values` 125 -> 144 (agent F: `calc-size-parsing`, `calc-mix-computed`,
+`random-item-computed`, `random-serialize`, the three `url-request-modifiers-*`,
+`sibling-function-invalidation`, `inherit-function-invalidation`, `if-conditionals`,
+`calc-angle-values`, `attr-pseudo-elem-invalidation`, the eight
+`viewport-units-gutter-00x`), `html/dom` 135 -> 146 (nine `the-lang-attribute-0xx`
+files and `document-lastModified-01` from `offsetWidth` becoming an accessor
+that flushes layout, `ef1f2464`; `name-content-attribute-and-property` back
+with `common.js` in the corpus), `css/cssom` 133 -> 140 (`CSSStyleRule-set-
+selectorText-namespace`, `computed-style-set-property`, the two
+`cssstyledeclaration-*custom-properties`, `flex-serialization`,
+`getComputedStyle-pseudo-checkmark`, `serialize-custom-props`), `dom/nodes`
+242 -> 244 (`Document-` and `Element-getElementsByTagName`). **The one lost:**
+`css/css-values/lh-unit-003.html` — `width: 10lh` on a ten-line box read
+through the new synchronous `offsetWidth` flush is 50 by 250 where the frame's
+layout, which the old copied number came from, was 250 by 250: the
+synchronous flush and the frame disagree about that box, which is a layout
+question rather than a units one (the second subtest, after the font loads,
+still passes).
+
+test262 at the same commit: **26,833 of 32,927 (81.5%)**, from 76.1% —
+`docs/test262.md`, the `00b5ab38` row, including the 53 files it lost and why.
+
+## The baseline — 2026-09-12, evening
+
+**716 of the 1,090 tests that ran, which is 65.7%**, and still not one crash.
+Same instrument, engine at commit `15f47064` on `ctbrowser-wpt` — browser gate
+540/540 at that commit; five suites run one after another on the devbox, 4
+workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, as every row below.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 242 | 55 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 135 | 81 | 2 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 133 | 49 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 125 | 126 | 11 | 0 | 9 | 237 | 508 |
+| **total** | **716** | **318** | **24** | **0** | **32** | **542** | **1,632** |
+
+Subtests: **78,570 PASS, 3,578 FAIL, 67 NOTRUN, 10 TIMEOUT.**
+
+Against `d27d8f36` (the row below): **+129 files, 1 lost.** Per suite:
+`dom/nodes` 175 -> 242 (agents D then E, 67 files: `Document-createElement`,
+`Document-createElementNS`, `Document-importNode`, `Element-classlist`,
+`Element-children`, `CharacterData-surrogates`, `DocumentFragment-getElementById`
+among them), `dom/events` 72 -> 81 (`Event-dispatch-bubbles-*`,
+`shadow-relatedTarget`, `mouse-event-retarget`, `Body-FrameSet-Event-Handlers`),
+`html/dom` 114 -> 135 (agents H then E: the seven `reflection-*` files are
+PASS now, `nameditem-*`, `document.title`, `document.body`, `document-dir`),
+`css/cssom` 116 -> 133 (agent C: `shorthand-serialization`,
+`cssstyledeclaration-csstext-*`, `CSSStyleRule-set-selectorText`,
+`page-descriptors`, `variable-names`), `css/css-values` 111 -> 125 (agent S:
+`attr-argument-grammar`, `if-*`, `random-item-*`, `round-mod-rem-computed`,
+`rem-unit-root-element`). The one lost: `html/dom/elements/name-content-attribute-and-property.html`
+is HARNESS_ERROR because `/html/resources/common.js` was not in the sparse
+corpus — an instrument gap, `fetch-wpt.sh` carries the file since `4a21438a`
+and the next row has it back. The engine side of the evening is mostly in the
+script tier (`docs/test262.md`, the `15f47064` row) and shows here as subtests:
+`dom/nodes` 11,889 PASS from 10,455.
+
+test262 at the same commit: **25,051 of 32,927 (76.1%)**, from 58.3%.
+
+## The baseline — 2026-09-12, late
+
+**588 of the 1,090 tests that ran, which is 53.9%**, and still not one crash.
+Same instrument, engine at commit `d27d8f36` on `ctbrowser-wpt` — browser gate
+187/187 at that commit. The row below (`b570bd29`, three hours earlier) is
+where the day's engine work was first measured; this one adds agent E's
+html/dom + dom/events work and one line in the INSTRUMENT.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 175 | 117 | 14 | 0 | 3 | 53 | 362 |
+| `dom/events` | 72 | 14 | 3 | 0 | 2 | 85 | 176 |
+| `html/dom` | 114 | 102 | 3 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 116 | 66 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 111 | 132 | 10 | 0 | 18 | 237 | 508 |
+| **total** | **588** | **431** | **30** | **0** | **41** | **542** | **1,632** |
+
+Subtests: **75,010 PASS, 6,992 FAIL, 212 NOTRUN, 25 TIMEOUT.**
+
+**THE REFLECTION TIMEOUTS WERE THE HARNESS.** `tools/wpt/testharnessreport.js`
+built its result JSON with `json += piece` per subtest, which in this engine
+copies the whole string each time: 8,000 subtests is 12 GB of copies, and the
+driver's 4 GB cap killed the seven `html/dom/reflection-*.html` files before
+they could report. Three sessions blamed the collector (the in-turn
+collection of `05ece7bc` is still right, and still needed for other
+files). It joins pieces now (`d27d8f36`); the seven files complete in under a
+second each and are FAIL, not TIMEOUT — reflection-embedded 8,446/8,922,
+forms 7,911/8,271, grouping 5,326/5,358, misc 4,781/4,877, sections
+5,346/5,604, tabular 6,106/6,116, text 10,138/10,202 — which is **+48,000
+passing subtests** and the whole of the html/dom subtest jump (8,658 ->
+57,847). Every number in the table is comparable with the rows below except
+that one column; the fix is in the instrument, not the engine, and is named
+here so nobody reads it as either.
+
+Against `b570bd29`: +3 files (`HTMLStyleElement-load-event`,
+`Event-dispatch-click` — a TIMEOUT before — and `src-cancel`), no file lost;
+`dom/nodes` +704 subtests and `dom/events` +3 from agent E's frames work (a
+frame's `contentWindow` is a proxy over the page's globals, so
+`windowFor(root).DOMException` IS the DOMException constructor and every
+`assert_throws_dom` inside an iframe document passes: `ParentNode-querySelector-All`
+1,671 -> 1,949, `Element-matches` 599 -> 668, `Document-createElementNS` 375 ->
+595), plus `javascript:` links, `queueMicrotask`, `<input type=image>`
+submitting, a sheet's `load` before the window's, and twenty ARIA attributes
+as nullable enumerated reflections (`aria-attribute-reflection-enumerated`
+562 -> 1,696 of 1,722).
+
+test262 at the same commit: **19,190 of 32,927 (58.3%)** — the `b570bd29`
+table in `docs/test262.md` plus `Function` +5 and `Array` +6 (the two
+`fromAsync` crashes fixed, the `String(class)` span).
+
+## The baseline — 2026-09-12, afternoon
+
+**585 of the 1,090 tests that ran, which is 53.7%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `b570bd29` on
+`ctbrowser-wpt` — browser gate 186/186 at that commit. The day started at
+491/1,090 = 45.0%, re-measured at `0e5cfbef` (identical to the 09-10 row, so
+the audit cuts moved nothing).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 175 | 117 | 14 | 0 | 3 | 53 | 362 |
+| `dom/events` | 71 | 14 | 4 | 0 | 2 | 85 | 176 |
+| `html/dom` | 113 | 95 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 115 | 67 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 111 | 132 | 10 | 0 | 18 | 237 | 508 |
+| **total** | **585** | **425** | **38** | **0** | **42** | **542** | **1,632** |
+
+Subtests: **25,113 PASS, 7,537 FAIL, 212 NOTRUN, 26 TIMEOUT.**
+
+(The run's JSON also holds 14 files under `html/dom/agentE-tmp/` that an agent
+left in the corpus checkout on the devbox while iterating on the reflection
+tests; they are excluded above and the corpus checkout was cleaned.)
+
+Against `0e5cfbef`: **+94 files, +7,522 passing subtests**, FAIL subtests
+8,455 -> 7,537. Per suite: `dom/nodes` +38, `css/cssom` +29, `css/css-values`
++21, `html/dom` +4, `dom/events` +3. What did it, from the PASS-set diff and
+the agents' own measurements (each on its own branch, against this JSON):
+
+- `dom/nodes` +38: every Node/Element/ParentNode/ChildNode operation now lives
+  on its interface PROTOTYPE, one native per realm with a `length`
+  (`c49750cc`: `Node-constants`, `Element-remove`, `Document-createComment`,
+  `*-getElementsByTagNameNS`, +3,700 subtests in `ParentNode-querySelector-All`,
+  `Element-classlist`, `Element-matches` alone); the three missing node kinds —
+  DocumentType, ProcessingInstruction, CDATASection — with the Document node
+  owning its child list and cross-document `adoptNode`/insert-adopts
+  (`055be4c3`, `d42d36ab`: `Document-doctype`, `DocumentType-literal`,
+  `Document-createProcessingInstruction`, `Node-nodeName`, `Node-nodeValue`,
+  `Node-isEqualNode`, `Document-adoptNode`, `rootNode`, `Node-parentElement`);
+  the Selectors engine — An+B in every spelling, `[ns|attr]`, `:has()`,
+  `:scope`, `:root` as the tree root only, a scoped `querySelectorAll` that
+  walks only its subtree (`87f64857`: `ParentNode-querySelector-scope`,
+  `ParentNode-querySelectors-namespaces`, `Element-matches-namespaced-elements`);
+  and the VM: a throw crossing a native is thrown ONCE at the native's call
+  site (`0f2a3ca8` — `ParentNode-append`, `ParentNode-prepend`, and every
+  assertion inside a `forEach` callback inside `test()`).
+- `css/cssom` +29: `@import` expanded into the cascade with `CSSImportRule`,
+  shadow-root `sheet`/`styleSheets`/`adoptedStyleSheets`,
+  `HTMLLinkElement.disabled` (all seven files), preferred style-sheet sets,
+  `@namespace`, `selectorText` against the sheet's namespaces, constructable
+  sheets' `baseURL`/`replace` (`6c68232b`), and value serialisation
+  (`serialize-values`, `dd255c38`).
+- `css/css-values` +21: `progress()`/`hypot()`/`exp()`/`round()` families,
+  signed zero, a percentage basis for used-value math, `lh`/`rlh`/`ic`/`rex`
+  /`rch` and the viewport-variant units, computed `transform` as `matrix()`,
+  the `border-radius` shorthand (`dd255c38`); the three `url-font-*-negative`
+  files and `viewport-units-css2-001` moved with the VM's `null.x` TypeError
+  and the promise-reaction fence.
+- `html/dom` +4 and `dom/events` +3: `EventListener-handleEvent`, the two
+  `scroll*` event files, `stream-append-*` and `src-buffered` — the VM changes
+  (async functions rejecting, throws through natives), not shell work.
+
+**PASS -> FAIL, three, all unmaskings:** `css/cssom/property-accessors` (a
+setter's throw parked past the test body's own `try` — fixed in `849c7b50`,
+after this measurement); `html/dom/historical` (`document.all` and
+`HashChangeEvent` are absent and reading through them is now an honest
+TypeError rather than a silent undefined); `css/css-values/animations/
+line-height-lh-transition` (`20lh` resolves now, and with no transitions the
+end value is read). **TIMEOUT 33 -> 38**: `MutationObserver-textContent`,
+`MutationObserver-cross-realm-callback-report-exception` and the six
+`*-invalidation` files for the new font-relative units (`cap`, `rcap`, `rch`,
+`rex`, `ric`, `rlh`) — each a restyle that does not converge, named for the
+next agent in `lib/Style`.
+
+### What is standing in front of the most tests now
+
+| what | where | counted |
+|---|---|---:|
+| reading an UNRESOLVABLE name is `undefined`, not a ReferenceError — `get_global`'s row says may_throw 0, so it is an ABI change made together with Codex (proposed in the journal) | `bytecode_opcodes.def`, `run_loop.cpp` | 1,211 test262 files; every WPT `assert_throws_js(ReferenceError, ...)` |
+| no strict mode at all: writes to non-writable properties, `this` in a plain call, `arguments` — the `-s.js` tests | the compiler (directive prologue) and `store_property` | ~1,000 test262 files across `-s` and `gs` |
+| `for await` / the sync `for-of` do not close the iterator on `break`/throw; `.return()` runs no `finally` | `compile_for_await`, `generator_resume` | ~100 test262 files |
+| the six `*-invalidation` TIMEOUTs above — a font-relative unit change on the root does not settle | `lib/Style` restyle | 6 files |
+| `document.all`, `HashChangeEvent`, `MutationObserver` on `textContent` | `bindings/document`, `events/`, `mutation.cpp` | `historical`, 2 TIMEOUTs |
+| the wrapper of an adopted node is not the wrapper that was adopted (identity across `adoptNode`) | `document/tree_ops.cpp` `node_from` | named in `unit/second_document` |
+| `:target`; null-namespace elements (`|div`); `#eof\` tokenisation | `lib/Shell/page` -> engine hook; the DOM/bindings; `css/token.cpp` | 6 + 16 + 2 subtests |
+| shorthand reconstruction in `el.style`/`cssText`; `@property` registration (`typed_arithmetic_cycle`) | `element/declarations.cpp`; `css/parser.cpp` | the `shorthand-*` files, 1 subtest |
+| the seven `reflection-*.html` files now report (see the late row: it was the harness); what is left is URL reflection (`link.href`, `input.formAction`: the document has no URL under ctdrive — `browser::set_location` from the driver turns 160 subtests) and the per-row table in `element/reflection.cpp` | `element/reflection.cpp`, `browser.hpp`, `tools/ctdrive` | ~1,900 subtests |
+
 ## The baseline — 2026-09-10, late
 
 **491 of the 1,090 tests that ran, which is 45.0%**, and still not one crash.

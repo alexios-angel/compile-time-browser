@@ -1,15 +1,11 @@
-// THE NODE METHOD SURFACE AGAINST dom/nodes - one case per rule the corpus
-// found missing, each named after the WPT file that asserts it.
+// THE dom/nodes CORNERS THAT A DIFF, A HANDLE OR A BYTE COUNT GOT WRONG.
 //
-// What these pin down is not that a method exists but WHICH of two answers it
-// gives: `child.after(x, y)` where x and y already follow child, a
-// `replaceChild` whose child is somebody else's, `removeChild(document)`, a
-// `moveBefore` across two trees, `lookupPrefix` asked of a text node, and a
-// `<template>` whose children the parser kept out of the element. Every one of
-// them had the OTHER answer before, silently.
-//
-// The pattern is unit/element_attrs.cpp's: one expression against a fresh
-// page, and whatever it logged.
+// Each case here stood behind a failing web-platform-tests file in dom/nodes,
+// and each is the smallest expression that fails if the fix goes: the document
+// element's parentNode, a same-value attribute write still queueing a
+// mutation record, an Attr keeping its identity, a surrogate pair being split
+// on a UTF-16 offset, a collection's indices being its own properties, and
+// `createElement("f:oo")` keeping the colon in its local name.
 
 #include <ctbrowser.hpp>
 
@@ -25,9 +21,7 @@ namespace {
 
 constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><body>
-<div id=box><span id=a></span><span id=b></span></div>
-<template id=tpl><div id=inner><b id=deep>x</b></div></template>
-<svg id=s><linearGradient id=lg></linearGradient></svg>
+<div id=outer><p id=p1 class="a">one</p></div>
 </body></html>)";
 
 [[nodiscard]] std::string answer(const std::string & expression) {
@@ -45,248 +39,210 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 void is(const std::string & expression, const std::string & expected) {
     const std::string got = answer(expression);
     CHECK_EQ(got, expected);
-    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+    if (got != expected) { std::printf("  for: %s\n", expression.c_str()); }
 }
 
-// --- ChildNode: the viable sibling, then the conversion, then one insertion --
-
-void test_after_and_before_skip_the_arguments_when_choosing_the_sibling() {
-    // ChildNode-after.html, "with all siblings of child as arguments": x, y and
-    // z already follow child, so the sibling to insert before is the one AFTER
-    // them - which is none - and they land after child in argument order.
+// The document element sits in the Document node's child list with no
+// parent pointer (document::document_node), and the page must not see that.
+void test_the_document_element_has_a_parent_and_siblings() {
+    is("document.documentElement.parentNode === document", "true");
+    is("document.documentElement.previousSibling === document.doctype", "true");
+    is("document.doctype.nextSibling === document.documentElement", "true");
+    is("document.documentElement.parentElement === null", "true");
+    // ...and a node of ANOTHER document is DISCONNECTED, consistently.
     is(R"JS((function () {
-        var p = document.createElement('div');
-        var c = document.createElement('test'), x = document.createElement('x'),
-            y = document.createElement('y'), z = document.createElement('z');
-        p.append(c, x, y, z);
-        c.after(x, y, z);
-        return p.innerHTML; })())JS",
-       "<test></test><x></x><y></y><z></z>");
-    // ...and "with one sibling of child and text as arguments": the text goes
-    // with the moved sibling, before the sibling that was not an argument.
-    is(R"JS((function () {
-        var p = document.createElement('div');
-        var c = document.createElement('test'), x = document.createElement('x'),
-            y = document.createElement('y');
-        p.append(c, x, y);
-        c.after(x, 'text');
-        return p.innerHTML; })())JS",
-       "<test></test><x></x>text<y></y>");
-    // ChildNode-before.html, "with some siblings of child as arguments; no
-    // changes in tree; viable sibling": v and x stay put, y is not an argument
-    // so it is the viable previous sibling, and z goes before child.
-    is(R"JS((function () {
-        var p = document.createElement('div');
-        var c = document.createElement('test'), v = document.createElement('v'),
-            x = document.createElement('x'), y = document.createElement('y'),
-            z = document.createElement('z');
-        p.append(v, x, y, z, c);
-        c.before(v, x, z);
-        return p.innerHTML; })())JS",
-       "<y></y><v></v><x></x><z></z><test></test>");
-}
-
-void test_replace_with_the_node_itself_among_the_arguments() {
-    // ChildNode-replaceWith.html, "with one sibling of child and child itself":
-    // converting the arguments moves child into the fragment, so it is no
-    // longer this parent's and the fragment goes before the viable sibling.
-    is(R"JS((function () {
-        var p = document.createElement('div');
-        var c = document.createElement('test'), x = document.createElement('x');
-        p.append(c, x, 'text');
-        c.replaceWith(x, c);
-        return p.innerHTML; })())JS",
-       "<x></x><test></test>text");
-    // `c.replaceWith(c)` is a replacement with itself: nothing moves, nothing
-    // is removed.
-    is(R"JS((function () {
-        var p = document.createElement('div');
-        var c = document.createElement('test'), x = document.createElement('x');
-        p.append(x, c);
-        c.replaceWith(c);
-        return p.innerHTML; })())JS",
-       "<x></x><test></test>");
-}
-
-void test_append_converts_and_validates() {
-    // ParentNode-append.html: a string becomes a Text node - null is the four
-    // letters - and `body.append(body)` is the ancestor check, not a cycle.
-    is("(function () { var d = document.createElement('div'); d.append(null);"
-       " return d.firstChild.data; })()",
-       "null");
-    is("(function () { document.body.append(document.body); })()", "threw:HierarchyRequestError");
-    is("(function () { var d = document.createElement('div'); var x = document.createElement('x');"
-       " var y = document.createElement('y'); d.append(x, y, x); return d.innerHTML; })()",
-       "<y></y><x></x>");
-}
-
-// --- replaceChild, removeChild and the document object --------------------
-
-void test_replace_child_checks_before_it_swaps() {
-    // Node-replaceChild.html, in the order its subtests come.
-    is("(function () { var a = document.createElement('div'); a.replaceChild(null, null); })()",
-       "threw:TypeError");
-    is("(function () { var a = document.createElement('div'), b = document.createElement('div'),"
-       " c = document.createElement('div'); a.replaceChild(b, c); })()",
-       "threw:NotFoundError");
-    is("(function () { var a = document.createElement('div'); a.replaceChild(a, a); })()",
-       "threw:HierarchyRequestError");
-    // "Replacing a node with itself should not move the node".
-    is("(function () { var a = document.createElement('div'), b = document.createElement('b'),"
-       " c = document.createElement('c'); a.append(b, c); a.replaceChild(b, b);"
-       " return a.innerHTML; })()",
-       "<b></b><c></c>");
-    is("(function () { var a = document.createElement('div'), b = document.createElement('b'),"
-       " c = document.createElement('c'); a.append(b); return a.replaceChild(c, b) === b &&"
-       " a.innerHTML; })()",
-       "<c></c>");
-}
-
-void test_the_document_is_a_node_for_the_purpose_of_a_refusal() {
-    // Node-removeChild.html: `s.removeChild(document)` is NOT_FOUND_ERR, and
-    // Node-insertBefore.html: `el.insertBefore(document, a)` is
-    // HIERARCHY_REQUEST_ERR. Both were TypeErrors, because the document object
-    // has no node handle.
-    is("(function () { var s = document.createElement('div'); s.removeChild(document); })()",
-       "threw:NotFoundError");
-    is("(function () { var el = document.createElement('div'), a = document.createElement('a');"
-       " el.appendChild(a); el.insertBefore(document, a); })()",
-       "threw:HierarchyRequestError");
-    // ...and something that is not a Node at all is still a TypeError.
-    is("(function () { document.body.removeChild({a: 'b'}); })()", "threw:TypeError");
-}
-
-void test_two_required_arguments() {
-    // Node-insertBefore.html: "Calling insertBefore with second argument
-    // missing ... must throw TypeError".
-    is("(function () { document.body.insertBefore(document.createTextNode('child')); })()",
-       "threw:TypeError");
-    is("(function () { document.body.moveBefore(document.createTextNode('child')); })()",
-       "threw:TypeError");
-}
-
-void test_move_before() {
-    // Node-moveBefore.html: undefined, not the node; not on a Text; and a move
-    // between two trees is refused.
-    is("(function () { var a = document.body.appendChild(document.createElement('div'));"
-       " var b = document.createElement('b'), c = document.createElement('c'); a.append(b, c);"
-       " return a.moveBefore(c, b) === undefined && a.innerHTML; })()",
-       "<c></c><b></b>");
-    is("'moveBefore' in document.createTextNode('x')", "false");
-    is("'moveBefore' in document.createElement('div')", "true");
-    is("(function () { var target = document.body.appendChild(document.createElement('div'));"
-       " document.createElement('div').moveBefore(target, null); })()",
-       "threw:HierarchyRequestError");
-    is("(function () { var dest = document.body.appendChild(document.createElement('div'));"
-       " dest.moveBefore(document.createElement('div'), null); })()",
-       "threw:HierarchyRequestError");
-}
-
-// --- namespaces, normalize, live tag lists ---------------------------------
-
-void test_namespace_lookups_on_every_node() {
-    // Node-lookupPrefix.xhtml asks a text node, a comment and a fragment; the
-    // element algorithm runs at the parent element, or at nothing.
-    is("(function () { var x = document.createElement('x'); x.setAttribute('xmlns:t', 'test');"
-       " x.append('TEST'); return x.firstChild.lookupPrefix('test'); })()",
-       "t");
-    is("(function () { var x = document.createElement('x'); x.setAttribute('xmlns:t', 'test');"
-       " x.append('TEST'); return x.firstChild.lookupNamespaceURI('t'); })()",
-       "test");
-    is("document.createDocumentFragment().lookupNamespaceURI('xml')", "null");
-    is("document.createDocumentFragment().isDefaultNamespace(null)", "true");
-    is("document.createDocumentFragment().isDefaultNamespace('foo')", "false");
-    is("document.createElement('div').lookupNamespaceURI('xmlns')",
-       "http://www.w3.org/2000/xmlns/");
-}
-
-void test_normalize() {
-    // Node-normalize.html: the run becomes its FIRST member, and an empty first
-    // member goes rather than absorbing the run (bug 19837).
-    is("(function () { var df = document.createDocumentFragment();"
-       " var t1 = document.createTextNode('1'), t2 = document.createTextNode('2');"
-       " df.append(t1, t2); df.normalize(); return df.childNodes.length + ',' +"
-       " (df.firstChild === t1) + ',' + t1.data + ',' + t2.data; })()",
-       "1,true,12,2");
-    is("(function () { var d = document.createElement('div');"
-       " var t1 = d.appendChild(document.createTextNode('')),"
-       " t2 = d.appendChild(document.createTextNode('a')),"
-       " t3 = d.appendChild(document.createTextNode('')); d.normalize();"
-       " return d.childNodes.length + ',' + (d.firstChild === t2); })()",
-       "1,true");
-    is("(function () { var d = document.createElement('div');"
-       " d.append(document.createTextNode(''), document.createTextNode('')); d.normalize();"
-       " return d.childNodes.length; })()",
-       "0");
-}
-
-void test_get_elements_by_tag_name_on_an_element() {
-    // Element-getElementsByTagName.html: live, an HTMLCollection, and a foreign
-    // element is found by its own spelling only.
-    is("(function () { var l = document.getElementById('box').getElementsByTagName('span');"
-       " var n = l.length; "
-       "document.getElementById('box').appendChild(document.createElement('span'));"
-       " return n + ',' + l.length + ',' + (l instanceof HTMLCollection); })()",
-       "2,3,true");
-    is("document.getElementById('s').getElementsByTagName('linearGradient').length", "1");
-    is("document.getElementById('s').getElementsByTagName('lineargradient').length", "0");
-    is("document.getElementById('box').getElementsByTagName('SPAN').length", "2");
-    is("document.getElementById('box').getElementsByTagName('div').length", "0");
-}
-
-// --- fragments and templates ------------------------------------------------
-
-void test_template_content() {
-    // svg-template-querySelector.html and DocumentFragment-getElementById.html:
-    // a parsed template's children are in its CONTENT fragment and not in the
-    // element, the fragment is the same object on every read, and a template a
-    // script makes has one too.
-    is("document.getElementById('tpl').childNodes.length", "0");
-    is("document.getElementById('tpl').content.childNodes.length", "1");
-    is("document.getElementById('tpl').content === document.getElementById('tpl').content", "true");
-    is("document.getElementById('tpl').content.querySelector('b').id", "deep");
-    is("document.getElementById('tpl').content.getElementById('deep').textContent", "x");
-    is("document.getElementById('inner')", "null");
-    is("(function () { var t = document.createElement('template');"
-       " return t.content.nodeType + ',' + t.content.childNodes.length; })()",
-       "11,0");
-}
-
-void test_get_element_by_id_on_a_fragment() {
-    is("(function () { var f = document.createDocumentFragment();"
-       " f.append(document.createElement('div'), document.createElement('span'));"
-       " f.childNodes[0].id = 'foo'; f.childNodes[1].id = 'foo';"
-       " return f.getElementById('foo') === f.childNodes[0]; })()",
+        var other = document.implementation.createHTMLDocument('');
+        var a = document.getElementById('p1'), b = other.body;
+        var ab = a.compareDocumentPosition(b), ba = b.compareDocumentPosition(a);
+        return (ab & 33) === 33 && (ba & 33) === 33 && ((ab ^ ba) & 6) === 6;
+    })())JS",
        "true");
-    is("(function () { var f = document.createDocumentFragment();"
-       " f.appendChild(document.createElement('div')).setAttribute('id', '');"
-       " return f.getElementById(''); })()",
-       "null");
 }
 
-void test_a_named_attribute_does_not_shadow_the_prototype_chain() {
-    // attributes-namednodemap.html: `toString` stays the inherited function.
-    is("(function () { var e = document.createElement('div');"
-       " e.setAttributeNS('foo', 'toString', 'first');"
-       " return e.attributes.length + ',' + typeof e.attributes.toString; })()",
-       "1,function");
+// A diff of before against after cannot see `setAttribute("class", "a")` on
+// an element whose class is already "a"; the write log can.
+void test_a_write_that_changes_nothing_still_queues_a_record() {
+    is(R"JS((function () {
+        var p = document.getElementById('p1');
+        var seen = [];
+        var m = new MutationObserver(function () {});
+        m.observe(p, { attributes: true, attributeOldValue: true, characterData: true,
+                       characterDataOldValue: true, subtree: true });
+        p.setAttribute('class', 'a');
+        p.classList.remove('missing');
+        p.firstChild.appendData('');
+        var records = m.takeRecords();
+        return records.map(function (r) { return r.type + ':' + r.oldValue; }).join(',');
+    })())JS",
+       "attributes:a,attributes:a,characterData:one");
+    // The record names the LOCAL name and the namespace.
+    is(R"JS((function () {
+        var p = document.getElementById('p1');
+        var m = new MutationObserver(function () {});
+        m.observe(p, { attributes: true });
+        p.setAttributeNS('http://example.org/', 'x:lang', 'v');
+        var r = m.takeRecords()[0];
+        return r.attributeName + ' ' + r.attributeNamespace;
+    })())JS",
+       "lang http://example.org/");
+}
+
+void test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed() {
+    is(R"JS((function () {
+        var p = document.getElementById('p1');
+        var a = p.getAttributeNode('class');
+        var same = a === p.attributes[1] && a === p.attributes.getNamedItem('class');
+        p.removeAttribute('class');
+        return same + ',' + (a.ownerElement === null) + ',' + a.value;
+    })())JS",
+       "true,true,a");
+    is(R"JS((function () {
+        var el = document.createElement('div'), other = document.createElement('div');
+        var attr = document.createAttribute('foo');
+        el.setAttributeNode(attr);
+        try { other.setAttributeNode(attr); return 'no throw'; } catch (e) { return e.name; }
+    })())JS",
+       "InUseAttributeError");
+    is("document.createAttribute('x').cloneNode() instanceof Attr", "true");
+}
+
+// Offsets are UTF-16 code units, and one may fall between the halves of a
+// surrogate pair: the lone half survives (as WTF-8) and rejoins on the other
+// side of a replaceData.
+void test_a_surrogate_pair_can_be_split_and_rejoined() {
+    is(R"JS((function () {
+        var t = document.createTextNode('🌠 test');
+        var head = t.substringData(1, 1) === '\uDF20';
+        t.replaceData(1, 1, '\uDF1F');
+        return head + ',' + (t.data === '🌟 test') + ',' + t.length;
+    })())JS",
+       "true,true,7");
+}
+
+// WebIDL's legacy platform object: indices and exposed names are own
+// properties, `item` is inherited and an expando may shadow it.
+void test_a_collection_owns_its_indices_and_names() {
+    is(R"JS((function () {
+        var list = document.getElementsByTagName('p');
+        var keys = Object.getOwnPropertyNames(list).sort().join(' ');
+        var own = list.hasOwnProperty('0') && list.hasOwnProperty('p1') && !('x' in list);
+        var proto = list.item === HTMLCollection.prototype.item;
+        list.item = 'shadowed';
+        list[0] = 'ignored';
+        return keys + '|' + own + '|' + proto + '|' + list.item + '|' + (list[0].id);
+    })())JS",
+       "0 p1|true|true|shadowed|p1");
+    is(R"JS((function () {
+        var d = document.getElementById('outer');
+        var kids = d.childNodes;
+        d.appendChild(document.createElement('span'));
+        return (kids === d.childNodes) + ',' + kids.length + ',' +
+               (kids instanceof NodeList) + ',' + (document.querySelectorAll('p') instanceof NodeList);
+    })())JS",
+       "true,2,true,true");
+    // NodeList-live-mutations: the own keys after a mutation nothing read
+    // through, and NodeList-Iterable: the iterator sees what is appended
+    // between two `next()`s. (A `for...of` over a collection still snapshots -
+    // the VM materialises a proxy rather than calling its @@iterator.)
+    is(R"JS((function () {
+        var d = document.createElement('div');
+        var kids = d.childNodes;
+        var before = Object.getOwnPropertyNames(kids).length;
+        d.appendChild(document.createElement('b')).id = 'b1';
+        d.appendChild(document.createElement('b')).id = 'b2';
+        var after = Object.getOwnPropertyNames(kids).join();
+        var seen = [], it = kids[Symbol.iterator]();
+        for (var step = it.next(); !step.done; step = it.next()) {
+            seen.push(step.value.id);
+            if (seen.length < 3) { d.appendChild(document.createElement('b')).id = 'after' + step.value.id; }
+        }
+        var keys = [...kids.keys()], entries = [...kids.entries()];
+        return [before, after, seen.join(' '), keys.join(' '), entries[1][1].id,
+                !(kids.values() instanceof Array), kids.values().next().value === kids[0]].join('|');
+    })())JS",
+       "0|0,1|b1 b2 afterb1 afterb2|0 1 2 3|b2|true|true");
+}
+
+void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {
+    is("document.createElement('f:oo').localName", "f:oo");
+    is("document.createElement('f:oo').prefix === null", "true");
+    is("document.createElementNS('http://www.w3.org/1999/xhtml', 'f:oo').localName", "oo");
+    is("document.createElementNS('http://www.w3.org/1999/xhtml', 'f:oo').prefix", "f");
+    is("document.createElementNS('http://www.w3.org/1999/xhtml', 'x:span') instanceof "
+       "HTMLSpanElement",
+       "true");
+}
+
+void test_outer_html_both_ways() {
+    is("document.getElementById('p1').outerHTML", "<p id=\"p1\" class=\"a\">one</p>");
+    is(R"JS((function () {
+        var p = document.getElementById('p1');
+        p.outerHTML = '<b id="b1">x</b><i></i>';
+        return document.getElementById('p1') + ',' + document.getElementById('outer').innerHTML;
+    })())JS",
+       "null,<b id=\"b1\">x</b><i></i>");
 }
 
 } // namespace
 
+// DOM 5's Range, the shape MutationObserver-childList.html uses it in:
+// boundaries, toString, deleteContents across a text edge, extractContents
+// into a fragment, insertNode splitting a text node, surroundContents.
+void test_a_range_cuts_moves_and_wraps() {
+    is("(function () { var d = document.getElementById('outer');"
+       " d.innerHTML = '<b>ab</b>cd<i>ef</i>'; var r = document.createRange();"
+       " r.setStart(d.firstChild.firstChild, 1); r.setEnd(d.childNodes[1], 1);"
+       " var s = r.toString(); r.deleteContents();"
+       " return s + '|' + d.innerHTML + '|' + r.collapsed + '|' + (r.startContainer === d)"
+       " + r.startOffset; })()",
+       "bc|<b>a</b>d<i>ef</i>|true|true1");
+    is("(function () { var d = document.getElementById('outer');"
+       " d.innerHTML = '<b>ab</b><u>cd</u><i>ef</i>'; var r = new Range();"
+       " r.setStartBefore(d.childNodes[1]); r.setEndAfter(d.childNodes[1]);"
+       " var f = r.extractContents(); return f.childNodes.length + f.firstChild.tagName + '|'"
+       " + d.innerHTML + '|' + r.commonAncestorContainer.id; })()",
+       "1U|<b>ab</b><i>ef</i>|outer");
+    is("(function () { var d = document.getElementById('outer'); d.textContent = 'abcd';"
+       " var r = document.createRange(); r.setStart(d.firstChild, 2); r.collapse(true);"
+       " r.insertNode(document.createElement('br')); var out = d.innerHTML + '|' + r.endOffset;"
+       " r.selectNodeContents(d); r.surroundContents(document.createElement('s'));"
+       " return out + '|' + d.innerHTML; })()",
+       "ab<br>cd|2|<s>ab<br>cd</s>");
+}
+
+// adoption.window.js and Node-isEqualNode-xhtml.xhtml: a fragment inserted
+// from another document is emptied there and stays there; adoptNode takes the
+// fragment itself; and isEqualNode reads across documents.
+void test_another_documents_fragment_and_nodes() {
+    is(R"JS((function () {
+        var doc = document.implementation.createHTMLDocument('');
+        var df = doc.createDocumentFragment();
+        var child = df.appendChild(doc.createTextNode('hi'));
+        document.body.appendChild(df);
+        var a = [df.childNodes.length, child.ownerDocument === document, df.ownerDocument === doc];
+        var df2 = doc.createDocumentFragment();
+        var kid2 = df2.appendChild(doc.createElement('i'));
+        document.adoptNode(df2);
+        a.push(df2.childNodes.length, df2.ownerDocument === document, kid2.ownerDocument === document);
+        var p = doc.createElement('p'); p.setAttribute('id', 'p1'); p.setAttribute('class', 'a');
+        var p1 = document.getElementById('p1');
+        a.push(p1.isEqualNode(p), p.isEqualNode(p1));
+        p.textContent = 'one';
+        a.push(p1.isEqualNode(p), p1.isEqualNode(null));
+        return a.join();
+    })())JS",
+       "0,true,true,1,true,true,false,false,true,false");
+}
+
 int main() {
-    test_after_and_before_skip_the_arguments_when_choosing_the_sibling();
-    test_replace_with_the_node_itself_among_the_arguments();
-    test_append_converts_and_validates();
-    test_replace_child_checks_before_it_swaps();
-    test_the_document_is_a_node_for_the_purpose_of_a_refusal();
-    test_two_required_arguments();
-    test_move_before();
-    test_namespace_lookups_on_every_node();
-    test_normalize();
-    test_get_elements_by_tag_name_on_an_element();
-    test_template_content();
-    test_get_element_by_id_on_a_fragment();
-    test_a_named_attribute_does_not_shadow_the_prototype_chain();
+    test_another_documents_fragment_and_nodes();
+    test_a_range_cuts_moves_and_wraps();
+    test_the_document_element_has_a_parent_and_siblings();
+    test_a_write_that_changes_nothing_still_queues_a_record();
+    test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed();
+    test_a_surrogate_pair_can_be_split_and_rejoined();
+    test_a_collection_owns_its_indices_and_names();
+    test_a_colon_is_a_prefix_only_when_it_was_made_as_one();
+    test_outer_html_both_ways();
     REPORT("dom_nodes_wpt");
 }

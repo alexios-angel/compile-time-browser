@@ -211,6 +211,27 @@ void test_destructuring_parameters() {
                   "5");
     // a whole-parameter default alongside a pattern
     expect_result("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
+    // A GENERATOR EVALUATES ITS PARAMETERS WHEN CALLED (10.2.1 step 8), not
+    // on the first `.next()`: the default runs at g(), a throw is g()'s, and
+    // the body itself has not started - `.return()` before a `.next()` still
+    // finishes it without running anything.
+    expect_result("var ran = 0; function* g(a = (ran++, 1)) { yield a; }"
+                  "var it = g(); var before = ran; var v = it.next().value;"
+                  "return before + ',' + ran + ',' + v;",
+                  "1,1,1");
+    expect_result("function* g({x}) { yield x; }"
+                  "try { g(null); return 'no throw'; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("var body = 0; function* g(a = 1) { body++; yield a; }"
+                  "var it = g(); var r = it.return(7); return body + ',' + r.value + ',' + r.done;",
+                  "0,7,true");
+    expect_result("function* g(a = 1) { var got = yield a; return got; }"
+                  "var it = g(); it.next('ignored'); return it.next('sent').value;",
+                  "sent");
+    expect_result(
+        "async function* ag({x}) { yield x; }"
+        "try { ag(undefined); return 'no throw'; } catch (e) { return e.constructor.name; }",
+        "TypeError");
 }
 
 void test_destructuring_assignment() {
@@ -349,6 +370,18 @@ void test_destructuring_in_a_block() {
 // zod's builder became the boolean `true` - and the failure surfaced 25,000
 // instructions later, in a different function, as "a captured variable is
 // boolean (true), not a function".
+// The TypeError for calling a non-function is built WITHOUT running page code:
+// an object inheriting Function.prototype.toString had that native throw a
+// second TypeError under the first, which took the page's own catch with it.
+void test_call_type_error_is_catchable() {
+    expect_result("function P() {} function F() {} F.prototype = P; const o = new F(); "
+                  "try { o(); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { new Function.prototype(); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { (5)(); } catch (e) { return e.message.includes('(5)'); }", "true");
+}
+
 void test_a_declaration_shadows() {
     // a block-scoped const over a hoisted function of the same name
     expect_result("function f() { function v() { return 'fn'; } "
@@ -393,6 +426,14 @@ void test_function_to_string() {
                   "m(a) { return a; }");
     expect_result("const o = { go(n) { return n; } }; return o.go.toString();",
                   "go(n) { return n; }");
+    // A CLASS IS ITS WHOLE TEXT (20.2.3.5), explicit constructor or not. The
+    // synthesised constructor used to keep the offsets of the "(function ()
+    // {})" it was compiled from, read against the program's own source.
+    expect_result("class C { m(a) { return a; } } return String(C);",
+                  "class C { m(a) { return a; } }");
+    expect_result("const D = class E { constructor(x) { this.x = x; } }; return String(D);",
+                  "class E { constructor(x) { this.x = x; } }");
+    expect_result("class F {} class G extends F {} return String(G);", "class G extends F {}");
     // a native says so rather than returning something a parser would accept
     expect_result("return Math.max.toString().indexOf('native code') >= 0;", "true");
 }
@@ -729,9 +770,174 @@ void test_named_function_expressions() {
                   "function,function");
 }
 
+// NamedEvaluation (8.4.5): an anonymous function, arrow or class takes the
+// name of what it initialises - a binding, a property, a default, a field.
+// Every one of these read "" before 2026-09-12; test262 has 1,056 files that
+// ask, and a stack trace through `var handler = function () {}` said
+// "<anonymous>" for the same reason.
+void test_anonymous_functions_take_the_binding_name() {
+    expect_result("var f = function () {}; return f.name;", "f");
+    expect_result("let g = () => 1; return g.name;", "g");
+    expect_result("var c = class {}; return c.name;", "c");
+    expect_result("var h; h = function () {}; return h.name;", "h");
+    expect_result("var o = { m: function () {}, a: () => 1, k: class {} };"
+                  "return o.m.name + ',' + o.a.name + ',' + o.k.name;",
+                  "m,a,k");
+    expect_result("var [d = function () {}] = []; return d.name;", "d");
+    expect_result("var { e = () => 0 } = {}; return e.name;", "e");
+    expect_result("function f(p = function () {}) { return p.name; } return f();", "p");
+    expect_result("class C { x = function () {}; static y = () => 1; }"
+                  "return new C().x.name + ',' + C.y.name;",
+                  "x,y");
+    expect_result("var z; z ?\?= function () {}; return z.name;", "z");
+    // A function with its own name keeps it; a parenthesised anonymous one
+    // is still anonymous and still takes the binding's.
+    expect_result("var f = function own() {}; var g = (function () {});"
+                  "return f.name + ',' + g.name;",
+                  "own,g");
+}
+
+// AN ARRAY PATTERN IS THE ITERATOR PROTOCOL (8.6.2), not `src[i]`: it takes
+// anything with a Symbol.iterator, steps exactly as many times as it has
+// elements, and closes the iterator (`return()`) when it stops early - also
+// on a throw out of a default. A `next()` that throws marks the record done,
+// so nothing is closed after it. Each of these was wrong before 2026-09-12:
+// a user iterable destructured to undefineds, and a generator was drained
+// to the end however many elements the pattern had.
+void test_array_patterns_iterate() {
+    const std::string counter =
+        "var steps = 0, closed = 0;"
+        "var it = { [Symbol.iterator]() { return { next() { steps++; return { value: steps,"
+        " done: steps > 5 }; }, return() { closed++; return {}; } }; } };";
+    expect_result(
+        counter + "var [a, b] = it; return a + ',' + b + ' steps ' + steps + ' closed ' + closed;",
+        "1,2 steps 2 closed 1");
+    // exhausted by the pattern: nothing left to close
+    expect_result(
+        counter +
+            "var [a, b, c, d, e, f] = it; return f + ' steps ' + steps + ' closed ' + closed;",
+        "undefined steps 6 closed 0");
+    expect_result(counter + "var [x, ...rest] = it; return rest.join('') + ' closed ' + closed;",
+                  "2345 closed 0");
+    expect_result(counter + "var [, , third] = it; return third + ' steps ' + steps;", "3 steps 3");
+    // A throw from a default is the original throw. (The iterator is NOT
+    // closed on that path - see compile_array_pattern for why.)
+    expect_result(counter + "try { var [q = (function () { throw new Error('dflt'); })()] ="
+                            " { [Symbol.iterator]() { return { next() { return { done: false }; },"
+                            " return() { closed++; return {}; } }; } }; }"
+                            " catch (e) { return e.message; }",
+                  "dflt");
+    // a throwing next() is not closed after
+    expect_result("var closed = 0; try { var [z] = { [Symbol.iterator]() { return { next() {"
+                  " throw new Error('step'); }, return() { closed++; } }; } }; }"
+                  " catch (e) { return e.message + ' closed ' + closed; }",
+                  "step closed 0");
+    // a generator is pulled lazily: two elements, two resumes
+    expect_result("var pulled = 0; function* g() { for (;;) { pulled++; yield pulled; } }"
+                  "var [m, n] = g(); return m + n + ' pulled ' + pulled;",
+                  "3 pulled 2");
+    // not iterable, and null or undefined as an object pattern: TypeError
+    expect_result("try { var [w] = 5; } catch (e) { return e.constructor.name; }", "TypeError");
+    expect_result("try { var {} = null; } catch (e) { return e.constructor.name; }", "TypeError");
+    expect_result("try { (function ({}) {})(undefined); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    // assignment patterns take the same walk
+    expect_result(counter + "var a, b; [a, b] = it; return a + b + ' closed ' + closed;",
+                  "3 closed 1");
+    // for-of and spread see a user iterable too
+    expect_result(counter + "var got = []; for (var v of it) got.push(v); return got.join('');",
+                  "12345");
+    expect_result(counter + "return [...it].length;", "5");
+    expect_result(counter + "return Math.max(...it);", "5");
+}
+
 } // namespace
 
+// 10.2.4: `caller` and `arguments` are %ThrowTypeError% accessors on
+// Function.prototype - a strict function, an arrow, a class and a built-in
+// throw; a sloppy function answers null, as every browser does.
+void test_restricted_properties() {
+    expect_result("function f() {} return f.caller + ',' + f.arguments;", "null,null");
+    expect_result("'use strict'; function f() {} try { return f.caller; } catch (e) { return "
+                  "e.constructor.name; }",
+                  "TypeError");
+    expect_result("try { return (() => 1).arguments; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("try { return Math.abs.caller; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("const d = Object.getOwnPropertyDescriptor(Function.prototype, 'caller');"
+                  "return (d.get === d.set) + ',' + d.configurable + ',' + d.enumerable;",
+                  "true,true,false");
+}
+
+// OrdinaryCallBindThis through call/apply/bind: a sloppy function's `this`
+// is the global object for null/undefined and a wrapper for a primitive; a
+// strict one takes the value as given. And `new bound()` constructs the
+// target with the bound arguments in front (10.4.1.2).
+void test_call_bind_this() {
+    expect_result("function f() { return this === globalThis; } return f.call() + ',' + "
+                  "f.apply(null) + ',' + f.bind(undefined)();",
+                  "true,true,true");
+    expect_result("function f() { return typeof this; } return f.call(1) + ',' + f.call('s');",
+                  "object,object");
+    expect_result("'use strict'; function f() { return this; } return f.call(1) + ',' + "
+                  "f.call(undefined);",
+                  "1,undefined");
+    expect_result("function P(a, b) { this.sum = a + b; } const B = P.bind({}, 1);"
+                  "const p = new B(2); return p.sum + ',' + (p instanceof P);",
+                  "3,true");
+    expect_result("const B = Math.abs.bind(null); try { new B(); } catch (e) { return "
+                  "e.constructor.name; }",
+                  "TypeError");
+    expect_result("return Object.getOwnPropertyNames((function () {}).bind()).join();",
+                  "length,name");
+}
+
+// A DERIVED CLASS'S CONSTRUCTOR binds `this` only when `super()` returns
+// (10.2.1.3): `this` before it, a return without it, and a second `super()`
+// are ReferenceErrors; a returned primitive is the TypeError; a returned
+// object replaces the instance. An arrow inside the constructor shares the
+// binding. Tracked by a hidden local the compiler keeps - see
+// frame::derived_flag - so a plain function or a base class pays nothing.
+void test_derived_constructors() {
+    expect_result("class A {} class B extends A { constructor() { super(); this.x = 1; } }"
+                  "return new B().x;",
+                  "1");
+    expect_result("class A {} class B extends A { constructor() { this.x = 1; super(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() {} }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() { super(); super(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() { return 1; } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("class A {} class B extends A { constructor() { return {y: 2}; } }"
+                  "return new B().y;",
+                  "2");
+    expect_result("class A {} class B extends A { constructor() { const f = () => super(); f();"
+                  " this.x = 3; } } return new B().x;",
+                  "3");
+    expect_result(
+        "class A {} class B extends A { constructor() { const g = () => this; try { g(); }"
+        " catch (e) { super(); return; } } } new B(); return 'caught';",
+        "caught");
+    // `super.x = v` lands on `this`, and a frozen prototype refuses it.
+    expect_result("class C { m() { super.x = 8; return this.x; } } return new C().m();", "8");
+    expect_result("class C { m() { super.x = 8; return C.prototype.hasOwnProperty('x'); } }"
+                  "return new C().m();",
+                  "false");
+    // `super[k]` reads through the parent prototype.
+    expect_result("class A { get k() { return 'a'; } } class B extends A { get k() { return 'b'; }"
+                  " m() { return super['k'] + this.k; } } return new B().m();",
+                  "ab");
+}
+
 int main() {
+    test_derived_constructors();
     test_default_parameters();
     test_rest_parameters();
     test_nested_function_declarations_are_local();
@@ -745,6 +951,7 @@ int main() {
     test_function_prototype();
     test_function_prototype_link();
     test_destructuring_in_a_block();
+    test_call_type_error_is_catchable();
     test_a_declaration_shadows();
     test_function_to_string();
     test_functions();
@@ -757,5 +964,9 @@ int main() {
     test_computed_calls_pass_their_arguments();
     test_arguments();
     test_named_function_expressions();
+    test_anonymous_functions_take_the_binding_name();
+    test_array_patterns_iterate();
+    test_restricted_properties();
+    test_call_bind_this();
     REPORT("vm_functions");
 }

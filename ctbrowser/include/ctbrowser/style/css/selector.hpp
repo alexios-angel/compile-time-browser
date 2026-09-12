@@ -38,4 +38,9 @@ namespace ctbrowser::style::css {
                                                 std::span<const component_value> prelude,
                                                 atom_table & atoms, bool * invalid = nullptr);
 
+// A pseudo-element name this parser knows - `before`, `marker`, `backdrop`, a
+// vendor-prefixed one - which is what `getComputedStyle(el, "::x")` asks
+// before resolving one. Case-insensitive, without the colons.
+[[nodiscard]] bool known_pseudo_element(std::string_view name);
+
 } // namespace ctbrowser::style::css

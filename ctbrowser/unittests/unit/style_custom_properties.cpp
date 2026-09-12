@@ -98,7 +98,7 @@ void test_var_substitution() {
         // substitution is a token-stream operation: one argument becomes three.
         fixture f;
         f.load("<p id=a></p>", ":root { --rgb: 33, 37, 41 } p { color: rgba(var(--rgb), .5) }");
-        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, .5)", "a var() comma list");
+        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, 0.5)", "a var() comma list");
     }
     {
         // THE FALLBACK is everything after the FIRST comma, commas included - because a
@@ -163,6 +163,18 @@ void test_var_substitution() {
         CHECK(f.value_of(f.find_id("a"), "color").empty());
     }
     {
+        // A SUBSTITUTED VALUE THE PROPERTY'S GRAMMAR REFUSES is invalid at
+        // computed-value time too - `width: 10` is not ten pixels - while one
+        // the grammar takes, or does not model, is kept (attr-all-types).
+        fixture f;
+        f.load("<p id=a></p>", ":root { --n: 10; --l: 10px; --c: 33, 37, 41 } "
+                               "p { width: 5px; width: var(--n); height: var(--l); "
+                               "color: rgba(var(--c), .5) }");
+        CHECK(f.value_of(f.find_id("a"), "width").empty());
+        expect_value(f, f.find_id("a"), "height", "10px", "a length from a var()");
+        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, 0.5)", "a colour from a var()");
+    }
+    {
         // `!important` ON A CUSTOM PROPERTY is the DECLARATION's importance, not part
         // of its value - so it is peeled where every other declaration's is, and a
         // var() cannot smuggle it into the property that reads it. Worth a test
@@ -187,11 +199,45 @@ void test_var_substitution() {
         f.load("<html><body id=a></body></html>", ":root { --a: var(--b); --b: #010101 }");
         expect_value(f, f.find_id("a"), "--a", "var(--b)", "stored verbatim");
     }
+    {
+        // A SUBSTITUTED VALUE IS SPELLED AS `el.style` WOULD SPELL IT: the same
+        // grammar that validates it serialises it, so a 25-digit `<integer>`
+        // is the double it became (cssom/serialize-custom-props), and a
+        // keyword is lowercased.
+        fixture f;
+        f.load("<p id=a></p>", ":root { --n: 1111111111111111111111111; --k: BLOCK }"
+                               "p { z-index: var(--n); display: var(--k) }");
+        expect_value(f, f.find_id("a"), "z-index", "1111111111111111092469760", "an integer");
+        expect_value(f, f.find_id("a"), "display", "block", "a keyword");
+    }
+}
+
+// inherit-function-basic: `inherit(--x)` is the parent's computed value of
+// the custom property, and the fallback when the parent has none.
+void test_inherit_function() {
+    fixture f;
+    f.load("<div id=p><div id=a></div></div><div id=b></div>",
+           ":root { --r: 3 } #p { --z: 2 } #a { --z: 13; z-index: inherit(--z); "
+           "order: inherit(--r) } #b { --z: 13; z-index: inherit(--z, 4); "
+           "order: inherit(--q); --w: inherit(--z, 5) }");
+    expect_value(f, f.find_id("a"), "z-index", "2", "the parent's value");
+    expect_value(f, f.find_id("a"), "order", "3", "an ancestor's value");
+    expect_value(f, f.find_id("b"), "z-index", "4", "the fallback");
+    expect_value(f, f.find_id("b"), "order", "", "no value and no fallback");
+    // In a CUSTOM property the inherit() is replaced in the cascade, so a
+    // chain of them accumulates through the parent's already-computed value
+    // (inherit-function-basic).
+    expect_value(f, f.find_id("b"), "--w", "5", "a custom property's fallback");
+    fixture chain;
+    chain.load("<div id=e1><div id=e2><div id=e3></div></div></div>",
+               "#e1 { --v: e1 } #e2 { --v: e2 inherit(--v) } #e3 { --v: e3 inherit(--v) }");
+    expect_value(chain, chain.find_id("e3"), "--v", "e3 e2 e1", "accumulating values");
 }
 
 } // namespace
 
 int main() {
+    test_inherit_function();
     test_initial_on_a_custom_property_is_guaranteed_invalid();
     test_var_substitution();
     REPORT("style_custom_properties");

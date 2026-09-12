@@ -337,13 +337,14 @@ int main() {
     js_expect("\"a2c\".search(2)", "1");
     js_expect("\"abc\".search(\"z\")", "-1");
     // matchAll builds its RegExp with `g`, which is what makes this three
-    // matches rather than the first one forever.
-    js_expect("\"aaa\".matchAll(\"a\").length", "3");
-    js_expect("\"abc\".matchAll(\"z\").length", "0");
+    // matches rather than the first one forever - and answers an ITERATOR
+    // (22.1.3.14 step 5, since 2026-09-12; it was an array).
+    js_expect("[...\"aaa\".matchAll(\"a\")].length", "3");
+    js_expect("[...\"abc\".matchAll(\"z\")].length", "0");
     // ...and REFUSES a RegExp that has no `g`, because the answer would be
     // wrong either way (22.1.3.14 step 2b).
     js_expect(throws("\"aaa\".matchAll(/a/)"), "TypeError");
-    js_expect("\"aaa\".matchAll(/a/g).length", "3");
+    js_expect("[...\"aaa\".matchAll(/a/g)].length", "3");
     js_expect(throws("\"aaa\".replaceAll(/a/, \"b\")"), "TypeError");
     js_expect("\"aaa\".replaceAll(/a/g, \"b\")", "bbb");
 
@@ -399,6 +400,36 @@ int main() {
     // on the host's locale or Unicode tables. V8's answers are in the comments.
     js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRA\u00dfE"); // V8: STRASSE
     js_expect("\"\\u0130\".toLowerCase()", "\u0130");           // V8: i followed by U+0307
+
+    // --- the well-known-symbol protocol: match/replace/search/split/matchAll
+    // ask their argument first (22.1.3.13 step 2 and its siblings) --------
+    js_expect("'abc'.match({[Symbol.match](s){return 'got:'+s;}})", "got:abc");
+    js_expect("'abc'.replace({[Symbol.replace](s, r){return s+'/'+r;}}, 'x')", "abc/x");
+    js_expect("'abc'.search({[Symbol.search](){return 7;}})", "7");
+    js_expect("'abc'.split({[Symbol.split](s, l){return [s, l];}}, 2).join()", "abc,2");
+    js_expect("'abc'.matchAll({[Symbol.matchAll](s){return s.length;}})", "3");
+    js_expect("'abc'.match({get [Symbol.match]() { throw new Error('poison'); }})", "THREW");
+    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW"); // GetMethod: not callable
+    // GetMethod: null is absent, so RegExpCreate(ToString(obj)) runs - a class
+    // of the characters in "[object Object]" matches the b.
+    js_expect("'abc'.match({[Symbol.match]: null})[0]", "b");
+    js_expect("'abc'.match(/b/)[0]", "b"); // a real RegExp is unchanged
+    js_expect("'a-b'.split('-').length", "2");
+
+    // --- 19.2.6 the URI functions (node's answers) ---------------------------
+    js_expect("encodeURIComponent('a b&c/d?é')", "a%20b%26c%2Fd%3F%C3%A9");
+    js_expect("encodeURI('http://x/a b?q=1&r=é#f')", "http://x/a%20b?q=1&r=%C3%A9#f");
+    js_expect("encodeURIComponent(\"-_.!~*'()\")", "-_.!~*'()");
+    js_expect("decodeURIComponent('a%20b%26c%2F%C3%A9')", "a b&c/é");
+    js_expect("decodeURI('a%20b%26c%2F%C3%A9')", "a b%26c%2Fé");
+    js_expect("decodeURIComponent('%E2%82%AC')", "€");
+    js_expect("decodeURIComponent('%')", "THREW");
+    js_expect("decodeURIComponent('%zz')", "THREW");
+    js_expect("decodeURIComponent('%C0%80')", "THREW");    // overlong
+    js_expect("decodeURIComponent('%ED%A0%80')", "THREW"); // a surrogate
+    js_expect("decodeURIComponent('%E2%82')", "THREW");    // truncated
+    js_expect("encodeURIComponent()", "undefined");
+    js_expect("[encodeURI.length, decodeURIComponent.name].join()", "1,decodeURIComponent");
 
     REPORT("string_basics");
 }

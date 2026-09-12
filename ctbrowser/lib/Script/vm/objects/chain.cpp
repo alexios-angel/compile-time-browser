@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 // The VM's implementation.
@@ -32,6 +33,9 @@
 // stays in :vm; the bodies live here and are compiled once.
 
 namespace ctbrowser::script {
+
+// Defined in lookup.cpp beside the read that needs it most.
+object_object * typed_array_prototype(context & cx, element_kind kind);
 
 value context::own_keys(value source) {
     // A PROXY ENUMERATES ITS TARGET: no handler here defines ownKeys or
@@ -50,18 +54,53 @@ value context::own_keys(value source) {
         // enumerates STRING keys only, and ENUMERABLE ones only: 13.7.5.15
         // filters on [[Enumerable]], which is why a built-in method never turns
         // up in a `for (k in Math)`.
-        static_cast<object_object *>(source.as_heap())
-            ->each_own_enumerable_key(
-                [&](const std::string & name) { keys->items.push_back(string(name)); });
+        auto * obj = static_cast<object_object *>(source.as_heap());
+        obj->each_own_enumerable_key(
+            [&](const std::string & name) { keys->items.push_back(string(name)); });
+        // ...AND THE PROTOTYPE CHAIN (14.7.5.9 EnumerateObjectProperties): an
+        // inherited enumerable key is visited once, unless an own or nearer
+        // property of the same name shadows it - a non-enumerable one shadows
+        // too. `for (k in body)` reaching the Window-forwarded handlers on
+        // HTMLBodyElement.prototype is the case a page notices.
+        std::unordered_set<std::string> seen;
+        const auto shadow = [&](object_object * table) {
+            table->each_own_entry(
+                [&](const std::string & name, std::uint8_t) { seen.insert(name); });
+        };
+        shadow(obj);
+        for (value up = obj->prototype; up.is_object();) {
+            auto * parent = static_cast<object_object *>(up.as_heap());
+            std::vector<std::string> fresh;
+            parent->each_own_enumerable_key([&](const std::string & name) {
+                if (seen.find(name) == seen.end()) { fresh.push_back(name); }
+            });
+            for (const std::string & name : fresh) { keys->items.push_back(string(name)); }
+            shadow(parent);
+            up = parent->prototype;
+            if (seen.size() > 1u << 16) { break; } // a cyclic chain is a page's own bug
+        }
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::size_t n = arr->items.size();
-        for (std::size_t i = 0; i < n; ++i) { keys->items.push_back(string(std::to_string(i))); }
+        for (std::size_t i = 0; i < n; ++i) {
+            // A hole is not a property and a non-enumerable element is not
+            // enumerated - see array_object::element_attrs.
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+            }
+            keys->items.push_back(string(std::to_string(i)));
+        }
         // Then the named own properties, in definition order (10.4.2.1: the
         // integer keys first, ascending, then the strings).
         if (arr->named) {
-            arr->named->each_own_enumerable_key(
-                [&](const std::string & name) { keys->items.push_back(string(name)); });
+            arr->named->each_own_enumerable_key([&](const std::string & name) {
+                // An accessor ELEMENT's pair also lives here, under its
+                // index; it was reported above.
+                if (std::uint32_t at = 0; !object_object::array_index_key(name, at)) {
+                    keys->items.push_back(string(name));
+                }
+            });
         }
     } else if (source.is_kind(heap_kind::function)) {
         // `for (k in fn)`: a class's enumerable statics (a plain function's
@@ -125,7 +164,18 @@ void context::copy_own_properties(value target, value source) {
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::vector<value> items = arr->items;
-        for (std::size_t i = 0; i < items.size(); ++i) { into->set(std::to_string(i), items[i]); }
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+                if ((a & array_object::elem_accessor) != 0) {
+                    into->set(std::to_string(i),
+                              lookup_index(source, value::number(static_cast<double>(i))));
+                    continue;
+                }
+            }
+            into->set(std::to_string(i), items[i]);
+        }
         if (arr->named) { copy_own_properties(target, value::object(arr->named.get())); }
     }
 }
@@ -150,6 +200,11 @@ bool context::has_property(value target, value key) {
         }
         return !lookup_property(p->target, to_string(key)).is_undefined();
     }
+    return has_property(target, to_string(key));
+}
+
+bool context::has_property(value target, const std::string & name) {
+    if (target.is_kind(heap_kind::proxy)) { return has_property(target, string(name)); }
     // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
     //
     // `in` used to answer about own DATA properties of an object_object and
@@ -163,17 +218,24 @@ bool context::has_property(value target, value key) {
     // own_property is the shared [[GetOwnProperty]] over all four tables, so
     // this is that walked up the chain: the explicit prototype links first,
     // then the implicit tables property lookup falls back to.
-    const std::string name = to_string(key);
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
     value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                                    : value::undefined();
+                                    : value::null();
     // A depth cap because a page can make the chain cyclic, exactly as
     // lookup_property does.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (own_property(link, name, found)) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
     }
+    // A prototype that is not a plain object (`foo.prototype = [1]`) answers
+    // for the rest of the chain - see lookup_property.
+    if (link.is_heap() && !link.is_object() && !link.is_string()) {
+        return has_property(link, name);
+    }
+    // An explicit null [[Prototype]] (object_object::prototype) ends the chain
+    // without the implicit Object.prototype.
+    if (target.is_object() && link.is_undefined()) { return false; }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
@@ -228,11 +290,18 @@ bool context::instance_of(value target, value ctor) {
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
     value link = subject.is_object() ? static_cast<object_object *>(subject.as_heap())->prototype
-                                     : value::undefined();
+                                     : value::null();
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
     }
+    // A prototype that is not a plain object (`foo.prototype = [1]`) carries
+    // the rest of the chain - see lookup_property.
+    if (link.is_heap() && !link.is_object() && !link.is_string()) {
+        if (link.as_heap() == wanted.as_heap()) { return true; }
+        return instance_of(link, ctor);
+    }
+    if (subject.is_object() && link.is_undefined()) { return false; } // an explicit null
     // Then the IMPLICIT one. An array, a function, a string and a plain object
     // have no prototype field to walk - their chain is the tables property
     // lookup falls back to - so instanceof answered false for every builtin
@@ -246,6 +315,18 @@ bool context::instance_of(value target, value ctor) {
     if (subject.is_object_like()) {
         for (object_object * table : implicit_prototypes(subject)) {
             if (table != nullptr && table == wanted.as_heap()) { return true; }
+        }
+    }
+    // A TYPED ARRAY's chain starts at its kind's own prototype (23.2.7),
+    // which is not one of the implicit tables.
+    if (subject.is_array()) {
+        auto * arr = static_cast<array_object *>(subject.as_heap());
+        for (object_object * table = typed_array_prototype(*this, arr->elements);
+             table != nullptr;) {
+            if (table == wanted.as_heap()) { return true; }
+            table = table->prototype.is_object()
+                        ? static_cast<object_object *>(table->prototype.as_heap())
+                        : nullptr;
         }
     }
     return false;

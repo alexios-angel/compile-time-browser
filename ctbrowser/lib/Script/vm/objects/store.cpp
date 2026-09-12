@@ -33,6 +33,9 @@
 
 namespace ctbrowser::script {
 
+// ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
+bool array_set_length(array_object & arr, double n);
+
 // op::set_index's body, extracted verbatim so the interpreter and a compiled
 // body run one implementation rather than two - ct_aot_set_index is the other
 // caller.
@@ -64,15 +67,53 @@ void context::store_index(value target, value key, value v) {
         if (i >= 0) {
             const auto index = static_cast<std::uint64_t>(i);
             if (index < arr->items.size()) {
-                // FROZEN MEANS FROZEN. Silently in sloppy mode - TODO(strict):
-                // this is a TypeError under "use strict", which the engine does
-                // not have (docs/test262.md names the gap).
-                if (!arr->elements_writable) { return; }
+                // FROZEN MEANS FROZEN. Silently in sloppy mode - a TypeError
+                // under "use strict", which strict_store_check raises off
+                // store_rejected_.
+                if (!arr->elements_writable) {
+                    store_rejected_ = true;
+                    return;
+                }
+                // An element with attributes of its own, an accessor element,
+                // or a hole - see array_object::element_attrs.
+                if (!arr->element_attrs.empty()) [[unlikely]] {
+                    const auto at = static_cast<std::uint32_t>(index);
+                    if (const std::uint8_t * e = arr->find_element_attrs(at)) {
+                        if ((*e & array_object::elem_accessor) != 0) {
+                            accessor_entry * entry =
+                                arr->named ? arr->named->find_accessor(std::to_string(at))
+                                           : nullptr;
+                            if (entry != nullptr && entry->setter.is_callable()) {
+                                const value args[1] = {v};
+                                (void)call(entry->setter, args, target);
+                            } else {
+                                store_rejected_ = true;
+                            }
+                            return;
+                        }
+                        if ((*e & array_object::elem_hole) != 0) {
+                            // A hole is not a property: [[Set]] creates one,
+                            // which a non-extensible array refuses.
+                            if (!arr->extensible) {
+                                store_rejected_ = true;
+                                return;
+                            }
+                            arr->set_element_attrs(at, attr_default);
+                        } else if ((*e & attr_writable) == 0) {
+                            store_rejected_ = true;
+                            return;
+                        }
+                    }
+                }
                 arr->items[static_cast<std::size_t>(index)] = v;
                 return;
             }
-            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS.
-            if (!arr->extensible) { return; }
+            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS, and neither does one
+            // whose `length` is not writable (10.4.2.1 step 2.d).
+            if (!arr->extensible || (!arr->length_writable && index >= arr->js_length())) {
+                store_rejected_ = true;
+                return;
+            }
             // HOW MANY SLOTS THIS ONE WRITE WOULD MATERIALISE. `a[4294967295]
             // = "x"` asked for 34 GB and std::bad_alloc ended the process; the
             // test is on the SIZE OF THE JUMP so that a sequential fill, whose
@@ -106,6 +147,36 @@ void context::store_property(value target, const std::string & name, value v) {
                                      " (setting '" + name + "')");
         return;
     }
+    // A PRIVATE NAME IS A BRAND CHECK ON THE WRITE TOO (7.3.32 PrivateSet):
+    // an object whose class did not add the element is the TypeError, as
+    // lookup_property's read is - and a private METHOD, which lives on the
+    // prototype under its key, is not writable at all; only a private
+    // accessor's setter (further down the chain walk) may take the value.
+    // A field is DEFINED by the class's initialiser, not written, so it never
+    // comes through here before it exists.
+    if (is_private_key(name)) [[unlikely]] {
+        const std::size_t colon = name.find(':');
+        const std::string shown =
+            name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
+        if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
+            !has_property(target, name)) {
+            throw_error("TypeError", "Cannot write private member " + shown +
+                                         " to an object whose class did not declare it");
+            return;
+        }
+        property_descriptor own;
+        if (!own_property(target, name, own)) {
+            for (value up = get_prototype(target); up.is_object_like(); up = get_prototype(up)) {
+                property_descriptor found;
+                if (!own_property(up, name, found)) { continue; }
+                if (!found.is_accessor()) {
+                    throw_error("TypeError", "Private method " + shown + " is not writable");
+                    return;
+                }
+                break;
+            }
+        }
+    }
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.
     if (target.is_kind(heap_kind::proxy)) {
@@ -113,7 +184,12 @@ void context::store_property(value target, const std::string & name, value v) {
         const value trap = proxy_trap(target, "set");
         if (trap.is_callable()) {
             const value args[4] = {p->target, string(name), v, target};
-            (void)call(trap, args, p->handler);
+            // 10.5.9 step 9: a trap answering false is a REJECTED write -
+            // silent here, the TypeError in strict code (strict_store_check).
+            // An HTMLCollection's index is the everyday case.
+            if (!truthy(call(trap, args, p->handler)) && !throw_pending()) {
+                store_rejected_ = true;
+            }
             return;
         }
         store_property(p->target, name, v);
@@ -139,19 +215,37 @@ void context::store_property(value target, const std::string & name, value v) {
         // hash the name twice, and this is the hottest write in the engine.
         obj->normalise();
         if (const auto it = obj->index.find(name); it != obj->index.end()) {
-            if ((obj->attrs_at(it->second) & attr_writable) == 0) { return; }
+            if ((obj->attrs_at(it->second) & attr_writable) == 0) {
+                store_rejected_ = true;
+                return;
+            }
             obj->props[it->second].second = v;
             return;
         }
         for (value up = obj->prototype; up.is_object();) {
             auto * parent = static_cast<object_object *>(up.as_heap());
             if (parent->find(name) != nullptr) {
-                if ((parent->attrs_of(name) & attr_writable) == 0) { return; }
+                if ((parent->attrs_of(name) & attr_writable) == 0) {
+                    store_rejected_ = true;
+                    return;
+                }
                 break;
             }
             up = parent->prototype;
         }
-        if (!obj->extensible) { return; }
+        if (!obj->extensible) {
+            store_rejected_ = true;
+            return;
+        }
+        // A STRING WRAPPER'S `length` AND INDICES are own, non-writable
+        // (10.4.3.1): the write is refused, not shadowed.
+        if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
+            property_descriptor slot_owned;
+            if (primitive_slot(target) != nullptr && own_property(target, name, slot_owned)) {
+                store_rejected_ = true;
+                return;
+            }
+        }
         obj->set(name, v);
         return;
     }
@@ -187,12 +281,18 @@ void context::store_property(value target, const std::string & name, value v) {
                     return;
                 }
                 if (arr->named->find(name) != nullptr) {
-                    if ((arr->named->attrs_of(name) & attr_writable) == 0) { return; }
+                    if ((arr->named->attrs_of(name) & attr_writable) == 0) {
+                        store_rejected_ = true;
+                        return;
+                    }
                     arr->named->set(name, v);
                     return;
                 }
             }
-            if (!arr->extensible) { return; }
+            if (!arr->extensible) {
+                store_rejected_ = true;
+                return;
+            }
             arr->named_table().set(name, v);
             return;
         }
@@ -200,15 +300,26 @@ void context::store_property(value target, const std::string & name, value v) {
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
+        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze.
+        if (!arr->length_writable) {
+            store_rejected_ = true;
+            return;
+        }
         // A RangeError, WHICH IT USED TO SWALLOW. 10.4.2.4 step 3 makes any
         // length that is not a uint32 a RangeError, and dropping the write
         // instead was leniency bought at the cost of a test that checks for the
         // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
         // that asked for 34 GB. set_js_length records what it will not
         // materialise; see array_object::dense_limit.
-        if (!arr->set_js_length(to_number(v))) {
+        // ToNumber runs a valueOf: `a.length = new Number(6)` is 6 (10.4.2.4).
+        const double n = to_number_value(v);
+        if (throw_pending()) { return; }
+        if (!(n >= 0) || n > array_object::max_length || n != std::trunc(n)) {
             throw_error("RangeError", "Invalid array length");
+            return;
         }
+        // A non-configurable element stops the shrink (descriptors.cpp).
+        if (!array_set_length(*arr, n)) { store_rejected_ = true; }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
@@ -223,8 +334,13 @@ void context::store_property(value target, const std::string & name, value v) {
         // The same three checks as an object's - see above, TODO(strict) and
         // all. `Array.prototype = x` is the one every page tries by accident.
         if (fn->find(name) != nullptr) {
-            if ((fn->attrs_of(name) & attr_writable) == 0) { return; }
-        } else if (!fn->extensible) {
+            if ((fn->attrs_of(name) & attr_writable) == 0) {
+                store_rejected_ = true;
+                return;
+            }
+        } else if (!fn->extensible || (name == "name" && !fn->name_erased)) {
+            // ...and a native's synthesised `name` is non-writable too.
+            store_rejected_ = true;
             return;
         }
         fn->set(name, v);
@@ -238,15 +354,28 @@ void context::store_property(value target, const std::string & name, value v) {
             (void)call(entry->setter, args, target);
         } else {
             if (closure->find(name) != nullptr) {
-                if ((closure->attrs_of(name) & attr_writable) == 0) { return; }
+                if ((closure->attrs_of(name) & attr_writable) == 0) {
+                    store_rejected_ = true;
+                    return;
+                }
             } else if (!closure->extensible) {
+                store_rejected_ = true;
+                return;
+            } else if ((name == "length" || name == "name") && closure->proto != nullptr) {
+                // The SYNTHESISED `length` and `name` (own_property answers
+                // them off the compiled function, { false, false, true }) are
+                // not writable: the write is refused, not shadowed by a new
+                // own entry. defineProperty still redefines them.
+                store_rejected_ = true;
                 return;
             }
             closure->set(name, v);
         }
+        return;
     }
     // A write to a number, a string or undefined is silently dropped, which is
-    // what non-strict JavaScript does.
+    // what non-strict JavaScript does - and a TypeError in strict code.
+    store_rejected_ = true;
 }
 
 bool context::assign_through_accessor(value target, const std::string & name, value v) {
@@ -262,11 +391,13 @@ bool context::assign_through_accessor(value target, const std::string & name, va
                 (void)call(entry->setter, args, target);
                 return true;
             }
-            // Getter with no setter: the write is DISCARDED, as in strict-mode
-            // JavaScript minus the throw. Silently defining a data property
-            // over it would shadow the getter forever.
+            // Getter with no setter: the write is DISCARDED (a TypeError in
+            // strict code). Silently defining a data property over it would
+            // shadow the getter forever.
+            store_rejected_ = true;
             return true;
         }
+        if (obj->prototype.is_undefined()) { return false; } // an explicit null [[Prototype]]
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
     }

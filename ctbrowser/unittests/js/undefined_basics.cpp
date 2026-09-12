@@ -71,14 +71,10 @@ int main() {
     js_expect("JSON.stringify(undefined)", "undefined");
     js_expect("JSON.stringify(function(){})", "undefined");
 
-    // --- KNOWN WRONG, pinned so a fix trips over them -------------------------
-    // ARRAY HOLES. `[,1]` has no element at 0 - `in` says false and Object.keys
-    // skips it - where this engine materialises every slot as undefined.
-    js_expect("0 in [,1]", "true"); // V8: false
-    // 2, not 0, since Object.keys became generic: it used to answer `[]` for
-    // EVERY array, which read as the right answer here for the wrong reason.
-    // The remaining gap is the hole itself, which is the line above.
-    js_expect("Object.keys([,1]).length", "2"); // V8: 1
+    // ARRAY HOLES. `[,1]` has no element at 0 (13.2.4.1): `in` says false and
+    // Object.keys skips it. The elision used to materialise as undefined.
+    js_expect("0 in [,1]", "false");
+    js_expect("Object.keys([,1]).length", "1");
 
     REPORT("undefined_basics");
 }

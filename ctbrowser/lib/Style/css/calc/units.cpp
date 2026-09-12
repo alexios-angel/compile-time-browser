@@ -103,14 +103,13 @@ namespace detail {
         }
     }
     // A length goes through the one function that owns the pixel bases, so there
-    // is exactly one place `rem` and `vw` are defined - and, deliberately, at the
-    // same `float` precision the rest of the cascade folds a plain `1cm` at.
-    // `test_math_used` compares the computed value of `min(1cm)` against that of
-    // `1cm`, so the two paths agreeing matters far more here than either being
-    // exact; widening this one alone would break every such pair. It can become a
-    // double the day `folded()` in `style/engine.hpp` folds through
-    // `canonical_dimension_text`.
-    if (const std::optional<float> px = unit_to_px(static_cast<float>(value), unit, ctx)) {
+    // is exactly one place `rem` and `vw` are defined. IN DOUBLE, like every
+    // other term: `mod(18vw, 5vw)` folded at float precision came out
+    // `30.720005px` against the `30.72px` a plain `3vw` prints
+    // (round-mod-rem-computed), because two bases rounded to 24 bits and then
+    // subtracted three times over do not cancel. The cascade's `folded()` folds
+    // a plain `1cm` through this same function, so the two paths agree.
+    if (const std::optional<double> px = unit_to_px(value, unit, ctx)) {
         out.set_type(numeric_type::length);
         out.value = *px;
         return out;
@@ -157,20 +156,29 @@ std::string_view canonical_unit(numeric_type type) noexcept {
     return {};
 }
 
-std::optional<float> unit_to_px(float value, std::string_view unit, const length_context & ctx) {
+std::optional<double> unit_to_px(double value, std::string_view unit, const length_context & ctx) {
     if (unit.empty()) { return value; } // a plain number in a calc term
     if (ascii_iequals(unit, "px")) { return value; }
     if (ascii_iequals(unit, "em")) { return value * ctx.font_size; }
     if (ascii_iequals(unit, "rem")) { return value * ctx.root_font_size; }
-    // ch and ex need font metrics the style engine deliberately cannot see -
-    // layout/values.hpp is explicit that measurement is injected - so both take
-    // CSS's own fallback of half an em. Bootstrap uses neither.
-    if (ascii_iequals(unit, "ch") || ascii_iequals(unit, "ex")) {
-        return value * ctx.font_size / 2;
+    // `ch` is the advance of `0`, which the context carries when the shell
+    // injected a measurement (engine::set_text_measure) and otherwise CSS's
+    // own fallback of half an em. `ex` needs an x-height no backend here
+    // exposes and takes the fallback always. Bootstrap uses neither.
+    if (ascii_iequals(unit, "ch")) {
+        return value * (ctx.zero_advance > 0.0f ? ctx.zero_advance : ctx.font_size / 2);
     }
-    if (ascii_iequals(unit, "rch") || ascii_iequals(unit, "rex")) {
-        return value * ctx.root_font_size / 2;
+    if (ascii_iequals(unit, "rch")) {
+        return value *
+               (ctx.root_zero_advance > 0.0f ? ctx.root_zero_advance : ctx.root_font_size / 2);
     }
+    if (ascii_iequals(unit, "ex")) { return value * ctx.font_size / 2; }
+    if (ascii_iequals(unit, "rex")) { return value * ctx.root_font_size / 2; }
+    // `cap` is the cap height, and where that cannot be determined CSS Values 4
+    // §6.1.1 says the font's ASCENT is used - which is 0.8em, layout's own
+    // fallback ascent (layout/values.hpp). No backend here exposes either.
+    if (ascii_iequals(unit, "cap")) { return value * ctx.font_size * 0.8; }
+    if (ascii_iequals(unit, "rcap")) { return value * ctx.root_font_size * 0.8; }
     // `ic` is the advance of the CJK water ideograph, and CSS's own fallback
     // for a font without one is 1em. `lh` and `rlh` are the line heights the
     // context carries - see length_context.
@@ -185,32 +193,44 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     //
     // ponytail: horizontal-tb assumed for `vi`/`vb`; thread the writing mode
     // through length_context when a vertical page asks.
-    const auto viewport_axis = [&](std::string_view suffix) -> std::optional<float> {
-        if (suffix == "w" || suffix == "i") { return ctx.viewport_width; }
-        if (suffix == "h" || suffix == "b") { return ctx.viewport_height; }
-        if (suffix == "min") { return std::min(ctx.viewport_width, ctx.viewport_height); }
-        if (suffix == "max") { return std::max(ctx.viewport_width, ctx.viewport_height); }
+    const auto viewport_axis = [&](std::string_view suffix) -> std::optional<double> {
+        const double w = ctx.viewport_width;
+        const double h = ctx.viewport_height;
+        if (suffix == "w" || suffix == "i") { return w; }
+        if (suffix == "h" || suffix == "b") { return h; }
+        if (suffix == "min") { return std::min(w, h); }
+        if (suffix == "max") { return std::max(w, h); }
         return std::nullopt;
     };
     if (unit.size() >= 2 && (unit[0] == 'v' || unit[0] == 'V')) {
         if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(1)))) {
-            return value * *axis / 100.0f;
+            return value * *axis / 100.0;
         }
     }
     if (unit.size() >= 3 && (unit[1] == 'v' || unit[1] == 'V') &&
         (unit[0] == 's' || unit[0] == 'l' || unit[0] == 'd' || unit[0] == 'S' || unit[0] == 'L' ||
          unit[0] == 'D')) {
         if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(2)))) {
-            return value * *axis / 100.0f;
+            return value * *axis / 100.0;
+        }
+    }
+    // THE CONTAINER QUERY UNITS, CSS Containment 3 §container-lengths: "if no
+    // eligible query container is available, then use the small viewport size
+    // for that axis". There are no query containers here, so that is what they
+    // always are - `sign(0cqi / 1px)` is 0, not a value waiting for layout.
+    if (unit.size() >= 3 && (unit[0] == 'c' || unit[0] == 'C') &&
+        (unit[1] == 'q' || unit[1] == 'Q')) {
+        if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(2)))) {
+            return value * *axis / 100.0;
         }
     }
     // The absolute units, all defined against the CSS inch of 96px.
-    if (ascii_iequals(unit, "in")) { return value * 96.0f; }
-    if (ascii_iequals(unit, "cm")) { return value * 96.0f / 2.54f; }
-    if (ascii_iequals(unit, "mm")) { return value * 96.0f / 25.4f; }
-    if (ascii_iequals(unit, "q")) { return value * 96.0f / 101.6f; }
-    if (ascii_iequals(unit, "pt")) { return value * 96.0f / 72.0f; }
-    if (ascii_iequals(unit, "pc")) { return value * 16.0f; }
+    if (ascii_iequals(unit, "in")) { return value * 96.0; }
+    if (ascii_iequals(unit, "cm")) { return value * 96.0 / 2.54; }
+    if (ascii_iequals(unit, "mm")) { return value * 96.0 / 25.4; }
+    if (ascii_iequals(unit, "q")) { return value * 96.0 / 101.6; }
+    if (ascii_iequals(unit, "pt")) { return value * 96.0 / 72.0; }
+    if (ascii_iequals(unit, "pc")) { return value * 16.0; }
     return std::nullopt;
 }
 
@@ -224,7 +244,9 @@ std::optional<float> length_text_to_px(std::string_view text, const length_conte
     if (tok == nullptr) { return std::nullopt; }
     if (tok->type == token_type::number) { return static_cast<float>(tok->number); }
     if (tok->type != token_type::dimension) { return std::nullopt; }
-    return unit_to_px(static_cast<float>(tok->number), tokens.unit_of(*tok), ctx);
+    const std::optional<double> px = unit_to_px(tok->number, tokens.unit_of(*tok), ctx);
+    if (!px) { return std::nullopt; }
+    return static_cast<float>(*px);
 }
 
 std::optional<std::string> canonical_dimension_text(std::string_view text,

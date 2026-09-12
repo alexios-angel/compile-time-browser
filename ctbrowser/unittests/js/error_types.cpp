@@ -118,6 +118,43 @@ int main() {
     // ...and an engine-raised error still carries a stack and reads back as one.
     js_expect(caught("(void 0)()", "typeof e.stack"), "string");
     js_expect(caught("(void 0)()", "e.toString().indexOf('TypeError: ')===0"), "true");
+    // A CONSTRUCTED error's `stack` is Error.prototype's accessor over a
+    // private [[ErrorData]] slot (the error-stacks proposal): no own property,
+    // a string through the getter, the setter making an own data property.
+    js_expect("typeof new Error('m').stack", "string");
+    js_expect("new Error('m').stack.indexOf('Error: m')", "0");
+    js_expect("new Error('m').hasOwnProperty('stack')", "false");
+    js_expect("Object.getOwnPropertyNames(new RangeError('m')).join()", "message");
+    js_expect("typeof Object.getOwnPropertyDescriptor(Error.prototype,'stack').get", "function");
+    js_expect("Object.getOwnPropertyDescriptor(Error.prototype,'stack').get.call({})", "undefined");
+    js_expect("Object.getOwnPropertyDescriptor(Error.prototype,'stack').get.call(1)", "THREW");
+    js_expect("(function(){var e=new Error('m');e.stack='s';return e.stack+','"
+              "+Object.getOwnPropertyDescriptor(e,'stack').enumerable;})()",
+              "s,true");
+    js_expect("(function(){var e=new Error('m');e.stack=1;})()", "THREW");
+    // 20.5.2.1 Error.isError: [[ErrorData]] and nothing that merely looks like it.
+    js_expect("Error.isError(new TypeError())", "true");
+    js_expect("Error.isError(TypeError())", "true");
+    js_expect("Error.isError({__proto__: Error.prototype, message: '', stack: 's'})", "false");
+    js_expect("Error.isError(Error.prototype)", "false");
+    js_expect("Error.isError(1)", "false");
+    // ...and an ENGINE-RAISED error has [[ErrorData]] too: make_error records
+    // its trace in the same slot, with `message` non-enumerable (20.5.1.1).
+    js_expect(caught("(void 0)()", "Error.isError(e)"), "true");
+    js_expect(caught("(void 0)()", "e.hasOwnProperty('stack')"), "false");
+    js_expect(caught("(void 0)()", "Object.keys(e).length"), "0");
+    // 20.5.1.1 step 4: `cause` off the options, after `message`; a Symbol
+    // message refuses; 20.5.3.4 toString on a non-object refuses and fills in
+    // the defaults.
+    js_expect("Object.getOwnPropertyNames(new Error('m',{cause:1})).join()", "message,cause");
+    js_expect("new Error('m',{cause:undefined}).hasOwnProperty('cause')", "true");
+    js_expect("new Error('m',{}).hasOwnProperty('cause')", "false");
+    js_expect("new Error(Symbol())", "THREW");
+    js_expect("Error.prototype.toString.call(1)", "THREW");
+    js_expect("Error.prototype.toString.call({})", "Error");
+    js_expect("Error.prototype.toString.call({name:'',message:'m'})", "m");
+    js_expect("Error.prototype.toString.call({name:'N',message:undefined})", "N");
+    js_expect("Error.prototype.toString.call({message:Symbol()})", "THREW");
 
     // ================================================================
     // 5. A KIND THE ENGINE HAS NO CONSTRUCTOR FOR falls back to Error

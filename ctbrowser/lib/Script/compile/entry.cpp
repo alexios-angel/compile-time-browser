@@ -18,12 +18,28 @@ void compiler_impl::compile_program() {
     push_scope();
 
     const vp::node & root = at(ast_.root);
+    // A module is strict code; a script is when it says so (11.2.1, 16.2.1).
+    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root);
+    out_.functions[script].is_strict = fn().is_strict;
     build_capture_index();
     fn().captures = range_of(ast_.root);
     collect_declared_names(ast_.root);
     // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
     // exactly as a function body's are. A classic script's are globals and
     // need none of this, which is why it was never called here before.
+    // A CLASSIC SCRIPT HOISTS ITS `var`s (16.1.7 GlobalDeclarationInstantiation
+    // step 12: CreateGlobalVarBinding for each, undefined unless it already
+    // exists): `use(x); var x = 1;` reads undefined, and since 2026-09-12 an
+    // unbound name is a ReferenceError, so without this the hoisting gap
+    // became a throw. Recorded on the program rather than emitted - a call
+    // at the top of every script was a global read no native pipeline could
+    // type - and context::run binds them before the first instruction.
+    if (!module_scope_) {
+        collect_hoisted_vars(ast_.root, out_.hoisted_vars);
+        std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
+        out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
+                                out_.hoisted_vars.end());
+    }
     if (module_scope_) {
         predeclare_locals(ast_.root);
         // THEN THE IMPORTS, still at entry: a function declared anywhere in
@@ -80,6 +96,20 @@ void compiler_impl::compile_program() {
     finish_frame(fn().proto, 0);
     pop_scope();
     frames_.pop_back();
+}
+
+bool compiler_impl::has_use_strict_directive(std::int32_t body) const {
+    if (body < 0) { return false; }
+    for (const std::int32_t s : kids(at(body))) {
+        const vp::node & stmt = at(s);
+        if (stmt.kind != vp::nk::expr_stmt || stmt.a < 0) { return false; }
+        const vp::node & e = at(stmt.a);
+        if (e.kind != vp::nk::str) { return false; } // the prologue ended
+        // The lexeme keeps its quotes, and escapes are not allowed to spell
+        // it (11.2.1: "the exact code point sequence").
+        if (e.text == "\"use strict\"" || e.text == "'use strict'") { return true; }
+    }
+    return false;
 }
 
 } // namespace ctbrowser::script::detail

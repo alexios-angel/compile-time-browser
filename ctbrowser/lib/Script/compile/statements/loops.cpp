@@ -205,8 +205,11 @@ void compiler_impl::compile_for(const vp::node & n) {
 // generator is pulled lazily and a promise in a sync iterator's `value` is
 // awaited. Only the statement form; `for await` at a module's top level is
 // refused with the same message as an `await` there would be.
-// NOT DONE: AsyncIteratorClose on `break`/`throw` (the sync loop has no
-// IteratorClose either).
+// AsyncIteratorClose (7.4.13) runs on `break` and on a throw out of the body:
+// the iterator's `return()`, if it has one, is called and awaited. A `return`
+// statement inside the body and a throw from `next()` itself do not close
+// (the first is a known gap; the second is the specification). The sync
+// for-of below closes on `break` only.
 void compiler_impl::compile_for_await(const vp::node & n) {
     if (!fn().is_async) {
         fail("`for await` outside an async function");
@@ -246,12 +249,39 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     } else if (const local * l = find_local_entry(fn(), target.text); l != nullptr && l->boxed) {
         proto().emit(instruction{op::new_cell, item});
     }
+    // The body is protected so a throw closes the iterator; `continue` and the
+    // fall-through pop the handler, `break` pops it on its way out (it counts
+    // in handler_depth_).
+    const std::uint16_t caught = alloc_reg();
+    const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
+    ++handler_depth_;
     compile_stmt(n.c);
-
+    --handler_depth_;
     patch_continues(loops_.back(), proto().code.size());
+    proto().emit(instruction{op::pop_handler});
     patch_jump(proto().emit(instruction{op::jump}), top);
-    patch_here(exit);
+
+    // `return()` on the iterator, awaited, when it has one.
+    const auto close = [&] {
+        const std::uint16_t back = alloc_reg();
+        proto().emit(instruction{op::get_prop, back, iterator, name_operand("return")});
+        const std::size_t has = proto().emit(instruction{op::jump_if_defined, back});
+        const std::size_t none = proto().emit(instruction{op::jump});
+        patch_here(has);
+        proto().emit(instruction{op::call_receiver, back, 0, iterator});
+        proto().emit(instruction{op::await_value, back, back});
+        patch_here(none);
+    };
+    // break: close, then leave.
     patch_breaks(loops_.back());
+    close();
+    const std::size_t leave = proto().emit(instruction{op::jump});
+    // throw: close, then rethrow.
+    patch_here(guard);
+    close();
+    proto().emit(instruction{op::throw_value, caught});
+    patch_here(exit);
+    patch_here(leave);
     loops_.pop_back();
     release_to(mark);
     pop_scope();
@@ -268,18 +298,29 @@ void compiler_impl::compile_for_of(const vp::node & n) {
 
     const std::uint16_t source = alloc_reg();
     compile_expr(n.b, source);
-    if (n.text == "in") {
-        proto().emit(instruction{op::own_keys, source, source});
-    } else {
-        // `for (x of ...)` TAKES ANYTHING ITERABLE. This is an index loop over
-        // `length`, so a Map or a Set - which has neither - ran zero times and
-        // reported nothing.
+    const bool of = n.text != "in";
+    // `for (x of ...)` RUNS THE ITERATOR PROTOCOL for a generator or a page's
+    // own iterable - one `next()` per iteration, `return()` on `break` - and
+    // stays the index loop for everything op::iterable materialises exactly:
+    // see for_of_open_name, which answers undefined for those. The choice is
+    // one register tested at the top of every iteration, so the two paths
+    // share one body and one set of locals, and `for (x in ...)` never has a
+    // record at all. Not closed on a `return` or a throw out of the body:
+    // that needs a handler round the body, and a protected region is what
+    // ctcompile's importer refuses a function for.
+    const std::uint16_t record = of ? alloc_reg() : 0;
+    std::size_t lazy = 0;
+    if (of) {
+        emit_iterator_native(for_of_open_name, record, source);
+        lazy = proto().emit(instruction{op::jump_if_defined, record});
         proto().emit(instruction{op::iterable, source, source});
+    } else {
+        proto().emit(instruction{op::own_keys, source, source});
     }
-
     const std::uint16_t length = alloc_reg();
     const std::uint16_t length_name = name_operand("length");
     proto().emit(instruction{op::get_prop, length, source, length_name});
+    if (of) { patch_here(lazy); }
     const std::uint16_t index = alloc_reg();
     emit_const(index, value::number(0));
     const std::uint16_t one = alloc_reg();
@@ -301,11 +342,20 @@ void compiler_impl::compile_for_of(const vp::node & n) {
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
+    const std::size_t step = of ? proto().emit(instruction{op::jump_if_defined, record}) : 0;
     const std::uint16_t test = alloc_reg();
     proto().emit(instruction{op::less, test, index, length});
     const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
-
     proto().emit(instruction{op::get_index, item, source, index});
+    std::size_t finished = 0;
+    if (of) {
+        const std::size_t body = proto().emit(instruction{op::jump});
+        patch_here(step);
+        emit_iterator_native(iterator_next_name, item, record);
+        proto().emit(instruction{op::get_prop, test, record, name_operand("done")});
+        finished = proto().emit(instruction{op::jump_if_true, test});
+        patch_here(body);
+    }
     if (is_shape) {
         compile_pattern_binding(target.b, item, declares);
     } else if (!declares) {
@@ -322,7 +372,13 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     proto().emit(instruction{op::add, index, index, one});
     patch_jump(proto().emit(instruction{op::jump}), top);
     patch_here(exit);
+    // `break` lands here too: IteratorClose (7.4.10) on a record that is not
+    // done, nothing at all on the index loop's undefined or a finished one.
     patch_breaks(loops_.back());
+    if (of) {
+        patch_here(finished);
+        emit_iterator_native(iterator_close_name, record, record, 0);
+    }
     loops_.pop_back();
     release_to(mark);
     pop_scope();

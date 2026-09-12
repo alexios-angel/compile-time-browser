@@ -74,7 +74,43 @@ namespace detail {
         out += unit;
     };
     if (value.has_percent) { append(value.percent, "%"); }
-    for (const auto & [unit, coefficient] : sorted) { append(coefficient, unit); }
+    for (const auto & [unit, coefficient] : sorted) {
+        // A FUNCTION TERM: `360deg * sibling-count()`, `2 * sibling-index()`,
+        // or the bare function when nothing multiplies it - and calc-size()'s
+        // `size`, which is one for this purpose: `30px + (0.5 * size)`.
+        if (unit.ends_with("()") || unit == "size" || unit.ends_with("*size")) {
+            const std::size_t star = unit.find('*');
+            const std::string_view dimension = star == std::string::npos
+                                                   ? std::string_view{}
+                                                   : std::string_view{unit}.substr(0, star);
+            const std::string_view function = star == std::string::npos
+                                                  ? std::string_view{unit}
+                                                  : std::string_view{unit}.substr(star + 1);
+            if (dimension.empty() && coefficient == 1.0) {
+                if (!out.empty()) { out += " + "; }
+                out += function;
+                continue;
+            }
+            // A product inside a sum is parenthesised, §10.13: `calc(10% +
+            // (10px * sibling-index()))`; alone it is the whole calc().
+            const bool in_sum = parts > 1;
+            if (in_sum) {
+                out += out.empty() ? "(" : " + (";
+                std::string one;
+                std::swap(one, out);
+                append(coefficient, dimension);
+                std::swap(one, out);
+                out += one;
+            } else {
+                append(coefficient, dimension);
+            }
+            out += " * ";
+            out += function;
+            if (in_sum) { out += ')'; }
+            continue;
+        }
+        append(coefficient, unit);
+    }
     return out;
 }
 
@@ -95,8 +131,22 @@ std::string serialize_calc(const calc_result & value) {
     // `calc(infinity)`, `calc(-infinity)`, `calc(NaN * 1px)`. Printing `infpx`
     // or `nan%` - which `std::to_string` would have done - is not a CSS value at
     // all, and a page reading it back gets something it cannot re-parse.
+    const auto word_of = [](double v) -> std::string {
+        return std::isnan(v) ? "NaN" : (v > 0 ? "infinity" : "-infinity");
+    };
+    // ...AND A PERCENTAGE BESIDE IT IS KEPT, finite or not: `calc(infinity *
+    // 1px - infinity * 1%)` is a NaN once the basis exists, and printing only
+    // the length would make it the bound instead (calc-infinity-nan-computed).
+    if (value.has_percent && !percent_only &&
+        (!std::isfinite(value.px) || !std::isfinite(value.percent))) {
+        const auto one = [&](double v, std::string_view u) {
+            return std::isfinite(v) ? format_number(v) + std::string{u}
+                                    : word_of(v) + " * 1" + std::string{u};
+        };
+        return "calc(" + one(value.percent, "%") + " + " + one(value.px, unit) + ")";
+    }
     if (!std::isfinite(lead)) {
-        const std::string word = std::isnan(lead) ? "NaN" : (lead > 0 ? "infinity" : "-infinity");
+        const std::string word = word_of(lead);
         if (unit.empty()) { return "calc(" + word + ")"; }
         return "calc(" + word + " * 1" + std::string{unit} + ")";
     }

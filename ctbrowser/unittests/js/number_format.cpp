@@ -144,13 +144,25 @@ int main() {
     js_expect("(77.1234).toExponential(2)", "7.71e+1");
     js_expect("(0).toExponential(1)", "0.0e+0");
     js_expect("(5).toExponential()", "5e+0");
-    js_expect("(1234.5).toExponential(3)", "1.234e+3");
+    // A TIE ROUNDS UP (21.1.3.2 step 10.b picks the larger n; to_chars picks
+    // the even one, which is what "1.234e+3" was - test262's
+    // toExponential/return-values.js pins (25).toExponential(0) as "3e+1").
+    js_expect("(1234.5).toExponential(3)", "1.235e+3");
+    js_expect("(25).toExponential(0)", "3e+1");
+    js_expect("(12345).toExponential(3)", "1.235e+4");
+    js_expect("(0.125).toExponential(1)", "1.3e-1");
+    js_expect("(9.5).toExponential(0)", "1e+1");    // the carry moves the exponent
+    js_expect("(1.25).toExponential(1)", "1.3e+0"); // 1.25 is exact, so a tie
+    js_expect("(1.35).toExponential(1)", "1.4e+0"); // 1.35 is not (1.350000000000000088...)
 
     // --- toPrecision --------------------------------------------------------
     js_expect("(1234.5).toPrecision(2)", "1.2e+3");
     js_expect("(0.000123).toPrecision(2)", "0.00012");
     js_expect("(123456).toPrecision(3)", "1.23e+5");
     js_expect("(1.5).toPrecision(3)", "1.50");
+    js_expect("(1234.5).toPrecision(4)", "1235"); // the same tie rule, 21.1.3.5
+    js_expect("(2.5).toPrecision(1)", "3");
+    js_expect("(99.5).toPrecision(2)", "1.0e+2");
 
     // --- the way back: ToNumber on a string ---------------------------------
     // Trailing garbage is NaN rather than a prefix - that is ToNumber, and it is

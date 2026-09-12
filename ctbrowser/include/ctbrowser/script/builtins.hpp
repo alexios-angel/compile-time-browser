@@ -51,6 +51,62 @@ inline constexpr std::string_view class_defined_name = "__ctbrowser_class_define
 // record (CreateAsyncFromSyncIterator, 27.1.6.1). The loop itself is bytecode:
 // `next()` through call_receiver, await_value, get_prop done/value.
 inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_iterator";
+// THE ITERATOR RECORD of an array destructuring (8.6.2 IteratorBindingInitialization,
+// 13.15.5.5 IteratorDestructuringAssignmentEvaluation), as three natives over
+// one plain object {iterator, next, done}: `open(v)` is GetIterator(v) into a
+// record, `next(rec)` is IteratorStep + IteratorValue writing rec.done, and
+// `close(rec, suppress)` is IteratorClose - `return()` when the record is not
+// done, its own throw swallowed when `suppress` is true because a throw is
+// already in flight. The pattern itself is bytecode around these calls.
+inline constexpr std::string_view iterator_open_name = "__ctbrowser_iter_open";
+inline constexpr std::string_view iterator_next_name = "__ctbrowser_iter_next";
+inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close";
+// A SYNC for-of's OPEN (14.7.5.6): `undefined` when the source is one the
+// index loop over op::iterable already handles exactly - an array, a string,
+// a proxy, a Map or Set, a library iterator, or an array-like with no
+// @@iterator - and otherwise GetIterator(v) into the same record as
+// iterator_open_name, so a generator or a page's own iterable is pulled ONE
+// value at a time (an infinite one runs until `break`) and closed by
+// iterator_close_name on `break`. The loop chooses per iteration on that
+// register, so an array is still the index loop it always was.
+inline constexpr std::string_view for_of_open_name = "__ctbrowser_for_of_open";
+// `yield*` (14.4.14), as three natives around the generator's own yield:
+// `open(v, async)` is GetIterator(v, kind) into the same record shape,
+// `call(rec, sent)` is Call(rec.next, rec.iterator, sent) - the raw result,
+// a promise for an async iterator, which the body awaits - and
+// `settle(rec, result)` checks the result is an object, records `done` and
+// the final value, and marks the coroutine as delegating so a sync `.next()`
+// hands the result object out untouched and `.throw()`/`.return()` reach
+// the inner iterator (context::generator_resume). The loop is bytecode.
+inline constexpr std::string_view yield_delegate_open_name = "__ctbrowser_delegate_open";
+inline constexpr std::string_view yield_delegate_call_name = "__ctbrowser_delegate_call";
+inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_delegate_settle";
+// A GENERATOR'S RETURN COMPLETION, TRAVELLING AS A THROW. `.return(v)` at a
+// yield resumes the frame with a marker object - {@#return: v}, a key no
+// source can spell - thrown at the yield, so every `finally` on the way out
+// runs as 27.5.3.4 says and nothing else can catch it: the compiler starts
+// every catch clause with this native, which rethrows a marker and returns
+// for anything else, and generator_resume fences the frame and turns the
+// escaping marker back into {value: v, done: true}.
+inline constexpr std::string_view return_marker_key = "@#return";
+inline constexpr std::string_view catch_filter_name = "__ctbrowser_catch_filter";
+// An array literal's elisions (13.2.4.1): (array, index...) marks each index
+// a hole - the literal appended undefined there because `append` is the one
+// opcode an element has, and a hole is an attribute on the slot.
+inline constexpr std::string_view array_holes_name = "__ctbrowser_array_holes";
+// RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
+// (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
+inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";
+// An accessor under a COMPUTED key - `get [k]() {}` in a class or a literal:
+// (target, key, getter, setter), the halves undefined when absent.
+// define_getter/define_setter take a name index, so a key that is only known
+// at run time goes through this one native rather than a new opcode.
+inline constexpr std::string_view define_accessor_name = "__ctbrowser_define_accessor";
+// `define_own(obj, key, value, enumerable)`: [[DefineOwnProperty]] of a
+// writable, configurable data property - what a static class member named
+// `name` or `length` needs, since those are own properties of every function
+// already and a set_prop to them in strict (class) code is the TypeError.
+inline constexpr std::string_view define_own_name = "__ctbrowser_define_own";
 
 // Install the standard library into a context.
 //

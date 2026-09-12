@@ -386,10 +386,19 @@ void test_to_primitive() {
     expect_result("return [1, 2] + '';", "1,2");
     expect_result("return String([1, [2, 3]]);", "1,2,3");
     // A method that hands back another object falls through rather than
-    // recursing.
+    // recursing, and when both do it is a TypeError (7.1.1.1 step 4).
     expect_result("const bad = { toString: function () { return {}; },"
-                  "              valueOf: function () { return {}; } }; return '' + bad;",
-                  "[object Object]");
+                  "              valueOf: function () { return {}; } };"
+                  "try { return '' + bad; } catch (e) { return e instanceof TypeError; }",
+                  "true");
+    // Symbol.toPrimitive wins over both, and sees the hint (7.1.1 step 1.b).
+    expect_result("const o = { [Symbol.toPrimitive](h) { return h; },"
+                  "            valueOf() { return 1; } };"
+                  "return [o + '', `${o}`, o * 1].join();",
+                  "default,string,NaN");
+    expect_result("const o = { [Symbol.toPrimitive]: 1 };"
+                  "try { return '' + o; } catch (e) { return e instanceof TypeError; }",
+                  "true");
 }
 
 // IDENTIFYING A VALUE WITHOUT `instanceof`.

@@ -53,9 +53,47 @@ void install_json(context & cx) {
         // same reason stringify's does - the root has to be a (holder, key)
         // pair so the reviver can replace it.
         const value wrapper = c.make_object();
+        const context::rooted keep_wrapper{c, wrapper};
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", out, reviver, 0);
+        return detail::internalize_json(c, wrapper, "", reviver, 0);
     });
+    // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
+    // null-prototype object whose `rawJSON` is the text, serialised verbatim
+    // by stringify. [[IsRawJSON]] is the private key; the text must be a JSON
+    // primitive - no object or array, no surrounding whitespace.
+    method(cx, json, "rawJSON", 1, [](context & c, std::span<value> a) {
+        const std::string text = string_arg(c, arg_at(a, 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto edge = [](char ch) {
+            return ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ';
+        };
+        bool ok = !text.empty() && text[0] != '[' && text[0] != '{' && !edge(text.front()) &&
+                  !edge(text.back());
+        if (ok) {
+            detail::json_reader reader{c, text};
+            (void)reader.parse_text();
+            ok = reader.ok;
+        }
+        if (!ok) {
+            c.throw_error("SyntaxError", "Invalid JSON text for JSON.rawJSON");
+            return value::undefined();
+        }
+        const value made = c.make_object();
+        auto * obj = static_cast<object_object *>(made.as_heap());
+        obj->prototype = value::undefined(); // an explicit null - object_object::prototype
+        // Frozen (step 6): the one property { false, true, false }, and no more.
+        obj->define("rawJSON", c.string(text), attr_enumerable);
+        obj->define(std::string{detail::raw_json_slot}, value::boolean(true), attr_none);
+        c.prevent_extensions(made);
+        return made;
+    });
+    method(cx, json, "isRawJSON", 1, [](context &, std::span<value> a) {
+        const value v = arg_at(a, 0);
+        return value::boolean(
+            v.is_object() &&
+            static_cast<object_object *>(v.as_heap())->find(detail::raw_json_slot) != nullptr);
+    });
+    json->define("@@toStringTag", cx.string("JSON"), attr_configurable); // 25.5.4
     cx.define_global("JSON", value::object(json));
 }
 
@@ -284,10 +322,22 @@ void install_promise(context & cx) {
     // AsyncFromSyncIteratorContinuation). `return`/`throw` forward the same way.
     cx.define_native(std::string{async_iterator_name}, [](context & c, std::span<value> a) {
         const value source = a.empty() ? value::undefined() : a[0];
-        if (const value async = c.lookup_property(source, "@@asyncIterator"); async.is_callable()) {
-            return c.call(async, {}, source);
+        if (source.is_nullish()) {
+            c.throw_error("TypeError", "the value is not async iterable");
+            return value::undefined();
+        }
+        // 7.4.3 GetIterator(async): GetMethod(@@asyncIterator) - a value that
+        // is neither undefined, null nor callable is the TypeError right
+        // there, and @@iterator is asked only when the method is ABSENT.
+        const value async = c.lookup_property(source, "@@asyncIterator");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (async.is_callable()) { return c.call(async, {}, source); }
+        if (!async.is_nullish()) {
+            c.throw_error("TypeError", "[Symbol.asyncIterator] is not a function");
+            return value::undefined();
         }
         const value sync = c.lookup_property(source, "@@iterator");
+        if (c.throw_pending()) { return value::undefined(); }
         if (!sync.is_callable()) {
             c.throw_error("TypeError", "the value is not async iterable");
             return value::undefined();
@@ -561,37 +611,43 @@ void install_promise(context & cx) {
         const value fn = cx.global(name);
         if (!fn.is_kind(heap_kind::native)) { return; }
         auto * made = static_cast<native_object *>(fn.as_heap());
+        made->is_constructor = false; // a global function, clause 19
         made->define("length", value::number(arity), attr_configurable);
         made->define("name", cx.string(name), attr_configurable);
     };
     slots("isNaN", 1);
     slots("isFinite", 1);
+    slots("eval", 1);
     // `String` is a NAMESPACE as well as a coercion, the same way Number is.
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.
     {
-        auto * string_ctor = cx.allocate<native_object>("String", [](context & c,
-                                                                     std::span<value> a) {
-            // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
-            // conversion the specification allows on a symbol (22.1.1.1
-            // step 2) and it yields "Symbol(description)". Everything else
-            // here goes through `to_string`, which for a symbol returns its
-            // internal KEY - that is deliberate and load-bearing, because
-            // computed property access resolves `o[sym]` through the same
-            // call, so it cannot be changed without separating
-            // ToPropertyKey from ToString. Special-casing the explicit
-            // conversion is the part that can be had cheaply.
-            if (!a.empty() && a[0].is_kind(heap_kind::symbol)) {
-                return c.string("Symbol(" +
-                                static_cast<symbol_object *>(a[0].as_heap())->description + ")");
-            }
-            return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
-        });
-        // A CONVERSION, not a constructor of wrappers - see context::construct. `new
-        // String(x)` evaluates to the converted value here rather than to a wrapper
-        // object; before the flag it evaluated to an empty object and the value was
-        // gone.
-        detail::constant(string_ctor, "__conversion", value::boolean(true));
+        auto * string_ctor =
+            cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
+                // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
+                // conversion the specification allows on a symbol (22.1.1.1
+                // step 2) and it yields "Symbol(description)". Everything else
+                // here goes through `to_string`, which for a symbol returns its
+                // internal KEY - that is deliberate and load-bearing, because
+                // computed property access resolves `o[sym]` through the same
+                // call, so it cannot be changed without separating
+                // ToPropertyKey from ToString. Special-casing the explicit
+                // conversion is the part that can be had cheaply.
+                const value self = c.current_this();
+                const bool constructing = detail::constructing_this(self);
+                value made = c.string(std::string{});
+                if (!a.empty() && a[0].is_kind(heap_kind::symbol) && !constructing) {
+                    made =
+                        c.string("Symbol(" +
+                                 static_cast<symbol_object *>(a[0].as_heap())->description + ")");
+                } else if (!a.empty()) {
+                    made = c.string(string_arg(c, a[0]));
+                    if (c.throw_pending()) { return value::undefined(); }
+                }
+                // 22.1.1.1 step 3: a call converts, `new` wraps - the same String
+                // exotic object `Object("ab")` builds, see detail::wrap_primitive.
+                return constructing ? detail::wrap_primitive(c, self, made) : made;
+            });
         // detail::method, not `set`: clause 17 makes every one of these
         // { writable: true, enumerable: FALSE, configurable: true }, and `set`
         // gave them the default attributes - so `Object.keys(String)` listed
@@ -622,7 +678,11 @@ void install_promise(context & cx) {
         stat("fromCharCode", 1, [encode](context & c, std::span<value> a) {
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
-                encode(out, static_cast<std::uint32_t>(context::to_uint32(a[i]) & 0xFFFFu));
+                // ToUint16 of ToNumber (22.1.2.1): an object's valueOf runs.
+                if (!numeric_arg(c, a[i])) { return value::undefined(); }
+                const double n = c.to_number_value(a[i]);
+                if (c.throw_pending()) { return value::undefined(); }
+                encode(out, context::to_uint32(value::number(n)) & 0xFFFFu);
             }
             return c.string(out);
         });

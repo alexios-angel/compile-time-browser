@@ -31,6 +31,8 @@ std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
     // a = the target, b = the iterable, c = the body; d carries `const` and
     // whether there is anything to declare
     case vp::nk::forof_stmt: return {n.a, n.b, n.c, -1};
+    // a = the operand; d = 1 says `yield*`
+    case vp::nk::yield_expr: return {n.a, -1, -1, -1};
     // a = the test, the statements are the list; d marks `default:`
     case vp::nk::case_clause: return {n.a, -1, -1, -1};
     // ES MODULES. `c` IS A FLAG ON ALL OF THESE - which binding form an
@@ -47,8 +49,9 @@ std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
     case vp::nk::import_meta: return {-1, -1, -1, -1};
     case vp::nk::import_spec:
     case vp::nk::export_decl:
-    case vp::nk::export_spec:
-    case vp::nk::dynamic_import: return {n.a, -1, -1, -1};
+    case vp::nk::export_spec: return {n.a, -1, -1, -1};
+    case vp::nk::dynamic_import:
+        return {n.a, n.b, -1, -1}; // b: the options argument
     // `++x` / `x++`: a is the operand and b IS THE PREFIX FLAG (1 or 0). The
     // default arm followed b as a node index; a program whose update node
     // is node 1 - `++x;` as the first statement, which is what
@@ -148,6 +151,12 @@ bool compiler_impl::is_captured(std::string_view name) const {
 void compiler_impl::collect_declared_names(std::int32_t body) {
     if (body < 0) { return; }
     const vp::node & n = at(body);
+    // A NESTED FUNCTION'S vars ARE ITS OWN. The walk used to descend through
+    // a function declaration statement into its body, so `function f() { var
+    // i }` made `i` a name of the enclosing scope too - harmless while the
+    // list only fed was_predeclared, a phantom global once the script's list
+    // became program::hoisted_vars.
+    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
     if (n.kind == vp::nk::var_decl) {
         for (const std::int32_t d : kids(n)) { fn().declared.push_back(std::string{at(d).text}); }
         return;
@@ -163,6 +172,32 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
             collect_declared_names(slot);
         }
     }
+}
+
+// The `var`s of a script (16.1.7's VarDeclaredNames): every `var` at any
+// depth of block, loop or branch, and nothing inside a function - and NOT
+// `let`/`const`, which are lexical (a top-level `let` before its line is a
+// TDZ ReferenceError in every engine, and a block's `const` is nobody's
+// global). Distinct from collect_declared_names, whose list also feeds the
+// function-body pre-declaration and so keeps the lexical names.
+void compiler_impl::collect_hoisted_vars(std::int32_t body, std::vector<std::string> & out) const {
+    if (body < 0) { return; }
+    const vp::node & n = at(body);
+    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
+    if (n.kind == vp::nk::var_decl) {
+        if (n.text != "var") { return; }
+        for (const std::int32_t d : kids(n)) {
+            const vp::node & decl = at(d);
+            if (decl.b >= 0) {
+                pattern_names(decl.b, out);
+            } else {
+                out.emplace_back(decl.text);
+            }
+        }
+        return;
+    }
+    for (const std::int32_t slot : child_slots(n)) { collect_hoisted_vars(slot, out); }
+    for (const std::int32_t k : kids(n)) { collect_hoisted_vars(k, out); }
 }
 
 void compiler_impl::predeclare_locals(std::int32_t body) {

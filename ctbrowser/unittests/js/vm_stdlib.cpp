@@ -20,18 +20,27 @@ namespace {
 // A REGEX ENGINE. Literals were rejected by name; there was none. Ported from
 // ctjs's backtracking matcher, which was already self-contained and coupled to
 // its host by exactly two calls, then extended with what p5.js actually uses:
-// lookahead, the sticky flag and named groups. Lookbehind and backreferences
-// are REFUSED rather than mis-matched - neither appears in p5.js, and a
-// matcher that silently ignores an assertion is worse than one that says no.
+// lookahead, the sticky flag and named groups - and, for test262's String
+// rows, lookbehind and backreferences.
 void test_regex() {
     // Invalid FLAGS are an early error - a SyntaxError of the source,
-    // reported as a parse error - not a throw when the line runs. The
-    // pattern is not checked at compile time (see compile_regex_literal).
+    // reported as a parse error - not a throw when the line runs. So is a
+    // body that is provably not a Pattern by inspection - an unclosed group,
+    // nothing to repeat - while anything the scan does not judge is left to
+    // the line (compile/early_errors/regexp.cpp says what it judges).
     CHECK(!compiler::compile("var r = /a/gg;").ok);
     CHECK(compiler::compile("var r = /a/gg;").error.starts_with("parse error:"));
     CHECK(!compiler::compile("var r = /a/q;").ok);
     CHECK(compiler::compile("function f() { return /a(b+)c/gi; }").ok);
-    CHECK(compiler::compile("var r = /(/;").ok);
+    CHECK(!compiler::compile("var r = /(/;").ok);
+    CHECK(!compiler::compile("var r = /?/;").ok);
+    CHECK(!compiler::compile("var r = /a{2,1}/;").ok);
+    CHECK(!compiler::compile("var r = /(?<a>x)(?<a>y)/;").ok);
+    CHECK(compiler::compile("var r = /(?<a>x)|(?<a>y)/;").ok);
+    CHECK(compiler::compile("var r = /a{1/;").ok); // Annex B: a literal brace
+    CHECK(!compiler::compile("var r = /a{1/u;").ok);
+    CHECK(compiler::compile("var r = /[/]/;").ok);
+    CHECK(compiler::compile("var r = / /;").ok);
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
     // .index is the most-used feature of all, at 143 sites in p5.js
@@ -53,8 +62,13 @@ void test_regex() {
     // `g` resumes from lastIndex and writes it back
     expect_result("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
     expect_result("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
-    // and a pattern that cannot compile does not match rather than crashing
-    expect_result("return /(?<=x)y/.test('xy');", "false");
+    // lookbehind and backreferences, since 2026-09-12 (regexp_model.cpp has
+    // the rest of the object model)
+    expect_result("return /(?<=x)y/.test('xy');", "true");
+    expect_result("return /(a)\\1/.test('aa') + '' + /(a)\\1/.test('ab');", "truefalse");
+    // and a pattern that cannot compile is a SyntaxError when the line runs
+    expect_result("try { new RegExp('('); return 'no'; } catch (e) { return e.name; }",
+                  "SyntaxError");
 }
 
 // `a.length = n` RESIZES, and a write that is silently dropped is the kind of
@@ -168,6 +182,20 @@ void test_typed_arrays() {
     // and a typed array does NOT grow: a write past the end is dropped
     expect_result("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
     expect_result("return Uint16Array.BYTES_PER_ELEMENT;", "2");
+    // 23.2.7: each constructor has a prototype OBJECT of its own, with
+    // `constructor` and BYTES_PER_ELEMENT, and an instance's chain starts
+    // there - which is what `class S extends Uint8Array {}` reads.
+    expect_result("return Uint8Array.prototype.constructor === Uint8Array;", "true");
+    expect_result("return Uint8Array.prototype.BYTES_PER_ELEMENT;", "1");
+    expect_result("return Object.getPrototypeOf(new Uint8Array(1)) === Uint8Array.prototype;",
+                  "true");
+    expect_result("return new Uint8Array(1) instanceof Uint8Array;", "true");
+    expect_result("return new Uint8Array(1) instanceof Int8Array;", "false");
+    expect_result("return new Float32Array(1).constructor.name;", "Float32Array");
+    expect_result("Uint8Array.prototype.tag = 'u8'; return new Uint8Array(1).tag;", "u8");
+    // (`class S extends Uint8Array {}; new S(2)` still answers the class's own
+    // instance rather than the typed array super() built - the constructor
+    // path in vm/call, not the prototype - so it is not asserted here.)
     expect_result("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
     expect_result("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');",
                   "2,3");
@@ -400,10 +428,10 @@ void test_array_iterators() {
 // function". p5 exposes day()/month()/year()/hour() and every one builds a
 // Date, so a sketch showing a clock failed on its first line.
 //
-// UTC only and no string parsing - that is a timezone database and a different
-// project. `new Date()` with no argument is the epoch, deliberately: the clock
-// is fixed here for the same reason Math.random is seeded, so a page that draws
-// from either can have a golden.
+// UTC only - a timezone database is a different project - so the local and
+// UTC methods agree. `new Date()` with no argument is the epoch, deliberately:
+// the clock is fixed here for the same reason Math.random is seeded, so a page
+// that draws from either can have a golden.
 void test_date() {
     expect_result("const d = new Date(0);"
                   "return [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()].join(',');",
@@ -424,7 +452,10 @@ void test_date() {
     // The two formatters, pinned byte-for-byte on a known instant, and a month
     // past December rolling into the next year.
     expect_result("return new Date(1234567890123).toISOString();", "2009-02-13T23:31:30.123Z");
-    expect_result("return new Date(1234567890123).toString();", "2009-02-13 23:31:30");
+    expect_result("return new Date(1234567890123).toString();",
+                  "Fri Feb 13 2009 23:31:30 GMT+0000 (Coordinated Universal Time)");
+    expect_result("return new Date(1234567890123).toUTCString();", "Fri, 13 Feb 2009 23:31:30 GMT");
+    expect_result("return new Date(1234567890123).toDateString();", "Fri Feb 13 2009");
     expect_result("return new Date(2024, 12, 1).toISOString();", "2025-01-01T00:00:00.000Z");
     expect_result("return Date.UTC(1970, 0, 2);", "86400000");
     expect_result("return new Date(0) instanceof Date;", "true");
@@ -432,6 +463,44 @@ void test_date() {
     // exists.
     expect_result("return typeof (new Date(5000) - new Date(2000));", "number");
     expect_result("return new Date(5000) - new Date(2000);", "3000");
+    // 21.4.4.45 @@toPrimitive: `+` takes the string, `-` the number.
+    expect_result("return new Date(0) + '';",
+                  "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)");
+    // Date.parse and the string constructor: the ISO format, with and without
+    // a time and an offset, and the two forms the engine itself prints.
+    expect_result("return Date.parse('2009-02-13T23:31:30.123Z');", "1234567890123");
+    expect_result("return Date.parse('2009-02-13T23:31:30.123+01:00');", "1234564290123");
+    expect_result("return new Date('2009-02-13').getTime();", "1234483200000");
+    expect_result("return new Date('2009').getTime();", "1230768000000");
+    expect_result("return Date.parse('Fri Feb 13 2009 23:31:30 GMT+0000 (UTC)');", "1234567890000");
+    expect_result("return Date.parse('Fri, 13 Feb 2009 23:31:30 GMT');", "1234567890000");
+    expect_result("return Date.parse('nonsense');", "NaN");
+    expect_result("return String(new Date(NaN));", "Invalid Date");
+    expect_result("return new Date(NaN).getFullYear();", "NaN");
+    expect_result("try { new Date(NaN).toISOString(); } catch (e) { return e.constructor.name; }",
+                  "RangeError");
+    expect_result("return new Date(8.64e15 + 1).getTime();", "NaN");
+    expect_result("return JSON.stringify({d: new Date(0)});",
+                  "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
+    // The setters rebuild through MakeDate, normalising an overflow; the
+    // UTC twins are the same functions under this engine's one zone.
+    expect_result("const d = new Date(0); d.setFullYear(2000, 1, 29); return d.toISOString();",
+                  "2000-02-29T00:00:00.000Z");
+    expect_result("const d = new Date(0); d.setMonth(13); return d.toISOString();",
+                  "1971-02-01T00:00:00.000Z");
+    expect_result("const d = new Date(0); d.setUTCHours(25, 61); return d.toISOString();",
+                  "1970-01-02T02:01:00.000Z");
+    expect_result("const d = new Date(0); return d.setTime(5) + ',' + d.getTime();", "5,5");
+    expect_result("const d = new Date(0); d.setDate(0); return d.toISOString();",
+                  "1969-12-31T00:00:00.000Z");
+    expect_result("return new Date(99, 0).getFullYear();", "1999");
+    expect_result("return new Date(-1).getUTCMilliseconds();", "999");
+    expect_result("return new Date(Date.UTC(-100000, 0, 1)).toISOString();",
+                  "-100000-01-01T00:00:00.000Z");
+    expect_result("return typeof Date();", "string");
+    expect_result(
+        "try { Date.prototype.getTime.call({}); } catch (e) { return e.constructor.name; }",
+        "TypeError");
 }
 
 // AN ARRAYBUFFER IS SHARED STORAGE.

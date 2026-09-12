@@ -380,6 +380,8 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         out.text(r.source);
         out.text(r.from);
     }
+    out.u32(static_cast<std::uint32_t>(from.hoisted_vars.size()));
+    for (const std::string & s : from.hoisted_vars) { out.text(s); }
 
     out.text(option == image_option::keep_source ? std::string_view{from.source}
                                                  : std::string_view{});
@@ -388,11 +390,14 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     for (const function_proto & fn : from.functions) {
         out.text(fn.module);
         out.text(fn.name);
+        out.text(fn.inferred_name);
         out.u16(fn.param_count);
         out.u16(fn.frame_size);
-        out.u8(fn.is_arrow ? 1u : 0u);
-        // 2 is an ASYNC generator: the one case the VM reads is_async.
-        out.u8(fn.is_generator ? (fn.is_async ? 2u : 1u) : 0u);
+        out.u8((fn.is_arrow ? 1u : 0u) | (fn.is_strict ? 2u : 0u));
+        // 2 is an ASYNC generator: the one case the VM reads is_async. Bit 2
+        // is eager_prologue, a generator's alone.
+        out.u8((fn.is_generator ? (fn.is_async ? 2u : 1u) : 0u) |
+               (fn.is_generator && fn.eager_prologue ? 4u : 0u));
         out.u32(fn.source_begin);
         out.u32(fn.source_end);
 

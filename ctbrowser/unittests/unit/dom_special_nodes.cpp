@@ -204,6 +204,88 @@ void test_document_children_move_like_any_node() {
     }
 }
 
+// DOM 4.13: a PI's attribute map is parsed from its data by the xml-stylesheet
+// pseudo-attribute rules, and an attribute write is serialised back into the
+// data - see document::update_pi_attributes and update_pi_data.
+void test_a_processing_instruction_keeps_its_attributes_in_its_data() {
+    atom_table atoms;
+    document doc{atoms};
+    const auto names = [&](node_id id) {
+        std::string out;
+        for (const attribute & a : doc.read().attributes(id)) {
+            out += atoms.text(a.name);
+            out += '=';
+            out += a.value;
+            out += ';';
+        }
+        return out;
+    };
+    const node_id pi = doc.create_processing_instruction(
+        atoms.intern("t"), "a=\"b\"\tx='y &amp; &lt;&#65;&#x42;&apos;'");
+    CHECK_EQ(names(pi), std::string{"a=b;x=y & <AB';"});
+    // The parse is all or nothing: an unquoted value, a duplicate, a bare
+    // `&`, a `<`, no space between two, a name that is no Name, no close.
+    for (const char * bad :
+         {"a=b", "a=\"1\" a=\"2\"", "a=\"&\"", "a=\"<\"", "a=\"1\"b=\"2\"", "$=\"1\"", "a=\"1"}) {
+        CHECK(doc.set_text(pi, bad).has_value());
+        CHECK_EQ(names(pi), std::string{});
+    }
+    CHECK(doc.set_text(pi, " one=\"1\"  two='2' ").has_value());
+    CHECK_EQ(names(pi), std::string{"one=1;two=2;"});
+    // A write goes back into the data, escaped, and a name the parser would
+    // refuse SURVIVES - the map is stored, not re-derived.
+    CHECK(doc.set_attribute(pi, atoms.intern("two"), "a<b>&\"c\"").has_value());
+    CHECK(doc.set_attribute(pi, atoms.intern("$"), "").has_value());
+    CHECK_EQ(std::string{doc.read().text(pi)},
+             std::string{"one=\"1\" two=\"a&lt;b&gt;&amp;&quot;c&quot;\" $=\"\""});
+    CHECK_EQ(names(pi), std::string{"one=1;two=a<b>&\"c\";$=;"});
+    CHECK(doc.remove_attribute(pi, atoms.intern("one")).has_value());
+    CHECK_EQ(std::string{doc.read().text(pi)},
+             std::string{"two=\"a&lt;b&gt;&amp;&quot;c&quot;\" $=\"\""});
+    // A comment is still not an element to set_attribute.
+    const node_id comment = doc.create_comment("c");
+    CHECK(!doc.set_attribute(comment, atoms.intern("a"), "b").has_value());
+}
+
+// HTML 13.2.5.72-76: `<?target data?>` is a ProcessingInstruction node now, and
+// `<?xml ...?>` - any target that is `xml` or `xml-stylesheet`, or no name at
+// all - is the bogus comment it always was.
+void test_the_html_parser_makes_processing_instructions() {
+    atom_table atoms;
+    document doc{atoms};
+    (void)parse_html(doc, "<!DOCTYPE html><?xml version=\"1.0\"?><?XML-Stylesheet x?><?t a=\"b\"?>"
+                          "<?_u ?"
+                          "?><?v x?y><?9 no?><body><p><?w  data ?></p>");
+    const auto r = doc.read();
+    const std::span<const node_id> top = r.children(r.document_node());
+    const std::vector<node_kind> expected{node_kind::document_type,
+                                          node_kind::comment,
+                                          node_kind::comment,
+                                          node_kind::processing_instruction,
+                                          node_kind::processing_instruction,
+                                          node_kind::processing_instruction,
+                                          node_kind::comment,
+                                          node_kind::element};
+    CHECK(kinds_of(r, r.document_node()) == expected);
+    if (kinds_of(r, r.document_node()) != expected) { return; }
+    CHECK_EQ(std::string{r.text(top[1])}, std::string{"?xml version=\"1.0\"?"});
+    CHECK(r.name(top[3]) == atoms.intern("t"));
+    CHECK_EQ(std::string{r.text(top[3])}, std::string{"a=\"b\""});
+    CHECK_EQ(std::string{r.attribute_value(top[3], atoms.intern("a"))}, std::string{"b"});
+    CHECK(r.name(top[4]) == atoms.intern("_u"));
+    CHECK_EQ(std::string{r.text(top[4])}, std::string{"?"}); // `??>`: one `?` is data
+    CHECK_EQ(std::string{r.text(top[5])}, std::string{"x?y"});
+    CHECK_EQ(std::string{r.text(top[6])}, std::string{"?9 no?"});
+    // Inside the body, where a comment would go, with the target's trailing
+    // white space skipped and the data's kept.
+    const node_id p = r.children(r.children(r.root()).back())[0];
+    const std::span<const node_id> in_p = r.children(p);
+    CHECK_EQ(in_p.size(), 1u);
+    CHECK(!in_p.empty() && r.kind(in_p[0]).value() == node_kind::processing_instruction);
+    CHECK(!in_p.empty() && r.name(in_p[0]) == atoms.intern("w"));
+    CHECK_EQ(std::string{r.text(in_p[0])}, std::string{"data "});
+}
+
 } // namespace
 
 int main() {
@@ -212,5 +294,7 @@ int main() {
     test_a_document_without_a_doctype_has_one_child();
     test_the_xml_parser_produces_all_three_kinds();
     test_document_children_move_like_any_node();
+    test_a_processing_instruction_keeps_its_attributes_in_its_data();
+    test_the_html_parser_makes_processing_instructions();
     REPORT("dom_special_nodes");
 }

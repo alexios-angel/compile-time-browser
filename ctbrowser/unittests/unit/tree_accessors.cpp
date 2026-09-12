@@ -57,6 +57,22 @@ void is(const std::string & expression, const std::string & expected) {
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
+// --- document.dir and the body colours --------------------------------------
+
+void test_the_document_reflects_dir_and_the_body_colours() {
+    // reflection-sections.html's #document rows: `dir` is the html element's,
+    // limited to the known values; `fgColor` is the body's `text`, and null
+    // writes "" ([LegacyNullToEmptyString]).
+    is("(function () { var out = [document.dir]; document.dir = 'RTL'; out.push(document.dir,"
+       " document.documentElement.getAttribute('dir')); document.dir = 'x';"
+       " out.push(document.dir); return out.join(); })()",
+       ",rtl,RTL,");
+    is("(function () { var out = [document.fgColor]; document.fgColor = 'red';"
+       " out.push(document.body.getAttribute('text')); document.bgColor = null;"
+       " out.push(document.body.getAttribute('bgcolor')); return JSON.stringify(out); })()",
+       "[\"\",\"red\",\"\"]");
+}
+
 // --- document.title --------------------------------------------------------
 
 void test_the_title_is_stripped_and_collapsed() {
@@ -213,12 +229,14 @@ void test_a_bare_identifier_finds_an_element() {
     is("anchor1.getAttribute('name')", "anchor1");
     // A DECLARED name still wins: the hook is consulted only on a miss.
     is("(function () { var ia = 7; return ia; })()", "7");
-    // And a name that is neither a global nor an element is still undefined
-    // rather than a ReferenceError, which is this runtime's documented shape.
+    // A name that is neither a global nor an element is an unresolvable
+    // reference: `typeof` says undefined, a read throws ReferenceError.
     is("typeof nosuchnameanywhere", "undefined");
-    // The hook answers named elements ONLY - a bare `toString` does not reach
-    // Object.prototype, which would be a much larger change.
-    is("typeof toString", "undefined");
+    is("(function () { try { nosuchnameanywhere; } catch (e) { return e.constructor.name; } })()",
+       "ReferenceError");
+    // The window is the global object, so a bare `toString` is
+    // Object.prototype's - as in every browser.
+    is("typeof toString", "function");
 }
 
 // --- named access on the Document ------------------------------------------
@@ -274,6 +292,19 @@ void test_a_name_never_shadows_a_real_property() {
     // does with a host object.
     is("typeof document.hasOwnProperty", "function");
     is("document.hasOwnProperty('nosuchname')", "false");
+    // Nor an INHERITED one: `constructor` and a null handler property stay
+    // what Document.prototype says (nameditem-no-shadowing), and an <iframe>
+    // alone answers its WindowProxy rather than the element (nameditem-02).
+    is("(function () {"
+       " var i = document.createElement('img'); i.setAttribute('name', 'constructor');"
+       " var j = document.createElement('img'); j.setAttribute('name', 'onreadystatechange');"
+       " document.body.appendChild(i); document.body.appendChild(j);"
+       " return (document.constructor === Document) + ',' + document.onreadystatechange; })()",
+       "true,null");
+    is("(function () {"
+       " var f = document.createElement('iframe'); f.setAttribute('name', 'fr');"
+       " document.body.appendChild(f); return document.fr === f.contentWindow; })()",
+       "true");
 }
 
 void test_several_of_one_name_is_a_collection() {
@@ -328,6 +359,7 @@ void test_the_document_is_still_itself_through_the_proxy() {
 } // namespace
 
 int main() {
+    test_the_document_reflects_dir_and_the_body_colours();
     test_the_title_is_stripped_and_collapsed();
     test_the_title_element_is_found_wherever_it_is();
     test_the_collections_count_what_they_name();

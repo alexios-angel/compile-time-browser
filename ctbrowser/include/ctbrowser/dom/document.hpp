@@ -90,6 +90,12 @@ public:
     // intern to the SAME atom, so this is the only way to tell a tooltip from
     // the window title.
     [[nodiscard]] node_ns element_ns(node_id) const noexcept;
+    // Does a colon in the tag introduce a prefix? See node::prefixed. The two
+    // halves of the qualified name follow from it: a prefixed `a:b` is (`a`,
+    // `b`) and anything else is (none, the whole tag).
+    [[nodiscard]] bool prefixed(node_id) const noexcept;
+    [[nodiscard]] std::string_view local_name(node_id) const noexcept;
+    [[nodiscard]] std::string_view prefix(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
     // The returned span points into an IMMUTABLE block held alive by this
@@ -167,7 +173,9 @@ public:
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
     // --- creation: the new node is DETACHED until it is appended ----------
-    [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html);
+    // `prefixed`: whether a colon in `tag` is a prefix - see node::prefixed.
+    [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
+                                         bool prefixed = false);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
     // A DocumentFragment. Detached like everything else here, and it stays
@@ -193,6 +201,12 @@ public:
     // see (document_node says why). `root()` stays the Document node itself
     // while there is no element, which is what `new Document()` is.
     void set_document_element(node_id id, node_id before = node_id{});
+    // THE OTHER DIRECTION: the document element leaves the Document node's
+    // child list and `root()` is the Document node again, as on a document
+    // that never had one. `remove_child` refuses the root because the
+    // engine's walks start there; a document nothing lays out - one a page
+    // made - may do this, and DOM says it may. No-op without an element.
+    void remove_document_element();
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
 
@@ -244,8 +258,9 @@ public:
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
-        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html) {
-            return doc_->create_element(tag, ns);
+        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
+                                             bool prefixed = false) {
+            return doc_->create_element(tag, ns, prefixed);
         }
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
@@ -348,6 +363,12 @@ private:
     // detach `child` from whatever parent it has; caller holds structure_
     void detach_locked(node * child_node, node_id child);
 
+    // A ProcessingInstruction's attribute map and its data, kept in step both
+    // ways (DOM §4.13) - see the parser above them in document.cpp. Caller
+    // holds the node's stripe.
+    void update_pi_attributes(node & n, std::string_view data);
+    void update_pi_data(node_id id, node & n);
+
     // "ADJUST FOREIGN ATTRIBUTES", the HTML parser's own step, and the reason
     // an SVG `xlink:href` is in the XLink namespace while an HTML `xml:lang` is
     // in none. It applies to FOREIGN CONTENT ONLY, which is why it takes the
@@ -361,6 +382,29 @@ private:
     // is what an author writing it means. Costs one enum compare on every
     // attribute of an HTML document, which is where it returns.
     [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
+
+    // --- the write log, for the MutationObserver diff ---------------------
+    //
+    // A write that changes nothing - `setAttribute("x", theSameValue)`,
+    // `appendData("")`, `classList.remove(aMissingToken)` - still queues a
+    // mutation record, and a diff of before against after cannot see it. So
+    // while a reader has asked (`log_writes(true)`), every set_attribute* and
+    // set_text notes what it wrote, and `take_writes` drains the notes. Off,
+    // it costs one load per write.
+public:
+    struct write_note {
+        node_id node;
+        atom name; // the attribute's qualified name; unused for a text write
+        bool text = false;
+    };
+    void log_writes(bool on);
+    [[nodiscard]] std::vector<write_note> take_writes();
+
+private:
+    void note_write(node_id id, atom name, bool text);
+    std::atomic<bool> log_writes_{false};
+    std::mutex writes_;
+    std::vector<write_note> writes_log_;
 
     atom_table * atoms_;
     mutable epoch_domain domain_;
@@ -386,6 +430,14 @@ private:
     if (!id) { return false; }
     if (txn.parent(id) == txn.document_node()) { return true; }
     return id == txn.root() && txn.kind(id).value_or(node_kind::document) == node_kind::element;
+}
+
+// THE PARENT AS THE DOM SEES IT: the Document node for every child of the
+// document, the document element included - whose own pointer is empty, see
+// above. `parentNode`, the sibling walks and anything else a page observes
+// asks this; the engine's walks keep asking `parent()`.
+[[nodiscard]] inline node_id dom_parent(const read_txn & txn, node_id id) noexcept {
+    return is_document_child(txn, id) ? txn.document_node() : txn.parent(id);
 }
 
 } // namespace ctbrowser

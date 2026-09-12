@@ -8,6 +8,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/media.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/selector.hpp>
 
 // CSS Syntax Level 3 §5, over the §4 tokens.
@@ -524,12 +525,44 @@ private:
         const bool contiguous = first.text < sheet_.source_length &&
                                 last.text < sheet_.source_length &&
                                 last.text + last.length >= first.text;
-        if (contiguous) { return {first.text, last.text + last.length - first.text}; }
+        if (contiguous) {
+            // A <url-token>'s text is its BODY: `url(` and `)` are consumed
+            // around it and not recorded, so a value beginning or ending with
+            // one is widened back over them - `src: url(a.ttf)` is the whole
+            // function, not `a.ttf`.
+            std::size_t begin = first.text;
+            std::size_t end = last.text + last.length;
+            const std::string_view source =
+                std::string_view{sheet_.pool}.substr(0, sheet_.source_length);
+            const auto is_space = [](char c) {
+                return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+            };
+            if (first.type == token_type::url) {
+                while (begin > 0 && is_space(source[begin - 1])) { --begin; }
+                if (begin >= 4 && source[begin - 1] == '(' &&
+                    ascii_iequals(source.substr(begin - 4, 3), "url")) {
+                    begin -= 4;
+                }
+            }
+            if (last.type == token_type::url) {
+                while (end < source.size() && is_space(source[end])) { ++end; }
+                if (end < source.size() && source[end] == ')') { ++end; }
+            }
+            return {static_cast<std::uint32_t>(begin), static_cast<std::uint32_t>(end - begin)};
+        }
         const std::size_t start = sheet_.pool.size();
         for (std::uint32_t i = first_index; i <= last_index; ++i) {
             // Copied out before the append: the pool is what text() reads from, so
             // appending to it while holding a view into it would dangle.
-            const std::string piece{text(sheet_.tokens[i])};
+            const css_token & tok = sheet_.tokens[i];
+            std::string piece{text(tok)};
+            if (tok.type == token_type::url) { piece = "url(" + piece + ")"; }
+            // A REBUILT IDENTIFIER IS DECODED TEXT, and is written back as an
+            // identifier: `\33 myident` decoded is `3myident`, which reads as
+            // a dimension the second time round (ident-function-computed).
+            if (tok.text >= sheet_.source_length && tok.type == token_type::ident) {
+                piece = serialize_identifier(piece);
+            }
             sheet_.pool += piece;
         }
         return {static_cast<std::uint32_t>(start),

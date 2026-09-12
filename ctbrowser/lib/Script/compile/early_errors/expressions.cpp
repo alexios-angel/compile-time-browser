@@ -36,6 +36,7 @@ namespace {
     case nk::labeled:
     case nk::try_stmt:
     case nk::switch_stmt:
+    case nk::with_stmt:
     case nk::func_decl: return true;
     default: return false;
     }
@@ -57,13 +58,14 @@ namespace {
     case nk::update: return {n.a, -1, -1, -1};
     case nk::new_expr: return {n.a, -1, -1, -1};
     case nk::forof_stmt: return {n.a, n.b, n.c, -1};
+    case nk::yield_expr: return {n.a, -1, -1, -1}; // d = 1 says `yield*`
     case nk::case_clause: return {n.a, -1, -1, -1};
     case nk::import_decl:
     case nk::import_meta: return {-1, -1, -1, -1};
     case nk::import_spec:
     case nk::export_decl:
-    case nk::export_spec:
-    case nk::dynamic_import: return {n.a, -1, -1, -1};
+    case nk::export_spec: return {n.a, -1, -1, -1};
+    case nk::dynamic_import: return {n.a, n.b, -1, -1}; // b: the options argument
     default: return {n.a, n.b, n.c, n.d};
     }
 }
@@ -112,7 +114,10 @@ void checker::check_assignment(std::int32_t idx) {
     // reinterpreted as a destructuring pattern (13.15.5). No other
     // operator does: `[a] += b` is an error.
     if (n.text == "=" && destructuring(target)) { return; }
-    if (simple_target(n.a)) { return; }
+    if (simple_target(n.a)) {
+        if (target == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
+        return;
+    }
     report("the left side of `" + std::string{n.text} +
                "` is not something a value can be "
                "assigned to",
@@ -121,7 +126,10 @@ void checker::check_assignment(std::int32_t idx) {
 
 void checker::check_update(std::int32_t idx) {
     const vp::node & n = at(idx);
-    if (simple_target(n.a)) { return; }
+    if (simple_target(n.a)) {
+        if (at(n.a).kind == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
+        return;
+    }
     report("the operand of `" + std::string{n.text} +
                "` is not something a value can be assigned to",
            n.a >= 0 ? n.a : idx);
@@ -223,6 +231,12 @@ void checker::check_proto_duplicates(std::int32_t idx) {
 void checker::check_number(std::int32_t idx) {
     const std::string_view text = at(idx).text;
     if (text.empty()) { return; }
+    // 12.9.3.1: a LegacyOctalIntegerLiteral (`010`) and a NonOctalDecimal-
+    // IntegerLiteral (`08`) are SyntaxErrors in strict code.
+    if (strict() && text.size() >= 2 && text[0] == '0' && text[1] >= '0' && text[1] <= '9') {
+        report("`" + std::string{text} + "` is not allowed in strict mode code", idx);
+        return;
+    }
     const bool bigint = text.back() == 'n';
     const std::string_view body = bigint ? text.substr(0, text.size() - 1) : text;
     if (body.empty()) {
@@ -314,6 +328,11 @@ void checker::check_delete(std::int32_t operand) {
     if ((n.kind == nk::member || n.kind == nk::opt_member) && n.text.starts_with('#')) {
         report("`delete` of the private member " + quoted(n.text) + " is not allowed", operand);
     }
+    // 13.5.1.1: `delete x` of a plain name is a SyntaxError in strict code.
+    if (n.kind == nk::ident && strict()) {
+        report("`delete` of the name " + quoted(n.text) + " is not allowed in strict mode code",
+               operand);
+    }
 }
 
 // The frame `new.target` and `super` are answered against: the nearest one
@@ -327,6 +346,24 @@ void checker::check_delete(std::int32_t operand) {
 
 [[nodiscard]] frame_kind checker::enclosing_non_arrow() const {
     return enclosing_non_arrow_frame().what;
+}
+
+// A YieldExpression IS AN AssignmentExpression, NOT AN OPERAND (15.5): `void
+// yield`, `a + yield b` and `yield 3 + yield 4` are not in the grammar, and
+// only parentheses make them one. The parser drops parentheses, so the
+// source after the operator's lexeme says whether they were there.
+void checker::check_yield_operand(std::int32_t op_node, std::int32_t operand) {
+    if (at(operand).kind != nk::yield_expr) { return; }
+    const vp::node & op = at(op_node);
+    const std::size_t where = offset_of(op_node);
+    if (where == early_error::nowhere || op.text.empty()) { return; }
+    for (std::size_t i = where + op.text.size(); i < source_.size(); ++i) {
+        const char c = source_[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
+        if (c == '(') { return; }
+        break;
+    }
+    report("`yield` is not an operand of `" + std::string{op.text} + "`; parenthesise it", operand);
 }
 
 void checker::walk_expression(std::int32_t idx) {
@@ -351,6 +388,17 @@ void checker::walk_expression(std::int32_t idx) {
 
     case nk::unary:
         if (n.text == "delete") { check_delete(n.a); }
+        check_yield_operand(idx, n.a);
+        if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
+            report("`await` is not allowed in the parameters of an async function", idx);
+        }
+        walk_expression(n.a);
+        return;
+
+    case nk::yield_expr:
+        if (in_parameters_ && frames_.back().is_generator) {
+            report("`yield` is not allowed in the parameters of a generator", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -384,7 +432,56 @@ void checker::walk_expression(std::int32_t idx) {
         for (const std::int32_t p : kids(n)) { walk_property(p); }
         return;
 
+    // `o.#x` / `o?.#x`: 15.7.1 AllPrivateIdentifiersValid, and the grammar -
+    // SuperProperty is `super . IdentifierName`, never a private name.
+    case nk::member:
+    case nk::opt_member:
+        if (n.text.starts_with('#')) {
+            if (at(n.a).kind == nk::super_lit) {
+                report("`super` has no private members", idx);
+            } else {
+                check_private_reference(n.text, idx);
+            }
+        }
+        walk_expression(n.a);
+        return;
+
+    // `#x in o` (13.10.1): the one place a private name stands alone, and
+    // it is a reference like any other.
+    case nk::binary:
+        if (n.text == "in" && at(n.a).kind == nk::ident && at(n.a).text.starts_with('#')) {
+            check_private_reference(at(n.a).text, n.a);
+            walk_expression(n.b);
+            return;
+        }
+        check_yield_operand(idx, n.b);
+        break;
+    case nk::logical: check_yield_operand(idx, n.b); break;
+
     case nk::num: check_number(idx); return;
+
+    case nk::regex:
+        if (auto wrong = regexp_literal_error(n.text)) {
+            report("invalid regular expression " + std::string{n.text} + ": " + *wrong, idx);
+        }
+        return;
+
+    // 13.1.1: in strict code `yield` and the future reserved words are not
+    // identifiers even as a reference (`eval`/`arguments` may be READ).
+    case nk::ident:
+        // A bare `#x` anywhere but the left of `in` is not an expression.
+        if (n.text.starts_with('#')) {
+            report("the private name " + quoted(n.text) + " is not an expression", idx);
+            return;
+        }
+        check_identifier_reference(n.text, idx, escaped(idx));
+        // 15.7.1: a field initialiser may not ContainsArguments - through
+        // an arrow, which has no `arguments` of its own, but not through a
+        // function, which does.
+        if (n.text == "arguments" && enclosing_non_arrow() == frame_kind::field_init) {
+            report("`arguments` in a class field initialiser", idx);
+        }
+        return;
 
     case nk::new_target:
         // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`
@@ -446,7 +543,15 @@ void checker::walk_property(std::int32_t idx) {
         return;
     }
     if ((n.d & 1) != 0) { walk_expression(n.a); } // a computed key
+    // `{ #x: 1 }`: a PropertyName is never a private name (13.2.5).
+    if ((n.d & 1) == 0 && n.text.starts_with('#')) {
+        report("the private name " + quoted(n.text) + " is not a property name", idx);
+    }
+    // `{ default }`: a shorthand is an IdentifierReference (13.2.5.1), where
+    // a keyword may not stand - unlike `{ default: 1 }`, whose key is a name.
+    if (n.c == 2 && (n.d & 1) == 0) { check_identifier_reference(n.text, idx, true); }
     if (n.c == 1 || n.c == 3) {
+        if (n.c == 3) { check_accessor_arity(n.b, (n.d & 4) != 0); }
         check_function(n.b, frame_kind::method);
         return;
     }

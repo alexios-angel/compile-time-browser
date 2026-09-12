@@ -57,9 +57,31 @@ void test_class_fields_are_per_instance() {
 // A PRIVATE NAME IS A DISTINCT NAME. The `#` used to be skipped as an unknown
 // byte, so `this.#count` became `this.count`: a private field silently aliased
 // a public one, and every later stage agreed with the wrong reading. p5.js
-// declares 174 of them. Real brand-check privacy is not modelled - what is
-// fixed is that the two names are no longer the same name.
+// declares 174 of them. Since 2026-09-12 a READ is a brand check too (7.3.31):
+// the key is `@#n:N` for the Nth class body, so two classes' `#n` are two
+// names, and an object the class did not initialise is the TypeError.
 void test_private_names_are_distinct() {
+    expect_result("class A { #x = 'a'; static read(o) { return o.#x; } }"
+                  "class B { #x = 'b'; static read(o) { return o.#x; } }"
+                  "return A.read(new A()) + B.read(new B());",
+                  "ab");
+    expect_result("class A { #x = 'a'; static read(o) { return o.#x; } }"
+                  "class B { #x = 'b'; }"
+                  "try { return A.read(new B()); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("class A { #x = 'outer'; m() { class B { #x = 'inner'; read(o) { return o.#x; } }"
+                  " try { return new B().read(this); } catch (e) { return e.constructor.name; } } }"
+                  "return new A().m();",
+                  "TypeError");
+    expect_result("class C { #x; read() { return String(this.#x); } } return new C().read();",
+                  "undefined");
+    expect_result("class C { #m() { return 1; } static call(o) { return o.#m(); } }"
+                  "try { return C.call({}); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result(
+        "class C { #x = 1; static read(o) { return o.#x; } }"
+        "try { return C.read(new Proxy(new C(), {})); } catch (e) { return e.constructor.name; }",
+        "TypeError");
     expect_result("class C { #n = 1; n = 2; read() { return this.#n + ',' + this.n; } } "
                   "return new C().read();",
                   "1,2");
@@ -73,6 +95,18 @@ void test_private_names_are_distinct() {
                   "8");
     // and the public field of the same name is untouched from outside
     expect_result("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
+    // A PRIVATE NAME IS NOT A PROPERTY KEY (its key is `@#n`, which no source
+    // can spell): reflection, `in`, hasOwnProperty and the string index see
+    // nothing, and a public `"#n"` string key is a different property.
+    expect_result("class C { #n = 1; #m() {} static #s = 2; } const c = new C();"
+                  "return Object.getOwnPropertyNames(c).length + ',' + Object.keys(c).length + ','"
+                  " + ('#n' in c) + ',' + c.hasOwnProperty('#n') + ',' + c['#n'] + ','"
+                  " + Object.getOwnPropertyNames(C.prototype).join('|') + ','"
+                  " + Object.getOwnPropertyNames(C).indexOf('#s') + ',' + JSON.stringify(c);",
+                  "0,0,false,false,undefined,constructor,-1,{}");
+    expect_result("class C { #n = 1; read() { return this.#n + ',' + this['#n']; } }"
+                  "const c = new C(); c['#n'] = 'pub'; return c.read();",
+                  "1,pub");
 }
 
 // ACCESSORS. A property that runs code when it is read, which is a different
@@ -201,11 +235,47 @@ void test_implicit_super() {
 // A CLASS EXPRESSION is as ordinary as a function expression. `class` had no
 // case in primary(), so `const X = class {...}` read a global named `class` and
 // the body's members leaked out as top-level statements - silently.
+// A static member named `name` or `length` is DEFINED over the constructor's
+// own read-only one (15.7.14 uses DefineMethodProperty), so it does not trip
+// the strict-mode rejected-store TypeError that a set would.
+void test_static_name_and_length() {
+    expect_result("class C { static name() { return 'm'; } static length = 3; }"
+                  "return C.name() + C.length + Object.keys(C).join(',');",
+                  "m3length");
+    expect_result("class X {} return X.name;", "X");
+}
+
 void test_class_expressions() {
     expect_result("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
     expect_result("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
     expect_result("const make = () => class { get v() { return 5; } }; return new (make())().v;",
                   "5");
+}
+
+// A COMPUTED KEY ON A METHOD OR AN ACCESSOR (15.4.5 step 1: the key is
+// evaluated, then the function is made) - `[k]() {}`, `get [k]() {}`, and a
+// Symbol as the key. Every one compiled to a member named "" before
+// 2026-09-12, so `new C()[k]` was undefined.
+void test_computed_member_keys() {
+    expect_result(
+        "const k = 'dyn'; class C { [k]() { return 1; } static ['s' + 1]() { return 2; } }"
+        "return new C().dyn() + C.s1();",
+        "3");
+    expect_result("const s = Symbol('t'); class C { [s]() { return 'sym'; } } return new C()[s]();",
+                  "sym");
+    expect_result(
+        "let n = 0; class C { get ['g' + ++n]() { return n; } set ['w'](v) { this.got = v; } }"
+        "const c = new C(); c.w = 9; return c.g1 + ',' + c.got;",
+        "1,9");
+    expect_result(
+        "const k = 'a'; const o = { get [k]() { return 4; }, set [k + 'x'](v) { this.v = v; } };"
+        "o.ax = 2; return o.a + o.v;",
+        "6");
+    // Methods stay non-enumerable and reach `super` from where they were written.
+    expect_result("class B { [('m')]() { return 'b'; } } class D extends B { ['m']() { return "
+                  "super.m() + 'd'; } }"
+                  "return new D().m() + Object.keys(D.prototype).length;",
+                  "bd0");
 }
 
 // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
@@ -454,7 +524,7 @@ void test_new_and_classes() {
     // `super.m()` calls the parent's version, and `this` inside it is still the
     // instance.
     expect_result("class A { label() { return 'A' + this.n; } }"
-                  "class B extends A { constructor() { this.n = 1; }"
+                  "class B extends A { constructor() { super(); this.n = 1; }"
                   "  label() { return super.label() + 'B'; } } return new B().label();",
                   "A1B");
     // Three deep. This is what resolving super against `this` gets wrong: C's
@@ -525,12 +595,14 @@ void test_object_literal_keys() {
 int main() {
     test_class_fields_are_per_instance();
     test_private_names_are_distinct();
+    test_static_name_and_length();
     test_accessors();
     test_object_descriptors();
     test_symbol();
     test_new_target();
     test_implicit_super();
     test_class_expressions();
+    test_computed_member_keys();
     test_named_class_expression_binds_itself();
     test_class_declaration_survives_the_statement();
     test_proxy();

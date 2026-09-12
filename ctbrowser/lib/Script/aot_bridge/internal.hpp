@@ -127,6 +127,15 @@ struct aot_name_record {
 struct aot_bridge {
     static context & ctx_of(aot::ct_aot_ctx * c) { return *reinterpret_cast<context *>(c); }
 
+    // Whether the compiled body behind `f` is strict mode code - the frame
+    // carries the real proto, so the answer is the interpreter's.
+    static bool strict_frame(aot::ct_aot_frame * f) {
+        const aot_frame_storage & held = frame_of(f);
+        const context & cx = *held.ctx;
+        return held.frame_index < cx.frames_.size() &&
+               cx.frames_[held.frame_index].proto != nullptr &&
+               cx.frames_[held.frame_index].proto->is_strict;
+    }
     static aot_frame_storage & frame_of(aot::ct_aot_frame * f) {
         return *reinterpret_cast<aot_frame_storage *>(f);
     }
@@ -239,8 +248,10 @@ struct aot_bridge {
     static void copy_props(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t source);
     static std::uint64_t cell_get(std::uint64_t cell);
     static void cell_set(std::uint64_t cell, std::uint64_t v);
-    static std::uint64_t global_get(aot::ct_aot_frame * f, const char * name,
-                                    std::uint32_t name_len);
+    static std::int32_t global_get(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
+                                   std::uint64_t * out);
+    static std::uint64_t global_get_soft(aot::ct_aot_frame * f, const char * name,
+                                         std::uint32_t name_len);
     static void global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                            std::uint64_t v);
     static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,

@@ -226,11 +226,19 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(get_global) do {
             {
                 // The hit path is the one map lookup it always was; a MISS asks
-                // the embedder, which is where named access on the window lives.
-                // See context::set_undeclared_name_hook.
+                // the embedder, then the global object, then throws - unless
+                // this read is `typeof x`'s operand, which the compiler emits as
+                // this instruction immediately followed by type_of on the same
+                // register. The peek is on the miss path only.
                 const auto it = globals_.find(vm_proto->names[in.bx()]);
-                reg(in.a) =
-                    it != globals_.end() ? it->second : global_or_named(vm_proto->names[in.bx()]);
+                if (it != globals_.end()) {
+                    reg(in.a) = it->second;
+                    break;
+                }
+                const bool silent = vm_frame->ip < vm_proto->code.size() &&
+                                    vm_proto->code[vm_frame->ip].code == op::type_of &&
+                                    vm_proto->code[vm_frame->ip].b == in.a;
+                reg(in.a) = global_or_named(vm_proto->names[in.bx()], silent);
                 break;
             }
         }
@@ -558,7 +566,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         // A SETTER ON THE CHAIN TAKES THE WRITE, and only if none does is an
         // own data property defined - store_property has the whole rule.
         VM_CASE(set_prop) do {
+            // STRICT CODE THROWS WHERE SLOPPY CODE DROPS: store_property says
+            // which through store_rejected_ (13.15.2 PutValue step 6.b).
+            store_rejected_ = false;
             store_property(reg(in.a), vm_proto->names[in.b], reg(in.c));
+            if (vm_proto->is_strict) { strict_store_check(vm_proto->names[in.b]); }
             break;
         }
         while (0);
@@ -570,7 +582,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(set_index) do {
+            store_rejected_ = false;
             store_index(reg(in.a), reg(in.b), reg(in.c));
+            if (vm_proto->is_strict && store_rejected_) {
+                strict_store_check(to_string(reg(in.b)));
+            }
             break;
         }
         while (0);
@@ -789,7 +805,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(iterable) do {
-            reg(in.a) = iterable_values(reg(in.b));
+            reg(in.a) = spread_values(reg(in.b));
             break;
         }
         while (0);
@@ -818,11 +834,32 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // awaits to itself. A REJECTED promise throws, which is what makes
                 // `try { await f() } catch` work.
                 const value awaited = reg(in.b);
-                // A PENDING PROMISE SUSPENDS THE FRAME. There is one stack and
+                // EVERY AWAIT SUSPENDS THE FRAME (27.7.5.3 Await: PerformPromiseThen
+                // on a promise resolved with the value, so the continuation is
+                // a job even when the value is already settled - `await 1`
+                // runs the rest of the body after the microtasks queued before
+                // it, which is what every ordering test and every
+                // MutationObserver callback relies on). There is one stack and
                 // the event loop is above it, so `await` cannot block: the frame
                 // is lifted out, the caller is handed a promise, and the frame
-                // comes back when the awaited one settles.
-                if (is_pending_promise(awaited) && pending_promise_factory_ && promise_settler_) {
+                // comes back when the awaited one settles - from its handler
+                // list when it is pending, from a job queued now when it is
+                // not. A SCRIPT'S TOP LEVEL is the exception it always was:
+                // `return await x` in a classic script (no closure, no caller
+                // to hand a promise to) reads a settled value straight out -
+                // and when the value is a PENDING promise it runs the queue
+                // first, since the jobs that settle it are the ones an async
+                // callee just queued. Draining re-enters the VM, so the
+                // frame and its window are re-derived afterwards.
+                const bool top_level = vm_frame->closure == nullptr;
+                if (top_level && is_pending_promise(awaited)) {
+                    drain_microtasks();
+                    if (failed_) { break; }
+                    vm_frame = &frames_.back();
+                    base = vm_frame->base;
+                }
+                const bool suspends = is_pending_promise(awaited) || !top_level;
+                if (suspends && pending_promise_factory_ && promise_settler_) {
                     if (vm_frame->async_promise.is_undefined()) {
                         vm_frame->async_promise = pending_promise_factory_(*this);
                     }
@@ -862,7 +899,24 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     const std::uint16_t slot = vm_frame->result_reg;
                     registers_.resize(base);
                     frames_.pop_back();
-                    attach_resume(awaited, value::object(saved));
+                    if (is_pending_promise(awaited)) {
+                        attach_resume(awaited, value::object(saved));
+                    } else {
+                        // Settled, or not a promise at all: resume in a job
+                        // with the value (or throw the rejection there).
+                        value with = awaited;
+                        bool rejected = false;
+                        if (awaited.is_object()) {
+                            auto * obj = static_cast<object_object *>(awaited.as_heap());
+                            if (value * state = obj->find("__rejected");
+                                state != nullptr && truthy(*state)) {
+                                rejected = true;
+                            }
+                            if (value * settled = obj->find("__value")) { with = *settled; }
+                        }
+                        queue_microtask(await_job(),
+                                        {value::object(saved), with, value::boolean(rejected)});
+                    }
                     suspended_ = true;
                     if (frames_.size() <= stop_depth) { return promise; }
                     registers_[frames_.back().base + slot] = promise;

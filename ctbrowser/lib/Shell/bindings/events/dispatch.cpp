@@ -79,7 +79,7 @@ void initialise_event(context & cx, script::object_object & event, std::string_v
     event.set("cancelable", value::boolean(cancelable));
     event.set("composed", value::boolean(false));
     event.set("defaultPrevented", value::boolean(false));
-    event.set("timeStamp", value::number(timestamp));
+    event.define(std::string{timestamp_property}, value::number(timestamp), script::attr_none);
     event.set(std::string{cancel_bubble_property}, value::boolean(false));
     event.set(std::string{stop_immediate_property}, value::boolean(false));
     event.set(std::string{dispatch_property}, value::boolean(false));
@@ -248,6 +248,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // widths when a page notices.
     if (at.on == listen_on::node && at.node) {
         if (const value * client_x = object->find("clientX")) {
+            flush_layout(); // mouse-event-retarget.html dispatches before the first frame
             const rect box = box_of(at.node);
             const value * client_y = object->find("clientY");
             object->set("offsetX", value::number(context::to_number(*client_x) - box.x));
@@ -270,8 +271,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     //
     // ALL OF IT IS GATED ON THE TARGET BEING IN A SHADOW TREE AT ALL, which is
     // one root walk, so a page with no shadow DOM pays nothing per step.
-    // ponytail: `relatedTarget` is not retargeted and `composedPath()` does not
-    // hide a closed tree's nodes - relatedTarget.window.js is the file for both.
+    // ponytail: `composedPath()` does not hide a closed tree's nodes.
     const auto in_shadow = [&](node_id node) {
         const auto txn = doc_->read();
         return shadow_tree_of(root_of_tree(txn, node, false)) != nullptr;
@@ -302,6 +302,35 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
         return a;
     };
+    // `relatedTarget` IS RETARGETED TOO - concept-event-dispatch step 4 against
+    // the target, then per step (invoke step 4) - so a `focus` leaving a
+    // closed shadow tree names the host and not the input inside it. A
+    // relatedTarget that retargets to the target itself while not being it
+    // (step 6's condition) is a dispatch that does not happen: the targets
+    // are cleared and nothing is invoked - relatedTarget.window.js's "Reset
+    // targets on early return".
+    const value related_value = cx.lookup_property(event, "relatedTarget");
+    const node_id related = handle_of(related_value);
+    const bool related_in_shadow = related && doc_ != nullptr && in_shadow(related);
+    // PER STEP, AND BEFORE ANY LISTENER RUNS: "append to an event path"
+    // fixes each item's relatedTarget as the path is built, so a listener
+    // that moves the related node (relatedTarget.window.js, "part 2") does
+    // not change what the later steps and the final value see.
+    std::vector<node_id> related_steps(path.size());
+    if (related_in_shadow) {
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            related_steps[i] = retarget(related, path[i]);
+        }
+    }
+    if (related_in_shadow && at.on == listen_on::node && retarget(related, at) == at.node &&
+        related != at.node) {
+        object->set("target", value::null());
+        object->set("srcElement", value::null());
+        object->set("relatedTarget", value::null());
+        object->set(std::string{cancel_bubble_property}, value::boolean(false));
+        object->set(std::string{stop_immediate_property}, value::boolean(false));
+        return prevented(event);
+    }
     object->set(std::string{stop_immediate_property}, value::boolean(false));
     object->set(std::string{dispatch_property}, value::boolean(true));
     ++dispatch_depth_;
@@ -356,7 +385,8 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // whether this step is AT_TARGET - which the HOST of a shadow tree also is,
     // its shadow-adjusted target being itself, so a listener there sees phase 2
     // and hears a non-bubbling event.
-    const auto visit = [&](const path_step & step, double otherwise) {
+    const auto visit = [&](std::size_t index, double otherwise) {
+        const path_step & step = path[index];
         node_id shown = at.node;
         if (target_in_shadow) {
             shown = retarget(at.node, step);
@@ -367,6 +397,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
         const bool is_target = (step.on == at.on && step.node == at.node) ||
                                (step.on == listen_on::node && step.node == shown);
+        if (related_in_shadow) { object->set("relatedTarget", wrap(cx, related_steps[index])); }
         object->set("currentTarget", object_of_step(cx, step));
         object->set("eventPhase", value::number(is_target ? 2 : otherwise));
         return is_target;
@@ -376,35 +407,42 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // listeners run here, at phase AT_TARGET rather than CAPTURING_PHASE.
     for (std::size_t i = path.size(); i-- > 0;) {
         if (stopped()) { break; }
-        (void)visit(path[i], 1);
+        (void)visit(i, 1);
         fire_at(path[i], type, event, true);
     }
     // BUBBLE: back up. A non-bubbling event gets this pass at the target only -
     // `continue` and not `break`, because a shadow host further up is a target
     // too and the steps between are merely skipped.
-    for (const path_step & step : path) {
+    for (std::size_t i = 0; i < path.size(); ++i) {
         if (stopped()) { break; }
-        if (!visit(step, 3) && !bubbles) { continue; }
-        fire_at(step, type, event, false);
+        if (!visit(i, 3) && !bubbles) { continue; }
+        fire_at(path[i], type, event, false);
     }
 
     // AFTER THE DISPATCH the event is not travelling any more, and the two
     // properties that say where it is have to say so - a page keeps the object
     // and reads them later.
-    if (target_in_shadow) {
-        // concept-event-dispatch steps 5.9-5.10: the target is the last step's
-        // shadow-adjusted target, and null when that is still inside a shadow
-        // tree - `clearTargets` - so nothing of a closed tree is left on the
-        // object.
+    if (target_in_shadow || related_in_shadow) {
+        // concept-event-dispatch steps 6.10-6.11 and 11: the target is the
+        // last step's shadow-adjusted target and the relatedTarget its
+        // retargeted one - and BOTH are null when either is still inside a
+        // shadow tree (`clearTargets`), so nothing of a closed tree is left
+        // on the object.
         node_id last = at.node;
-        for (auto it = path.rbegin(); it != path.rend(); ++it) {
-            if (it->on != listen_on::node) { continue; }
-            last = retarget(at.node, *it);
+        node_id last_related = related;
+        for (std::size_t i = path.size(); i-- > 0;) {
+            if (path[i].on != listen_on::node) { continue; }
+            last = retarget(at.node, path[i]);
+            if (related_in_shadow) { last_related = related_steps[i]; }
             break;
         }
-        const value final_target = in_shadow(last) ? value::null() : wrap(cx, last);
+        const bool clear = (last && in_shadow(last)) || (last_related && in_shadow(last_related));
+        const value final_target = clear ? value::null() : wrap(cx, last);
         object->set("target", final_target);
         object->set("srcElement", final_target);
+        object->set("relatedTarget", clear               ? value::null()
+                                     : related_in_shadow ? wrap(cx, last_related)
+                                                         : related_value);
     }
     object->set("currentTarget", value::null());
     object->set("eventPhase", value::number(0));
@@ -484,10 +522,48 @@ bool dom_bindings::has_activation_behavior(const read_txn & txn, node_id node) c
 
 void dom_bindings::run_activation_behavior(context & cx, node_id target) {
     control_kind kind = control_kind::none;
+    std::string javascript_url;
     {
         const auto txn = doc_->read();
-        kind = control_kind_of(atoms_->text(txn.tag(target).value_or(atom{})),
-                               txn.attribute_value(target, atoms_->intern("type")));
+        const std::string_view tag = atoms_->text(txn.tag(target).value_or(atom{}));
+        kind = control_kind_of(tag, txn.attribute_value(target, atoms_->intern("type")));
+        if (tag == "a" || tag == "area") {
+            const std::string_view href = txn.attribute_value(target, atoms_->intern("href"));
+            if (ascii_istarts_with(href, "javascript:")) {
+                javascript_url = std::string{href.substr(std::string_view{"javascript:"}.size())};
+            }
+        }
+    }
+    // A `javascript:` LINK RUNS ITS SCRIPT, and that is the whole navigation:
+    // HTML 7.4.2.1 evaluates the percent-decoded URL body as a classic script
+    // in the document's realm, as a TASK queued from the navigate - so it is a
+    // zero-delay timer here, which is what puts it after the click's own
+    // listeners and microtasks. In the bindings rather than the browser's
+    // follow_link because the bindings own the context; the browser would
+    // have to re-enter `run` from inside the dispatch that is running now.
+    // dom/events/Event-dispatch-click's "pick the first with activation
+    // behavior <a href>" is two nested `javascript:` anchors and expects the
+    // inner one's script, once.
+    if (!javascript_url.empty()) {
+        std::string source;
+        source.reserve(javascript_url.size());
+        for (std::size_t i = 0; i < javascript_url.size(); ++i) {
+            if (javascript_url[i] == '%' && i + 2 < javascript_url.size() &&
+                hex_value(javascript_url[i + 1]) >= 0 && hex_value(javascript_url[i + 2]) >= 0) {
+                source.push_back(static_cast<char>(hex_value(javascript_url[i + 1]) * 16 +
+                                                   hex_value(javascript_url[i + 2])));
+                i += 2;
+            } else {
+                source.push_back(javascript_url[i]);
+            }
+        }
+        script::program compiled =
+            script::compiler::compile("return (function () {\n" + source + "\n});");
+        if (compiled.ok) {
+            const value body = cx.run_nested(cx.own_program(std::move(compiled)));
+            if (body.is_callable()) { (void)add_timer(body, 0, false); }
+        }
+        return;
     }
     if (kind == control_kind::checkbox || kind == control_kind::radio) {
         // HTML's input activation behaviour for the two: nothing unless the
@@ -517,6 +593,8 @@ void dom_bindings::run_activation_behavior(context & cx, node_id target) {
 
 bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
     (void)type; // the event carries it; initEvent can have changed it since
+    if (cx_ == nullptr) { return false; }
+    const script::context::rooted keep{*cx_, event}; // see fire_at
     return dispatch_to(event, target ? path_step{target, listen_on::node}
                                      : path_step{node_id{}, listen_on::document});
 }
@@ -823,6 +901,15 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
 }
 
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
+    // THE EVENT IS ROOTED FOR THE CALL. An event the ENGINE made - a sheet's
+    // load from browser::tick, an image's from the registry - lives only in
+    // a C++ local while its listeners run, and a listener that allocates
+    // enough runs the collector; the object was freed under the second
+    // listener and read back as whatever took its slot (paint_timing saw an
+    // element where `bubbles` should have been). A page-made event is held
+    // by its register too, so this costs it nothing.
+    if (cx_ == nullptr) { return; }
+    const script::context::rooted keep{*cx_, event};
     // A LISTENER THAT THREW IS REPORTED TO THE PAGE, and not only to the
     // embedder.
     //
@@ -1155,11 +1242,104 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
     return made;
 }
 
+// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
+// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
+// onload="init()">` and `document.body.onresize = f` both address the window.
+[[nodiscard]] bool forwards_to_window(std::string_view name) {
+    for (const std::string_view each :
+         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
+        if (name == each) { return true; }
+    }
+    return false;
+}
+
+// The body or frameset element `self` wraps, or none.
+node_id dom_bindings::body_or_frameset_of(value self) {
+    const node_id id = handle_of(self);
+    if (!id || doc_ == nullptr) { return {}; }
+    const auto txn = doc_->read();
+    const atom tag = txn.tag(id).value_or(atom{});
+    const bool is =
+        txn.element_ns(id) == node_ns::html &&
+        (tag == atoms_->intern_lower("body") || tag == atoms_->intern_lower("frameset"));
+    return is ? id : node_id{};
+}
+
+// A forwarded CONTENT attribute reaches the window from here, lazily: there is
+// no attribute-change hook, so the element's `on<name>` text is compared with
+// what was last compiled from it on every read of the handler - through the
+// element or through the window - and a changed text is compiled onto the
+// window's slot, a removed one clears it. The element that last supplied the
+// window's handler is remembered so its removal is seen from the window side
+// too, and every body or frameset a script has a wrapper for - a detached
+// `createElement("body")` included - is checked when the window's handler is
+// read, since that is where its content attribute lands. A real hook in
+// setAttribute would replace all of this.
+void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
+                                             const std::string & name) {
+    auto * window = window_object();
+    if (window == nullptr || !element) { return; }
+    const value self = wrap(cx, element);
+    if (!self.is_object()) { return; }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const value * before = object->find(source_slot(name));
+    const bool had = before != nullptr;
+    const std::string was = had && before->is_string() ? cx.to_string(*before) : "";
+    const value made = compile_handler_attribute(cx, self, name);
+    const value * after = object->find(source_slot(name));
+    const auto supplier = forwarded_from_.find(name);
+    if (after == nullptr) {
+        // Gone. If it was this element's text the window was running, the
+        // window's handler goes with it ("deactivate an event handler").
+        if (had && supplier != forwarded_from_.end() && supplier->second == element) {
+            window->define(assigned_slot(name), value::null(), script::attr_none);
+            cx.define_global(name, value::null());
+            forwarded_from_.erase(supplier);
+        }
+        return;
+    }
+    if (had && cx.to_string(*after) == was) { return; } // unchanged since last seen
+    const value handler = made.is_callable() ? made : value::null();
+    window->define(assigned_slot(name), handler, script::attr_none);
+    cx.define_global(name, handler);
+    forwarded_from_[name] = element;
+}
+
 // THE GETTER. Null when unset, and "unset" is the ABSENCE of the assigned slot
 // rather than a null in it - see assigned_slot.
 value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
     if (!self.is_object()) { return value::null(); }
     auto * object = static_cast<script::object_object *>(self.as_heap());
+    if (forwards_to_window(name) && window_object() != nullptr) {
+        if (object == window_object()) {
+            // The bodies a script can have written to: the document's own,
+            // and every wrapped one. The wrapped list is rebuilt only when a
+            // wrapper has been made since it was last built.
+            if (wrappers_.size() != bodies_scanned_at_) {
+                bodies_scanned_at_ = wrappers_.size();
+                bodies_.clear();
+                const auto txn = doc_->read();
+                const atom body = atoms_->intern_lower("body");
+                const atom frameset = atoms_->intern_lower("frameset");
+                for (const auto & [packed, wrapper] : wrappers_) {
+                    const node_id node = unpack(packed);
+                    if (!txn.contains(node)) { continue; }
+                    const atom tag = txn.tag(node).value_or(atom{});
+                    if ((tag == body || tag == frameset) && txn.element_ns(node) == node_ns::html) {
+                        bodies_.push_back(node);
+                    }
+                }
+            }
+            if (const node_id body = find_by_tag("body");
+                body && std::ranges::find(bodies_, body) == bodies_.end()) {
+                refresh_forwarded_handler(cx, body, name);
+            }
+            for (const node_id body : bodies_) { refresh_forwarded_handler(cx, body, name); }
+        } else if (const node_id element = body_or_frameset_of(self)) {
+            refresh_forwarded_handler(cx, element, name);
+            object = window_object();
+        }
+    }
     if (const value * held = object->find(assigned_slot(name))) { return *held; }
     if (const value made = compile_handler_attribute(cx, self, name); made.is_callable()) {
         return made;
@@ -1192,6 +1372,10 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
                                      value given) {
     if (!self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());
+    // `body.onload = f` IS `window.onload = f` - see forwards_to_window.
+    if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {
+        object = window_object();
+    }
     const value stored = given.is_object_like() ? given : value::null();
     object->define(assigned_slot(name), stored, script::attr_none);
     // AND THE ASSIGNMENT DISCARDS THE CONTENT ATTRIBUTE'S HANDLER - HTML's
@@ -1229,6 +1413,11 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
     // this - so ask for them now. It is a no-op if they already exist and it is
     // what makes `interface_prototype` answer at all this early.
     ensure_dom_interfaces(cx);
+    install_frame_accessors(cx); // the prototypes exist now, and this is the first to need one
+    install_element_reflection(cx);
+    install_double_reflection(cx);
+    install_option_reflection(cx);
+    install_form_owner(cx);
     std::vector<script::object_object *> hosts;
     for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
         if (const value proto = interface_prototype(interface); proto.is_object()) {
@@ -1250,6 +1439,16 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
         for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
     };
     for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
+    // The Document's own (HTML 3.1.3 and the pointer lock, fullscreen and
+    // selection specifications): null on the prototype until assigned.
+    if (const value proto = interface_prototype("Document"); proto.is_object()) {
+        auto * document_proto = static_cast<script::object_object *>(proto.as_heap());
+        for (const std::string_view attribute :
+             {"onreadystatechange", "onvisibilitychange", "onselectionchange", "onfullscreenchange",
+              "onfullscreenerror", "onpointerlockchange", "onpointerlockerror"}) {
+            install(attribute, std::span<script::object_object *>{&document_proto, 1});
+        }
+    }
     // WindowEventHandlers is the window's alone here - see the note above on
     // what forwarding would need.
     if (auto * window = window_object()) {

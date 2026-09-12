@@ -30,6 +30,10 @@ inline constexpr std::string_view initialised_property = "__initialised";
 // because the IDL says so and because a page can see the difference - see
 // install_event_interfaces.
 inline constexpr std::string_view trusted_property = "__isTrusted";
+// Where `timeStamp` reads from - an accessor on Event.prototype, as the IDL
+// says, so `Object.getOwnPropertyDescriptor(Event.prototype, "timeStamp").get`
+// exists (Event-timestamp-cross-realm-getter.html calls it).
+inline constexpr std::string_view timestamp_property = "__timeStamp";
 // THE IN-PASSIVE-LISTENER FLAG, which rides on the EVENT because the event is
 // the only thing `preventDefault` is handed. `{passive: true}` is not a hint
 // the engine may take or leave: the DOM says the canceled flag is not set while

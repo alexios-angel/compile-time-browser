@@ -493,6 +493,66 @@ void test_the_window_keeps_both_spellings() {
        "1");
 }
 
+void test_a_sheets_onload_attribute_has_run_by_the_windows_load() {
+    // css/cssom/HTMLStyleElement-load-event: three `<style onload="++N">`,
+    // counted from a `window` load listener. HTML delays the document's load
+    // until its subresources have settled, so the count is three and not - as
+    // it was with the sheets queued beside the timers - zero.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><head><script>var N = 0;</script>"
+                   "<style onload='++N'></style><style onload='++N'>p{}</style>"
+                   "<link rel=stylesheet href='data:text/css,*{}' onload='++N'>"
+                   "<script>console.log('sync=' + N);"
+                   "window.addEventListener('load', function () { console.log('load=' + N); });"
+                   "</script></head><body></body></html>");
+    (void)page.tick(16.0);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{2});
+    if (logged.size() == 2) {
+        CHECK_EQ(logged[0], std::string{"sync=0"});
+        CHECK_EQ(logged[1], std::string{"load=3"});
+    }
+}
+
+void test_a_body_handler_is_the_windows() {
+    // HTML's window-reflecting body element event handler set, as
+    // dom/events/Body-FrameSet-Event-Handlers.html reads it: `body.onload` IS
+    // `window.onload`, both ways, and a `<body onload>` attribute is the
+    // window's handler - so the load event runs it.
+    is("(function () { function f() {} document.body.onresize = f;"
+       " return window.onresize === f && document.body.onresize === f; })()",
+       "true");
+    is("(function () { window.onblur = null; document.body.setAttribute('onblur', 'return 1');"
+       " var a = typeof window.onblur === 'function' && window.onblur === document.body.onblur;"
+       " document.body.removeAttribute('onblur'); return a && window.onblur === null; })()",
+       "true");
+    // A DETACHED body's content attribute reaches the window too - the
+    // file's "Forward" cases set it on a `createElement("body")`.
+    is("(function () { window.onscroll = null; var b = document.createElement('body');"
+       " b.setAttribute('onscroll', 'return 2');"
+       " return typeof window.onscroll === 'function' && window.onscroll === b.onscroll; })()",
+       "true");
+    // A frameset made by script forwards too; a div does not.
+    is("(function () { var fs = document.createElement('frameset'); function f() {}"
+       " fs.onfocus = f; var d = document.createElement('div'); d.onload = f;"
+       " return window.onfocus === f && window.onload === null; })()",
+       "true");
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><head><script>var N = 0;</script></head>"
+                   "<body onload='console.log(\"body-load=\" + (++N))'></body></html>");
+    (void)page.tick(16.0);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{1});
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"body-load=1"}); }
+}
+
+void test_a_hash_change_event_can_be_constructed() {
+    // html/dom/historical.html asks HashChangeEvent.prototype a question.
+    is("(function () { var e = new HashChangeEvent('hashchange', {newURL: 'a#b'});"
+       " return e.oldURL + '|' + e.newURL + '|' + ('initHashChangeEvent' in e); })()",
+       "|a#b|false");
+}
+
 } // namespace
 
 int main() {
@@ -516,5 +576,8 @@ int main() {
     test_an_animation_event_can_be_constructed();
     test_a_synthetic_touch_event_is_not_cancelable();
     test_the_window_keeps_both_spellings();
+    test_a_sheets_onload_attribute_has_run_by_the_windows_load();
+    test_a_body_handler_is_the_windows();
+    test_a_hash_change_event_can_be_constructed();
     REPORT("event_handlers");
 }

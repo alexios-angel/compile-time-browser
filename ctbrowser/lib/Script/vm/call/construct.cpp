@@ -33,6 +33,36 @@
 
 namespace ctbrowser::script {
 
+namespace {
+// The callee's name for "X is not a constructor", or "the value" when it has none.
+[[nodiscard]] std::string describe_new_target(value callee) {
+    std::string name;
+    if (callee.is_kind(heap_kind::native)) {
+        name = static_cast<const native_object *>(callee.as_heap())->name;
+    } else if (callee.is_kind(heap_kind::function)) {
+        const function_proto * p = static_cast<const closure_object *>(callee.as_heap())->proto;
+        if (p != nullptr) { name = p->display_name(); }
+    }
+    return name.empty() ? std::string{"the value"} : name;
+}
+} // namespace
+
+bool is_constructor(value v) {
+    if (v.is_kind(heap_kind::native)) {
+        return static_cast<const native_object *>(v.as_heap())->is_constructor;
+    }
+    if (v.is_kind(heap_kind::function)) {
+        const function_proto * p = static_cast<const closure_object *>(v.as_heap())->proto;
+        // A method (`{ m() {} }`) is not one either, but the bytecode does not
+        // record that - the compiler's, not this file's.
+        return p == nullptr || !(p->is_arrow || p->is_generator || p->is_async);
+    }
+    if (v.is_kind(heap_kind::proxy)) {
+        return is_constructor(static_cast<const proxy_object *>(v.as_heap())->target);
+    }
+    return false;
+}
+
 // EVERY FUNCTION HAS A `prototype`, and JavaScript relies on it far beyond
 // classes: `function F() {}; new F() instanceof F` is the constructor-function
 // pattern every transpiler emits, and Babel's own `_classCallCheck` guard is
@@ -63,6 +93,15 @@ value context::make_instance(value callee) {
     auto * instance = allocate<object_object>();
     if (callee.is_object()) {
         if (value * proto = static_cast<object_object *>(callee.as_heap())->find("prototype")) {
+            instance->prototype = *proto;
+        }
+    } else if (callee.is_kind(heap_kind::native)) {
+        // A BUILT-IN CONSTRUCTOR'S `prototype` TOO (OrdinaryCreateFromConstructor,
+        // 10.1.13). Only a plain object's was read, so every native constructor
+        // received an instance with no prototype and had to pick one itself -
+        // and WeakMap's fallback picked Map's table, which made
+        // `new WeakMap()` a Map to every method that checks its receiver.
+        if (value * proto = static_cast<native_object *>(callee.as_heap())->find("prototype")) {
             instance->prototype = *proto;
         }
     } else if (callee.is_kind(heap_kind::function)) {
@@ -98,6 +137,10 @@ value context::construct(value callee, std::span<const value> args) {
         raise("attempted to construct a non-function");
         return value::undefined();
     }
+    if (!is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
+        return value::undefined();
+    }
     const value self = make_instance(callee);
     // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
     // field-initialiser run and a constructor body - both of which run user
@@ -107,6 +150,16 @@ value context::construct(value callee, std::span<const value> args) {
     run_field_initialisers(callee, self);
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
+        // A BOUND FUNCTION (Function.prototype.bind, which says how `retained`
+        // is laid out): [[Construct]] is the target's, with the bound
+        // arguments in front and the bound `this` ignored (10.4.1.2).
+        if (const value * target = nat->find("@#BoundTargetFunction");
+            target != nullptr && target->is_callable() && nat->retained.size() >= 2) {
+            std::vector<value> all{nat->retained.begin() + 2, nat->retained.end()};
+            all.insert(all.end(), args.begin(), args.end());
+            const rooted_values keep_all{*this, all};
+            return construct(*target, all);
+        }
         std::vector<value> copy{args.begin(), args.end()};
         // Rooted for the same reason invoke() roots a native's arguments: from
         // C++ they live in the caller's span alone.
@@ -119,19 +172,10 @@ value context::construct(value callee, std::span<const value> args) {
         }();
         current_this_ = saved;
         if (rethrow_pending()) { return value::undefined(); } // see context::call
-        // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
-        // evaluate to the fresh empty instance, because a native returning a
-        // primitive looks exactly like a constructor that returned nothing - so
-        // the 5 was thrown away and `n + 1` was "[object Object]1". Silently.
-        //
-        // The DEVIATION, said plainly: the spec builds a wrapper OBJECT here, so
-        // `typeof new Number(5)` is "object" in a browser and "number" here.
-        // Every operation on it is right, which is the opposite of what happened
-        // before, and no page relies on the wrapper - every style guide in
-        // existence tells you not to write this. The flag is set only on the
-        // three conversions in install_globals, so a page's own constructor
-        // returning a primitive still evaluates to its instance per spec.
-        if (nat->find("__conversion") != nullptr) { return produced; }
+        // A native returning a primitive looks exactly like a constructor
+        // that returned nothing: `new Number(5)` evaluates to the receiver,
+        // which the three wrapper constructors fill through
+        // detail::wrap_primitive (values.cpp, async.cpp).
         return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its
@@ -184,6 +228,10 @@ value context::construct_new(value callee, std::span<const value> args,
     // and duplicating either is what let the two disagree.
     if (callee.is_kind(heap_kind::proxy) || callee.is_kind(heap_kind::native)) {
         return construct(callee, args);
+    }
+    if (callee.is_kind(heap_kind::function) && !is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
+        return value::undefined();
     }
     const value self = make_instance(callee);
     // ROOTED FOR THE REASON BOTH OTHER SPELLINGS ROOT IT: the instance is in a

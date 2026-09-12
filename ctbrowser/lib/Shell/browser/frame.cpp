@@ -69,7 +69,9 @@ std::size_t browser::tick(double elapsed_ms) {
     bindings_->reconcile_frames();
     if (load_event_pending_) {
         load_event_pending_ = false;
+        bindings_->set_ready_state("interactive");
         (void)bindings_->dispatch("DOMContentLoaded", node_id{});
+        bindings_->set_ready_state("complete");
         (void)bindings_->dispatch("load", node_id{});
         if (script_error_.empty() && !bindings_->callback_error().empty()) {
             script_error_ = bindings_->callback_error();

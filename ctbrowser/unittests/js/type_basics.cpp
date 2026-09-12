@@ -36,6 +36,24 @@ int main() {
     // typeof is the ONE operator that does not throw on an undeclared name -
     // which is why `typeof x === "undefined"` is the guard every bundle uses.
     js_expect("typeof undeclaredThing", "undefined");
+    // Reading one is an unresolvable reference: ReferenceError, catchable
+    // (6.2.5.5). A declared global holding undefined is NOT one.
+    js_expect("(function () { try { undeclaredThing; return 'read'; }"
+              " catch (e) { return e.constructor.name; } })()",
+              "ReferenceError");
+    js_expect("(function () { try { undeclaredThing; } catch (e) { return e.message; } })()",
+              "undeclaredThing is not defined");
+    js_expect("(function () { var declaredEmpty; try { declaredEmpty; return 'read'; }"
+              " catch (e) { return 'threw'; } })()",
+              "read");
+    // The global object is the global environment's object record, so a
+    // name inherited by globalThis resolves - `toString` is Object.prototype's.
+    js_expect("typeof toString", "function");
+    js_expect("(function () { globalThis.lateGlobal = 3; return lateGlobal; })()", "3");
+    // ...and `delete` reaches the binding (clause 17: every global is configurable).
+    js_expect("(function () { globalThis.gone = 3; delete globalThis.gone; return typeof gone + "
+              "',' + ('gone' in globalThis); })()",
+              "undefined,false");
     js_expect("typeof typeof 1", "string");
     js_expect("typeof void 0", "undefined");
 

@@ -12,9 +12,13 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
+#include <iomanip>
+#include <locale>
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -87,15 +91,28 @@ inline constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
 
 // A "valid element local name": at least one code point, an element name start
 // first, and nothing after it that would end a tag name.
+// U+0000 is refused by all three rules - it is the one character the tokenizer
+// cannot carry (it becomes U+FFFD) - and a string_view literal cannot hold it,
+// hence the separate find.
 [[nodiscard]] inline bool is_valid_element_local_name(std::string_view name) {
     if (name.empty() || !is_element_name_start(static_cast<unsigned char>(name.front()))) {
         return false;
     }
-    return name.find_first_of(element_name_breaks) == std::string_view::npos;
+    return name.find_first_of(element_name_breaks) == std::string_view::npos &&
+           name.find('\0') == std::string_view::npos;
 }
 
 [[nodiscard]] inline bool is_valid_doctype_name(std::string_view name) {
-    return name.find_first_of(doctype_name_breaks) == std::string_view::npos;
+    return name.find_first_of(doctype_name_breaks) == std::string_view::npos &&
+           name.find('\0') == std::string_view::npos;
+}
+
+// A "valid namespace prefix" (DOM 4.9): not empty, no ASCII whitespace,
+// U+0000, `/` or `>`. Looser than an attribute name - `=` is allowed - and
+// with no first-character rule; element/internal.hpp spells the same one.
+[[nodiscard]] inline bool is_valid_namespace_prefix(std::string_view prefix) {
+    return !prefix.empty() && prefix.find_first_of(element_name_breaks) == std::string_view::npos &&
+           prefix.find('\0') == std::string_view::npos;
 }
 
 // AND THE THIRD NAME RULE, WHICH IS AN ATTRIBUTE'S, and it is LOOSER than

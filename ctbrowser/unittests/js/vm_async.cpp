@@ -70,6 +70,107 @@ void test_pending_promises() {
 // author writing generators at all - TypeScript compiles every `async` function
 // into one driven by an `__awaiter` helper, so `yield` there is what `await`
 // became. That helper is the shape these pin.
+// `yield*` DELEGATES (14.4.14): every inner value is yielded by the outer
+// generator, the expression's value is what the inner one returned, `next(v)`
+// is forwarded, a sync `.next()` answers the inner RESULT OBJECT itself, and
+// `.throw()`/`.return()` while delegating reach the inner iterator's own
+// `throw`/`return` before anything else happens. The parser used to eat the
+// star and yield the operand.
+void test_yield_delegation() {
+    expect_result("function* inner() { yield 1; yield 2; return 'r'; }"
+                  "function* outer() { const got = yield* inner(); yield got; }"
+                  "return [...outer()].join(',');",
+                  "1,2,r");
+    expect_result("function* inner() { const a = yield 'first'; yield a + 1; }"
+                  "function* outer() { yield* inner(); }"
+                  "const it = outer(); it.next(); return it.next(41).value;",
+                  "42");
+    // The inner result object comes out as it is.
+    expect_result("const marker = { value: 5, done: false, extra: true };"
+                  "const inner = { [Symbol.iterator]() { return { next() { return marker; } }; } };"
+                  "function* outer() { yield* inner; }"
+                  "return outer().next() === marker;",
+                  "true");
+    // Anything iterable, including a string and an array.
+    expect_result("function* g() { yield* 'ab'; yield* [3]; } return [...g()].join('');", "ab3");
+    // `.throw(e)` goes to inner.throw; without one the inner is closed and a
+    // TypeError lands at the yield.
+    expect_result("var seen = ''; var closed = 0;"
+                  "const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  throw(e) { seen = e; return { value: 'handled', done: false }; } }; } };"
+                  "function* outer() { yield* inner; }"
+                  "const it = outer(); it.next(); const r = it.throw('boom');"
+                  "return seen + ',' + r.value + ',' + r.done;",
+                  "boom,handled,false");
+    expect_result(
+        "var closed = 0;"
+        "const inner = { [Symbol.iterator]() { return {"
+        "  next() { return { value: 1, done: false }; }, return() { closed++; return {}; } }; } };"
+        "function* outer() { yield* inner; }"
+        "const it = outer(); it.next();"
+        "try { it.throw('boom'); return 'no'; } catch (e) { return e.constructor.name + closed; }",
+        "TypeError1");
+    // `.return(v)` goes to inner.return; its done result finishes the outer.
+    expect_result("const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  return(v) { return { value: v + '!', done: true }; } }; } };"
+                  "function* outer() { yield* inner; yield 'after'; }"
+                  "const it = outer(); it.next(); const r = it.return('bye');"
+                  "return r.value + ',' + r.done + ',' + it.next().done;",
+                  "bye!,true,true");
+    // A delegate that finishes through `.throw()` lets the body carry on.
+    expect_result("const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  throw(e) { return { value: 'end', done: true }; } }; } };"
+                  "function* outer() { const v = yield* inner; yield 'got ' + v; }"
+                  "const it = outer(); it.next(); return it.throw('x').value;",
+                  "got end");
+    // Not iterable: TypeError from the yield* itself.
+    expect_result("function* g() { yield* 5; }"
+                  "try { g().next(); return 'no'; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+}
+
+// `.return(v)` AT A YIELD RUNS THE FINALLY BLOCKS ON THE WAY OUT (27.5.3.4):
+// the return completion travels through the body, a catch clause does not
+// see it, a `yield` inside a finally suspends again, and a finally that
+// returns overrides the value. It used to finish the generator on the spot.
+void test_generator_return_runs_finally() {
+    expect_result("var log = []; function* g() { try { yield 1; } finally { log.push('f'); } }"
+                  "const it = g(); it.next(); const r = it.return(9);"
+                  "return log.join('') + ',' + r.value + ',' + r.done + ',' + it.next().done;",
+                  "f,9,true,true");
+    expect_result("var caught = 0; function* g() { try { yield 1; } catch (e) { caught++; } }"
+                  "const it = g(); it.next(); const r = it.return(2);"
+                  "return caught + ',' + r.value + ',' + r.done;",
+                  "0,2,true");
+    expect_result("function* g() { try { yield 1; } finally { yield 'cleanup'; } }"
+                  "const it = g(); it.next(); const a = it.return(3); const b = it.next();"
+                  "return a.value + ',' + a.done + ',' + b.value + ',' + b.done;",
+                  "cleanup,false,3,true");
+    expect_result(
+        "function* g() { try { yield 1; } finally { return 'override'; } }"
+        "const it = g(); it.next(); const r = it.return(3); return r.value + ',' + r.done;",
+        "override,true");
+    // Nested try/finally: both run, innermost first.
+    expect_result(
+        "var log = []; function* g() { try { try { yield 1; } finally { log.push('in'); } }"
+        " finally { log.push('out'); } }"
+        "const it = g(); it.next(); it.return(); return log.join(',');",
+        "in,out");
+    // A throw from a finally during return is the throw, not the return.
+    expect_result("function* g() { try { yield 1; } finally { throw new Error('fin'); } }"
+                  "const it = g(); it.next(); try { it.return(3); return 'no'; }"
+                  " catch (e) { return e.message + ',' + it.next().done; }",
+                  "fin,true");
+    // Before the first next() nothing runs; after the end nothing runs either.
+    expect_result(
+        "var ran = 0; function* g() { try { ran++; yield 1; } finally { ran += 10; } }"
+        "const it = g(); const r = it.return(5); return ran + ',' + r.value + ',' + r.done;",
+        "0,5,true");
+}
+
 void test_generators() {
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
@@ -346,9 +447,40 @@ void test_for_await() {
                       "(async () => { try { for await (const v of g()) { result += v; } } "
                       "  catch (e) { result += e.message; } })();",
                       "1bad");
+    // AsyncIteratorClose: `break` and a throw out of the body call the
+    // iterator's return(); a normal end and a throw from next() do not.
+    expect_after_turn("var result = ''; var it = { i: 0, next() { return Promise.resolve({value: "
+                      "this.i++, done: this.i > 5}); },"
+                      "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+                      "[Symbol.asyncIterator]() { return this; } };"
+                      "(async () => { for await (const v of it) { result += v; if (v === 1) { "
+                      "break; } } result += '.'; })();",
+                      "01R.");
+    expect_after_turn("var result = ''; var it = { i: 0, next() { return Promise.resolve({value: "
+                      "this.i++, done: this.i > 2}); },"
+                      "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+                      "[Symbol.asyncIterator]() { return this; } };"
+                      "(async () => { try { for await (const v of it) { result += v; throw new "
+                      "Error('t'); } } catch (e) { result += e.message; } })();",
+                      "0Rt");
+    expect_after_turn(
+        "var result = ''; var it = { i: 0, next() { return Promise.resolve({value: this.i++, done: "
+        "this.i > 2}); },"
+        "  return() { result += 'R'; return Promise.resolve({done: true}); }, "
+        "[Symbol.asyncIterator]() { return this; } };"
+        "(async () => { for await (const v of it) { result += v; } result += '.'; })();",
+        "01.");
     expect_after_turn("var result = ''; var x;"
                       "(async () => { for await (x of [1, 2]) { result += x; } })();",
                       "12");
+    // GetIterator(async), 7.4.3: a [Symbol.asyncIterator] that is present but
+    // not callable is the TypeError; [Symbol.iterator] is asked only when it
+    // is absent - so the sync getter here is never read.
+    expect_after_turn("var result = ''; var it = { get [Symbol.iterator]() { result += 'sync'; }, "
+                      "[Symbol.asyncIterator]: false };"
+                      "(async () => { try { for await (const v of it) {} } catch (e) { result += "
+                      "e.constructor.name; } })();",
+                      "TypeError");
     // Outside an async function it is refused at compile time.
     CHECK(!compiler::compile("function f() { for await (const v of []) {} }").ok);
 
@@ -370,6 +502,20 @@ void test_for_await() {
     expect_after_turn("var result = ''; Array.fromAsync(null).then(() => { result = 'no'; }, e => "
                       "{ result = e.name; });",
                       "TypeError");
+    // A constructor as `this` takes the elements through defineProperty: a
+    // non-configurable slot is a TypeError, not an endless loop (test262
+    // this-constructor-with-unsettable-element ran the box out of memory).
+    expect_after_turn(
+        "var result = ''; function M() { Object.defineProperty(this, 0, {value: 0,"
+        "  writable: true, configurable: false}); }"
+        "var it = { next() { return Promise.resolve({value: 1, done: false}); },"
+        "  [Symbol.asyncIterator]() { return this; } };"
+        "Array.fromAsync.call(M, it).then(() => { result = 'no'; }, e => { result = e.name; });",
+        "TypeError");
+    expect_after_turn(
+        "var result = ''; Array.fromAsync({length: 2 ** 40}).then(() => { result = 'no'; },"
+        "  e => { result = e.name; });",
+        "RangeError");
 }
 
 } // namespace
@@ -377,6 +523,8 @@ void test_for_await() {
 int main() {
     test_pending_promises();
     test_generators();
+    test_yield_delegation();
+    test_generator_return_runs_finally();
     test_async_and_promises();
     test_promise_handlers_are_microtasks();
     test_async_rejection();

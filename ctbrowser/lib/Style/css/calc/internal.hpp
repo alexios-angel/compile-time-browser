@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -131,7 +132,18 @@ struct function_span {
 
 // One expression with NO bases at all, answered as a term. Defined in
 // evaluator.cpp.
-[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression);
+// `size_symbol` admits `size` as a length term: the calculation of a calc-size().
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
+                                                              bool size_symbol = false);
+
+// A <calc-sum> THAT WILL NOT FOLD, simplified over its tree (CSS Values 4
+// §10.12) and written in §10.13's order, without a calc() around it:
+// `(min(10px, 20%) + max(1rem, 2%)) * 2` is `2 * (min(10px, 20%) + max(1rem,
+// 2%))`. With `ctx` it is a computed value - relative lengths in pixels and
+// the nested functions folded; without one a specified value. `nullopt` when
+// the text is not one <calc-sum> of arithmetic. Defined in tree.cpp.
+[[nodiscard]] std::optional<std::string> simplify_sum_text(std::string_view expression,
+                                                           const length_context * ctx = nullptr);
 
 // The inside of a symbolic calc() in §10.13's order, or empty when the sum has
 // no canonical spelling. Defined in serialize.cpp.
@@ -147,6 +159,16 @@ struct function_span {
 [[nodiscard]] std::string_view body_of(std::string_view value, std::size_t at,
                                        std::string_view name, const function_span & span);
 [[nodiscard]] bool has_percentage(std::string_view text);
+// Every comma-separated argument of `body`, at bracket depth zero and with
+// quoted runs skipped.
+[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body);
+// A COMPARISON FUNCTION WITH NO ANSWER, its arguments each rewritten by `one`
+// and a `clamp()` with an absent bound reduced to the comparison that is
+// left. Defined in fold.cpp; simplify_math and fold_math both render through
+// it, one with symbolic terms and one against the bases it has.
+[[nodiscard]] std::string rewritten_arguments(
+    std::string_view name, std::string_view inner,
+    const std::function<std::string(std::string_view)> & one);
 
 // The canonical unit's spelling, or an empty view for a `<number>`. This is what
 // a computed value is serialised with. Defined in units.cpp.
@@ -157,7 +179,7 @@ struct function_span {
 // between an honest gap and a wrong number. An empty unit is a plain number and
 // answers with itself, because that is what a calc term needs. Defined in
 // units.cpp.
-[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
-                                              const length_context & ctx);
+[[nodiscard]] std::optional<double> unit_to_px(double value, std::string_view unit,
+                                               const length_context & ctx);
 
 } // namespace ctbrowser::style::css::detail

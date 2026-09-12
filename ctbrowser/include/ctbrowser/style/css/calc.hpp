@@ -39,6 +39,13 @@ struct length_context {
     // pinned by the goldens.
     float line_height = 20.0f;
     float root_line_height = 20.0f;
+    // THE ADVANCE OF `0` IN THE ELEMENT'S FONT, and in the root's, which is
+    // what `ch` and `rch` measure (CSS Values 4 §6.1.1). Only a font backend
+    // knows it and the style engine has it injected (engine::set_text_measure);
+    // zero means nothing measured, and the unit takes CSS's own fallback of
+    // half an em.
+    float zero_advance = 0.0f;
+    float root_zero_advance = 0.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
@@ -55,6 +62,15 @@ struct length_context {
     // can say so before the basis exists (round-mod-rem-computed,
     // signs-abs-computed, hypot-pow-sqrt-computed).
     std::optional<float> percent_basis;
+    // WHAT `random()` IS RANDOM PER (CSS Values 5 §random-caching): a value
+    // with no name is shared by nothing - it differs per element, per property
+    // and per position in the value - and the caller says which element and
+    // which property this is. `random_index` is the ordinal of this
+    // expression's first random() among the value's, counted from zero in
+    // source order by the fold as it walks the value; zero everywhere else.
+    std::uint64_t element_key = 0;
+    std::string_view property;
+    std::uint32_t random_index = 0;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
@@ -129,6 +145,11 @@ enum class math_outcome : std::uint8_t {
 struct math_answer {
     math_outcome outcome = math_outcome::invalid;
     calc_result value;
+    // HOW MANY random() FUNCTIONS THE EXPRESSION HOLDS, whatever the outcome,
+    // so a caller walking a whole value can number the next one: the
+    // automatic sharing key is the function's ordinal in the value
+    // (`length_context::random_index`), and a calc() may hold several.
+    std::uint32_t randoms = 0;
 };
 
 // WHAT KIND OF NUMBER THE PROPERTY WILL TAKE. A `<number>` answer is a valid
@@ -174,6 +195,34 @@ enum class math_context : std::uint8_t {
 // Evaluate one expression - the inside of a calc(), or a whole `calc(...)`,
 // `min(...)`, `max(...)` or `clamp(...)`. The three outcomes are above.
 [[nodiscard]] math_answer evaluate_math(std::string_view expression, const length_context & ctx);
+
+// THE TYPE OF A WELL-FORMED MATH FUNCTION THAT HAS NO ANSWER YET. `calc(1px *
+// sibling-index())` is unresolved everywhere but in the cascade, and is a
+// <length> all the same: CSS Values 4 §10.2 types the expression before anything
+// is measured, which is what lets `rotate` refuse it on sight. The answer is a
+// `calc_result` whose magnitudes are left at zero - only `type`, `is_number` and
+// `has_percent` mean anything - and `nullopt` for an expression whose type
+// cannot be settled without a basis, such as `min(10px, 5%)`.
+[[nodiscard]] std::optional<calc_result> math_type_of(std::string_view expression);
+
+// calc-size( <calc-size-basis>, <calc-sum> ), CSS Values 5 §calc-size, AS A
+// SPECIFIED VALUE: the basis canonical - a keyword, a nested calc-size() or a
+// <length-percentage> - and the calculation simplified with `size` as a term
+// of its own, so `size * 2` is `2 * size`. `keywords` are the property's own
+// size keywords (`auto` for width, `none` for max-width); the intrinsic ones
+// and `any` are always a basis, and `size` may not be used over `any`.
+// `nullopt` when `value` is not one valid calc-size() and nothing else
+// (calc-size-parsing).
+[[nodiscard]] std::optional<std::string> calc_size_text(std::string_view value,
+                                                        std::string_view keywords);
+
+// EVERY random() IN A SPECIFIED VALUE, ITS KEY SPELLED OUT (CSS Values 5
+// §random-caching, as random-serialize reads it): the sharing words become
+// the `<dashed-ident>`, `element-scoped` and UA-ident triple `random_base`
+// keys on - `random(0px, 100px)` in `width` is `random(element-scoped
+// ua-width-1, 0px, 100px)`, `property-scoped` is `ua-width` - and the
+// bounds take their canonical units. `fixed` keeps its number.
+[[nodiscard]] std::string canonical_random(std::string_view value, std::string_view property);
 
 // A folded value, and whether every calc() in it actually evaluated.
 //
@@ -271,6 +320,13 @@ struct folded_value {
 // is 24px" from "this is not a length at all" without a second parse.
 [[nodiscard]] std::optional<float> length_text_to_px(std::string_view text,
                                                      const length_context & ctx);
+
+// `random()`'S BASE for a set of sharing options against a context, CSS
+// Values 5 §random-caching: a number in [0, 1) that is the same every time the
+// same key asks. The key is the options' - a `--name`, `element-scoped`,
+// `property-index-scoped` - over the context's element, property and
+// position. Public because `random-item()` shares it.
+[[nodiscard]] double random_base(std::string_view options, const length_context & ctx);
 
 // A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)`, `90deg`,
 // `0.5s` - or, for a number answer, the bare number with no unit at all: `0.5`,

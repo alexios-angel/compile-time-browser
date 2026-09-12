@@ -197,6 +197,12 @@ void test_labeled_break() {
 
 void test_try_catch() {
     expect_result("var r = 0; try { throw 7; } catch (e) { r = e; } return r;", "7");
+    // A catch parameter may be a pattern (14.15.3), and it is a binding the
+    // block's closures capture like any other.
+    expect_result("try { throw { code: 4, tags: ['a', 'b'] }; }"
+                  " catch ({ code, tags: [first] }) { return code + first; }",
+                  "4a");
+    expect_result("try { throw [1, 2]; } catch ([x, y]) { return (() => x + y)(); }", "3");
     expect_result("var r = 0; try { r = 1; } catch (e) { r = 2; } return r;", "1");
     expect_result("var r = ''; try { throw 'boom'; } catch (e) { r = e; } return r;", "boom");
 }
@@ -335,12 +341,56 @@ void test_for_of() {
     expect_result("var fns = []; for (const x of [1,2,3]) { fns.push(function () { return x; }); }"
                   "return fns[0]() + fns[2]();",
                   "4");
+    // THE PROTOCOL, LAZILY (14.7.5.6): a generator is pulled one value per
+    // iteration, so an infinite one ends at `break` - and `break` closes the
+    // iterator through its `return()` (7.4.10 IteratorClose), once, while a
+    // loop that ran to `done` does not call it.
+    expect_result("function* nat() { let i = 0; while (true) { yield i++; } }"
+                  "var s = 0; for (const x of nat()) { if (x > 3) { break; } s += x; } return s;",
+                  "6");
+    expect_result("var returned = 0, started = 0;"
+                  "var it = { [Symbol.iterator]() { return { next() { started++;"
+                  " return { done: false, value: started }; }, return() { returned++;"
+                  " return {}; } }; } };"
+                  "var seen = 0; for (const x of it) { seen += x; if (x == 2) { break; } }"
+                  "return [started, returned, seen].join(',');",
+                  "2,1,3");
+    expect_result(
+        "var returned = 0;"
+        "var it = { [Symbol.iterator]() { var n = 0; return { next() { n++;"
+        " return { done: n > 2, value: n }; }, return() { returned++; return {}; } }; } };"
+        "var t = 0; for (const x of it) { t += x; } return t + ',' + returned;",
+        "3,0");
+    // The head may be an assignment pattern over bindings that already exist,
+    // in for-of and for-in alike.
+    expect_result("var a, b, out = []; for ([a, b] of [[1, 2], [3, 4]]) { out.push(a * b); }"
+                  "return out.join(',');",
+                  "2,12");
+    expect_result("var k, out = []; var o = { x: 1 }; for ({ length: k } in o) { out.push(k); }"
+                  "return out.join(',');",
+                  "1");
+    // A non-iterable is the TypeError the specification says, not zero turns.
+    expect_result("try { for (const x of 5) {} return 'ran'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { for (const x of {}) {} return 'ran'; } catch (e) { return e.name; }",
+                  "TypeError");
 }
 
 void test_for_in() {
     expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
     expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;",
                   "3");
+    // INHERITED ENUMERABLE KEYS TOO (14.7.5.9), own first, a shadowed name
+    // once, and a non-enumerable own property shadows an inherited one.
+    expect_result("var p = { inherited: 1, get acc() { return 2; } };"
+                  "var o = Object.create(p); o.own = 3; o.inherited = 4;"
+                  "Object.defineProperty(o, 'acc', { value: 0, enumerable: false });"
+                  "var keys = []; for (var k in o) keys.push(k); return keys.join(',');",
+                  "own,inherited");
+    expect_result("class A { m() {} } var a = new A(); Object.defineProperty(A.prototype, 'e',"
+                  " { value: 1, enumerable: true }); var ks = []; for (var k in a) ks.push(k);"
+                  " return ks.join(',');",
+                  "e");
 }
 
 void test_switch() {
@@ -414,7 +464,34 @@ void test_calling_a_non_function_throws() {
 
 } // namespace
 
+// `with (o) body` (14.11): the object stands in front of the scope chain for
+// every name the body does not declare itself. Compiled, not interpreted -
+// see compile/with.cpp - so what is tested is the resolution order: object
+// over outer local, object over global, a body-local over the object, the
+// @@unscopables veto, a nested closure seeing the object, `this` on a call
+// through it, an assignment landing on the object, and the TypeError for a
+// nullish object. Sloppy code only: strict code refuses the statement.
+void test_with() {
+    expect_result("var x = 1; var o = {x: 2}; with (o) { return x; }", "2");
+    expect_result("var o = {x: 2}; with (o) { var y = x + 1; } return y;", "3");
+    expect_result("var x = 1; with ({}) { return x; }", "1");
+    expect_result("var o = {x: 2}; with (o) { let x = 5; return x; }", "5");
+    expect_result("var o = {x: 2}; with (o) { x = 7; } return o.x;", "7");
+    expect_result("var o = {x: 2}; var x = 0; with (o) { x += 1; } return o.x + ':' + x;", "3:0");
+    expect_result("var o = {f() { return this === o; }}; with (o) { return f(); }", "true");
+    expect_result("var o = {x: 2}; var g; with (o) { g = function () { return x; }; } return g();",
+                  "2");
+    expect_result("var o = {x: 2}; with (o) { return typeof x + typeof nope; }", "numberundefined");
+    expect_result("var a = {x: 1}; var b = {x: 2}; with (a) { with (b) { return x; } }", "2");
+    expect_result("var a = {x: 1}; var b = {y: 2}; with (a) { with (b) { return x; } }", "1");
+    expect_result("try { with (null) {} } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("function f(o) { with (o) { return arguments.length; } } return f({});", "1");
+    CHECK(!compiler::compile("'use strict'; with ({}) {}").ok);
+}
+
 int main() {
+    test_with();
     test_errors();
     test_variables_and_control_flow();
     test_increment_semantics();

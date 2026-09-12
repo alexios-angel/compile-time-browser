@@ -3,6 +3,9 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/core/atom.hpp>
+#include <ctbrowser/style/css/parser.hpp>
+
 namespace ctbrowser::style::css {
 
 using namespace detail;
@@ -54,6 +57,16 @@ constexpr std::array<std::string_view, 5> wide_keywords{"inherit", "initial", "u
         find_top_level(body, "or", 0) != std::string_view::npos) {
         return condition(body, depth + 1);
     }
+    // `selector( <complex-selector> )`, CSS Conditional 4 §6.2: supported when
+    // it parses. A SYNTAX error and a selector this engine cannot match are
+    // different answers, and only the first is "not supported".
+    if (ascii_istarts_with(body, "selector(") && body.back() == ')') {
+        atom_table atoms;
+        bool invalid = false;
+        const stylesheet parsed =
+            parse_selector_text(body.substr(9, body.size() - 10), atoms, invalid);
+        return !invalid && !parsed.selectors.empty();
+    }
     const std::size_t colon = body.find(':');
     if (colon == std::string_view::npos) { return false; }
     // `!important` is part of a <declaration> and does not change the answer, so
@@ -80,6 +93,8 @@ bool condition(std::string_view text, int depth) {
         const bool right = condition(body.substr(at + op.size()), depth + 1);
         return op == "and" ? (left && right) : (left || right);
     }
+    // `selector()` is a <supports-condition> of its own, parentheses or not.
+    if (ascii_istarts_with(body, "selector(")) { return leaf(body, depth); }
     if (body.front() != '(' || body.back() != ')') { return false; }
     return leaf(body.substr(1, body.size() - 2), depth);
 }
@@ -118,7 +133,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
 
     const auto yes = [important, &found](std::string serialized) {
-        return value_check{true, std::move(serialized), important, found.unknown_function};
+        return value_check{true, std::move(serialized), important, found.unknown_function,
+                           found.substituted};
     };
     // THE AUTHOR'S BYTES, for every value this file does not model. A
     // re-serialised token stream is not the same string - `random-item(auto
@@ -132,8 +148,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // one way wherever they stand: `.5%` is `0.5%` in a `background-position`
     // this table leaves freeform exactly as it is in a `width` it types. Only
     // those three token kinds are respelled; every other byte is the author's.
-    const std::string verbatim{text};
-    const std::string normalized = normalize_value_tokens(ts, text);
+    // ...WITH THE BLOCKS EOF CLOSED WRITTEN OUT: a value kept as
+    // `attr(data-foo type(<color>)` would swallow the declaration after it
+    // when the block is serialised and parsed again (attr-all-types).
+    std::string verbatim{text};
+    verbatim.append(static_cast<std::size_t>(found.unclosed), ')');
+    bool bad_url = false;
+    std::string normalized = normalize_value_tokens(ts, text, &bad_url);
+    if (bad_url) { return {}; }
+    normalized.append(static_cast<std::size_t>(found.unclosed), ')');
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.
@@ -163,6 +186,9 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and it answers only about the functions it implements, so a `calc-size()`
     // is left alone rather than guessed at.
     if (!math_syntax_ok(text)) { return {}; }
+    // ...AND SO DOES A NON-INTEGER LITERAL IN AN <integer> SLOT, in the handful
+    // of freeform properties that have one (grammar.cpp).
+    if (!integer_slots_ok(property, ts)) { return {}; }
 
     // ...AND A WELL FORMED ONE IS SIMPLIFIED WHEREVER IT SITS. CSS Values 4
     // §10.12 says a math function's specified value is its simplified form; it
@@ -171,8 +197,11 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // of which this table models. `calc/` owns the rule and keeps the author's
     // bytes for everything it cannot answer, so a value with no math in it and a
     // value whose math needs a font size both come back untouched.
-    const std::string simplified =
-        may_have_math(normalized) ? simplify_math(normalized) : normalized;
+    std::string simplified = may_have_math(normalized) ? simplify_math(normalized) : normalized;
+    // ...AND A random() SPELLS ITS KEY, which needs the property's name.
+    if (!property.starts_with("--") && simplified.find("random(") != std::string::npos) {
+        simplified = canonical_random(simplified, property);
+    }
 
     const property_syntax * p = find_property(property);
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
@@ -216,6 +245,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // perfectly good position whose components this reader does not evaluate,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
+    if (p->kind == k::color) {
+        // `invert` is CSS 2.1's outline colour and nothing else's.
+        if (ascii_iequals(property, "outline-color") && ascii_iequals(text, "invert")) {
+            return yes("invert");
+        }
+        std::string serialized;
+        if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
+        return {};
+    }
+
     if (p->kind == k::position) {
         std::string serialized;
         if (match_position(ts, found, serialized)) { return yes(std::move(serialized)); }
@@ -236,6 +275,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes
+    // one (CSS Values 5 §calc-size): the basis is judged against the
+    // property's keywords and the calculation is simplified with `size` in it.
+    if (p->kind == k::length_percentage && ascii_istarts_with(text, "calc-size(")) {
+        std::optional<std::string> sized = calc_size_text(text, p->keywords);
+        if (!sized) { return {}; }
+        return yes(std::move(*sized));
+    }
+
     // A math function over the whole value: `calc/` owns the evaluation and
     // has a third answer besides folded and invalid.
     //
@@ -247,7 +295,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // number is the cascade's job, one layer up.
     if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
         const math_answer answer = evaluate_math(text, length_context{});
-        if (!math_type_fits(*p, answer)) { return {}; }
+        if (!math_type_fits(*p, answer, text)) { return {}; }
         return yes(simplified);
     }
     return {};

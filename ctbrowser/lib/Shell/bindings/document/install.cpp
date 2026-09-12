@@ -32,7 +32,11 @@ void dom_bindings::install_document(context & cx) {
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
-        if (!doc_->xml()) { return create_html_element(c, name); }
+        if (!doc_->xml()) {
+            const value made = create_html_element(c, name);
+            if (ascii_iequals(name, "script")) { note_unstarted_script(handle_of(made)); }
+            return made;
+        }
         // AN XML DOCUMENT, DOM 4.5 steps 3-5: the local name is kept AS
         // WRITTEN - only an HTML document lowercases - and the namespace is
         // HTML only when the content type is application/xhtml+xml, null
@@ -70,47 +74,20 @@ void dom_bindings::install_document(context & cx) {
             given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
         const std::string qualified =
             args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
-        const qualified_name split = split_qualified(qualified);
-        // VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the
-        // shape of the name is decided BEFORE the namespace is looked at, so
-        // `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and
-        // not the NamespaceError its namespace would otherwise earn. Both
-        // orderings throw; only one of them throws what the suite asserts.
-        //
-        // A prefix is checked for being writable and non-empty and NOTHING
-        // ELSE - `createElementNS(ns, "0:a")` is legal and `"a:0"` is not,
-        // because it is the LOCAL name that has to be a name and the prefix is
-        // only ever a label in front of it.
-        const bool prefixed = split.has_colon;
-        const bool prefix_writable =
-            !split.prefix.empty() &&
-            split.prefix.find_first_of(element_name_breaks) == std::string_view::npos;
-        if ((prefixed && !prefix_writable) || !is_valid_element_local_name(split.local)) {
-            throw_dom_exception(c, "InvalidCharacterError",
-                                "createElementNS: '" + qualified + "' is not a qualified name");
+        if (!validate_and_extract_element(c, "createElementNS", ns, qualified)) {
             return value::undefined();
         }
-        const auto fail = [this, &c](const std::string & why) {
-            throw_dom_exception(c, "NamespaceError", "createElementNS: " + why);
-            return value::undefined();
-        };
-        if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
-        if (split.prefix == "xml" && ns != xml_namespace) {
-            return fail("the xml prefix belongs to the XML namespace");
-        }
-        if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
-            return fail("xmlns belongs to the XMLNS namespace");
-        }
-        if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
-            return fail("the XMLNS namespace is only for xmlns");
-        }
+        const bool prefixed = split_qualified(qualified).has_colon;
         const node_ns kind = ns == html_namespace  ? node_ns::html
                              : ns == svg_namespace ? node_ns::svg
                                                    : node_ns::other;
         // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
         // here, and folding it would lose the case an XML document depends on.
-        const node_id made = doc_->create_element(atoms_->intern(qualified), kind);
+        const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);
         if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        if (kind == node_ns::html && split_qualified(qualified).local == "script") {
+            note_unstarted_script(made);
+        }
         return wrap(c, made);
     });
     // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on
@@ -155,6 +132,8 @@ void dom_bindings::install_document(context & cx) {
         }
         dom_bindings * owner = owner_of(given);
         if (owner == nullptr) {
+            // An Attr is a Node with no handle - see attribute_object.
+            if (attribute_of_object(c, given).name) { return clone_attr_object(c, given); }
             c.throw_error("TypeError", "importNode: the argument is not a Node");
             return value::undefined();
         }
@@ -193,7 +172,7 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         if (owner != this) {
-            (void)node_from(c, given);
+            (void)node_from(c, given, true);
             return given;
         }
         if (doc_->read().parent(node)) {
@@ -333,35 +312,60 @@ void dom_bindings::install_document(context & cx) {
     // NOTHING HERE SETS THE INITIALISED FLAG. Leaving it clear is the point:
     // an event `createEvent` made and `initEvent` has not touched must not be
     // dispatchable.
+    method("createRange", [this](context & c, std::span<value>) { return create_range(c); });
     method("createEvent", [this](context & c, std::span<value> args) {
         const std::string want = ascii_lower_copy(arg_string(c, args, 0));
         struct alias {
             std::string_view spelling;
             std::string_view interface_name;
         };
-        // The DOM's own table, lowercased, minus every entry this engine has no
-        // interface object for - those fall through to Event, which is what
-        // they would get anyway.
-        static constexpr alias aliases[] = {
-            {"customevent", "CustomEvent"}, {"uievent", "UIEvent"},
-            {"uievents", "UIEvent"},        {"mouseevent", "MouseEvent"},
-            {"mouseevents", "MouseEvent"},  {"keyboardevent", "KeyboardEvent"},
-            {"focusevent", "FocusEvent"},   {"compositionevent", "CompositionEvent"},
-            {"wheelevent", "WheelEvent"}};
+        // The DOM's own table (4.5 createEvent), lowercased. An entry this
+        // engine has no interface object for is a plain Event, which is what
+        // it would get anyway; a name OUTSIDE the table is a NotSupportedError
+        // - and `touchevent` is outside it while the legacy touch APIs are
+        // not exposed (`'ontouchstart' in document` is false), which
+        // Document-createEvent-touchevent.window.js checks.
+        static constexpr alias aliases[] = {{"beforeunloadevent", "BeforeUnloadEvent"},
+                                            {"compositionevent", "CompositionEvent"},
+                                            {"customevent", "CustomEvent"},
+                                            {"devicemotionevent", "DeviceMotionEvent"},
+                                            {"deviceorientationevent", "DeviceOrientationEvent"},
+                                            {"dragevent", "DragEvent"},
+                                            {"event", "Event"},
+                                            {"events", "Event"},
+                                            {"focusevent", "FocusEvent"},
+                                            {"hashchangeevent", "HashChangeEvent"},
+                                            {"htmlevents", "Event"},
+                                            {"keyboardevent", "KeyboardEvent"},
+                                            {"messageevent", "MessageEvent"},
+                                            {"mouseevent", "MouseEvent"},
+                                            {"mouseevents", "MouseEvent"},
+                                            {"storageevent", "StorageEvent"},
+                                            {"svgevents", "Event"},
+                                            {"textevent", "TextEvent"},
+                                            {"uievent", "UIEvent"},
+                                            {"uievents", "UIEvent"},
+                                            {"wheelevent", "WheelEvent"}};
+        const alias * found = nullptr;
+        for (const alias & entry : aliases) {
+            if (entry.spelling == want) { found = &entry; }
+        }
+        if (found == nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "createEvent: '" + arg_string(c, args, 0) +
+                                    "' is not an event interface");
+            return value::undefined();
+        }
         value made = make_event_object(c, "", false, false);
         auto * object = static_cast<script::object_object *>(made.as_heap());
-        for (const alias & entry : aliases) {
-            if (entry.spelling != want) { continue; }
-            const value interface_object = c.global(entry.interface_name);
-            if (!interface_object.is_undefined()) {
-                const value proto = c.lookup_property(interface_object, "prototype");
-                if (proto.is_object()) { object->prototype = proto; }
-            }
-            // `detail` is the one member a CustomEvent has that an Event does
-            // not, and it reads null until `initCustomEvent` gives it one.
-            if (want == "customevent") { object->set("detail", value::null()); }
-            break;
+        const value interface_object = c.global(found->interface_name);
+        if (!interface_object.is_undefined()) {
+            const value proto = c.lookup_property(interface_object, "prototype");
+            if (proto.is_object()) { object->prototype = proto; }
         }
+        // `detail` is the one member a CustomEvent has that an Event does
+        // not, and it reads null until `initCustomEvent` gives it one.
+        if (want == "customevent") { object->set("detail", value::null()); }
         return made;
     });
     // `document.dispatchEvent`. The document is a stop on every path, so this
@@ -390,7 +394,15 @@ void dom_bindings::install_document(context & cx) {
     // the only thing it refuses is text that is not a selector at all. An
     // UNSUPPORTED selector - `:has()`, `ns|div` - still returns null, which is a
     // missing answer rather than a wrong one.
-    method("querySelector", [this](context & c, std::span<value> args) {
+    // ONE REQUIRED ARGUMENT for both: `document.querySelector()` is a
+    // TypeError, not a search for "undefined".
+    const auto needs_selector = [](context & c, std::span<value> args, const char * who) {
+        if (!args.empty()) { return true; }
+        c.throw_error("TypeError", std::string{who} + ": 1 argument required, but only 0 present");
+        return false;
+    };
+    method("querySelector", [this, needs_selector](context & c, std::span<value> args) {
+        if (!needs_selector(c, args, "querySelector")) { return value::undefined(); }
         bool invalid = false;
         const std::string selector = arg_string(c, args, 0);
         const std::vector<node_id> found = query(selector, node_id{}, &invalid, true);
@@ -400,7 +412,8 @@ void dom_bindings::install_document(context & cx) {
         }
         return found.empty() ? value::null() : wrap(c, found.front());
     });
-    method("querySelectorAll", [this](context & c, std::span<value> args) {
+    method("querySelectorAll", [this, needs_selector](context & c, std::span<value> args) {
+        if (!needs_selector(c, args, "querySelectorAll")) { return value::undefined(); }
         bool invalid = false;
         const std::string selector = arg_string(c, args, 0);
         const std::vector<node_id> found = query(selector, node_id{}, &invalid);
@@ -408,13 +421,8 @@ void dom_bindings::install_document(context & cx) {
             throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
             return value::undefined();
         }
-        // An ARRAY, not a NodeList: everything a page does with one - index it,
-        // read length, walk it - an array already does, and p5 spreads the
-        // result into an array anyway.
-        value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
-        return out;
+        // A STATIC NodeList: the members are fixed at the call.
+        return make_live_collection(c, [found] { return found; }, "NodeList");
     });
     method("hasFocus", [](context &, std::span<value>) {
         // There is one window and a page in it is the thing being looked at.
@@ -659,6 +667,27 @@ void dom_bindings::install_document(context & cx) {
         doc->set("fonts", value::object(fonts));
     }
 
+    // `document.lastModified`, HTML 3.1.3: with no Last-Modified header to
+    // read, the current time in the user's local timezone, "MM/DD/YYYY
+    // hh:mm:ss" - document-lastModified-01.html matches the shape.
+    doc->define_accessor("lastModified",
+                         value::object(cx.allocate<script::native_object>(
+                             "lastModified",
+                             [](context & c, std::span<value>) {
+                                 const std::time_t now = std::time(nullptr);
+                                 std::tm local{};
+#ifdef _WIN32
+                                 localtime_s(&local, &now);
+#else
+                                 localtime_r(&now, &local);
+#endif
+                                 char text[32];
+                                 const std::size_t n =
+                                     std::strftime(text, sizeof text, "%m/%d/%Y %H:%M:%S", &local);
+                                 return c.string(std::string{text, n});
+                             })),
+                         value::undefined());
+
     // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
     //
     // An accessor rather than a string, because the API is not a string: READING
@@ -673,43 +702,89 @@ void dom_bindings::install_document(context & cx) {
     // same reasoning localStorage is written down with, and the same answer: a
     // test that leaves state behind fails the next run for reasons that have
     // nothing to do with the code.
+    // COOKIE-AVERSE (HTML 7.7.2): a document with no browsing context - one a
+    // page made - reads "" and ignores writes. The page's own document keeps
+    // the jar whatever its URL: a page served from a file here stands in for
+    // one served over http, and document-cookie.html expects a cookie to
+    // stick.
+    const auto cookie_averse = [this] { return secondary_; };
     doc->define_accessor(
         "cookie",
-        value::object(cx.allocate<script::native_object>("cookie",
-                                                         [this](context & c, std::span<value>) {
-                                                             std::string out;
-                                                             for (const auto & [name, item] :
-                                                                  cookies_) {
-                                                                 if (!out.empty()) { out += "; "; }
-                                                                 out += name + "=" + item;
-                                                             }
-                                                             return c.string(out);
-                                                         })),
-        value::object(cx.allocate<script::native_object>("cookie", [this](context & c,
-                                                                          std::span<value> a) {
-            const std::string written = arg_string(c, a, 0);
-            // Everything after the first `;` is attributes - path, expires,
-            // SameSite - and none of them mean anything without an origin
-            // or a clock to expire against.
-            const std::string pair = written.substr(0, written.find(';'));
-            const std::size_t equals = pair.find('=');
-            if (equals == std::string::npos) { return value::undefined(); }
-            const auto trim = [](std::string_view piece) {
-                const std::size_t first = piece.find_first_not_of(" \t");
-                if (first == std::string_view::npos) { return std::string{}; }
-                return std::string{piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
-            };
-            const std::string name = trim(pair.substr(0, equals));
-            const std::string item = trim(pair.substr(equals + 1));
-            for (auto & [key, held] : cookies_) {
-                if (key == name) {
-                    held = item;
+        value::object(cx.allocate<script::native_object>(
+            "cookie",
+            [this, cookie_averse](context & c, std::span<value>) {
+                if (cookie_averse()) { return c.string(""); }
+                std::string out;
+                for (const auto & [name, item] : cookies_) {
+                    if (!out.empty()) { out += "; "; }
+                    out += name + "=" + item;
+                }
+                return c.string(out);
+            })),
+        value::object(cx.allocate<script::native_object>(
+            "cookie", [this, cookie_averse](context & c, std::span<value> a) {
+                if (cookie_averse()) { return value::undefined(); }
+                const std::string written = arg_string(c, a, 0);
+                // Everything after the first `;` is attributes - path, expires,
+                // SameSite - and none of them mean anything without an origin
+                // or a clock to expire against.
+                const std::string pair = written.substr(0, written.find(';'));
+                const std::size_t equals = pair.find('=');
+                if (equals == std::string::npos) { return value::undefined(); }
+                const auto trim = [](std::string_view piece) {
+                    const std::size_t first = piece.find_first_not_of(" \t");
+                    if (first == std::string_view::npos) { return std::string{}; }
+                    return std::string{
+                        piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
+                };
+                const std::string name = trim(pair.substr(0, equals));
+                const std::string item = trim(pair.substr(equals + 1));
+                // A CONTROL CHARACTER REFUSES THE WHOLE WRITE (RFC 6265
+                // 5.2): `b=A\0Z` leaves the jar as it was.
+                for (const char each : pair) {
+                    if (static_cast<unsigned char>(each) < 0x20 || each == 0x7f) {
+                        return value::undefined();
+                    }
+                }
+                // `expires` IN THE PAST - or a max-age of zero - is how a
+                // page DELETES a cookie, and the one attribute that means
+                // something without an origin. The date is RFC 1123's, read
+                // in the C locale.
+                bool expired = false;
+                for (std::size_t at = written.find(';'); at != std::string::npos;
+                     at = written.find(';', at + 1)) {
+                    const std::string attribute =
+                        trim(written.substr(at + 1, written.find(';', at + 1) - at - 1));
+                    const std::string lowered = ascii_lower_copy(attribute);
+                    if (lowered.starts_with("max-age=")) {
+                        expired = std::atoll(attribute.c_str() + 8) <= 0;
+                    } else if (lowered.starts_with("expires=")) {
+                        std::tm when{};
+                        std::istringstream in{attribute.substr(8)};
+                        in.imbue(std::locale::classic());
+                        in >> std::get_time(&when, "%a, %d %b %Y %H:%M:%S");
+                        if (!in.fail()) {
+#ifdef _WIN32
+                            expired = _mkgmtime(&when) <= std::time(nullptr);
+#else
+                                             expired = timegm(&when) <= std::time(nullptr);
+#endif
+                        }
+                    }
+                }
+                if (expired) {
+                    std::erase_if(cookies_, [&](const auto & held) { return held.first == name; });
                     return value::undefined();
                 }
-            }
-            cookies_.emplace_back(name, item);
-            return value::undefined();
-        })));
+                for (auto & [key, held] : cookies_) {
+                    if (key == name) {
+                        held = item;
+                        return value::undefined();
+                    }
+                }
+                cookies_.emplace_back(name, item);
+                return value::undefined();
+            })));
 
     // `document.implementation`, WHICH DID NOT EXIST.
     //
@@ -766,10 +841,12 @@ void dom_bindings::install_document(context & cx) {
                             value::object(cx.allocate<script::native_object>(
                                 "createHTMLDocument", [this](context & c, std::span<value> args) {
                                     // THE ARGUMENT'S ABSENCE IS OBSERVABLE: with no argument
-                                    // there is no `<title>` element at all, and with `undefined`
-                                    // there is one containing the string "undefined". HTML says
-                                    // so in as many words and createHTMLDocument.js tests both.
-                                    if (args.empty()) { return make_html_document(c, nullptr); }
+                                    // there is no `<title>` element at all - and `undefined`
+                                    // IS absence, the argument being an optional DOMString
+                                    // (WebIDL), which createHTMLDocument.js tests beside null.
+                                    if (args.empty() || args[0].is_undefined()) {
+                                        return make_html_document(c, nullptr);
+                                    }
                                     const std::string title = c.to_string(args[0]);
                                     return make_html_document(c, &title);
                                 })));
@@ -777,33 +854,51 @@ void dom_bindings::install_document(context & cx) {
             "createDocument",
             value::object(cx.allocate<script::native_object>(
                 "createDocument", [this](context & c, std::span<value> args) {
+                    // TWO REQUIRED ARGUMENTS - nullable, but required.
+                    if (args.size() < 2) {
+                        c.throw_error("TypeError",
+                                      "createDocument needs a namespace and a qualified name");
+                        return value::undefined();
+                    }
                     const value given = arg(args, 0);
                     const std::string ns = given.is_null() || given.is_undefined()
                                                ? std::string{}
                                                : c.to_string(given);
+                    // [LegacyNullToEmptyString]: null is "", and undefined is
+                    // the eight letters - `createDocument(null, undefined)` has
+                    // an <undefined> document element.
                     const value name = arg(args, 1);
                     const std::string qualified =
-                        name.is_null() || name.is_undefined() ? std::string{} : c.to_string(name);
-                    // THE DOCTYPE, DOM 4.5.1 step 5. A DocumentType
-                    // node or nothing - WebIDL refuses anything else
-                    // with a TypeError before the document is made.
+                        name.is_null() ? std::string{} : c.to_string(name);
+                    // THE DOCTYPE, DOM 4.5.1 step 5. A DocumentType node of ANY
+                    // document in the realm or nothing - WebIDL refuses anything
+                    // else with a TypeError before the document is made.
                     const value given_doctype = arg(args, 2);
+                    dom_bindings * doctype_owner = nullptr;
                     node_id doctype;
                     if (!given_doctype.is_nullish()) {
-                        doctype = handle_of(given_doctype);
-                        if (!doctype || doc_->read().kind(doctype).value_or(node_kind::comment) !=
-                                            node_kind::document_type) {
+                        doctype_owner = owner_of(given_doctype);
+                        doctype =
+                            doctype_owner ? doctype_owner->handle_of(given_doctype) : node_id{};
+                        if (!doctype || doctype_owner->doc_->read().kind(doctype).value_or(
+                                            node_kind::comment) != node_kind::document_type) {
                             c.throw_error("TypeError", "createDocument: the third argument "
                                                        "is not a DocumentType");
                             return value::undefined();
                         }
                     }
+                    // Step 2: "validate and extract", before anything is made.
+                    if (!qualified.empty() &&
+                        !validate_and_extract_element(c, "createDocument", ns, qualified)) {
+                        return value::undefined();
+                    }
                     const value made = make_xml_document(c, ns, qualified);
-                    if (!doctype || secondary_documents_.empty()) { return made; }
+                    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+                    if (!doctype || top.secondary_documents_.empty()) { return made; }
                     // ADOPTED into the new document - the same JavaScript object,
                     // now that document's node - and put ahead of the element.
                     // See node_from.
-                    dom_bindings & fresh = *secondary_documents_.back();
+                    dom_bindings & fresh = *top.secondary_documents_.back();
                     const node_id adopted = fresh.node_from(c, given_doctype);
                     document & tree = *fresh.doc_;
                     const node_id ahead_of =
@@ -818,6 +913,9 @@ void dom_bindings::install_document(context & cx) {
                     }
                     return made;
                 })));
+        // Linked to DOMImplementation.prototype by install_dom_interfaces,
+        // which runs later - the interfaces are built on the first wrap().
+        implementation->prototype = interface_prototype("DOMImplementation");
         doc->set("implementation", value::object(implementation));
     }
     // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.
@@ -911,6 +1009,44 @@ void dom_bindings::install_document(context & cx) {
 // once because the node never changes; these cannot - a title is rewritten by
 // script and the focused element changes on every click - so they are pushed
 // again whenever the wrappers are, exactly as location.href is.
+// VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the shape
+// of the name is decided BEFORE the namespace is looked at, so
+// `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and not the
+// NamespaceError its namespace would otherwise earn. Both orderings throw;
+// only one of them throws what the suite asserts.
+//
+// A prefix is checked for being writable and non-empty and NOTHING ELSE -
+// `createElementNS(ns, "0:a")` is legal and `"a:0"` is not, because it is the
+// LOCAL name that has to be a name and the prefix is only ever a label in
+// front of it.
+bool dom_bindings::validate_and_extract_element(context & cx, std::string_view where,
+                                                const std::string & ns,
+                                                const std::string & qualified) {
+    const qualified_name split = split_qualified(qualified);
+    const bool prefixed = split.has_colon;
+    if ((prefixed && !is_valid_namespace_prefix(split.prefix)) ||
+        !is_valid_element_local_name(split.local)) {
+        throw_dom_exception(cx, "InvalidCharacterError",
+                            std::string{where} + ": '" + qualified + "' is not a qualified name");
+        return false;
+    }
+    const auto fail = [&](const std::string & why) {
+        throw_dom_exception(cx, "NamespaceError", std::string{where} + ": " + why);
+        return false;
+    };
+    if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
+    if (split.prefix == "xml" && ns != xml_namespace) {
+        return fail("the xml prefix belongs to the XML namespace");
+    }
+    if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
+        return fail("xmlns belongs to the XMLNS namespace");
+    }
+    if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
+        return fail("the XMLNS namespace is only for xmlns");
+    }
+    return true;
+}
+
 void dom_bindings::refresh_document() {
     auto * doc = document_object();
     if (doc == nullptr || cx_ == nullptr) { return; }

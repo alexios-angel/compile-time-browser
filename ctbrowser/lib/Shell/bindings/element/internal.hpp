@@ -120,6 +120,11 @@ struct split_name {
     bool has_colon = false;
 };
 
+// The hidden slot on an element's `attributes` map holding the element's
+// wrapper - a symbol key, so getOwnPropertyNames does not report it. See
+// install_named_node_map.
+inline constexpr std::string_view named_node_map_owner_key = "@@sym:ctbrowser:attributes-owner";
+
 // The namespaces this file names by URI. Spelled out rather than derived,
 // because one wrong character makes a NamespaceError fire on the valid case and
 // not on the invalid one, and nothing about the failure says so.
@@ -166,14 +171,26 @@ std::string css_text_of(script::object_object & held, context & cx);
 [[nodiscard]] std::string_view declared_value(std::string_view stored);
 [[nodiscard]] std::string_view declared_priority(std::string_view stored);
 bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
-                       std::string_view text, bool allow_important, bool force_important);
+                       std::string_view text, bool important);
 void seed_declarations(script::object_object & held, context & cx, std::string_view text);
+std::string read_declaration(script::object_object & held, context & cx, std::string_view name);
+std::string read_priority(script::object_object & held, context & cx, std::string_view name);
+std::string remove_stored_declaration(script::object_object & held, context & cx,
+                                      std::string_view name, bool & removed);
 
 // What an attribute may be called, the two halves of a qualified name, and a
 // nullable namespace argument. Defined in attributes.cpp, which explains the
 // rule; the break set is here because refresh_attribute_map reads it too.
 inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 [[nodiscard]] bool valid_attribute_name(std::string_view name);
+// A "valid namespace prefix" (DOM 4.9, whatwg/dom#1079): not empty, no ASCII
+// whitespace, U+0000, `/` or `>` - and NOT the attribute rule, which also
+// refuses `=`: `setAttributeNS(ns, "=:attr", v)` is legal
+// (dom/nodes/name-validation.html). document/internal.hpp spells the same.
+[[nodiscard]] inline bool valid_namespace_prefix(std::string_view prefix) {
+    return !prefix.empty() && prefix.find_first_of("\t\n\f\r />") == std::string_view::npos &&
+           prefix.find('\0') == std::string_view::npos;
+}
 [[nodiscard]] split_name split_attribute_name(std::string_view name);
 [[nodiscard]] std::string namespace_argument(context & cx, std::span<value> args, std::size_t i);
 
@@ -188,5 +205,9 @@ inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 // ToUint32, for the numeric reflection types and for CharacterData offsets.
 // Defined in reflection.cpp.
 [[nodiscard]] long long to_uint32(double x);
+
+// The rules for parsing integers, HTML 2.4.4.1: false when there is no integer
+// there at all. Defined in reflection.cpp.
+[[nodiscard]] bool parse_html_integer(std::string_view text, long long & out);
 
 } // namespace ctbrowser::shell::detail

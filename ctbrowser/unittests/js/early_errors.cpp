@@ -300,6 +300,46 @@ int main() {
     accepted("class C { #x = 1; m() { return this.#x; } } new C().m();");
 
     // ================================================================
+    // 9. MORE OF 15.7.1, AND THE CONTEXTUAL NAMES - 15.5.1, 15.8.1
+    // ================================================================
+    // A field initialiser may not mention `arguments`, through an arrow but
+    // not through a function; no field may be named `constructor`, static or
+    // not; `extends` takes a left-hand-side expression; `await` is not a name
+    // in an async function and `yield` is not one in a generator.
+    refused("class C { x = arguments; }");
+    refused("class C { x = () => arguments; }");
+    refused("class C { static #x = arguments.length; }");
+    accepted("class C { x = function () { return arguments; }; }");
+    refused("class C { static 'constructor' = 1; }");
+    refused("class C { constructor = 1; }");
+    refused("class C extends () => {} {}");
+    refused("class C extends a = b {}");
+    accepted("var b = class {}; var a = class extends b {}; var c = class extends (b) {};");
+    refused("class C { async m() { var await; } }");
+    refused("class C { async m(await) {} }");
+    refused("class C { *g() { var yield; } }");
+    refused("async function f() { var await; }");
+    refused("function* g() { var yield; }");
+    // Outside a generator, sloppy `yield` is a name (the parser tracks the
+    // generator context; an arrow's body leaves it).
+    accepted("function f() { var yield = 1; return yield; } f();");
+    accepted("var yield = 23; var f = (x = yield) => x; f();");
+    accepted("function* g() { var f = () => { var yield = 1; return yield; }; yield f(); }");
+    accepted("async function f() { var g = () => 1; return g(); }");
+
+    // ================================================================
+    // 10. import() IS A CALL EXPRESSION - 13.3.10
+    // ================================================================
+    // Grammar, so the parser's refusal: one or two arguments, never a
+    // `new`, and a bare `import` is not an expression.
+    refused("new import('x');");
+    refused("new import('x').prop;");
+    refused("import('x', {}, '');");
+    refused("typeof import;");
+    accepted("var p = () => import('x', {});");
+    accepted("var p = () => import('x',);");
+
+    // ================================================================
     // 9. TWO `__proto__` IN ONE OBJECT LITERAL - B.3.1
     // ================================================================
     refused("var o = { __proto__: null, __proto__: null };");
@@ -479,14 +519,33 @@ int main() {
     accepted("var x = 08;");
 
     // ================================================================
-    // 17. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 17. STRICT MODE CODE - 11.2.2, 13.1.1, 13.5.1.1, 12.9.3.1, 15.2.1
     // ================================================================
-    // Each of these is an early error in STRICT mode and legal sloppy
-    // JavaScript, and this engine has no strict mode. They are here so that
-    // adding one is a deliberate change to this file rather than a surprise.
+    // Legal sloppy JavaScript, an early error once a directive, a class body
+    // or a module makes the code strict. The sloppy form of each stays
+    // accepted, which is what keeps this a deliberate list.
     accepted("var x = 1; delete x;");
     accepted("var eval; eval = 1;");
     accepted("var args = function () { arguments = 1; };");
+    accepted("function f(a, a) {} var o = 010; var n8 = 08;");
+    refused("'use strict'; var x = 1; delete x;");
+    refused("'use strict'; var eval;");
+    refused("'use strict'; eval = 1;");
+    refused("'use strict'; arguments++;");
+    refused("\"use strict\"; function f(a, a) {}");
+    refused("'use strict'; var package = 1;");
+    refused("'use strict'; var n = 010;");
+    refused("'use strict'; var n = 08;");
+    refused("'use strict'; try {} catch (eval) {}");
+    refused("'use strict'; var f = function eval() {};");
+    refused("class C { m() { var eval; } }");
+    refused("function g() { 'use strict'; delete g; }");
+    // Reading `eval`/`arguments` is fine; a nested function inherits.
+    accepted("'use strict'; var v = eval; function f() { return arguments; }");
+    accepted("'use strict'; var n = 0x10; var m = 0.5; var big = 0n;");
+    refused("'use strict'; (function () { function inner(a, a) {} })();");
+    // A directive is only one at the top of the body.
+    accepted("var before = 1; 'use strict'; function f(a, a) {}");
 
     REPORT("early_errors");
 }

@@ -56,9 +56,10 @@ std::uint64_t aot_bridge::new_array(aot::ct_aot_frame * f, std::uint32_t reserve
 }
 
 // ct_aot_iterable_values. VM_CASE(iterable) is one line -
-// `reg(in.a) = iterable_values(reg(in.b))` - and iterable_values is
-// ALREADY a named member, so there is nothing to extract and no way for
-// the two tiers to drift.
+// `reg(in.a) = spread_values(reg(in.b))` - and spread_values is ALREADY a
+// named member (iterable_values plus the spread's own TypeError for a
+// nullish or non-string primitive source), so there is nothing to extract
+// and no way for the two tiers to drift.
 //
 // DELEGATED WHOLESALE, INCLUDING THE ROW'S CORRECTION (1). That correction
 // describes a real defect - the array-like arm calls lookup_property up to
@@ -71,7 +72,7 @@ std::uint64_t aot_bridge::new_array(aot::ct_aot_frame * f, std::uint32_t reserve
 std::int32_t aot_bridge::iterable_values(aot::ct_aot_frame * f, std::uint64_t source,
                                          std::uint64_t * out) {
     context & cx = *frame_of(f).ctx;
-    const value produced = cx.iterable_values(value::from_bits(source));
+    const value produced = cx.spread_values(value::from_bits(source));
     const std::int32_t status = check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;
@@ -143,7 +144,11 @@ std::uint64_t aot_bridge::new_string(aot::ct_aot_frame * f, const aot::ct_aot_si
 std::int32_t aot_bridge::set_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
                                    std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
+    cx.clear_store_rejected();
     cx.store_index(value::from_bits(obj), value::from_bits(key), value::from_bits(v));
+    // The same strict-mode TypeError VM_CASE(set_index) throws, decided by the
+    // frame's own proto - the image keeps the real one.
+    if (strict_frame(f)) { cx.strict_store_check(cx.to_string(value::from_bits(key))); }
     return check(f);
 }
 
@@ -254,19 +259,27 @@ void aot_bridge::cell_set(std::uint64_t cell, std::uint64_t v) {
     }
 }
 
-// ct_aot_global_get. THE ABSENCE IS LOAD-BEARING and the row says so: an
-// undeclared global does NOT throw a ReferenceError in this runtime, it
-// reads `undefined` - or whatever the embedder's undeclared-name hook says,
-// which is how an element with an `id` answers to a bare identifier.
-// `context::global_or_named` is exactly what VM_CASE(get_global) runs, so
-// the two tiers cannot drift.
-//
-// THE CONTEXT IS NO LONGER const, because the hook may allocate a wrapper.
-// It still touches no frame beyond finding the context.
-std::uint64_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
-                                     std::uint32_t name_len) {
+// ct_aot_global_get. A name that is neither a global nor a property of the
+// global object is an unresolvable reference and THROWS ReferenceError
+// (catchable, so a status and an out-slot like every other throwing row);
+// the embedder's undeclared-name hook still answers first, which is how an
+// element with an `id` answers to a bare identifier. `context::global_or_named`
+// is exactly what VM_CASE(get_global) runs, so the two tiers cannot drift.
+std::int32_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
+                                    std::uint32_t name_len, std::uint64_t * out) {
     context & cx = *frame_of(f).ctx;
-    return cx.global_or_named(std::string_view{name, name_len}).bits();
+    const value produced = cx.global_or_named(std::string_view{name, name_len});
+    const std::int32_t status = check(f);
+    if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+    return status;
+}
+
+// ct_aot_global_get_soft: `typeof x`'s read - undefined on a miss, never a
+// throw. The row says which load_global a backend routes here.
+std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * name,
+                                          std::uint32_t name_len) {
+    context & cx = *frame_of(f).ctx;
+    return cx.global_or_named(std::string_view{name, name_len}, true).bits();
 }
 
 // ct_aot_global_set. VM_CASE(set_global) is
@@ -326,7 +339,9 @@ std::int32_t aot_bridge::get_prop(aot::ct_aot_frame * f, std::uint64_t obj,
 std::int32_t aot_bridge::set_prop(aot::ct_aot_frame * f, std::uint64_t obj,
                                   const aot_name_record * name, std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
+    cx.clear_store_rejected();
     cx.store_property(value::from_bits(obj), name->text, value::from_bits(v));
+    if (strict_frame(f)) { cx.strict_store_check(name->text); }
     return check(f);
 }
 
@@ -391,8 +406,13 @@ void ct_aot_cell_set(std::uint64_t cell, std::uint64_t v) {
     script::aot_bridge::cell_set(cell, v);
 }
 
-std::uint64_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
-    return script::aot_bridge::global_get(fr, name, name_len);
+std::int32_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
+                               std::uint64_t * out) {
+    return script::aot_bridge::global_get(fr, name, name_len, out);
+}
+
+std::uint64_t ct_aot_global_get_soft(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
+    return script::aot_bridge::global_get_soft(fr, name, name_len);
 }
 
 void ct_aot_global_set(ct_aot_frame * fr, const char * name, std::uint32_t name_len,

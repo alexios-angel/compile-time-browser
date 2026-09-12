@@ -10,16 +10,40 @@
 
 #include "internal.hpp"
 
+namespace ctbrowser::script {
+// Defined in vm/objects/lookup.cpp; see the note there.
+object_object * typed_array_prototype(context & cx, element_kind kind);
+} // namespace ctbrowser::script
+
 namespace ctbrowser::script::detail {
 
 namespace {
 
 [[nodiscard]] inline bool wanted_key(key_filter which, const std::string & key) {
-    const bool symbol = key.starts_with(symbol_key_prefix);
+    if (is_private_key(key)) { return false; } // a private name is not a property key
+    const bool symbol = key.starts_with("@@"); // "@@sym:<n>:" or a well-known "@@iterator"
     return which == key_filter::all || (which == key_filter::symbols) == symbol;
 }
 
 } // namespace
+
+// A PROPERTY KEY AS A VALUE: the string, or the symbol rebuilt from its key -
+// which IS its identity (value.hpp), so it is `===` to the one the property
+// was defined with. Object.getOwnPropertySymbols and Reflect.ownKeys share it.
+[[nodiscard]] value key_value(context & cx, const std::string & key) {
+    if (key.starts_with(symbol_key_prefix)) {
+        const std::size_t at = key.find(':', symbol_key_prefix.size());
+        return value::object(cx.allocate<symbol_object>(
+            at == std::string::npos ? std::string{} : key.substr(at + 1), key));
+    }
+    if (key.starts_with("@@for:")) {
+        return value::object(cx.allocate<symbol_object>(key.substr(6), key));
+    }
+    if (key.starts_with("@@")) {
+        return value::object(cx.allocate<symbol_object>(key.substr(2), key));
+    }
+    return cx.string(key);
+}
 
 // A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
 // FromPropertyDescriptor). Four callers needed the same object and each built
@@ -41,12 +65,85 @@ namespace {
                                                           key_filter which) {
     std::vector<std::string> out;
     if (of.is_kind(heap_kind::proxy)) {
-        return own_property_names(cx, static_cast<proxy_object *>(of.as_heap())->target, which);
+        auto * p = static_cast<proxy_object *>(of.as_heap());
+        const value trap = cx.proxy_trap(of, "ownKeys");
+        if (!trap.is_callable()) { return own_property_names(cx, p->target, which); }
+        // 10.5.11 [[OwnPropertyKeys]]: the trap's list, each a String or a
+        // Symbol and none twice (steps 7-8), then the invariants against the
+        // target - every non-configurable key is reported, and a
+        // non-extensible target's keys are reported exactly (steps 9-23).
+        const value args[1] = {p->target};
+        const value listed = cx.call(trap, args, p->handler);
+        if (cx.throw_pending()) { return out; }
+        if (!listed.is_object_like()) {
+            cx.throw_error("TypeError", "ownKeys trap result must be an object");
+            return out;
+        }
+        std::vector<std::string> keys;
+        const double n = array_like_length(cx, listed);
+        if (cx.throw_pending()) { return out; }
+        for (double i = 0; i < n; i += 1.0) {
+            const value k = element_at(cx, listed, i);
+            if (cx.throw_pending()) { return out; }
+            std::string key;
+            if (k.is_string()) {
+                key = static_cast<string_object *>(k.as_heap())->text;
+            } else if (k.is_kind(heap_kind::symbol)) {
+                key = static_cast<symbol_object *>(k.as_heap())->key;
+            } else {
+                cx.throw_error("TypeError",
+                               "ownKeys trap result must contain only strings and symbols");
+                return out;
+            }
+            if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+                cx.throw_error("TypeError", "ownKeys trap result contains duplicate entries");
+                return out;
+            }
+            keys.push_back(std::move(key));
+        }
+        const bool extensible = cx.is_extensible(p->target);
+        std::vector<std::string> target_keys = own_property_names(cx, p->target, key_filter::all);
+        std::size_t matched = 0;
+        for (const std::string & key : target_keys) {
+            const bool reported = std::find(keys.begin(), keys.end(), key) != keys.end();
+            if (reported) { ++matched; }
+            if (reported && extensible) { continue; }
+            context::property_descriptor found;
+            const bool configurable = !cx.own_property(p->target, key, found) || found.configurable;
+            if (!reported && (!configurable || !extensible)) {
+                cx.throw_error("TypeError", "ownKeys trap result must include '" + key + "'");
+                return out;
+            }
+        }
+        if (!extensible && matched != keys.size()) {
+            cx.throw_error("TypeError", "ownKeys trap result must not add keys to a "
+                                        "non-extensible target");
+            return out;
+        }
+        for (const std::string & key : keys) {
+            if (wanted_key(which, key)) { out.push_back(key); }
+        }
+        return out;
     }
     if (of.is_object()) {
+        // A String wrapper's indices and `length` come first (10.4.3.3), as
+        // they do for the primitive below.
+        if (value * slot = primitive_slot(of); slot != nullptr && slot->is_string()) {
+            if (which != key_filter::symbols) {
+                const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+                for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
+                out.emplace_back("length");
+            }
+        }
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });
+        // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
+        // own order), then strings, then SYMBOLS, each in creation order.
+        if (which == key_filter::all) {
+            std::stable_partition(out.begin(), out.end(),
+                                  [](const std::string & k) { return !k.starts_with("@@"); });
+        }
         return out;
     }
     // Nothing but an object_object can hold a symbol key: the other three
@@ -54,7 +151,9 @@ namespace {
     if (which == key_filter::symbols) { return out; }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
-        for (std::size_t i = 0; i < arr->length(); ++i) { out.push_back(std::to_string(i)); }
+        for (std::size_t i = 0; i < arr->length(); ++i) {
+            if (!arr->is_hole(static_cast<std::uint32_t>(i))) { out.push_back(std::to_string(i)); }
+        }
         for (const auto & [at, held] : arr->sparse) {
             (void)held;
             out.push_back(std::to_string(at));
@@ -63,7 +162,12 @@ namespace {
         // Then the named own properties - see array_object::named.
         if (arr->named) {
             arr->named->each_own_key([&](const std::string & k) {
-                if (wanted_key(which, k)) { out.push_back(k); }
+                // An accessor ELEMENT's pair also lives here, under its
+                // index; it was reported above.
+                std::uint32_t at = 0;
+                if (wanted_key(which, k) && !object_object::array_index_key(k, at)) {
+                    out.push_back(k);
+                }
             });
         }
         return out;
@@ -79,6 +183,7 @@ namespace {
         bool named = false;
         for (const auto & [key, held] : fn->props) {
             (void)held;
+            if (!wanted_key(which, key)) { continue; } // a bound function's private target slot
             out.push_back(key);
             named = named || key == "name";
         }
@@ -146,9 +251,10 @@ namespace {
     };
     if (of.is_object()) {
         auto * obj = static_cast<object_object *>(of.as_heap());
-        if (obj->prototype.is_object()) { return obj->prototype; }
-        // Object.prototype's own [[Prototype]] is null, and it is the only
-        // table for which that is true.
+        if (obj->prototype.is_object_like()) { return obj->prototype; }
+        // An EXPLICIT null (object_object::prototype says how the two nulls
+        // are told apart); and Object.prototype's own [[Prototype]] is null.
+        if (obj->prototype.is_undefined()) { return value::null(); }
         if (obj == cx.prototype(context::proto_kind::object)) { return value::null(); }
         return table(context::proto_kind::object);
     }
@@ -180,10 +286,46 @@ namespace {
     if (of.is_string()) { return table(context::proto_kind::string); }
     if (of.is_number()) { return table(context::proto_kind::number); }
     if (of.is_boolean()) { return table(context::proto_kind::boolean); }
-    if (of.is_array()) { return table(context::proto_kind::array); }
+    if (of.is_array()) {
+        // A typed array's is its kind's own prototype object (23.2.7).
+        auto * arr = static_cast<array_object *>(of.as_heap());
+        if (object_object * own = typed_array_prototype(cx, arr->elements)) {
+            return value::object(own);
+        }
+        return table(context::proto_kind::array);
+    }
     if (of.is_kind(heap_kind::symbol)) { return table(context::proto_kind::symbol); }
     if (of.is_kind(heap_kind::bigint)) { return table(context::proto_kind::bigint); }
     return value::null();
+}
+
+// [[SetPrototypeOf]] over the three tables that carry a link - shared by
+// Object.setPrototypeOf, Reflect.setPrototypeOf and the `__proto__` setter.
+// A primitive receiver is a no-op that succeeds. FALSE is 10.1.2.1's refusal:
+// a non-extensible object keeps the prototype it has, a chain may not be made
+// cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
+[[nodiscard]] bool set_prototype_of(context & cx, value of, value proto) {
+    if (!of.is_object_like()) { return true; }
+    if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
+    if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {
+        return false;
+    }
+    if (!cx.is_extensible(of)) { return false; }
+    for (value walk = proto; walk.is_heap();) {
+        if (walk.as_heap() == of.as_heap()) { return false; }
+        if (walk.is_kind(heap_kind::proxy)) { break; } // step 8.c.i: a proxy ends the walk
+        walk = prototype_of(cx, walk);
+    }
+    if (of.is_object()) {
+        // null is an EXPLICIT null here - see object_object::prototype.
+        static_cast<object_object *>(of.as_heap())->prototype =
+            proto.is_null() ? value::undefined() : proto;
+    } else if (of.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
+    } else if (of.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(of.as_heap())->proto_link = proto;
+    }
+    return true;
 }
 
 // 6.2.6.6 ToPropertyDescriptor's OWN three refusals, which nothing here made.

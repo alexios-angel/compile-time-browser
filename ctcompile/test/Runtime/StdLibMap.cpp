@@ -285,25 +285,28 @@ const probe probes[] = {
          table.emplace(-0.0, 4.0);
          return number_token(static_cast<double>(table.size()));
      }},
-    // A REGEX THAT DISAGREES IN BOTH DIRECTIONS. `\1` is a backreference to
-    // Boost and the literal character '1' to this engine, so each matches a
-    // string the other rejects - and nothing anywhere reports an error.
-    {"RegExp_ctor", R"JS(new RegExp("(.)\\1").test("aa"))JS",
+    // A REGEX DIALECT THAT IS NOT JAVASCRIPT'S. Backreferences and lookbehind
+    // stopped separating the two on 2026-09-12 (the browser's rx engine grew
+    // both), so the witnesses are constructs that are Perl to Boost and
+    // something else to ECMAScript: `\Z` is end-before-final-newline to Boost
+    // and the identity escape `Z` in a JavaScript pattern; `[[:digit:]]` is a
+    // POSIX class to Boost and, to JavaScript, the class `[:digt` followed by
+    // a literal `]`; `(?i)` is an inline modifier to Boost and, to JavaScript,
+    // not a group at all - and nothing anywhere reports an error.
+    {"RegExp_ctor", R"JS(new RegExp("a\\Z").test("a\n"))JS",
      [] {
          return std::string(
-             boost::regex_search(std::string("aa"), boost::regex("(.)\\1")) ? "true" : "false");
+             boost::regex_search(std::string("a\n"), boost::regex("a\\Z")) ? "true" : "false");
      }},
-    {"RegExp_ctor", R"JS(new RegExp("(.)\\1").test("a1"))JS",
+    {"RegExp_ctor", R"JS(new RegExp("[[:digit:]]").test("5"))JS",
      [] {
          return std::string(
-             boost::regex_search(std::string("a1"), boost::regex("(.)\\1")) ? "true" : "false");
+             boost::regex_search(std::string("5"), boost::regex("[[:digit:]]")) ? "true" : "false");
      }},
-    // LOOKBEHIND: refused by this engine's parser, so the program is not ok and
-    // `test` is false for every subject. Boost implements it.
-    {"RegExp_ctor", R"JS(new RegExp("(?<=a)b").test("ab"))JS",
+    {"RegExp_ctor", R"JS(new RegExp("(?i)A").test("a"))JS",
      [] {
-         return std::string(
-             boost::regex_search(std::string("ab"), boost::regex("(?<=a)b")) ? "true" : "false");
+         return std::string(boost::regex_search(std::string("a"), boost::regex("(?i)A")) ? "true"
+                                                                                         : "false");
      }},
     // Integer syntax still denotes a JavaScript Number, including signed zero.
     // Boost stores integer -0 as int64 zero before conversion to double.

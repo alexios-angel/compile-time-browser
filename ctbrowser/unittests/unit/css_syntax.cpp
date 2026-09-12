@@ -356,6 +356,20 @@ void test_a_real_bootstrap_shaped_rule() {
     CHECK(functions == 2);
 }
 
+// A declaration's stored text is the SOURCE slice, and where an escape forced
+// a rebuild it is written back as CSS: `\33 myident` decodes to `3myident`,
+// which would read as a dimension the second time round
+// (ident-function-computed).
+void test_an_escaped_identifier_is_stored_as_one() {
+    ctbrowser::atom_table atoms;
+    const auto sheet =
+        ctbrowser::style::css::parse_declaration_list("view-transition-name: \\33 myident", atoms);
+    CHECK(sheet.declarations.size() == 1);
+    if (sheet.declarations.size() == 1) {
+        CHECK(sheet.text_of(sheet.declarations.front()) == "\\33 myident");
+    }
+}
+
 // --- the front end's own score ---------------------------------------------
 
 // HOW MANY OF BOOTSTRAP'S SELECTORS CAN MATCH AT ALL.
@@ -442,6 +456,7 @@ int main() {
     test_unbalanced_input_terminates();
     test_preprocessing_folds_line_endings();
     test_a_real_bootstrap_shaped_rule();
+    test_an_escaped_identifier_is_stored_as_one();
     test_how_much_of_bootstrap_can_match();
     REPORT("css_syntax");
 }

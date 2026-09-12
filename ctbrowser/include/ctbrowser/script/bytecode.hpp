@@ -354,15 +354,37 @@ struct function_proto {
     // to resolve `./x.js` against the module that WROTE it.
     std::string module;
     std::string name;
+    // NamedEvaluation (8.4.5): the name an ANONYMOUS function or class took
+    // from the binding, property or default it initialised - `var f =
+    // function () {}` reads f.name as "f". Kept apart from `name`, which
+    // stays what the source wrote, because every consumer of the bytecode
+    // derives a symbol from `name` and "" is what an anonymous function is
+    // there. display_name() is what `.name` and a stack trace read.
+    std::string inferred_name;
+    [[nodiscard]] const std::string & display_name() const noexcept {
+        return name.empty() ? inferred_name : name;
+    }
     std::uint16_t param_count = 0;
     std::uint16_t frame_size = 1; // registers this body needs
     // An arrow does not get its own `this`; it sees the one where it was
     // WRITTEN, and the VM cannot tell an arrow from a function at run time.
     bool is_arrow = false;
+    // STRICT MODE CODE (11.2.2): a "use strict" directive in this body or an
+    // enclosing one, a module, or a class body. What it changes here: an
+    // assignment [[Set]] rejected - non-writable, non-extensible, getter with
+    // no setter, a primitive receiver - is a TypeError instead of a silent
+    // drop, and an assignment to an unresolvable name is a ReferenceError.
+    bool is_strict = false;
     // `function*`. Calling one does NOT run the body: it builds a generator
     // object over a suspended frame and hands that back, so the first
-    // instruction runs on the first `.next()`.
+    // instruction runs on the first `.next()` - unless eager_prologue.
     bool is_generator = false;
+    // A generator whose parameters have defaults or patterns: the compiler
+    // ends that prologue with a yield_value of its own, and make_generator
+    // runs the frame up to it, because FunctionDeclarationInstantiation is
+    // part of [[Call]] (10.2.1 step 8) - `g(null)` with a pattern parameter
+    // is a TypeError at the call, not at the first `.next()`.
+    bool eager_prologue = false;
     // `async`. The VM needs it only together with is_generator - an async
     // generator's call builds a different object - and the image carries it
     // only in that case; a plain async function's promise wrapping and its
@@ -495,6 +517,12 @@ struct program {
         std::string from;
     };
     std::vector<reexport> reexports;
+    // A CLASSIC SCRIPT'S HOISTED `var` NAMES (16.1.7 GlobalDeclarationInstantiation
+    // step 12): context::run binds each one that is not already a global to
+    // undefined before the first instruction, so `use(x); var x = 1` reads
+    // undefined rather than throwing. Data on the program, not bytecode, so
+    // nothing that reads the instructions sees it. Empty for a module.
+    std::vector<std::string> hoisted_vars;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

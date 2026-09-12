@@ -395,7 +395,11 @@ private:
     // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
-    [[nodiscard]] node_id node_from(context & cx, value v);
+    // Another document's node is ADOPTED - cloned into this slab, its wrapper
+    // rebound - except a fragment, whose children come and which itself stays
+    // where it was, as insertion has it; `adoptNode` asks for the fragment too
+    // with `whole_fragment`.
+    [[nodiscard]] node_id node_from(context & cx, value v, bool whole_fragment = false);
     // "Convert nodes into a node", DOM 4.2.5: the arguments of one of those
     // methods as ONE node - the node itself for one argument, a fragment holding
     // them all (which MOVES each out of the tree) for several.
@@ -424,6 +428,9 @@ private:
     // `getComputedStyle`, on `window` and as a bare global.
     void install_computed_style(context & cx);
     [[nodiscard]] value computed_style_object(context & cx, node_id id);
+    // ...for `getComputedStyle(el, "::before")`: `pseudo` is the pseudo-element's
+    // name (`before`/`after`), resolved through the style engine on every read.
+    [[nodiscard]] value computed_style_object(context & cx, node_id id, atom pseudo);
     // ONE ELEMENT'S WHOLE COMPUTED STYLE, as (CSS name, value) pairs: the
     // supported longhands lexicographically, then the shorthands, then whatever
     // the element declared that the property table has never heard of. Empty for
@@ -437,6 +444,11 @@ private:
     // and that now happens inside a script turn.
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
         node_id id);
+    // ...and of the element's `::before`/`::after`: `pseudo` is the style
+    // engine::resolve_pseudo made for it, read in the element's place - no box,
+    // percentages against the element's content box, the element as parent.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
+        node_id id, const style::computed_style_ptr & pseudo);
 
     // --- DOMException, and the CSS interface --------------------------------
     //
@@ -608,8 +620,8 @@ private:
     // keeping the union of their options per node.
     struct mutation_node_state {
         std::vector<node_id> children;
-        std::vector<std::pair<atom, std::string>> attributes;
-        std::string text; // text and comment nodes only
+        std::vector<attribute> attributes;
+        std::string text; // CharacterData nodes only
     };
 
     void install_mutation_observer(context & cx);
@@ -857,11 +869,10 @@ public:
     // it buys nothing here, because everything the CSSOM answers with is a
     // SERIALISATION rather than a slice of the source. See the file for what
     // "serialisation" means and why it is not the author's bytes.
-    struct css_declaration {
-        std::string name; // the CSS spelling; a custom property keeps its case
-        std::string value;
-        bool important = false;
-    };
+    // The declaration itself, and the block algorithms over it, are
+    // style/css/properties.hpp's: `el.style` keeps the same list, and the
+    // shorthand expansion both need lives once.
+    using css_declaration = style::css::declaration;
     // One rule. A grouping rule (`@media`) carries `children` and no
     // declarations; a style rule carries declarations and no children.
     struct css_rule_record {
@@ -885,6 +896,15 @@ public:
         std::size_t sheet = static_cast<std::size_t>(-1);
         // An `@import`'s own sheet - `rule.styleSheet` - into css_sheets_.
         std::size_t imported_sheet = static_cast<std::size_t>(-1);
+        // `@font-feature-values`' feature blocks, CSS Fonts 4 §8.9: one entry
+        // per `name: <integer>+` under `@styleset`, `@annotation` and the
+        // rest, which the rule's seven CSSFontFeatureValuesMaps are views of.
+        struct feature_value {
+            std::string type; // "styleset", "annotation", ...
+            std::string name;
+            std::vector<double> numbers;
+        };
+        std::vector<feature_value> features;
     };
     struct css_sheet_record {
         node_id owner; // the <style>/<link>; unset for a constructed sheet
@@ -900,8 +920,9 @@ public:
         std::size_t owner_rule = static_cast<std::size_t>(-1);
         std::string href;
         std::string title;
-        std::string media;  // the `media` ATTRIBUTE as last seen on the owner
-        std::string source; // what was last parsed, so a <style> edit re-parses
+        std::string media;    // the `media` ATTRIBUTE as last seen on the owner
+        std::string source;   // what was last parsed, so a <style> edit re-parses
+        std::string children; // the <style>'s child ids when last parsed
         bool disabled = false;
         bool constructed = false;
         // CSSOM 6.3 "origin-clean flag": false for a `<link>` fetched from
@@ -1024,6 +1045,15 @@ private:
                                              std::string & error);
     // The CSSOM changed something the cascade would care about.
     void style_sheets_changed();
+
+public:
+    // Counts style_sheets_changed(): a CSSOM edit changes what an element
+    // computes to without touching the document, so a cached computed style
+    // compares this beside the document version.
+    [[nodiscard]] std::uint64_t style_stamp() const noexcept { return style_generation_; }
+
+private:
+    std::uint64_t style_generation_ = 0;
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
     // The media query list `this` is a view of - a sheet's or a media rule's.
@@ -1245,6 +1275,9 @@ private:
         // A sheet or script announcing its `load`, as opposed to an <iframe>:
         // not a callback the page scheduled, so the drain does not count it.
         bool resource = false;
+        // The bindings whose element `id` names when it is not the queue's
+        // own: a frame document's nested frame lands on the primary's queue.
+        dom_bindings * owner = nullptr;
     };
     std::vector<pending_frame> frame_loads_;
     // Which frames are loaded, and from what. The `src` is kept as WRITTEN
@@ -1580,8 +1613,12 @@ private:
     // also carries a non-empty `name`, which is the asymmetry
     // `nameditem-01.html` tests by removing one attribute at a time.
     [[nodiscard]] std::vector<node_id> named_document_items(std::string_view name);
-    // The Proxy a page sees as `document`. Installs the `get` and `has` traps
-    // over `document_target_` and returns it.
+    // The other direction: every name the rule above answers to, once each, in
+    // tree order - the document's "supported property names".
+    [[nodiscard]] std::vector<std::string> document_property_names();
+    // The Proxy a page sees as `document`. Installs the `get`, `has`, `ownKeys`
+    // and `getOwnPropertyDescriptor` traps over `document_target_` and returns
+    // it.
     [[nodiscard]] value make_document_proxy(context & cx, value target);
     // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
     // FF and CR, all five - and drop duplicates. `split` above splits on spaces
@@ -1642,6 +1679,8 @@ private:
     node_id focused_;
     std::string location_href_;
     std::string location_hash_;
+    // The element the fragment names - `:target` - see observe_location.
+    node_id target_element_;
     // DOMException.prototype, held here as well as on the global for the reason
     // blob_prototype_ is: a page can delete a global, and an exception whose
     // prototype was collected stops being a DOMException.
@@ -1873,14 +1912,180 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
-    // What EVERY DocumentFragment has and an element does not: `getElementById`
-    // scoped to the fragment, DOM 4.2.6 NonElementParentNode. A ShadowRoot and a
-    // <template>'s contents are both fragments and both get it from here.
-    void install_fragment_members(context & cx, script::object_object & obj, node_id root);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+
+    // HTML's window-reflecting body element event handler set: `body.onload`
+    // is the window's, and a `<body onload>` content attribute is compiled onto
+    // the window. Lazy - checked on read - because there is no attribute-change
+    // hook; see events/dispatch.cpp. `forwarded_from_` is the element whose
+    // attribute last supplied each window handler.
+    [[nodiscard]] node_id body_or_frameset_of(value self);
+    void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
+    flat_map<std::string, node_id> forwarded_from_;
+    std::vector<node_id> bodies_; // every wrapped body/frameset, rebuilt when a wrapper is made
+    std::size_t bodies_scanned_at_ = static_cast<std::size_t>(-1);
+    // Which bindings an EventTarget receiver belongs to - `owner_of` for a
+    // node, the document's own for a Document, else this. The EventTarget
+    // methods route through it so a second document's nodes get a path.
+    [[nodiscard]] dom_bindings & target_owner(value self);
+
+public:
+    // What the browser tells the document as a load progresses.
+    // `document.currentScript`: the <script> running now, or none.
+    void set_current_script(node_id script);
+    // `document.readyState`, with `readystatechange` at the document when it
+    // changes.
+    void set_ready_state(std::string_view state);
+    // A FocusEvent at `target` naming `related` (the element focus came from
+    // or went to): `focus`/`blur` do not bubble, `focusin`/`focusout` do.
+    bool dispatch_focus(std::string_view type, node_id target, node_id related);
+    // `hashchange` at the window, a HashChangeEvent with both addresses.
+    bool dispatch_hash_change(const std::string & old_url, const std::string & new_url);
+    // TIME AS A SCRIPT OBSERVES IT: `performance.now()` and an event's
+    // timeStamp. The engine's one clock moves only between ticks, so within a
+    // script two readings were equal forever and `while (performance.now() <
+    // t)` never ended (Event-timestamp-safe-resolution.html spins until two
+    // events differ). Each observation advances it by the 5 us a browser
+    // coarsens to, counted from the tick's start - so it is still a function
+    // of the page's own behaviour and a golden stays a golden. The first
+    // reading of a tick is the clock itself; an event the ENGINE makes reads
+    // the clock, not this.
+    [[nodiscard]] double observed_now() {
+        return now_ms_ + 0.005 * static_cast<double>(time_reads_++);
+    }
+    std::uint64_t time_reads_ = 0;
+    // `contentWindow`/`contentDocument` on HTMLIFrameElement.prototype, which
+    // build a not-yet-reconciled frame on demand. See frames.cpp.
+    void install_frame_accessors(context & cx);
+    // `ariaActiveDescendantElement` and the seven `aria*Elements` lists: HTML
+    // 2.6.1's Element and FrozenArray<Element> reflection, with the explicitly
+    // set attr-element kept on the wrapper. See element/reflection.cpp.
+    void install_element_reflection(context & cx);
+    // `progress.max` and `<meter>`'s six: HTML's double reflections, on
+    // their interface prototypes. See element/reflection.cpp.
+    void install_double_reflection(context & cx);
+    // `option.label` and `option.value`, which fall back to the option's text.
+    void install_option_reflection(context & cx);
+    [[nodiscard]] value element_reference_get(context & cx, std::string_view idl,
+                                              std::string_view content, bool list);
+    void element_reference_set(context & cx, std::string_view idl, std::string_view content,
+                               bool list, value given);
+    [[nodiscard]] bool element_reference_in_scope(const read_txn & txn, node_id element,
+                                                  node_id candidate) const;
+    [[nodiscard]] node_id element_reference_by_id(const read_txn & txn, node_id element,
+                                                  std::string_view id) const;
+    // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
+    // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
+    // LEFT IT, which before the first frame is no layout at all. The browser
+    // installs the same flush its getComputedStyle wrapper does; anything
+    // reading `box_of` calls this first. Only what is stale runs.
+    void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    void flush_layout() {
+        if (flush_layout_) { flush_layout_(); }
+    }
+    std::function<void()> flush_layout_;
+    // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"
+    // runs when one becomes connected (the post-connection steps) or, once
+    // connected, when its children change; `mutated()` is where both are
+    // noticed. A parser-inserted <script> that was empty is in here too - it
+    // was never started, so text appended later runs it. See document/entry.cpp.
+    std::vector<node_id> unstarted_scripts_;
+    void run_inserted_scripts();
+
+public:
+    void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
+
+private:
+    // DOM 5, Range - bindings/document/range.cpp. `Range` the global and its
+    // prototype, and the document's `createRange`.
+    void install_range(context & cx);
+    [[nodiscard]] value create_range(context & cx);
+    // WRAPPERS THAT LEFT WITH THEIR NODE. `node_from` adopts by cloning into
+    // the other document's slab and rebinding the page's wrapper to the copy;
+    // the node here keeps its slot, and anything that finds it again by id -
+    // `template.content` after the contents were adopted - must answer the
+    // same object. Marked as roots; see wrap().
+    flat_map<std::uint64_t, script::object_object *> adopted_away_;
+    // `document.x` for several elements of one name is ONE live collection
+    // per name (HTML 3.1.5), so `document.a === document.a` even as the
+    // members change. Marked as roots.
+    flat_map<std::string, value> named_collections_;
+    // THE NODES A MUTATION MOVED: connected before the insertion that is
+    // being announced, so their subtrees were REMOVED for a moment - which is
+    // when HTML's focus fixup rule runs, and `is_connected` afterwards cannot
+    // see. moveBefore does not go through this, and keeps focus. Cleared
+    // after the hook.
+    std::vector<node_id> moved_by_mutation_;
+    // Set while `moveBefore` moves: DOM's "move" runs neither the removing
+    // nor the insertion side effects an ordinary insertion has - no focus
+    // fixup, and no script "children changed" steps (script-move-before.html).
+    bool moving_ = false;
+
+public:
+    [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }
+
+private:
+    // `form` on the form-associated elements - the form owner, HTML 4.10.17.3.
+    // element/reflection.cpp.
+    void install_form_owner(context & cx);
+    // `compareDocumentPosition` against a node or Document of ANOTHER document
+    // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
+    // direction the specification only asks to be consistent taken from the
+    // order of the two bindings. Zero when `given` is not one of those.
+    [[nodiscard]] unsigned foreign_document_position(value given);
+    // An Attr's value accessors and ownerElement, (re)bound to `owner` - or to
+    // nowhere. See element/attributes.cpp.
+    void bind_attr_object(context & cx, script::object_object & attr, node_id owner,
+                          const attribute & held);
+    // The four parts of an Attr read off the object; an empty name when it is
+    // not one. And a detached copy of one, for cloneNode and importNode.
+    [[nodiscard]] attribute attribute_of_object(context & cx, value given);
+    [[nodiscard]] value clone_attr_object(context & cx, value given);
+    // `outerHTML`, HTML 13.2 / DOM Parsing: the element serialised WITH its own
+    // tag, and the setter that parses in the parent's context and puts the
+    // result in the element's place. See document/tree_ops.cpp.
+    [[nodiscard]] std::string outer_html(node_id target) const;
+    void set_outer_html(context & cx, node_id target, std::string_view markup);
+    [[nodiscard]] std::string serialize_html(node_id target, bool outer) const;
+    // "Validate and extract" for an ELEMENT name, DOM 4.9, shared by
+    // createElementNS and createDocument: false having thrown the
+    // InvalidCharacterError or NamespaceError the pair earns.
+    [[nodiscard]] bool validate_and_extract_element(context & cx, std::string_view where,
+                                                    const std::string & ns,
+                                                    const std::string & qualified);
+    // ONE Attr OBJECT PER (element, namespace, local name), so that
+    // `el.getAttributeNode("x") === el.attributes[0]` - an Attr is a node and
+    // a node has an identity. Keyed by pack(element), then by the pair; rooted
+    // by mark_roots like wrappers_; an entry goes when the attribute does.
+    flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
+        attr_objects_;
+    void forget_attr_object(node_id owner, std::string_view ns, std::string_view local);
+    // `new DOMParser().parseFromString(markup, type)`, HTML 8.6.2: a SECOND
+    // document - this document's HTML parser over `markup` for text/html, the
+    // XML parser for the four XML types - as a real Document or XMLDocument in
+    // the realm, so `createElement`, `documentElement.tagName` and the rest
+    // answer as the type says. See document/second_document.cpp.
+    [[nodiscard]] value parse_from_string(context & cx, std::string_view markup,
+                                          std::string_view type);
+    // The bindings for a document this one made, linked and installed - the
+    // half of make_html_document and make_xml_document they share.
+    dom_bindings & adopt_second_document(context & cx, document & fresh);
+    // NamedNodeMap's members, on its prototype - see element/attributes.cpp.
+    void install_named_node_map(context & cx);
+    // "REPLACE ALL" (DOM 4.2.3), which the diff cannot see whole: `replaceChildren(x)`
+    // where x was already a child queues ONE record removing every old child
+    // and adding x, and the tree afterwards says only that the others went.
+    // The caller notes it here before the mutated() that follows, and
+    // record_mutations emits exactly this record for the parent instead of a diff.
+    struct replace_all_note {
+        node_id parent;
+        std::vector<node_id> removed;
+        std::vector<node_id> added;
+    };
+    std::optional<replace_all_note> replace_all_;
 };
 
 } // namespace ctbrowser::shell

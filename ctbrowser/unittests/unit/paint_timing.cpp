@@ -72,7 +72,8 @@ void test_paint_entries_are_recorded_by_the_first_frame() {
 // Parser-inserted: `load` at a <link rel=stylesheet>, a <style> and a
 // <script src>, `error` where the bytes were not there, nothing at an inline
 // classic script - and all of it a tick AFTER the page's script registered the
-// listeners, with the sheet applied and the script run.
+// listeners, with the sheet applied and the script run - and BEFORE the
+// window's own `load`, which HTML delays until the subresources have settled.
 void test_parsed_sheets_and_scripts_fire_load_or_error_at_the_element() {
     browser page{browser_options{400, 200}};
     page.assets().add("red.css", bytes_of(".target { color: rgb(255, 0, 0); }"));
@@ -100,8 +101,8 @@ void test_parsed_sheets_and_scripts_fire_load_or_error_at_the_element() {
         </script></head><body><div class=target>red</div></body></html>)");
     (void)page.tick(16.0);
     CHECK_EQ(logged(page, "events="),
-             std::string{"events=window,l:load:true:true:false,rgb(255, 0, 0),m:error,"
-                         "s:load:true:true:false,j:load:true:true:false,dummy=1,k:error"});
+             std::string{"events=l:load:true:true:false,rgb(255, 0, 0),m:error,"
+                         "s:load:true:true:false,j:load:true:true:false,dummy=1,k:error,window"});
 }
 
 // Script-inserted: a <link> and a <style> appended after load are announced

@@ -39,8 +39,28 @@ namespace ctbrowser::script {
 [[nodiscard]] inline double num_at(std::span<value> args, std::size_t i) {
     return i < args.size() ? context::to_number(args[i]) : 0.0;
 }
+// ToNumber (7.1.4) and ToString (7.1.17) both REFUSE A SYMBOL with a TypeError,
+// and context::to_number_value / to_string cannot say so: to_string is also
+// ToPropertyKey, which a symbol must pass through. So the refusal sits on the
+// argument helpers every built-in reads through, and no method has to
+// remember it. FALSE means the TypeError is in flight; the callers below
+// answer a harmless default and the method returns into the unwound frame.
+[[nodiscard]] inline bool numeric_arg(context & cx, value v) {
+    if (!v.is_kind(heap_kind::symbol)) { return true; }
+    cx.throw_error("TypeError", "Cannot convert a Symbol value to a number");
+    return false;
+}
+[[nodiscard]] inline bool stringable_arg(context & cx, value v) {
+    if (!v.is_kind(heap_kind::symbol)) { return true; }
+    cx.throw_error("TypeError", "Cannot convert a Symbol value to a string");
+    return false;
+}
+// ToString of an argument: a symbol refuses, everything else converts.
+[[nodiscard]] inline std::string string_arg(context & cx, value v) {
+    return stringable_arg(cx, v) ? cx.to_string(v) : std::string{};
+}
 [[nodiscard]] inline std::string str_at(context & cx, std::span<value> args, std::size_t i) {
-    return i < args.size() ? cx.to_string(args[i]) : std::string{};
+    return i < args.size() ? string_arg(cx, args[i]) : std::string{};
 }
 
 // ToIntegerOrInfinity (7.1.5) over an argument that MAY BE AN OBJECT, and the
@@ -63,6 +83,7 @@ namespace ctbrowser::script {
 // long" from "as long as you like" because the specification makes one of them
 // a RangeError.
 [[nodiscard]] inline double integer_arg(context & cx, std::span<value> args, std::size_t i) {
+    if (i < args.size() && !numeric_arg(cx, args[i])) { return 0.0; }
     const double n = i < args.size() ? cx.to_number_value(args[i]) : 0.0;
     return std::isnan(n) ? 0.0 : std::trunc(n);
 }
@@ -124,8 +145,8 @@ namespace detail {
 }
 [[nodiscard]] inline std::string this_string(context & cx) {
     const value self = cx.current_this();
-    return self.is_string() ? static_cast<string_object *>(self.as_heap())->text
-                            : cx.to_string(self);
+    if (self.is_string()) { return static_cast<string_object *>(self.as_heap())->text; }
+    return string_arg(cx, self);
 }
 
 // thisNumberValue (21.1.3), WHICH THIS FILE DID NOT HAVE - and the cycle that
@@ -149,12 +170,61 @@ namespace detail {
 [[nodiscard]] inline double this_number_value(context & cx, const char * method) {
     const value self = cx.current_this();
     if (self.is_number()) { return self.as_number(); }
+    // A WRAPPER (`new Number(5)`) carries its [[NumberData]] in the slot - see
+    // primitive_slot in value.hpp and box_primitive below.
+    if (value * slot = primitive_slot(self); slot != nullptr && slot->is_number()) {
+        return slot->as_number();
+    }
     if (self.is_object() && self.as_heap() == cx.prototype(context::proto_kind::number)) {
         return 0.0;
     }
     cx.throw_error("TypeError", std::string{method} + " requires that 'this' be a Number");
     return std::nan("");
 }
+
+// --- PRIMITIVE WRAPPERS, 7.1.18 ToObject --------------------------------------
+//
+// The wrapper is an ordinary object on the prototype its kind names, with the
+// primitive in the private-keyed slot `primitive_slot_key` (value.hpp says why
+// a private key IS an internal slot here). `typeof` says "object", `==` and
+// arithmetic reach the primitive through valueOf, and Number.prototype's,
+// Boolean.prototype's and String.prototype's own methods read the slot.
+[[nodiscard]] inline value wrap_primitive(context & cx, value self, value primitive) {
+    auto * obj = static_cast<object_object *>(self.as_heap());
+    if (!obj->prototype.is_object()) {
+        const context::proto_kind kind = primitive.is_number()    ? context::proto_kind::number
+                                         : primitive.is_boolean() ? context::proto_kind::boolean
+                                         : primitive.is_string()  ? context::proto_kind::string
+                                         : primitive.is_kind(heap_kind::symbol)
+                                             ? context::proto_kind::symbol
+                                             : context::proto_kind::bigint;
+        if (object_object * table = cx.prototype(kind)) { obj->prototype = value::object(table); }
+    }
+    obj->define(primitive_slot_key, primitive, attr_none);
+    return self;
+}
+// ToObject of a primitive. An object passes through; null and undefined are
+// the caller's refusal.
+[[nodiscard]] inline value box_primitive(context & cx, value v) {
+    if (v.is_object_like() || v.is_nullish()) { return v; }
+    const value made = cx.make_object();
+    return wrap_primitive(cx, made, v);
+}
+// IS A CONSTRUCTOR BEING RUN UNDER `new`? A native has no new.target: what it
+// has is `this`, which context::construct makes as a fresh, EMPTY instance
+// before the call, and which a plain call never supplies. `Number.call({}, 5)`
+// is the one spelling this cannot tell apart, and no page writes it.
+[[nodiscard]] inline bool constructing_this(value self) {
+    if (!self.is_object()) { return false; }
+    auto * obj = static_cast<object_object *>(self.as_heap());
+    return obj->props.empty() && !obj->accessors.any;
+}
+
+// A REAL ITERATOR over a list that already exists - what `keys()`, `values()`
+// and `entries()` answer on an Array, a Map and a Set, and what
+// String.prototype[@@iterator] answers over the characters. Defined in
+// collections/array_iteration.cpp, which says why it answers both protocols.
+[[nodiscard]] value list_iterator(context & cx, value items, const char * tag);
 
 // --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
 //
@@ -187,43 +257,117 @@ namespace detail {
     if (self.is_array()) {
         return static_cast<double>(static_cast<array_object *>(self.as_heap())->length());
     }
-    return to_length(cx.to_number_value(cx.lookup_property(self, "length")));
+    const value raw = cx.lookup_property(self, "length");
+    if (!numeric_arg(cx, raw)) { return 0.0; }
+    return to_length(cx.to_number_value(raw));
 }
 
 [[nodiscard]] inline value element_at(context & cx, value self, double i) {
     return cx.lookup_index(self, value::number(i));
 }
 
-inline void put_element(context & cx, value self, double i, value v) {
-    cx.store_index(self, value::number(i), v);
+// Set(O, P, V, true) - 23.1.3's writes all carry Throw=true, so a write that
+// does not land (a frozen array, a non-writable `length`, a String receiver's
+// index) is a TypeError even in sloppy code. context::store_index records the
+// refusal in store_rejected_ and strict_store_check turns it into the throw.
+//
+// FALSE MEANS THE THROW IS IN FLIGHT and the method must return at once: a
+// second throw_error on the way out would consume a second handler
+// (context::reentry_scope says why that loses the page's own `try`), and a
+// walk that carries on after its first refused write is doing work the
+// specification stopped.
+//
+// WHETHER A DIRECT throw_error HAPPENED is read off context::current_stack: a
+// throw the native raised itself is not parked (that is `call`'s doing, and
+// throw_pending sees only that) and the landing clears `thrown_`, but the
+// landing also moves the handler frame's `ip` to the catch block or pops
+// frames above it, and the trace prints both. An uncaught throw fails the
+// run, which throw_pending does see. (A compiled frame prints no offset, so
+// a catch in one is invisible here; the interpreted tier is what runs the
+// suites.) The snapshot costs a string, so the dense-array write below, which
+// no JavaScript can refuse or observe, skips it.
+[[nodiscard]] inline bool threw_since(context & cx, const std::string & before) {
+    return cx.throw_pending() || cx.current_stack() != before;
 }
-
+// The same question off context::unwinds(), which costs nothing: a native
+// that has read `length` off a revoked proxy has already thrown and landed,
+// and must not throw a second time over the handler it consumed.
+struct unwind_watch {
+    context & cx;
+    std::size_t before;
+    explicit unwind_watch(context & c) : cx(c), before(c.unwinds()) {}
+    [[nodiscard]] bool threw() const { return cx.throw_pending() || cx.unwinds() != before; }
+};
+[[nodiscard]] inline array_object * dense_array_this(value self); // below
+[[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
+    if (self.is_array()) {
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        // A typed array coerces and drops out of range, never refuses; an
+        // ordinary dense one that is extensible and writable never refuses an
+        // index at or below its size. Neither can run a line of JavaScript.
+        const bool typed = arr->is_view() || arr->elements != element_kind::none;
+        if (typed ||
+            (dense_array_this(self) != nullptr && arr->extensible && arr->elements_writable &&
+             i >= 0 && i <= static_cast<double>(arr->items.size()))) {
+            cx.store_index(self, value::number(i), v);
+            return true;
+        }
+    }
+    const std::string before = cx.current_stack();
+    cx.clear_store_rejected();
+    cx.store_index(self, value::number(i), v);
+    if (cx.throw_pending()) { return false; }
+    cx.strict_store_check(number_to_string(i));
+    return !threw_since(cx, before);
+}
+// CreateDataPropertyOrThrow(A, k, v), 7.3.5 - a DEFINE, not a [[Set]], so a
+// non-writable but configurable slot on a species-made result is overwritten
+// rather than refused; the refusal is a TypeError. A dense array takes
+// put_element's fast path, which is the same operation there.
+[[nodiscard]] inline bool create_element(context & cx, value target, double k, value v) {
+    if (target.is_array() && dense_array_this(target) != nullptr) {
+        return put_element(cx, target, k, v);
+    }
+    context::property_descriptor wanted;
+    wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
+    wanted.held = v;
+    wanted.writable = wanted.enumerable = wanted.configurable = true;
+    if (cx.define_own_property(target, number_to_string(k), wanted)) { return true; }
+    if (!cx.throw_pending()) {
+        cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
+    }
+    return false;
+}
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
-// Free on a dense array, which cannot have one: `delete a[i]` is specified to
-// leave a hole and array_object is a std::vector with nowhere to put one (see
-// context::delete_own_property, which answers true and removes nothing), so
-// every index below its size is present. For anything else this is the real
-// HasProperty, and it is what makes
+// Free on a dense array with no holes and no element attributes of its own
+// (array_object::element_attrs): every index below its size is present. For
+// anything else this is the real HasProperty, and it is what makes
 // `Array.prototype.forEach.call({length: 3, 1: 'x'}, f)` call back once rather
 // than three times.
 [[nodiscard]] inline bool has_element(context & cx, value self, double i) {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
-        if (arr->sparse.empty()) { return i >= 0 && i < static_cast<double>(arr->length()); }
+        if (arr->sparse.empty() && arr->element_attrs.empty()) {
+            return i >= 0 && i < static_cast<double>(arr->length());
+        }
     }
     return cx.has_property(self, value::number(i));
 }
 
-// DeletePropertyOrThrow over an index (7.3.9), and Set(O, "length", n, true).
-// The two writes the MUTATING methods are built out of, named so that push,
-// pop, shift, unshift, splice and reverse read like their clauses in 23.1.3
-// rather than like calls on the context.
-inline void delete_element(context & cx, value self, double i) {
-    cx.delete_index(self, value::number(i));
+[[nodiscard]] inline bool delete_element(context & cx, value self, double i) {
+    if (cx.delete_own_property(self, number_to_string(i))) { return !cx.throw_pending(); }
+    if (cx.throw_pending()) { return false; }
+    cx.throw_error("TypeError", "Cannot delete property '" + number_to_string(i) + "'");
+    return false;
 }
-inline void put_length(context & cx, value self, double len) {
+[[nodiscard]] inline bool put_length(context & cx, value self, double len) {
+    const std::string before = cx.current_stack();
+    cx.clear_store_rejected();
     cx.store_property(self, "length", value::number(len));
+    if (cx.throw_pending()) { return false; }
+    cx.strict_store_check("length");
+    return !threw_since(cx, before);
 }
 
 // THE FAST PATH'S RECEIVER: a real, ORDINARY Array, whose elements are its own
@@ -239,10 +383,16 @@ inline void put_length(context & cx, value self, double len) {
 // so vector surgery on one would silently do nothing. It goes the generic way,
 // where store_index coerces and refuses to grow it, which is what a typed
 // array is for.
+//
+// NOR IS ONE WITH A HOLE, AN ACCESSOR ELEMENT OR A NON-WRITABLE `length`
+// (array_object::element_attrs, length_writable): those are exactly the cases
+// where vector surgery would skip a getter, fill a hole or write a length the
+// specification refuses, so they take the generic walk too.
 [[nodiscard]] inline array_object * dense_array_this(value self) {
     if (!self.is_array()) { return nullptr; }
     auto * arr = static_cast<array_object *>(self.as_heap());
-    return arr->is_view() || arr->elements != element_kind::none ? nullptr : arr;
+    if (arr->is_view() || arr->elements != element_kind::none) { return nullptr; }
+    return arr->element_attrs.empty() && arr->length_writable ? arr : nullptr;
 }
 
 // A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.
@@ -260,7 +410,8 @@ inline void put_length(context & cx, value self, double len) {
 // object with an ordinary, writable `length`, which is why
 // `Array.prototype.push.call(true)` is specified to answer 0 rather than throw.
 [[nodiscard]] inline bool mutable_receiver(context & cx, value self, const char * method) {
-    if (!self.is_string()) { return true; }
+    const value * slot = primitive_slot(self);
+    if (!self.is_string() && (slot == nullptr || !slot->is_string())) { return true; }
     cx.throw_error("TypeError",
                    std::string{"Array.prototype."} + method + " cannot modify a String");
     return false;
@@ -293,6 +444,16 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     return false;
 }
 
+// ToObject(this value), 23.1.3's first step in every method: a primitive is
+// BOXED (detail::box_primitive) so that `Array.prototype.push.call(true)` sets
+// `length` on a Boolean wrapper and answers 0 rather than refusing a write to
+// a primitive, and a String receiver's non-writable indices refuse through
+// the wrapper as 10.4.3 says. null and undefined pass through to
+// coercible_this, which is step 1's TypeError.
+[[nodiscard]] inline value array_this(context & cx) {
+    return box_primitive(cx, cx.current_this());
+}
+
 // RequireObjectCoercible on `this`, which every Array.prototype method begins
 // with (as ToObject, 7.1.18, whose step 1 is the same refusal). The methods
 // answered a default instead, so `Array.prototype.forEach.call(null, f)` did
@@ -306,6 +467,28 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     cx.throw_error("TypeError",
                    std::string{"Array.prototype."} + method + " called on null or undefined");
     return false;
+}
+
+// IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked one
+// (both slots null) is a TypeError - FALSE with the throw in flight.
+[[nodiscard]] inline bool is_array_value(context & cx, value v, bool & out) {
+    for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
+        auto * p = static_cast<proxy_object *>(v.as_heap());
+        if (p->handler.is_null()) {
+            cx.throw_error("TypeError",
+                           "Cannot perform 'IsArray' on a proxy that has been revoked");
+            out = false;
+            return false;
+        }
+        v = p->target;
+    }
+    // A TYPED ARRAY IS NOT AN Array exotic object (7.2.2 step 2 asks for the
+    // exotic kind), though it is an array_object here: Array.isArray, concat's
+    // spreading and ArraySpeciesCreate all say no to one.
+    out = v.is_array() &&
+          static_cast<const array_object *>(v.as_heap())->elements == element_kind::none &&
+          !static_cast<const array_object *>(v.as_heap())->is_view();
+    return true;
 }
 
 // IsCallable, 7.2.3, at the one place every iteration method checks it: an
@@ -326,6 +509,39 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     if (made->set_js_length(len)) { return made; }
     cx.throw_error("RangeError", "Invalid array length");
     return nullptr;
+}
+
+// ArraySpeciesCreate, 10.4.2.3: the object an Array.prototype method fills. A
+// fresh Array of `len` unless the receiver IS an array whose `constructor` -
+// or that constructor's @@species - is some other constructor, which is then
+// constructed with `len`. Undefined means a throw is in flight. (The
+// cross-realm Array test of step 4 has nowhere to apply: one context, one
+// realm.)
+[[nodiscard]] inline value array_species_create(context & cx, value original, double len) {
+    const unwind_watch watch{cx};
+    bool is_array = false;
+    if (!is_array_value(cx, original, is_array) || watch.threw()) { return value::undefined(); }
+    value ctor = value::undefined();
+    if (is_array) {
+        ctor = cx.lookup_property(original, "constructor");
+        if (watch.threw()) { return value::undefined(); }
+        if (ctor.is_object_like()) {
+            ctor = cx.lookup_property(ctor, "@@species");
+            if (watch.threw()) { return value::undefined(); }
+            if (ctor.is_null()) { ctor = value::undefined(); }
+        }
+    }
+    if (ctor.is_undefined() || (ctor.is_heap() && ctor.as_heap() == cx.global("Array").as_heap())) {
+        const value out = cx.make_array();
+        return new_array_of_length(cx, out, len) == nullptr ? value::undefined() : out;
+    }
+    if (!is_constructor(ctor)) {
+        cx.throw_error("TypeError", "Array species constructor is not a constructor");
+        return value::undefined();
+    }
+    const value args[1] = {value::number(len)};
+    const value out = cx.construct(ctor, args);
+    return watch.threw() || !out.is_object_like() ? value::undefined() : out;
 }
 
 [[nodiscard]] inline object_object * new_table(context & cx) {
@@ -386,14 +602,25 @@ inline void install_arity(context & cx, native_object * fn, double arity) {
 // The arity-less form installs `name` and NOT `length`, which is the honest
 // answer for a built-in whose specified arity has not been checked at its
 // install site: an absent property is a gap, a wrong one is a wrong answer.
-inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+// A BUILT-IN METHOD HAS NO [[Construct]] (clause 17): `new Math.abs()` is a
+// TypeError, and isConstructor.js asks Reflect.construct exactly that.
+[[nodiscard]] inline native_object * method_native(context & cx, std::string name, native_fn fn) {
     auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    made->is_constructor = false;
+    return made;
+}
+// A getter or setter, for define_accessor: a function that is not a constructor.
+[[nodiscard]] inline value accessor_fn(context & cx, std::string name, native_fn fn) {
+    return value::object(method_native(cx, std::move(name), std::move(fn)));
+}
+inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, object_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }
@@ -401,13 +628,13 @@ inline void method(context & cx, object_object * table, std::string name, double
 // `Object(x)` coerces and `Object.keys` is a static - has to be a native
 // carrying properties, and its statics are installed exactly like a table's.
 inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, native_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }
@@ -634,6 +861,7 @@ inline value settle_with(context & cx, value on_ok, value on_err,
     method(cx, table, "finally", [](context & c, std::span<value> a) {
         return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
     });
+    table->define("@@toStringTag", cx.string("Promise"), attr_configurable); // 27.2.5.5
     cx.set_prototype(context::proto_kind::promise, table);
     return table;
 }
@@ -649,6 +877,9 @@ inline value settle_with(context & cx, value on_ok, value on_err,
 }
 
 // --- JSON -----------------------------------------------------------------
+
+// [[IsRawJSON]] (25.5.3): the private slot JSON.rawJSON's objects carry.
+inline constexpr std::string_view raw_json_slot = "@#IsRawJSON";
 
 // QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
 // of its rows were missing: U+0008 and U+000C have the short forms \b and \f
@@ -744,9 +975,35 @@ struct json_writer {
             const value args[2] = {cx.string(key), v};
             v = cx.call(replacer, args, holder);
         }
+        // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
+        // its primitive - through ToNumber / ToString, so a user valueOf or
+        // toString on it runs; a Boolean and a BigInt read the slot.
+        if (const value * slot = primitive_slot(v); slot != nullptr) {
+            if (slot->is_number()) {
+                v = value::number(cx.to_number_value(v));
+            } else if (slot->is_string()) {
+                v = cx.string(cx.to_string(v));
+            } else if (slot->is_boolean() || slot->is_kind(heap_kind::bigint)) {
+                v = *slot;
+            }
+            if (cx.throw_pending()) {
+                failed = true;
+                return false;
+            }
+        }
         if (v.is_null()) {
             out += "null";
             return true;
+        }
+        // 25.5.2.2 step 4.a: a rawJSON object is its text, verbatim.
+        if (v.is_object()) {
+            auto * obj = static_cast<object_object *>(v.as_heap());
+            if (obj->find(raw_json_slot) != nullptr) {
+                if (const value * raw = obj->find("rawJSON"); raw != nullptr && raw->is_string()) {
+                    out += static_cast<const string_object *>(raw->as_heap())->text;
+                    return true;
+                }
+            }
         }
         if (v.is_boolean()) {
             out += v.as_boolean() ? "true" : "false";
@@ -1211,45 +1468,84 @@ struct json_reader {
     }
 };
 
-// InternalizeJSONProperty, 25.5.1.1 - the reviver walk.
+// WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10
+// (getOwnPropertyNames) and 20.1.2.11 (getOwnPropertySymbols) are the same walk
+// filtered two different ways, and 7.3.7/7.3.24 want it unfiltered - a symbol
+// key is copied by Object.assign and read by Object.defineProperties, which is
+// the one place OwnPropertyKeys and EnumerableOwnProperties differ.
+enum class key_filter : std::uint8_t {
+    strings,
+    symbols,
+    all
+};
+// EVERY OWN KEY OF ANY VALUE, including the synthesised ones - and a proxy's
+// ownKeys trap. Defined in objects/operations.cpp.
+[[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
+                                                          key_filter which = key_filter::strings);
+
+// InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
+// object operations so a reviver that grafts a Proxy in sees its traps run.
 //
 // POST-ORDER: a child is revived and written back before its parent is offered
 // to the reviver, so a reviver rebuilding a Date out of a string sees a
 // finished object. A reviver returning `undefined` DELETES the property, which
-// is how one filters, and is why this cannot be a plain map.
-inline value internalize_json(context & cx, value holder, const std::string & key, value held,
-                              value reviver, std::uint32_t depth) {
+// is how one filters, and is why this cannot be a plain map. Undefined with a
+// throw pending is an abrupt completion.
+inline value internalize_json(context & cx, value holder, const std::string & key, value reviver,
+                              std::uint32_t depth) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
-    if (held.is_array()) {
-        auto * arr = static_cast<array_object *>(held.as_heap());
-        for (std::size_t i = 0; i < arr->items.size(); ++i) {
-            const value revived =
-                internalize_json(cx, held, std::to_string(i), arr->items[i], reviver, depth + 1);
-            // A DELETED ELEMENT IS A HOLE, NOT A SHORTER ARRAY: 25.5.1.1 does
-            // [[Delete]] and leaves `length` where it was. An array here has no
-            // holes to write (see context::delete_own_property), so a deleted
-            // element reads back as `undefined`, which is what it would be.
-            if (i < arr->items.size()) { arr->items[i] = revived; }
-        }
-    } else if (held.is_object()) {
-        // The key list is taken BEFORE the walk (step 3.d.i takes OwnPropertyKeys
-        // once): a property the reviver adds must not be visited, and one it
-        // deletes ahead of the cursor must not be either.
-        auto * obj = static_cast<object_object *>(held.as_heap());
-        std::vector<std::string> keys;
-        obj->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
-        for (const std::string & each : keys) {
-            value * slot = obj->find(each);
-            if (slot == nullptr) { continue; } // an earlier round deleted it
-            const value revived = internalize_json(cx, held, each, *slot, reviver, depth + 1);
+    const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
+    if (cx.throw_pending()) { return value::undefined(); }
+    if (held.is_object_like()) {
+        const context::rooted keep{cx, held};
+        // Step 2.b: a deleted child is [[Delete]]d (a refusal is a TypeError);
+        // a revived one is CreateDataProperty'd, its refusal ignored.
+        const auto revive_child = [&](const std::string & k) {
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1);
+            if (cx.throw_pending()) { return false; }
             if (revived.is_undefined()) {
-                (void)obj->erase(each);
+                if (!cx.delete_own_property(held, k)) {
+                    if (!cx.throw_pending()) {
+                        cx.throw_error("TypeError", "Cannot delete property " + k);
+                    }
+                    return false;
+                }
             } else {
-                obj->set(each, revived);
+                const context::rooted keep_revived{cx, revived};
+                context::property_descriptor wanted;
+                wanted.has_value = wanted.has_writable = wanted.has_enumerable =
+                    wanted.has_configurable = true;
+                wanted.held = revived;
+                wanted.writable = wanted.enumerable = wanted.configurable = true;
+                (void)cx.define_own_property(held, k, wanted);
+            }
+            return !cx.throw_pending();
+        };
+        bool is_array = false;
+        if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
+        if (is_array) {
+            const double len = array_like_length(cx, held);
+            if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            for (double i = 0; i < len; i += 1.0) {
+                if (!revive_child(number_to_string(i))) { return value::undefined(); }
+            }
+        } else {
+            // EnumerableOwnProperties: the key list is taken BEFORE the walk
+            // (step 2.c.i takes OwnPropertyKeys once) - a property the reviver
+            // adds is not visited - and each is re-checked for being there and
+            // enumerable as its turn comes.
+            const std::vector<std::string> keys = own_property_names(cx, held, key_filter::strings);
+            if (cx.throw_pending()) { return value::undefined(); }
+            for (const std::string & each : keys) {
+                context::property_descriptor found;
+                const bool present = cx.own_property(held, each, found);
+                if (cx.throw_pending()) { return value::undefined(); }
+                if (!present || !found.enumerable) { continue; }
+                if (!revive_child(each)) { return value::undefined(); }
             }
         }
     }
@@ -1275,6 +1571,7 @@ void install_math(context & cx, std::uint64_t seed);
 void install_array(context & cx);
 void install_string(context & cx);
 void install_base64(context & cx);
+void install_uri(context & cx);
 void install_structured_clone(context & cx);
 void install_boolean(context & cx);
 void install_number(context & cx);
@@ -1293,6 +1590,8 @@ void install_typed_arrays(context & cx);
 void install_dynamic_function(context & cx);
 void install_generator(context & cx);
 void install_class_defined(context & cx);
+// See iterator_open_name and its two siblings.
+void install_destructuring_iteration(context & cx);
 
 // Used by more than one of those, so defined once here rather than duplicated.
 // inline, because a header five translation units include may not define a

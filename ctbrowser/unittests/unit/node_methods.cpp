@@ -80,7 +80,9 @@ void test_tree_navigation() {
 // WPT is opt-in, needs a 40 MB corpus, and takes four minutes.
 void test_element_collections_are_live() {
     browser page{browser_options{400, 300}};
-    page.load_html(R"(<html class="a"><body class="a">
+    // A DOCTYPE, because the case-sensitivity asserted below is the
+    // standards-mode rule: a quirks-mode document folds case (DOM 4.5).
+    page.load_html(R"(<!DOCTYPE html><html class="a"><body class="a">
       <p id=p1 class="x  y"></p><input id=i1 name=q><script>
         const all = document.getElementsByClassName('a');
         console.log('n=' + all.length + ',' + all[0].tagName + ',' + all[1].tagName);

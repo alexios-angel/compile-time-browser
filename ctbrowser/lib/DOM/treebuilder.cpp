@@ -97,8 +97,15 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
     // non-text kind. Where this still differs from the spec: a comment after
     // `</html>` lands under the last open element rather than the Document,
     // because this builder ignores `</body>` and `</html>` outright.
-    case token_kind::comment: {
-        const node_id comment = builder_->create_comment(t.data);
+    // A PROCESSING INSTRUCTION GOES WHERE A COMMENT GOES - every insertion
+    // mode's row for one reads "insert a processing instruction" beside the
+    // comment's "insert a comment", with the same target.
+    case token_kind::comment:
+    case token_kind::processing_instruction: {
+        const node_id comment =
+            t.kind == token_kind::comment
+                ? builder_->create_comment(t.data)
+                : builder_->create_processing_instruction(atoms_->intern(t.name), t.data);
         if (before_html()) {
             builder_->insert_before(doc_->document_node(), comment, root_);
         } else {
@@ -324,6 +331,10 @@ void tree_builder::ensure_head() {
 
 void tree_builder::ensure_body() {
     if (in_body_) { return; }
+    // INSIDE A <template> NOTHING IMPLIES A BODY - "in template" insertion
+    // mode: a <div> in a template in the head goes into the template's
+    // contents, and leaving the head for it would put it in a body instead.
+    if (std::ranges::any_of(open_, [](const entry & e) { return e.tag == "template"; })) { return; }
     // Leaving <head> is what "after head" means; anything that is not
     // head-only content does it.
     while (open_.size() > 1 && open_.back().tag != "html") { open_.pop_back(); }

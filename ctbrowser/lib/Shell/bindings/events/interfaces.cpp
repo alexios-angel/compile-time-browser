@@ -8,6 +8,19 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+// The bindings whose target `self` is: the owner of a node wrapper, the
+// bindings whose `document` it is, else this one - which is right for the
+// window and for a standalone EventTarget.
+dom_bindings & dom_bindings::target_owner(value self) {
+    if (dom_bindings * owner = owner_of(self)) { return *owner; }
+    dom_bindings * top = primary_ == nullptr ? this : primary_;
+    if (top->is_the_document(self)) { return *top; }
+    for (const auto & made : top->secondary_documents_) {
+        if (made->is_the_document(self)) { return *made; }
+    }
+    return *this;
+}
+
 namespace {
 
 // Does `self`'s prototype chain reach `wanted`?
@@ -238,6 +251,17 @@ void dom_bindings::install_event_interfaces(context & cx) {
             }
             return value::undefined();
         });
+    // `timeStamp`, on the prototype, reading the slot initialise_event fills.
+    accessor_on(
+        event_proto, "timeStamp",
+        [](context & c, std::span<value>) {
+            const value self = c.current_this();
+            if (!self.is_object()) { return value::number(0); }
+            const value * held = static_cast<script::object_object *>(self.as_heap())
+                                     ->find(std::string{timestamp_property});
+            return held == nullptr ? value::number(0) : *held;
+        },
+        nullptr);
     // THE ONE `isTrusted` GETTER. It is installed here so that every instance
     // can take a copy of it as an OWN accessor - see initialise_event - and so
     // that there is exactly one per page.
@@ -304,7 +328,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
                 // extends Event` arrives with X.prototype already in place, and
                 // overwriting that would flatten the subclass back to an Event.
                 if (!event->prototype.is_object()) { event->prototype = prototype_value; }
-                initialise_event(c, *event, type, bubbles, cancelable, now_ms_,
+                initialise_event(c, *event, type, bubbles, cancelable, observed_now(),
                                  is_trusted_getter_of(event_prototype_));
                 event->set("composed", value::boolean(composed));
                 // CONSTRUCTED IS INITIALISED. It is the difference between this
@@ -713,6 +737,13 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
                  });
 
+    // `HashChangeEvent` (HTML 7.4.6.2): two USVStrings defaulting to "".
+    interface_of("HashChangeEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("oldURL", c.string(dict_string(c, init, "oldURL")));
+                     e.set("newURL", c.string(dict_string(c, init, "newURL")));
+                 });
+
     // `ErrorEvent`, which is what an uncaught exception is reported as. It is
     // here rather than beside dispatch_error because a page CONSTRUCTS one:
     // window-event-restored-after-throwing-onerror.html dispatches its own.
@@ -819,14 +850,22 @@ void dom_bindings::install_event_interfaces(context & cx) {
     const auto target_method = [&](const char * name, script::native_fn fn) {
         method_on(target_proto, name, std::move(fn));
     };
+    // AND `this` IS NOT ALWAYS THIS DOCUMENT'S. The prototypes are the realm's
+    // and installed by the primary, so a node of a document the page made -
+    // `createHTMLDocument()`, `document.cloneNode(true)` - arrives here with
+    // the primary as `this`, whose `step_of` does not know it and files it as
+    // a standalone object: no capture, no bubble, no path. Each method asks
+    // which bindings own the receiver, as every Node operation does.
     target_method("addEventListener", [this](context & c, std::span<value> args) {
         const value self = c.current_this();
         if (!self.is_object_like()) { return value::undefined(); }
-        add_listener(make_listener(c, step_of(self), args));
+        dom_bindings & owner = target_owner(self);
+        owner.add_listener(owner.make_listener(c, owner.step_of(self), args));
         return value::undefined();
     });
     target_method("removeEventListener", [this](context & c, std::span<value> args) {
         const value self = c.current_this();
+        dom_bindings & owner = target_owner(self);
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
         // The capture flag is part of a listener's identity, and the third
@@ -838,8 +877,8 @@ void dom_bindings::install_event_interfaces(context & cx) {
         const bool capture = options.is_object()
                                  ? context::truthy(c.lookup_property(options, "capture"))
                                  : context::truthy(options);
-        const path_step at = step_of(self);
-        std::erase_if(listeners_, [&](const listener & l) {
+        const path_step at = owner.step_of(self);
+        std::erase_if(owner.listeners_, [&](const listener & l) {
             if (l.on != at.on || l.type != type || l.capture != capture ||
                 l.callback.bits() != callback.bits()) {
                 return false;
@@ -860,7 +899,8 @@ void dom_bindings::install_event_interfaces(context & cx) {
             return value::boolean(false);
         }
         if (!self.is_object_like()) { return value::boolean(true); }
-        return value::boolean(!dispatch_to(event, step_of(self)));
+        dom_bindings & owner = target_owner(self);
+        return value::boolean(!owner.dispatch_to(event, owner.step_of(self)));
     });
     // The Error constructor's shape, and for the same reason: `this` is the
     // instance when this runs through `new` or through a subclass's `super()`,

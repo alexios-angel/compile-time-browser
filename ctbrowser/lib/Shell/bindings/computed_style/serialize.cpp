@@ -99,6 +99,66 @@ namespace detail {
     return "rgba(" + rgb + ", " + number_text(std::round(alpha * 64.0f) / 64.0f) + ")";
 }
 
+// A SYSTEM COLOUR RESOLVES TO A COLOUR. CSS Color 4 §6.2 leaves the value to
+// the platform and CSSOM makes the resolved value of a colour property the
+// used one, so `background-color: Menu` reads back as an `rgb()` in every
+// browser (getComputedStyle-resolved-colors). These are the light-scheme
+// values Chromium ships; nothing here is themed, so they are the answer.
+[[nodiscard]] std::optional<color> system_color(std::string_view text) {
+    static constexpr std::pair<std::string_view, std::string_view> table[] = {
+        {"accentcolor", "#0075ff"},
+        {"accentcolortext", "#ffffff"},
+        {"activetext", "#ff0000"},
+        {"buttonborder", "#767676"},
+        {"buttonface", "#efefef"},
+        {"buttontext", "#000000"},
+        {"canvas", "#ffffff"},
+        {"canvastext", "#000000"},
+        {"field", "#ffffff"},
+        {"fieldtext", "#000000"},
+        {"graytext", "#808080"},
+        {"highlight", "#1e90ff"},
+        {"highlighttext", "#ffffff"},
+        {"linktext", "#0000ee"},
+        {"mark", "#ffff00"},
+        {"marktext", "#000000"},
+        {"selecteditem", "#1e90ff"},
+        {"selecteditemtext", "#ffffff"},
+        {"visitedtext", "#551a8b"},
+        {"activeborder", "#ffffff"},
+        {"activecaption", "#cccccc"},
+        {"appworkspace", "#ffffff"},
+        {"background", "#6363ce"},
+        {"buttonhighlight", "#ffffff"},
+        {"buttonshadow", "#808080"},
+        {"captiontext", "#000000"},
+        {"inactiveborder", "#ffffff"},
+        {"inactivecaption", "#ffffff"},
+        {"inactivecaptiontext", "#7f7f7f"},
+        {"infobackground", "#fbfcc5"},
+        {"infotext", "#000000"},
+        {"menu", "#f7f7f7"},
+        {"menutext", "#000000"},
+        {"scrollbar", "#ffffff"},
+        {"threeddarkshadow", "#666666"},
+        {"threedface", "#c0c0c0"},
+        {"threedhighlight", "#dddddd"},
+        {"threedlightshadow", "#c0c0c0"},
+        {"threedshadow", "#888888"},
+        {"window", "#ffffff"},
+        {"windowframe", "#cccccc"},
+        {"windowtext", "#000000"},
+        // ...and the one named colour CSS Color 4 added that paint's table
+        // predates (adoptedstylesheets-cascade-order).
+        {"rebeccapurple", "#663399"},
+    };
+    const std::string_view word = trim(text, html_whitespace);
+    for (const auto & [name, hex] : table) {
+        if (ascii_iequals(name, word)) { return paint::parse_color(hex); }
+    }
+    return std::nullopt;
+}
+
 // THE COMPUTED `transform` IS A MATRIX. CSS Transforms 1 §9: the resolved value
 // of a 2D transform list is the product of its functions, serialised as
 // `matrix(a, b, c, d, e, f)` - `scale(0.5)` reads back as `matrix(0.5, 0, 0,
@@ -232,16 +292,85 @@ namespace detail {
     return out;
 }
 
+// A SHADOW LIST AS ITS RESOLVED VALUE. CSS Backgrounds 3 §7.2 and CSS Text
+// Decoration 3 §4: each shadow's colour computes to a colour - a system colour
+// or a named one becomes its `rgb()`, an absent one is `currentcolor`, which
+// the caller substitutes - and its lengths become px, the omitted ones zero.
+// Serialised colour first, then the lengths, then `inset`, which is the order
+// every engine prints (getComputedStyle-resolved-colors asks that
+// `box-shadow: 1px 1px Menu` begin with `rgb(`). `none` stays `none`; a shadow
+// this reader cannot take apart keeps its text.
+[[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box) {
+    const std::string_view whole = trim(text, html_whitespace);
+    if (whole.empty() || ascii_iequals(whole, "none")) { return "none"; }
+    // Split at depth zero - a comma or a space inside `rgb(1, 2, 3)` is the
+    // colour's, not the list's.
+    const auto split = [](std::string_view in, bool on_comma) {
+        std::vector<std::string_view> out;
+        int depth = 0;
+        std::size_t start = 0;
+        for (std::size_t i = 0; i <= in.size(); ++i) {
+            const bool end = i == in.size();
+            const char c = end ? '\0' : in[i];
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            const bool cut =
+                end || (depth == 0 && (on_comma ? c == ',' : html_whitespace.contains(c)));
+            if (!cut) { continue; }
+            const std::string_view piece = trim(in.substr(start, i - start), html_whitespace);
+            if (!piece.empty()) { out.push_back(piece); }
+            start = i + 1;
+        }
+        return out;
+    };
+    std::string out;
+    for (const std::string_view shadow : split(whole, true)) {
+        std::string colour;
+        std::vector<std::string> lengths;
+        bool inset = false;
+        for (const std::string_view part : split(shadow, false)) {
+            if (ascii_iequals(part, "inset")) {
+                inset = true;
+            } else if (ascii_iequals(part, "currentcolor")) {
+                colour = "currentcolor";
+            } else if (const std::optional<color> c = paint::parse_color(part)) {
+                colour = color_text(*c);
+            } else if (const std::optional<color> s = system_color(part)) {
+                colour = color_text(*s);
+            } else {
+                const layout::length len = layout::parse_length(part);
+                if (len.is_auto() || len.u == layout::unit::percent) { return std::string{text}; }
+                lengths.push_back(px_text(len.resolve(0.0f, font_size)));
+            }
+        }
+        const std::size_t wanted = box ? 4 : 3;
+        if (lengths.size() < 2 || lengths.size() > wanted) { return std::string{text}; }
+        while (lengths.size() < wanted) { lengths.emplace_back("0px"); }
+        if (!out.empty()) { out += ", "; }
+        out += colour.empty() ? std::string{"currentcolor"} : colour;
+        for (const std::string & len : lengths) { out += ' ' + len; }
+        if (inset) { out += " inset"; }
+    }
+    return out;
+}
+
 [[nodiscard]] std::string collapse_keyword(std::string_view text) {
     std::string out;
     bool gap = false;
+    char quote = 0; // inside a string, which keeps its case and its spaces
     for (const char c : trim(text, html_whitespace)) {
+        if (quote != 0) {
+            out += c;
+            if (c == quote && (out.size() < 2 || out[out.size() - 2] != '\\')) { quote = 0; }
+            continue;
+        }
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
             gap = true;
             continue;
         }
         if (gap && !out.empty()) { out += ' '; }
         gap = false;
+        if (c == '"' || c == '\'') { quote = c; }
         out += ascii_lower(c);
     }
     return out;

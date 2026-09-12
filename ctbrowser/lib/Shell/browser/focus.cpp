@@ -102,6 +102,18 @@ bool browser::via_label(node_id from) {
     return static_cast<bool>(labelled_control(txn, from));
 }
 
+// Did the mutation being announced move the focused element, or an ancestor
+// of it, out of the tree and back? See dom_bindings::moved_by_mutation.
+bool browser::focus_was_moved() const {
+    const std::span<const node_id> moved = bindings_->moved_by_mutation();
+    if (moved.empty()) { return false; }
+    const auto txn = doc_->read();
+    for (node_id at = focused_; at; at = txn.parent(at)) {
+        if (std::ranges::find(moved, at) != moved.end()) { return true; }
+    }
+    return false;
+}
+
 bool browser::focus(node_id id) {
     if (is_disabled(id)) { return false; } // a disabled control cannot take focus
     if (id == focused_) { return false; }
@@ -110,6 +122,10 @@ bool browser::focus(node_id id) {
         // difference between it and `input`, and pages rely on it.
         bindings_->dispatch("change", focused_);
         (void)set_state(focused_, state_focus, false);
+        // HTML's focus update steps: `blur` then `focusout` at what loses
+        // focus, each naming what gains it. `blur` never fired at all before.
+        (void)bindings_->dispatch_focus("blur", focused_, id);
+        (void)bindings_->dispatch_focus("focusout", focused_, id);
         // And the outgoing field DROPS ITS SELECTION. A highlight left
         // behind in a field nobody is typing in reads as still selected,
         // and Ctrl+A followed by a click somewhere else did exactly that.
@@ -122,6 +138,7 @@ bool browser::focus(node_id id) {
             }
         }
     }
+    const node_id was = focused_;
     focused_ = id;
     // Told to the bindings BEFORE the event fires, so a `focus` listener asking
     // document.activeElement gets the element it was just handed rather than
@@ -130,7 +147,8 @@ bool browser::focus(node_id id) {
     restart_caret_blink(); // a field you just clicked into shows its caret at once
     if (focused_) {
         (void)set_state(focused_, state_focus, true);
-        bindings_->dispatch("focus", focused_);
+        (void)bindings_->dispatch_focus("focus", focused_, was);
+        (void)bindings_->dispatch_focus("focusin", focused_, was);
     }
     mark(dirty::paint);
     return true;

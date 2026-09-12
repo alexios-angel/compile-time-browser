@@ -274,6 +274,18 @@ void test_explicit_defaulting_keywords() {
         f.load("<div><p id=child></p></div>", "div { display: inline } p { display: inherit }");
         expect_value(f, f.find_id("child"), "display", "inline", "display: inherit");
     }
+    {
+        // `revert` is the user-agent origin's answer, and `unset` where the UA
+        // said nothing (CSS Cascade 4 §7.3, attr-css-wide-keywords).
+        fixture f;
+        f.load("<div><em id=a></em><em id=b></em></div>",
+               "#a { font-style: revert; color: revert } #b { font-style: normal }"
+               "div { color: #010101 }",
+               "em { font-style: italic }");
+        expect_value(f, f.find_id("a"), "font-style", "italic", "revert to the UA's italic");
+        expect_value(f, f.find_id("a"), "color", "#010101", "revert with no UA value inherits");
+        expect_value(f, f.find_id("b"), "font-style", "normal", "the author's value stands");
+    }
 }
 
 // @media, EVALUATED. Every block used to flatten in unconditionally - the prelude was
@@ -469,9 +481,41 @@ void test_font_face_sources() {
              std::string{"<none>"});
 }
 
+// `ch` IS THE ADVANCE OF `0` IN THE ELEMENT'S FONT when the shell injects a
+// measurement, and half an em when nothing does (CSS Values 4 §6.1.1,
+// line-break-ch-unit). The face is the element's own: family, weight (600 and
+// up is bold) and style, over what it inherited; in `font-size` itself the
+// `ch` is the parent's, like `em`.
+void test_ch_measures_the_zero_glyph() {
+    fixture f;
+    // A stand-in backend: 0.5em for monospace, 0.25em otherwise, bold +0.25em
+    // - ratios exact in a float, so the answers below are too.
+    f.styles.set_text_measure(
+        [](std::string_view text, float size, std::string_view family, bool bold, bool) {
+            const float ratio = (family == "monospace" ? 0.5f : 0.25f) + (bold ? 0.25f : 0.0f);
+            return static_cast<float>(text.size()) * size * ratio;
+        });
+    f.load("<div id=a><p id=b>x</p><i id=c>y</i></div>",
+           "#a { font-family: monospace, serif; font-size: 10px; width: 10ch }"
+           "#b { font-weight: 700; width: 10ch; font-size: 3ch }"
+           "#c { font-family: 'Fira Sans'; padding-left: 4rch; width: 10ch }");
+    expect_value(f, f.find_id("a"), "width", "50px", "10ch of a 10px monospace");
+    // 3ch of the PARENT's face and size (15px), then 10ch of a bold 15px face.
+    expect_value(f, f.find_id("b"), "font-size", "15px", "font-size: 3ch uses the parent");
+    expect_value(f, f.find_id("b"), "width", "112.5px", "10ch of a bold 15px monospace");
+    expect_value(f, f.find_id("c"), "width", "25px", "10ch of a proportional face");
+    // The root's `0` advance for rch: the root is 16px in the default face.
+    expect_value(f, f.find_id("c"), "padding-left", "16px", "4rch of the root's face");
+
+    fixture bare;
+    bare.load("<div>x</div>", "div { font-size: 10px; width: 10ch }");
+    expect_value(bare, bare.find("div"), "width", "50px", "10ch with nothing measuring");
+}
+
 } // namespace
 
 int main() {
+    test_ch_measures_the_zero_glyph();
     test_specificity_and_source_order();
     test_author_beats_user_agent();
     test_identical_styles_are_shared();

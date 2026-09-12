@@ -359,12 +359,16 @@ void test_layout_is_visible_to_script() {
     </script></body></html>)");
     check(page.frame().has_value(), "the page renders");
 
-    // The script ran BEFORE the first layout, so it must report 0 rather than
-    // a guess. Reporting a plausible-looking wrong number is worse: a page that
-    // sizes itself from it would be silently wrong.
+    // The script ran BEFORE the first frame - and reading `offsetWidth` is
+    // what asks for a layout (the accessor flushes, as getBoundingClientRect
+    // and getComputedStyle do), so it reports the real box rather than 0. A
+    // page that sizes itself from the number - Bootstrap's reflow idiom, every
+    // WPT file that styles a box and measures it in the same script - needs
+    // exactly that. Before 2026-09-12 this read 0 until the first frame.
     check(log_of(page).size() == 1, "one console line");
     if (!log_of(page).empty()) {
-        check(log_of(page)[0] == "w=0 h=0", "before the first layout, geometry reads as zero");
+        check(log_of(page)[0] == "w=123 h=45",
+              "reading offsetWidth before the first frame lays out and reports the box");
     }
 
     // After a layout, a freshly-obtained wrapper sees real numbers.

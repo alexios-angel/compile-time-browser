@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -110,7 +111,9 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
     const std::string lowered = ascii_lower_copy(ext);
     if (lowered == "html" || lowered == "htm") { return "text/html"; }
     if (lowered == "xhtml" || lowered == "xht") { return "application/xhtml+xml"; }
-    if (lowered == "xml") { return "text/xml"; }
+    // application/xml, not text/xml: it is what a server sends for `.xml`
+    // and what Document-createElement-namespace.html reads back.
+    if (lowered == "xml") { return "application/xml"; }
     if (lowered == "svg") { return "image/svg+xml"; }
     if (lowered == "txt") { return "text/plain"; }
     if (lowered == "css") { return "text/css"; }
@@ -131,8 +134,21 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
 // it went away. Guarded by `frames_dirty_`, which `mutated()` sets - without
 // that this walks the whole tree on every frame of an idle page, which is
 // exactly what "a frame runs only what changed" forbids.
+//
+// A FRAME DOCUMENT RECONCILES ITS OWN FRAMES TOO: a nested `<iframe>` gets its
+// document the same way, on the accessor - `install_frame_accessors` asks the
+// element's owner - since only the primary is asked on the tick. A document
+// WITHOUT a browsing context - createHTMLDocument's, DOMParser's - has no
+// nested navigables and its `<iframe>`s stay empty (`contentDocument` null),
+// and "has a window" is exactly that fact: install_document leaves
+// `defaultView` null for one and load_frame sets it for a frame's.
 void dom_bindings::reconcile_frames() {
-    if (cx_ == nullptr || secondary_ || !frames_dirty_) { return; }
+    if (cx_ == nullptr || !frames_dirty_) { return; }
+    if (secondary_) {
+        script::object_object * doc = document_object();
+        const value * window = doc == nullptr ? nullptr : doc->find("defaultView");
+        if (window == nullptr || window->is_nullish()) { return; }
+    }
     frames_dirty_ = false;
     // A frame element with no `src` has an about:blank document in a browser.
     // It gets one here too - `load_frame` with an empty src builds an empty
@@ -166,12 +182,46 @@ void dom_bindings::reconcile_frames() {
     frames_.swap(still);
 }
 
+// A FRAME HAS ITS DOCUMENT THE MOMENT IT IS INSERTED, not at the next tick.
+// `appendChild(iframe).contentWindow` is how event-global-extra.window.js and
+// the cross-realm listener files reach another global, and a browser answers
+// it synchronously. The accessors live on the prototype and a reconciled
+// frame carries the two as OWN properties, so they run only while a frame is
+// still unbuilt - and building it is one pass over the frames that changed.
+void dom_bindings::install_frame_accessors(context & cx) {
+    const value iface = interface_prototype("HTMLIFrameElement");
+    if (!iface.is_object()) { return; }
+    auto * proto = static_cast<script::object_object *>(iface.as_heap());
+    for (const char * name : {"contentWindow", "contentDocument"}) {
+        proto->define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name,
+                [this, name](context & c, std::span<value>) {
+                    const value self = c.current_this();
+                    if (!self.is_object()) { return value::null(); }
+                    dom_bindings & owner = target_owner(self);
+                    if (owner.handle_of(self)) { owner.reconcile_frames(); }
+                    const value * held =
+                        static_cast<script::object_object *>(self.as_heap())->find(name);
+                    return held == nullptr ? value::null() : *held;
+                })),
+            value::undefined());
+    }
+}
+
 // Build the frame's document. Synchronous, because the bytes are already on
 // disk or in the registry; the EVENT it queues is what makes the load
 // asynchronous in the way a page can observe.
 void dom_bindings::load_frame(context & cx, node_id id, const std::string & src) {
     std::string bytes;
-    bool ok = src.empty(); // an empty src is about:blank, and that always loads
+    // A FRAME ALWAYS LOADS. A navigation that fetched nothing - a 404, and
+    // here a name the registry cannot find - still ends in a document (the
+    // error page), and `load` fires at the element for it; `error` is not an
+    // iframe's event. An EMPTY file is the same as a missing one to the
+    // registry, and Document-createElement-namespace.html's empty.html waits
+    // on exactly that load.
+    bool ok = true;
     std::string type{mime_for_path(src)};
     if (!src.empty()) {
         // A data: URL CARRIES ITS OWN TYPE, and it is the only source here that
@@ -183,8 +233,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
             type = parse_data_url(src, stated) ? stated.mime : "text/plain";
         }
         if (assets_ != nullptr) {
-            const std::vector<std::byte> loaded = assets_->load(src);
-            ok = !loaded.empty();
+            // WITHOUT THE FRAGMENT: `page.html#target` names page.html to a
+            // server and to the registry alike - a fragment never leaves the
+            // client - and the registry matches names literally. A data: URL
+            // goes over whole, as it always did; parse_data_url owns its shape.
+            const std::size_t hash = is_data_url(src) ? std::string::npos : src.find('#');
+            const std::vector<std::byte> loaded = assets_->load(src.substr(0, hash));
             bytes.resize(loaded.size());
             for (std::size_t i = 0; i < loaded.size(); ++i) {
                 bytes[i] = static_cast<char>(loaded[i]);
@@ -195,18 +249,15 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         type = "text/html";
     }
 
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    auto & made = *secondary_documents_.emplace_back(
-        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
-                                       std::function<void(node_id)>{}));
-    made.secondary_ = true;
-    made.cx_ = &cx;
-    // BEFORE the adoption, for the reason `make_html_document` gives: the
-    // primary builds its interface table on the first `wrap()`, and a page
-    // whose first frame loads before anything has been wrapped would adopt an
-    // empty one and never be able to build another.
-    ensure_dom_interfaces(cx);
-    made.adopt_interfaces_of(*this);
+    // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
+    // with `primary_` set. Built by hand here before, without `primary_`, so
+    // `owner_of` run from inside a frame document could see nothing but the
+    // frame's own wrappers: `frame.contentDocument.body.appendChild(pageNode)`
+    // was "the argument is not a Node" (Node-isConnected.html's iframe case,
+    // the node-realm-* files), and a frame's own `<iframe>` never loaded.
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    document & fresh = *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    dom_bindings & made = adopt_second_document(cx, fresh);
     made.content_type_ = type;
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
@@ -214,14 +265,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // about:blank IS A DOCUMENT WITH A BODY, and it has to be: `frame
     // .contentDocument.body` is how a page writes into a scratch frame, and
     // parsing the empty string leaves a tree with no body at all to write to.
-    if (src.empty()) {
-        (void)parse_html(fresh, "<html><head></head><body></body></html>");
-    } else if (!ok) {
-        // A `src` that resolved to nothing still leaves a Document behind - a
-        // browser shows its error page in one - and `error` rather than `load`
-        // is what the element hears about it.
+    if (src.empty() || (bytes.empty() && !is_xml)) {
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     } else if (is_xml) {
+        // An EMPTY .xml is still an XML document - createElement in it makes
+        // a null-namespace element, which Document-createElement-namespace
+        // .html's empty.xml row reads.
         // The XML front end, which is why `.xhtml` is worth having at all: the
         // HTML tree builder lowercases `viewBox` and hands `<![CDATA[` to the
         // JavaScript engine. A frame whose XML is not well-formed keeps the
@@ -240,6 +289,15 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     }
     made.install_document(cx);
+    // THE FRAME DOCUMENT'S ADDRESS: the src resolved against this document's,
+    // with its fragment - which is what makes `:target` match inside a frame
+    // loaded as `page.html#target` (ParentNode-querySelector-All.html's
+    // in-document cases run in one).
+    if (!src.empty()) {
+        const std::string href = location_href_.empty() ? src : resolve(location_href_, src);
+        const std::size_t hash = href.find('#');
+        made.observe_location(href, hash == std::string::npos ? std::string{} : href.substr(hash));
+    }
 
     // Hung off the WRAPPER rather than kept in a table beside it, so the frame
     // document is reachable from the element that owns it and the collector
@@ -249,14 +307,69 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     auto * frame_object = static_cast<script::object_object *>(element.as_heap());
     frame_object->set("contentDocument", made.document_);
 
-    // `contentWindow`, and it is a SMALL object on purpose. What a page does
-    // with one is read `.document` off it and hand it to `instanceof`; the rest
-    // of the Window interface belongs to a realm this frame does not have.
+    // `contentWindow`: a SMALL object with its own few properties, behind a
+    // proxy whose miss reads the PAGE's globals. The realm is shared (see the
+    // header), so `frame.contentWindow.DOMException`, `.TypeError` and
+    // `.NodeList` ARE the page's, and answering them from the one table is
+    // what makes `e instanceof frameWindow.DOMException` true for an exception
+    // this frame's own DOM threw. Measured: every invalid-selector case in
+    // `ParentNode-querySelector-All` is `assert_throws_dom("SyntaxError",
+    // windowFor(root).DOMException, ...)`, and with that constructor undefined
+    // testharness took it for the function to call - 272 subtests reporting
+    // "`call` is undefined" about a method that had thrown correctly.
     auto * frame_window = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto trap = [&](const char * name, script::native_fn fn) {
+        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    // NOT THE PAGE'S BROWSING-CONTEXT STATE, though. `location`, `history`
+    // and their kin are per-context, and this frame has none (see the header):
+    // handing back the page's would let `frame.contentWindow.location.href =
+    // x` rewrite the top document's address, which is worse than the
+    // `undefined` a page can test for.
+    const auto shared_global = [](context & c, std::string_view name) {
+        for (const std::string_view own :
+             {"location", "history", "frames", "name", "opener", "closed", "event"}) {
+            if (own == name) { return false; }
+        }
+        return c.has_global(name);
+    };
+    trap("get", [shared_global](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        if (target->find(name) == nullptr && target->find_accessor(name) == nullptr &&
+            shared_global(c, name)) {
+            return c.global(name);
+        }
+        return c.lookup_property(args[0], name);
+    });
+    trap("has", [shared_global](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        return value::boolean(target->find(name) != nullptr ||
+                              target->find_accessor(name) != nullptr || shared_global(c, name));
+    });
+    const value frame_view = value::object(
+        cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
     frame_window->set("frameElement", element);
-    frame_window->set("self", value::object(frame_window));
-    frame_window->set("window", value::object(frame_window));
+    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
+    // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's
+    // cross-global case), so those three are the frame's own natives over the
+    // shared prototypes - `instanceof Text` still holds, `ownerDocument` is
+    // the frame's.
+    for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
+        auto * ctor = cx.allocate<script::native_object>(
+            name, [&made, name](context & c, std::span<value> args) {
+                return made.construct_node_interface(c, name, args);
+            });
+        ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
+        frame_window->set(name, value::object(ctor));
+    }
+    frame_window->set("self", frame_view);
+    frame_window->set("window", frame_view);
     frame_window->set("length", value::number(0));
     // `parent` and `top` are the PAGE's window, which is true: this frame's
     // parent browsing context is the top-level one and there is no nesting
@@ -271,9 +384,16 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     const value page_window = cx.global("window");
     frame_window->set("parent", page_window);
     frame_window->set("top", page_window);
-    frame_object->set("contentWindow", value::object(frame_window));
+    frame_object->set("contentWindow", frame_view);
+    // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set `defaultView`
+    // null for a secondary, which is right for createHTMLDocument and wrong
+    // for a frame: `root.ownerDocument.defaultView` is how a test reaches the
+    // global an exception must have come from.
+    if (auto * doc = made.document_object()) { doc->set("defaultView", frame_view); }
 
-    frame_loads_.push_back(pending_frame{id, ok});
+    // ON THE PRIMARY'S QUEUE, which is the one the tick drains, naming the
+    // owner whose element it is; settle_frame hands it back.
+    top.frame_loads_.push_back(pending_frame{id, ok, false, &top == this ? nullptr : this});
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does
@@ -283,6 +403,10 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
 // `<script>` announce through here too (announce_load): `timeStamp` is what a
 // page compares a paint entry against.
 void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
+    if (waiting.owner != nullptr && waiting.owner != this) {
+        waiting.owner->settle_frame(cx, pending_frame{waiting.id, waiting.ok, waiting.resource});
+        return;
+    }
     const std::string_view type = waiting.ok ? "load" : "error";
     const value event = make_event_object(cx, type, false, false);
     auto * object = static_cast<script::object_object *>(event.as_heap());

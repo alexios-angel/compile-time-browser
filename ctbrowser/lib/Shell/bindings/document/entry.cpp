@@ -42,6 +42,36 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
             }
         }
     }
+    // THE INDICATED ELEMENT, HTML 7.4.6.3: the fragment names an id - as
+    // written, then percent-decoded - and that element is what `:target`
+    // matches. Kept as a state bit on the selector engine, exactly as `:focus`
+    // is, so a query and a sheet both see it; the browser re-resolves on the
+    // mutation hook, and a frame document's own engine answers its queries.
+    node_id fresh;
+    if (location_hash_.size() > 1) {
+        const std::string_view fragment = std::string_view{location_hash_}.substr(1);
+        fresh = find_by_id(std::string{fragment});
+        if (!fresh && fragment.find('%') != std::string_view::npos) {
+            std::string decoded;
+            for (std::size_t i = 0; i < fragment.size(); ++i) {
+                if (fragment[i] == '%' && i + 2 < fragment.size() &&
+                    hex_value(fragment[i + 1]) >= 0 && hex_value(fragment[i + 2]) >= 0) {
+                    decoded += static_cast<char>(hex_value(fragment[i + 1]) * 16 +
+                                                 hex_value(fragment[i + 2]));
+                    i += 2;
+                } else {
+                    decoded += fragment[i];
+                }
+            }
+            fresh = find_by_id(decoded);
+        }
+    }
+    if (fresh == target_element_) { return; }
+    style::engine & states = selector_engine();
+    (void)states.set_state(target_element_, style::state_target, false);
+    (void)states.set_state(fresh, style::state_target, true);
+    target_element_ = fresh;
+    if (on_mutation_) { on_mutation_(); }
 }
 
 // THE REALM HAS ONE EXTERNAL-ROOTS CALLBACK. `set_external_roots` REPLACES
@@ -87,6 +117,15 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const value & callback : animation_callbacks_) { mark(callback); }
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
+    }
+    for (const auto & [packed, obj] : adopted_away_) {
+        if (obj != nullptr) { mark(value::object(obj)); }
+    }
+    for (const auto & [name, held] : named_collections_) { mark(held); }
+    for (const auto & [packed, held] : attr_objects_) {
+        for (const auto & [key, obj] : held) {
+            if (obj != nullptr) { mark(value::object(obj)); }
+        }
     }
     // Blob.prototype is held here as well as on the global, and the global
     // is what keeps it alive - but a page can delete a global, and a Blob
@@ -138,6 +177,7 @@ void dom_bindings::install(context & cx) {
     install_dom_exception(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
+    install_range(cx);
     // AFTER install_css_interface, because the sheet objects throw through
     // `dom_exception_prototype_` and hang their state off `document_`.
     install_style_sheets(cx);
@@ -267,15 +307,137 @@ void dom_bindings::mutated() {
     // natives that change the document: this is the funnel they all already go
     // through. It costs one branch on a page that never made an observer.
     record_mutations();
+    // A "replace all" note is for the mutation it preceded and no other.
+    replace_all_.reset();
     // An `<iframe>` can only appear, change its `src` or leave through a
     // mutation, so this is where the reconcile is told there is something to
     // look at. The walk itself is not done here: it needs the script context
     // and it must not run inside a native that is halfway through a tree edit.
     frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
-    // LAST, because it runs script - a connectedCallback may mutate again and
-    // arrive back here - and everything above it is bookkeeping.
+    moved_by_mutation_.clear();
+    // THE TWO THAT RUN SCRIPT, last: an inserted <script>'s post-connection
+    // steps, then the custom element reactions - a connectedCallback may mutate
+    // again and arrive back here - and everything above it is bookkeeping.
+    run_inserted_scripts();
     react_custom_elements();
+}
+
+// HTML 4.12.1 "prepare the script element", for a script a page inserted:
+// connected, with a src or non-empty text, and not `already started` - which
+// is what leaving the list means. THE BATCH IS TAKEN FIRST: every script the
+// mutation made ready leaves the list before any of them runs, so a script
+// that gives a later one its text arrives back here from that insertion and
+// finds only the later one - which runs nested, ahead of the rest of the
+// batch, and that is the order the post-connection steps have.
+// ponytail: creation order, not tree order - the corpus inserts in the order
+// it creates. Sort by tree position if a page ever depends on it.
+void dom_bindings::run_inserted_scripts() {
+    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_ || moving_) { return; }
+    context & cx = *cx_;
+    const atom src_name = atoms_->intern("src");
+    const atom type_name = atoms_->intern("type");
+    struct prepared {
+        node_id id;
+        std::string source;
+        std::string src;
+        std::string type;
+    };
+    std::vector<prepared> batch;
+    {
+        const auto txn = doc_->read();
+        for (std::size_t i = 0; i < unstarted_scripts_.size();) {
+            const node_id id = unstarted_scripts_[i];
+            if (!txn.kind(id).has_value()) {
+                unstarted_scripts_.erase(unstarted_scripts_.begin() +
+                                         static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            prepared script{
+                id,
+                {},
+                std::string{txn.attribute_value(id, src_name)},
+                ascii_lower_copy(trim(txn.attribute_value(id, type_name), html_whitespace))};
+            // "Child text content": the Text children only, not a comment's.
+            for (const node_id child : txn.children(id)) {
+                if (is_text_kind(txn.kind(child).value_or(node_kind::comment))) {
+                    script.source += txn.text(child);
+                }
+            }
+            if ((script.src.empty() && script.source.empty()) ||
+                root_of_tree(txn, id, true) != txn.root()) {
+                ++i;
+                continue;
+            }
+            // Started, whatever happens next: a script that fails to parse,
+            // or whose src is missing, does not run again when its children
+            // change.
+            unstarted_scripts_.erase(unstarted_scripts_.begin() + static_cast<std::ptrdiff_t>(i));
+            batch.push_back(std::move(script));
+        }
+    }
+    for (auto & [id, source, src, type] : batch) {
+        // AN EARLIER SCRIPT OF THE BATCH MAY HAVE REMOVED THIS ONE, and a
+        // script that is not connected when its turn comes does not run - it
+        // was never started, so it stays on the list for a later insertion
+        // (later-script-removed-by-earlier-script.html).
+        {
+            const auto txn = doc_->read();
+            if (root_of_tree(txn, id, true) != txn.root()) {
+                unstarted_scripts_.push_back(id);
+                continue;
+            }
+        }
+        // A classic script only. A data block (`type="text/plain"`) runs
+        // nothing; a module's loader is the browser's and is not reached from
+        // a mutation.
+        if (!type.empty() && type != "text/javascript" && type != "application/javascript" &&
+            type != "module") {
+            continue;
+        }
+        if (type == "module") { continue; }
+        if (!src.empty()) {
+            const std::vector<std::byte> bytes =
+                assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+            announce_load(id, !bytes.empty());
+            if (bytes.empty()) { continue; }
+            source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        }
+        // `document.currentScript` is this element while it runs - and while
+        // its parse error is reported - and what it was, the outer script when
+        // there is one, afterwards.
+        value outer = value::null();
+        if (auto * doc = document_object()) {
+            if (const value * had = doc->find("currentScript"); had != nullptr) { outer = *had; }
+        }
+        set_current_script(id);
+        script::program compiled = script::compiler::compile(source);
+        if (!compiled.ok) {
+            (void)dispatch_error(compiled.error);
+            if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+            continue;
+        }
+        const script::program & kept = cx.own_program(std::move(compiled));
+        auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
+        entry->owner = &kept;
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
+        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+        // AN UNCAUGHT THROW IS REPORTED AND THE INSERTING SCRIPT CARRIES ON,
+        // exactly as a listener's is - see fire_at for the two ways to fail.
+        if (threw || cx.failed()) {
+            const context::rooted keep_thrown{cx, thrown};
+            const std::string fault =
+                cx.failed()
+                    ? cx.take_error()
+                    : "uncaught " + (thrown.is_object()
+                                         ? cx.to_string(cx.lookup_property(thrown, "message"))
+                                         : cx.to_string(thrown));
+            const bool handled = dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) { callback_error_ = fault; }
+        }
+    }
 }
 
 void dom_bindings::install_navigation(context & cx) {

@@ -50,6 +50,20 @@ bool tokenizer::is_alpha(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
+// THE INPUT STREAM'S NEWLINE NORMALISATION (HTML 13.2.3.5), applied where a
+// text run is built rather than to the whole input: CR LF and a lone CR are
+// both LF. `<pre>abc\rdef</pre>` has a newline in its Text node, and the
+// source spans still cover the bytes as written.
+void tokenizer::append_text(std::string & data) {
+    const char c = input_[at_++];
+    if (c != '\r') {
+        data += c;
+        return;
+    }
+    data += '\n';
+    if (at_ < input_.size() && input_[at_] == '\n') { ++at_; }
+}
+
 token tokenizer::in_data() {
     if (peek() == '<') {
         if (is_alpha(peek(1))) { return tag_open(); }
@@ -63,11 +77,53 @@ token tokenizer::in_data() {
             ctbrowser::ascii_iequals(input_.substr(at_, 9), "<!doctype")) {
             return doctype();
         }
-        if (looking_at("<!") || looking_at("<?")) { return bogus_comment(); }
+        if (looking_at("<?")) { return processing_instruction(); }
+        if (looking_at("<!")) { return bogus_comment(); }
         // A `<` that starts nothing is DATA. That is the spec's answer and
         // it is why `a < b` in a paragraph renders as text.
     }
     return characters();
+}
+
+// `<?target data?>`, HTML 13.2.5.72-76: the processing instruction states,
+// which HTML gained in 2025 for the declarative partial-update work - before
+// them a `<?` was a bogus comment and nothing else. The target is
+// `[A-Za-z_][A-Za-z0-9_-]*` and may not be `xml` or `xml-stylesheet` in any
+// case; anything else falls to the bogus comment state exactly as it always
+// did, so `<?xml version="1.0"?>` is still the comment `?xml version="1.0"?`.
+// The data runs to the first `>`, and a `?` directly before it belongs to the
+// delimiter rather than the data. EOF inside one emits an end-of-file token
+// and nothing else, which is the spec's "eof-in-processing-instruction".
+token tokenizer::processing_instruction() {
+    const auto target_char = [](char c) {
+        return is_alpha(c) || (c >= '0' && c <= '9') || c == '-' || c == '_';
+    };
+    std::size_t at = at_ + 2;
+    if (!(is_alpha(peek(2)) || peek(2) == '_')) { return bogus_comment(); }
+    while (at < input_.size() && target_char(input_[at])) { ++at; }
+    if (at >= input_.size()) {
+        at_ = input_.size();
+        return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
+    }
+    const std::string_view target = input_.substr(at_ + 2, at - at_ - 2);
+    const char after = input_[at];
+    if (!(html_whitespace.contains(after) || after == '?' || after == '>') ||
+        ctbrowser::ascii_iequals(target, "xml") ||
+        ctbrowser::ascii_iequals(target, "xml-stylesheet")) {
+        return bogus_comment();
+    }
+    token out;
+    out.kind = token_kind::processing_instruction;
+    out.name = std::string{target};
+    at_ = at;
+    while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+    while (at_ < input_.size() && peek() != '>') { append_text(out.data); }
+    if (at_ >= input_.size()) {
+        return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
+    }
+    ++at_; // '>'
+    if (out.data.ends_with('?')) { out.data.pop_back(); }
+    return out;
 }
 
 token tokenizer::characters() {
@@ -87,8 +143,7 @@ token tokenizer::characters() {
             out.data += decode_reference(false);
             continue;
         }
-        out.data += c;
-        ++at_;
+        append_text(out.data);
     }
     return out;
 }
@@ -96,8 +151,7 @@ token tokenizer::characters() {
 token tokenizer::rest_as_text() {
     token out;
     out.kind = token_kind::character;
-    out.data = input_.substr(at_);
-    at_ = input_.size();
+    while (at_ < input_.size()) { append_text(out.data); }
     return out;
 }
 
@@ -115,7 +169,7 @@ token tokenizer::in_text_until_close(bool decode_entities) {
             out.data += decode_reference(false);
             continue;
         }
-        out.data += input_[at_++];
+        append_text(out.data);
     }
     // Back to normal markup: the close tag itself is a tag again.
     model_ = content_model::data;

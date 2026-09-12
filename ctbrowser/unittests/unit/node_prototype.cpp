@@ -110,6 +110,23 @@ void test_a_second_document_edits_its_own_tree() {
        "<p id=\"made\">hi</p>|hi|true|made|made");
 }
 
+void test_document_operations_are_on_document_prototype() {
+    // node-creation-realm.html: `Document.prototype.createTextNode.apply(doc,
+    // ...)` runs the receiver's own method; a receiver that is no document is
+    // an illegal invocation; Node's operations are not duplicated onto it.
+    is(R"JS((function () {
+        var doc = document.implementation.createHTMLDocument('t');
+        var t = Document.prototype.createTextNode.apply(doc, ['x']);
+        var d = DOMImplementation.prototype.createHTMLDocument.call(document.implementation, 'u');
+        var threw = false;
+        try { Document.prototype.createElement.call({}, 'div'); } catch (e) { threw = e.name; }
+        return [t.ownerDocument === doc, t.nodeType, d.title, threw,
+                Object.getOwnPropertyNames(Document.prototype).includes('appendChild'),
+                typeof Document.prototype.getElementById].join();
+    })())JS",
+       "true,3,u,TypeError,false,function");
+}
+
 } // namespace
 
 int main() {
@@ -118,5 +135,6 @@ int main() {
     test_a_method_is_only_where_its_interface_is();
     test_node_constants_and_compare_document_position();
     test_a_second_document_edits_its_own_tree();
+    test_document_operations_are_on_document_prototype();
     REPORT("node_prototype");
 }

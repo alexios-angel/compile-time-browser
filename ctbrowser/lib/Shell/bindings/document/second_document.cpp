@@ -57,14 +57,17 @@ void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
 // calls, so the tree a made document has is the tree a parsed one has - and
 // the title goes in through `set_text` afterwards, which is how an argument
 // containing `<` stays a text node rather than becoming markup.
-value dom_bindings::make_html_document(context & cx, const std::string * title) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
-    auto & made = *secondary_documents_.emplace_back(
+dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fresh) {
+    // EVERY MADE DOCUMENT IS THE PRIMARY'S SECONDARY, whichever document made
+    // it: `owner_of` and `is_a_document` search one flat list, and a doctype
+    // that `made.implementation.createDocument` adopted has to be findable
+    // by `document.implementation.createDocument` afterwards.
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    auto & made = *top.secondary_documents_.emplace_back(
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
-    made.primary_ = this;
+    made.primary_ = &top;
     made.cx_ = &cx;
     // BEFORE the adoption, and this is not belt and braces. The primary builds
     // its interface table lazily, on the first `wrap()` - so a page whose very
@@ -74,12 +77,22 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
     // that page and true for one that had touched an element first.
     ensure_dom_interfaces(cx);
     made.adopt_interfaces_of(*this);
+    return made;
+}
+
+value dom_bindings::make_html_document(context & cx, const std::string * title) {
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+    dom_bindings & made = adopt_second_document(cx, fresh);
     if (title != nullptr) {
         const node_id head = made.first_html_element("head");
         const node_id element = fresh.create_element(atoms_->intern_lower("title"));
         if (head && element) {
             (void)fresh.append_child(head, element);
-            made.set_text(element, *title);
+            // A Text node EVEN WHEN EMPTY: `createHTMLDocument("")` has a
+            // title with one child whose data is "" (HTML 8.6 step 5).
+            (void)fresh.append_child(element, fresh.create_text(*title));
         }
     }
     made.install_document(cx);
@@ -102,20 +115,14 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 // dom/common.js opens with one.
 value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                                       std::string_view qualified_name, bool as_xml_document) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     // IT IS AN XML DOCUMENT, and saying so is what makes `nodeName` keep its
     // case and `compatMode` answer CSS1Compat. `createDocument` never parses
     // anything, so nothing else would have set the flag.
     fresh.set_xml(true);
     fresh.set_quirks(false);
-    auto & made = *secondary_documents_.emplace_back(
-        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
-                                       std::function<void(node_id)>{}));
-    made.secondary_ = true;
-    made.primary_ = this;
-    made.cx_ = &cx;
-    ensure_dom_interfaces(cx); // see make_html_document
-    made.adopt_interfaces_of(*this);
+    dom_bindings & made = adopt_second_document(cx, fresh);
     // DOM 4.5.1's own table, and it is the NAMESPACE that decides rather than
     // anything about the tree: `createDocument(null, "x")` is application/xml
     // whatever `x` is called. `Document-contentType/contentType/
@@ -130,7 +137,9 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
         // INTERNED AS WRITTEN: an XML document is case-sensitive, so the
         // qualified name is the tag and folding it would lose the case the
         // page asked for.
-        const node_id root = fresh.create_element(atoms_->intern(qualified_name), kind);
+        const node_id root =
+            fresh.create_element(atoms_->intern(qualified_name), kind,
+                                 qualified_name.find(':') != std::string_view::npos);
         auto builder = fresh.build();
         builder.set_root(root);
         if (kind == node_ns::other || ns.empty()) {
@@ -155,6 +164,58 @@ dom_bindings * dom_bindings::owner_of(value v) {
         if (made.get() != this && made->handle_of(v)) { return made.get(); }
     }
     return nullptr;
+}
+
+// `parseFromString`, HTML 8.6.2. text/html runs the HTML parser with
+// scripting disabled - nothing here executes a <script> - and the four XML
+// types run the XML parser; an ill-formed one is, per the specification, a
+// document whose root is a <parsererror>, and here it is the tree the parser
+// had when it stopped plus that element, which is what a page checks for.
+value dom_bindings::parse_from_string(context & cx, std::string_view markup,
+                                      std::string_view type) {
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    if (type == "text/html") {
+        (void)parse_html(fresh, markup);
+        dom_bindings & made = adopt_second_document(cx, fresh);
+        made.install_document(cx);
+        return made.document_;
+    }
+    const xml_parse_result read = parse_xml(fresh, markup);
+    dom_bindings & made = adopt_second_document(cx, fresh);
+    made.content_type_ = std::string{type};
+    if (!read.error.empty()) {
+        const node_id error = fresh.create_element(atoms_->intern("parsererror"), node_ns::other);
+        (void)fresh.append_child(error, fresh.create_text(read.error));
+        if (fresh.read().kind(fresh.root()).value_or(node_kind::document) == node_kind::element) {
+            (void)fresh.append_child(fresh.root(), error);
+        } else {
+            fresh.build().set_root(error);
+        }
+        made.namespaces_.emplace(
+            made.pack(error), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});
+    }
+    made.install_document(cx);
+    if (const value proto = interface_prototype("XMLDocument"); proto.is_object()) {
+        made.document_object()->prototype = proto;
+    }
+    return made.document_;
+}
+
+unsigned dom_bindings::foreign_document_position(value given) {
+    dom_bindings * owner = owner_of(given);
+    if (owner == nullptr) {
+        dom_bindings * top = primary_ == nullptr ? this : primary_;
+        if (top->is_the_document(given)) { owner = top; }
+        for (const auto & made : top->secondary_documents_) {
+            if (made->is_the_document(given)) { owner = made.get(); }
+        }
+    }
+    if (owner == nullptr || owner == this) { return 0; }
+    constexpr unsigned disconnected = 0x01, preceding = 0x02, following = 0x04,
+                       implementation_specific = 0x20;
+    return disconnected | implementation_specific |
+           (std::less<const dom_bindings *>{}(owner, this) ? preceding : following);
 }
 
 bool dom_bindings::is_a_document(value v) const {

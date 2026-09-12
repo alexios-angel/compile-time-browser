@@ -53,11 +53,12 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     //    NotFoundError."
     if (!ref_arg.is_nullish()) {
         const node_id before = handle_of(ref_arg);
-        if (!before) {
+        // Another document's node is a Node that is no child of this parent.
+        if (!before && owner_of(ref_arg) == nullptr && !is_a_document(ref_arg)) {
             cx.throw_error("TypeError", "the reference node is not a Node");
             return false;
         }
-        if (txn.parent(before) != parent) {
+        if (!before || txn.parent(before) != parent) {
             throw_dom_exception(cx, "NotFoundError",
                                 "the reference node is not a child of the parent");
             return false;
@@ -295,7 +296,15 @@ void dom_bindings::install_node_methods(context & cx) {
     method(child_node, "remove", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (self) {
-            (void)doc_->remove_child(self);
+            // THE DOCUMENT ELEMENT OF A MADE DOCUMENT may go - see the top of
+            // document/as_node.cpp; `remove_child` refuses the root, and
+            // `parent.firstChild.remove()` on a created document is how
+            // pre-insertion-validation-notfound.js empties one.
+            if (self == doc_->root() && secondary_) {
+                doc_->remove_document_element();
+            } else {
+                (void)doc_->remove_child(self);
+            }
             mutated();
         }
         return value::undefined();
@@ -337,6 +346,14 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
+        // ANOTHER DOCUMENT'S NODE is a Node in another tree: the root check
+        // below, not adoption - a move never adopts (moveBefore/throws-
+        // exception.html).
+        if (!child && owner_of(arg(args, 0)) != nullptr) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "moveBefore: the node belongs to another document");
+            return value::undefined();
+        }
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
         }
@@ -360,7 +377,9 @@ void dom_bindings::install_node_methods(context & cx) {
                 return value::undefined();
             }
         }
+        moving_ = true;
         (void)insert_node(parent, child, handle_of(arg(args, 1)));
+        moving_ = false;
         // `undefined`, unlike insertBefore: the IDL return type is void.
         return value::undefined();
     });
@@ -408,10 +427,9 @@ void dom_bindings::install_node_methods(context & cx) {
                                        "'" + selector + "' is not a valid selector");
                    return value::undefined();
                }
-               value out = c.make_array();
-               auto * items = static_cast<script::array_object *>(out.as_heap());
-               for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
-               return out;
+               // A STATIC NodeList - the members are fixed at the call, and
+               // `instanceof NodeList` is a subtest by name.
+               return make_live_collection(c, [found] { return found; }, "NodeList");
            });
     // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
     // did not, so a page that scoped its search to a subtree found the method
@@ -544,13 +562,21 @@ void dom_bindings::install_node_methods(context & cx) {
         // COPIED BEFORE REMOVING: children() is a view onto the live child list
         // and each removal republishes it.
         std::vector<node_id> existing;
+        std::vector<node_id> arriving;
         {
             const auto txn = doc_->read();
             for (const node_id child : txn.children(self)) { existing.push_back(child); }
+            if (txn.kind(node).value_or(node_kind::element) == node_kind::document_fragment) {
+                for (const node_id child : txn.children(node)) { arriving.push_back(child); }
+            } else {
+                arriving.push_back(node);
+            }
         }
+        // ONE RECORD, naming every old child and every new one - "replace
+        // all" - which the diff after the fact could not tell from a move.
+        replace_all_ = replace_all_note{self, existing, arriving};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
         (void)insert_node(self, node, node_id{});
-        mutated();
         return value::undefined();
     });
     // --- shadow DOM: the two things an ELEMENT gains --------------------------
@@ -653,22 +679,77 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id fresh = insertable(c, node_arg);
         const node_id stale = handle_of(child_arg);
         // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
-        if ((!fresh && !is_a_document(node_arg)) || (!stale && !is_a_document(child_arg))) {
+        // Another document's node is a Node; pre_insert_valid says what is
+        // wrong with it, in the specification's order.
+        if ((!fresh && !is_a_document(node_arg)) ||
+            (!stale && !is_a_document(child_arg) && owner_of(child_arg) == nullptr)) {
             c.throw_error("TypeError", "replaceChild: the argument is not a Node");
             return value::undefined();
         }
         if (!pre_insert_valid(c, parent, fresh, node_arg, child_arg)) { return value::undefined(); }
-        if (fresh == stale) { return child_arg; }
-        (void)insert_node(parent, fresh, stale);
+        // DOM 4.2.3 "replace", in the order its records come out: a node that
+        // is ALREADY a child of the parent is removed first, with a record of
+        // its own (step 8) - `replaceChild(x, x)` included, which goes out and
+        // comes back in the same place - and then the child is removed and
+        // the node inserted where it was, ONE record naming both (step 13).
+        const auto next_sibling = [this](node_id of) {
+            const auto txn = doc_->read();
+            const std::span<const node_id> kids = txn.children(txn.parent(of));
+            const auto here = std::ranges::find(kids, of);
+            return here == kids.end() || here + 1 == kids.end() ? node_id{} : *(here + 1);
+        };
+        if (fresh == stale) {
+            const node_id next = next_sibling(stale);
+            (void)doc_->remove_child(stale);
+            mutated();
+            (void)insert_node(parent, stale, next);
+            return child_arg;
+        }
+        if (doc_->read().parent(fresh) == parent) {
+            (void)doc_->remove_child(fresh);
+            mutated();
+        }
+        const node_id next = next_sibling(stale);
         (void)doc_->remove_child(stale);
-        mutated();
+        (void)insert_node(parent, fresh, next);
         return child_arg;
+    });
+    // `getElementById` ON A FRAGMENT - DOM 4.2.6 NonElementParentNode, on
+    // DocumentFragment.prototype and so on a ShadowRoot and a <template>'s
+    // contents. An id inside a shadow tree is scoped to that tree and
+    // `document.getElementById` must NOT find it; on a template's contents
+    // this is the only way to reach a node by id at all.
+    method({"DocumentFragment"}, "getElementById", 1, [this](context & c, std::span<value> args) {
+        const node_id root = receiver(c);
+        const std::string want = arg_string(c, args, 0);
+        if (!root || want.empty()) { return value::null(); }
+        const auto txn = doc_->read();
+        const atom id_name = atoms_->intern("id");
+        node_id found{};
+        const auto walk = [&](auto && self, node_id at) -> void {
+            for (const node_id child : txn.children(at)) {
+                if (found) { return; }
+                if (txn.attribute_value(child, id_name) == want) {
+                    found = child;
+                    return;
+                }
+                self(self, child);
+            }
+        };
+        walk(walk, root);
+        return found ? wrap(c, found) : value::null();
     });
     // `cloneNode(deep)` - a DETACHED copy, and without it there is no way at all
     // to duplicate a template, which is how a page builds a list from one row.
     method(node, "cloneNode", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::null(); }
+        if (!self) {
+            // An Attr is a Node with no handle - see attribute_object.
+            if (attribute_of_object(c, c.current_this()).name) {
+                return clone_attr_object(c, c.current_this());
+            }
+            return value::null();
+        }
         const bool deep = !args.empty() && context::truthy(args[0]);
         const auto txn = doc_->read();
         return wrap(c, clone_node(txn, self, deep));
@@ -682,7 +763,9 @@ void dom_bindings::install_node_methods(context & cx) {
     // element algorithm on THE element this node names": an element is its own,
     // a Text or Comment names its parent element, a DocumentFragment names
     // nothing - and the algorithms themselves are the document's, shared.
-    const auto namespace_element = [this](node_id self) {
+    const auto namespace_element = [this](context & c, node_id self) {
+        // An Attr names its ownerElement, and a detached one names nothing.
+        if (!self) { return handle_of(c.lookup_property(c.current_this(), "ownerElement")); }
         const auto txn = doc_->read();
         switch (txn.kind(self).value_or(node_kind::element)) {
         case node_kind::element: return self;
@@ -712,7 +795,7 @@ void dom_bindings::install_node_methods(context & cx) {
                const value given = arg(args, 0);
                // "If prefix is the empty string, then set it to null."
                const std::string prefix = given.is_nullish() ? std::string{} : c.to_string(given);
-               const std::string found = locate_namespace(namespace_element(receiver(c)),
+               const std::string found = locate_namespace(namespace_element(c, receiver(c)),
                                                           prefix.empty() ? nullptr : &prefix);
                return found.empty() ? value::null() : c.string(found);
            });
@@ -720,14 +803,14 @@ void dom_bindings::install_node_methods(context & cx) {
            [this, namespace_element](context & c, std::span<value> args) {
                const value given = arg(args, 0);
                const std::string want = given.is_nullish() ? std::string{} : c.to_string(given);
-               return value::boolean(locate_namespace(namespace_element(receiver(c)), nullptr) ==
+               return value::boolean(locate_namespace(namespace_element(c, receiver(c)), nullptr) ==
                                      want);
            });
     method(node, "lookupPrefix", 1, [this, namespace_element](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (given.is_nullish()) { return value::null(); }
         const std::string found =
-            locate_namespace_prefix(namespace_element(receiver(c)), c.to_string(given));
+            locate_namespace_prefix(namespace_element(c, receiver(c)), c.to_string(given));
         return found.empty() ? value::null() : c.string(found);
     });
     // `normalize()`, DOM 4.4: every EMPTY Text descendant goes, and every run of
@@ -771,9 +854,17 @@ void dom_bindings::install_node_methods(context & cx) {
             walk(walk, self);
         }
         if (merged.empty() && removed.empty()) { return value::undefined(); }
-        for (const auto & [node, data] : merged) { (void)doc_->set_text(node, data); }
-        for (const node_id node : removed) { (void)doc_->remove_child(node); }
-        mutated();
+        // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
+        // is a record and every removal is its own, with the siblings the node
+        // had when it went - MutationObserver-childList.html counts them.
+        for (const auto & [node, data] : merged) {
+            (void)doc_->set_text(node, data);
+            mutated();
+        }
+        for (const node_id node : removed) {
+            (void)doc_->remove_child(node);
+            mutated();
+        }
         return value::undefined();
     });
     method(node, "contains", 1, [this](context & c, std::span<value> args) {
@@ -922,8 +1013,19 @@ void dom_bindings::install_node_methods(context & cx) {
         // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is `Node?`,
         // so `isEqualNode(null)` is a question with the answer false rather
         // than a TypeError.
-        const node_id other = handle_of(arg(args, 0));
-        if (!self || !other) { return value::boolean(false); }
+        node_id other = handle_of(arg(args, 0));
+        if (!self) { return value::boolean(false); }
+        // ANOTHER DOCUMENT'S NODE is compared the way the document's own
+        // isEqualNode compares two documents: cloned into this slab, deep,
+        // and left detached for collect(). `doc1.doctype.isEqualNode(doc2
+        // .doctype)` is Node-isEqualNode-xhtml.xhtml's two frames.
+        if (!other) {
+            dom_bindings * theirs = owner_of(arg(args, 0));
+            if (theirs == nullptr || theirs == this) { return value::boolean(false); }
+            const auto from = theirs->doc_->read();
+            other = clone_node(from, theirs->handle_of(arg(args, 0)), true, theirs);
+        }
+        if (!other) { return value::boolean(false); }
         const auto txn = doc_->read();
         return value::boolean(nodes_are_equal(txn, self, other));
     });
@@ -932,6 +1034,11 @@ void dom_bindings::install_node_methods(context & cx) {
         // separate method because `isEqualNode` is not.
         const node_id self = receiver(c);
         const node_id other = handle_of(arg(args, 0));
+        // An Attr has no handle and is itself and nothing else.
+        if (!self) {
+            const value given = arg(args, 0);
+            return value::boolean(given.is_object() && given.bits() == c.current_this().bits());
+        }
         return value::boolean(self && other && self == other);
     });
     method(node, "hasChildNodes", 0, [this](context & c, std::span<value>) {
@@ -958,25 +1065,35 @@ void dom_bindings::install_node_methods(context & cx) {
                                          ? (contains | preceding)
                                          : (disconnected | implementation_specific | preceding));
             }
+            if (const unsigned foreign = foreign_document_position(given); foreign != 0) {
+                return value::number(foreign);
+            }
             c.throw_error("TypeError", "compareDocumentPosition: the argument is not a Node");
             return value::undefined();
         }
         if (!self || self == other) { return value::number(0); }
-        if (root_of_tree(txn, self, false) != root_of_tree(txn, other, false)) {
-            return value::number(disconnected | implementation_specific |
-                                 (pack(other) < pack(self) ? preceding : following));
-        }
-        if (txn.is_ancestor_of(other, self)) { return value::number(contains | preceding); }
-        if (txn.is_ancestor_of(self, other)) { return value::number(contained_by | following); }
-        // Neither contains the other: walk both up to the root and compare the
-        // two children of the deepest shared ancestor by their order in it.
+        // THE TREE AS THE DOM SEES IT: the walk goes through `dom_parent`, so
+        // the document element and a doctype beside it share the Document
+        // node as their root rather than being two trees.
         const auto chain = [&txn](node_id from) {
             std::vector<node_id> up;
-            for (node_id at = from; at; at = txn.parent(at)) { up.push_back(at); }
+            for (node_id at = from; at; at = dom_parent(txn, at)) { up.push_back(at); }
             return up;
         };
         const std::vector<node_id> mine = chain(self);
         const std::vector<node_id> theirs = chain(other);
+        if (mine.back() != theirs.back()) {
+            return value::number(disconnected | implementation_specific |
+                                 (pack(other) < pack(self) ? preceding : following));
+        }
+        if (std::ranges::find(mine, other) != mine.end()) {
+            return value::number(contains | preceding);
+        }
+        if (std::ranges::find(theirs, self) != theirs.end()) {
+            return value::number(contained_by | following);
+        }
+        // Neither contains the other: compare the two children of the deepest
+        // shared ancestor by their order in it.
         std::size_t i = mine.size();
         std::size_t j = theirs.size();
         while (i > 1 && j > 1 && mine[i - 2] == theirs[j - 2]) {

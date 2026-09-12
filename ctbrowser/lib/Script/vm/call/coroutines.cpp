@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctbrowser/script/bigint.hpp>
+#include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 #include <functional>
@@ -107,7 +108,17 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
     // An arrow's `this` is decided HERE, where it is written, not where it is
     // called - which is what makes an arrow inside an arrow inside a method
     // still see the method's object. The caller reads the EFFECTIVE receiver.
-    if (target.is_arrow) { made->captured_this = enclosing_this; }
+    if (target.is_arrow) {
+        made->captured_this = enclosing_this;
+        // ...AND ITS HOME OBJECT, for the same reason: `super.m()` and
+        // `super()` inside an arrow resolve against the method or constructor
+        // the arrow was written in (an arrow has no [[HomeObject]] of its
+        // own, 15.3.4). load_home reads the running closure's `__home`, so
+        // the enclosing one's is copied where there is one.
+        if (enclosing != nullptr) {
+            if (const value * home = enclosing->find("__home")) { made->set("__home", *home); }
+        }
+    }
     return value::object(made);
 }
 
@@ -136,7 +147,37 @@ value context::make_generator(closure_object * closure, value receiver,
         obj->prototype = value::object(table);
     }
     obj->set("__co", value::object(saved));
+    // See function_proto::eager_prologue: the parameters run now, up to the
+    // compiler's own yield. `started` is put back so `.throw()`/`.return()`
+    // on a generator that has not been resumed still never enter the body
+    // (27.5.3.3 step 6-8: suspendedStart), and the first `.next(v)` keeps
+    // discarding v. A prologue that threw has already unwound to the caller's
+    // handler and left the generator done.
+    if (closure->proto->eager_prologue) {
+        (void)generator_resume(out, value::undefined(), resume_mode::next);
+        saved->started = false;
+    }
     return out;
+}
+
+context::coroutine_object * context::current_generator() const noexcept {
+    return frames_.empty() ? nullptr : frames_.back().generator;
+}
+
+value context::make_return_marker(value v) {
+    value marker = make_object();
+    static_cast<object_object *>(marker.as_heap())->set(return_marker_key, v);
+    return marker;
+}
+
+bool context::is_return_marker(value v) const {
+    return v.is_object() &&
+           static_cast<object_object *>(v.as_heap())->find(return_marker_key) != nullptr;
+}
+
+value context::return_marker_value(value marker) const {
+    const value * held = static_cast<object_object *>(marker.as_heap())->find(return_marker_key);
+    return held != nullptr ? *held : value::undefined();
 }
 
 value context::generator_resume(value generator, value sent, resume_mode how) {
@@ -189,15 +230,117 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         }
         return record(how == resume_mode::returned ? sent : value::undefined(), true);
     }
-    // `.return(v)` at a yield finishes the generator without running any more of
-    // it. Running the rest would be wrong - `return` means stop - and the
-    // `finally` blocks the spec would run on the way out need the unwinder,
-    // which is a bigger change than this corpus asks for. Recorded rather than
-    // silent: docs/script.md says so by name.
-    if (how == resume_mode::returned) {
+    // A `yield*` IN PROGRESS (sync only): `.throw(e)` and `.return(v)` go to
+    // the inner iterator first (14.4.14 steps 7.b and 7.c), and only what
+    // comes back decides whether the frame resumes, stays suspended, or
+    // finishes. The record is the one yield_delegate_settle_name keeps on the
+    // coroutine; it is cleared as soon as the delegation is over.
+    if (!saved->async_gen && how != resume_mode::next && saved->delegate.is_object()) {
+        auto * rec = static_cast<object_object *>(saved->delegate.as_heap());
+        const auto slot = [&](const char * name) {
+            const value * found = rec->find(name);
+            return found != nullptr ? *found : value::undefined();
+        };
+        const value iterator = slot("iterator");
+        const value method =
+            lookup_property(iterator, how == resume_mode::thrown ? "throw" : "return");
+        value forwarded = value::undefined();
+        bool threw = false;
+        if (method.is_nullish()) {
+            if (how == resume_mode::returned) {
+                // No `return`: the return completion carries on through the
+                // outer generator's own finally blocks (below).
+                saved->delegate = value::undefined();
+                rec->set("done", value::boolean(true));
+            }
+            // No `throw`: close the inner iterator, then a TypeError at the
+            // yield - the protocol was violated by the delegate.
+            if (const value close = lookup_property(iterator, "return"); close.is_callable()) {
+                value ignored = value::undefined();
+                bool close_threw = false;
+                (void)call_fenced(close, {}, iterator, close_threw, ignored);
+                if (close_threw) {
+                    threw = true;
+                    forwarded = ignored;
+                }
+            }
+            if (!threw) {
+                threw = true;
+                forwarded =
+                    make_error("TypeError", "The iterator does not provide a 'throw' method");
+            }
+        } else if (!method.is_callable()) {
+            threw = true;
+            forwarded = make_error(
+                "TypeError", "iterator." +
+                                 std::string{how == resume_mode::thrown ? "throw" : "return"} +
+                                 " is not a function");
+        } else {
+            forwarded = call_fenced(method, {&sent, 1}, iterator, threw, forwarded);
+            if (!threw && !forwarded.is_object()) {
+                threw = true;
+                forwarded = make_error("TypeError", "Iterator result is not an object");
+            }
+        }
+        if (method.is_nullish() && how == resume_mode::returned) {
+            // fall through to the return completion
+        } else if (threw) {
+            // Thrown at the yield inside the loop - the frame resumes with it.
+            saved->delegate = value::undefined();
+            rec->set("done", value::boolean(true));
+            sent = forwarded;
+            how = resume_mode::thrown;
+        } else if (truthy(lookup_property(forwarded, "done"))) {
+            saved->delegate = value::undefined();
+            rec->set("done", value::boolean(true));
+            const value final = lookup_property(forwarded, "value");
+            if (how == resume_mode::returned) {
+                // The delegate returned: the outer generator returns its
+                // value, through its own finally blocks (below).
+                sent = final;
+            } else {
+                // The delegate finished normally: the yield* expression takes
+                // its value and the body carries on from the loop's exit.
+                rec->set("value", final);
+                sent = value::undefined();
+                how = resume_mode::next;
+            }
+        } else {
+            // Still going: the inner result IS the answer, and the frame stays
+            // where it is.
+            return forwarded;
+        }
+    }
+    // `.return(v)` AT A YIELD (27.5.3.4 step 6-9): a sync generator resumes
+    // with a return completion, which here is the marker thrown at the yield
+    // - every `finally` between the yield and the body's end runs, a catch
+    // clause passes it on (catch_filter_name), a `yield` inside a finally
+    // suspends again, and the marker escaping the frame is what finishes the
+    // generator with v (or with whatever a finally returned instead). An
+    // async generator still finishes on the spot.
+    if (how == resume_mode::returned && saved->async_gen) {
         saved->done = true;
         return record(sent, true);
     }
+    if (how == resume_mode::returned) {
+        sent = make_return_marker(sent);
+        how = resume_mode::thrown;
+    }
+
+    // THE FENCE UNDER THE FRAME: a throw that leaves the body lands here
+    // first, so a return marker can be told from a page's own exception and
+    // the exception put back on its way (see after run_loop).
+    // Not for an async generator: its frame may park on an `await` and come
+    // back through resume(), which knows nothing of a fence left here.
+    const bool fenced = !saved->async_gen;
+    if (fenced) {
+        handler fence;
+        fence.frame = frames_.size();
+        fence.reg_top = registers_.size();
+        fence.fence = true;
+        handlers_.push_back(fence);
+    }
+    const std::size_t fence_mark = handlers_.size();
 
     const std::size_t base = registers_.size();
     registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
@@ -239,6 +382,28 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     saved->running = true;
     yielded_ = false;
 
+    // What an escaping throw means once the fence has caught it: a return
+    // marker finishes the generator with its value; anything else is the
+    // page's exception and continues unwinding from the caller.
+    const auto escaped = [&](value thrown) {
+        saved->running = false;
+        saved->done = true;
+        saved->delegate = value::undefined();
+        registers_.resize(base);
+        if (is_return_marker(thrown)) { return record(return_marker_value(thrown), true); }
+        thrown_ = thrown;
+        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+        return record(value::undefined(), true);
+    };
+    const auto pop_fence = [&] {
+        if (fenced && handlers_.size() >= fence_mark) { handlers_.resize(fence_mark - 1); }
+    };
+    const auto fence_took = [&] {
+        if (!fenced || !fence_hit_) { return false; }
+        fence_hit_ = false;
+        return true;
+    };
+
     if (how == resume_mode::thrown) {
         // THROW AT THE YIELD, so `try { yield x } catch` works across a real
         // suspension. __awaiter's rejection path is exactly this.
@@ -250,15 +415,33 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             saved->done = true;
             return record(value::undefined(), true);
         }
+        if (fence_took()) {
+            const value thrown = fence_thrown_;
+            fence_thrown_ = value::undefined();
+            return escaped(thrown);
+        }
     }
 
     const value produced = run_loop(stop);
     saved->running = false;
 
+    if (fence_took()) {
+        const value thrown = fence_thrown_;
+        fence_thrown_ = value::undefined();
+        return escaped(thrown);
+    }
+    pop_fence();
+
     if (yielded_) {
         yielded_ = false;
+        // A sync `yield*` yields the inner result object AS IT IS (14.4.14
+        // step 7.a.vii: GeneratorYield(innerResult)), not a fresh record.
+        if (!saved->async_gen && saved->delegate.is_object() && produced.is_object()) {
+            return produced;
+        }
         return record(produced, false);
     }
+    saved->delegate = value::undefined();
     // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
     // frame back into this same coroutine and flagged it; the request is
     // finished by resume() when the awaited promise settles. Nothing to

@@ -174,7 +174,7 @@ void test_what_a_math_function_may_not_be() {
     // time anything here sees it, so it belongs in the serialisation -
     // `calc-complex-unresolved-serialize` asks for it on all six of its values.
     ok("width", "calc(1px", "calc(1px)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
     // `calc-invalid-parsing` are one assertion per line and this is what they
@@ -318,8 +318,24 @@ void test_the_rest_of_the_math_functions() {
     // is `test_valid_value` in the corpus, and calling them invalid deleted 34
     // declarations across `css/css-values/tree-counting/`.
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
+    // ...BUT ITS TYPE IS KNOWN BEFORE ITS VALUE IS (§10.2), and a length is no
+    // more a rotation for being unresolved (calc-sibling-function-parsing).
+    bad("left", "calc(10 * sibling-index())");
+    bad("rotate", "calc(1px * sibling-index())");
+    bad("rotate", "calc(1s * sibling-index())");
+    bad("opacity", "calc(1ms * sibling-index())");
+    bad("animation-duration", "calc(1deg * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
+    // The blocks EOF closed are written out, or the serialised declaration
+    // swallows the one after it (attr-all-types 59-61).
+    ok("background-color", "attr(data-foo type(<color>)", "attr(data-foo type(<color>))");
+    ok("width", "attr(data-foo type(<length> | <percentage>)",
+       "attr(data-foo type(<length> | <percentage>))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     // A UNIT WITH NO BASIS KEEPS ITS TERM, AND ITS TERM KEEPS ITS PLACE. CSS
     // Values 4 §10.11 does not resolve `1em` or `5%` here, so both survive to
     // the specified value; §10.13 says what order they survive in.
@@ -381,16 +397,35 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // A comparison that is not ALONE inside the calc keeps it too: the root is
     // then a sum, not a Clamp.
     ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot
     // evaluate are all left exactly as written - which is where they were before
     // this rule existed, so nothing that works today can start failing.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
-    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(sibling-index())");
+    // calc-sibling-function-parsing: the function is a term of its own, and
+    // what multiplies it folds around it.
+    ok("rotate", "calc(1turn * sibling-count())", "calc(360deg * sibling-count())");
+    ok("rotate", "calc(sibling-index() * 2rad * pi)", "calc(360deg * sibling-index())");
+    ok("z-index", "calc(sibling-index())", "sibling-index()");
+    ok("animation-duration", "calc(100ms * sibling-count())", "calc(0.1s * sibling-count())");
+    ok("left", "calc(10px * sibling-index() + 10%)", "calc(10% + (10px * sibling-index()))");
+    // ...and a function OVER one is not applied to nought (hypot-pow-sqrt-computed),
+    // nor is a random() drawn before computed-value time (random-serialize).
+    ok("margin-left", "calc(1px * sqrt(sibling-index()))", "calc(1px * sqrt(sibling-index()))");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // A relative colour's channel keywords are values inside its math, and
+    // nowhere else (CSS Color 5 §relative-colors, random-serialize).
+    ok("color", "rgb(from red calc(r + 30) g b)", "rgb(from red calc(r + 30) g b)");
+    bad("color", "rgb(calc(r + 1) 0 0)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
 }
 
@@ -469,8 +504,9 @@ void test_the_angle_functions_take_an_angle() {
     ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
     ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
     ok("filter", "hue-rotate(90deg)", "hue-rotate(90deg)");
-    // ...and a function with no answer here is not a function with a wrong type.
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    // ...and a function with no answer here is not a function with a wrong type;
+    // `1deg + 1cqw` would be one, the container units resolving now.
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
     // Nothing outside the angle-only functions is touched by the rule.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
 }
@@ -506,6 +542,31 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     ok("width", "calc(1 * min(NaN * 2px, NaN * 4em))", "calc(1 * min(NaN * 1px, NaN * 1em))");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
+
+    // A SUM AROUND SUCH A COMPARISON IS A TREE (CSS Values 4 §10.12, §10.13):
+    // what folds around the min() folds, a product's number comes first, a
+    // product inside a sum is parenthesised, and a sum's terms are sorted -
+    // numbers, percentages, dimensions by unit, then the rest in order
+    // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+    ok("width", "calc((min(10px, 20%) + max(1rem, 2%)) * 2)",
+       "calc(2 * (min(10px, 20%) + max(1rem, 2%)))");
+    ok("width", "calc(0px - (1 * (-10px + min(20%, 20px))))",
+       "calc(0px - (1 * (-10px + min(20%, 20px))))");
+    ok("width", "calc(min(1px, 1in) + max(100px + 1em, 10px + 1in) + 1px)",
+       "calc(2px + max(1em + 100px, 106px))");
+    ok("width", "calc(2 * (.2 * min(1em, 1px)) + 1px)", "calc(1px + (0.4 * min(1em, 1px)))");
+    ok("width", "calc(min(1%, 2%) + max(3%, 4%) + 10%)", "calc(10% + min(1%, 2%) + max(3%, 4%))");
+    ok("width", "max((min(10%, 30px) + 10px) * 2 + 10px, 5em + 5%)",
+       "max(10px + (2 * (10px + min(10%, 30px))), 5% + 5em)");
+    // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers.
+    ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(pow(2, sign(1em - 18px)) * 1px)");
+    // A signed zero keeps its sign through the tree, and a unit whose
+    // canonical spelling would lose digits keeps the author's: the cascade
+    // parses this text again (signs-abs-computed, typed_arithmetic).
+    ok("scale", "clamp(-1, 1 / sign(-0em / 1px), 1)", "clamp(-1, 1 / sign(-0em / 1px), 1)");
+    ok("margin-left", "calc(1px * 10em / -0em)", "calc(1px * 10em / -0em)");
+    ok("image-resolution", "calc(100dpi + 20dpi * sign(38px - 2em))",
+       "calc(100dpi + (20dpi * sign(-2em + 38px)))");
 }
 
 // ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.
@@ -565,17 +626,31 @@ void test_important_and_the_empty_value() {
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
     // `el.style` still stores the value. Five `css/css-values` files guard
     // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // running and failing when this said yes to everything. The substitution
+    // functions are all performed now, so all six are support.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(supports_declaration("font-family", "random-item(auto, serif)"));
+    CHECK(supports_declaration("color", "random-item(fixed 0, rgb(1, 0, 0), rgb(0, 1, 0))"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
+    // `random()` is a math function (CSS Values 5 §random), and random-computed
+    // guards a hundred and forty assertions on this answer.
+    CHECK(supports_declaration("width", "random(0px, 100px)"));
+    CHECK(supports_declaration("scale", "random(--foo element-scoped, 2, 12)"));
+    // A `!` INSIDE A BLOCK IS A DELIM, not a priority: `if(style(--x!): a; else:
+    // b)` is a value whose condition is false (if-conditionals 39, 117, 118).
+    CHECK(check_declaration("--p", "if(style(--x!): 1px; else: 2px)").valid);
+    CHECK(check_declaration("width", "calc(1px * var(--x!))").valid);
+    CHECK(!check_declaration("--p", "1px !").valid);
+    CHECK(!check_declaration("width", "1px !").valid);
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
     CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
     // An empty value is reported invalid because both callers want the same
     // thing from it - store nothing - and `el.style.width = ""` is how a page
     // removes a declaration.
@@ -624,7 +699,8 @@ void test_the_property_table_itself() {
     // `undefined` to a page, which is the failure this table exists to end.
     for (const auto & one : known_properties()) {
         CHECK(!one.name.empty());
-        if (one.name != "font") { CHECK(!one.initial.empty()); }
+        // `font` and `all` are the two shorthands with no one initial value.
+        if (one.name != "font" && one.name != "all") { CHECK(!one.initial.empty()); }
     }
 }
 
@@ -644,25 +720,28 @@ void test_css_supports() {
     CHECK(!supports_condition("(width: 10px) and (display: flexx)"));
     CHECK(supports_condition("(width: 10px) or (display: flexx)"));
     CHECK(supports_condition("((width: 10px))"));
+    // `selector()` is supported when it parses (if-conditionals 176, 177).
+    CHECK(supports_condition("selector(h2 > p)"));
+    CHECK(supports_condition("(selector(h2 > p))"));
+    CHECK(!supports_condition("selector(h2 >)"));
+    CHECK(supports_condition("not selector(h2 >)"));
     // A bare declaration with no parentheses is not a <supports-condition>.
     CHECK(!supports_condition("width: 10px"));
     CHECK(!supports_condition(""));
     // `!important` is part of a <declaration> and does not change the answer.
     CHECK(supports_condition("(width: 10px !important)"));
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
-    // `el.style` still stores the value. Five `css/css-values` files guard
-    // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // `el.style` still stores the value; a substitution it performs is.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
-    CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
 }
 
 // AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
@@ -751,13 +830,163 @@ void test_the_random_item_argument_list() {
        "random-item(auto, {Times, serif}, sans-serif)");
     // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
     // is a value and not a parse error.
-    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif)");
 }
 
 // `interpolate-size` is a real property with a real two-keyword grammar. As an
 // UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
 // did not publish the property at all - which is the two assertions of
 // `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+// calc-size-parsing: the basis is judged against the property, the
+// calculation is a length over `size`, and both are written canonically.
+void test_calc_size() {
+    ok("width", "calc-size(auto, size)", "calc-size(auto, size)");
+    ok("min-height", "calc-size(auto, size)", "calc-size(auto, size)");
+    bad("max-width", "calc-size(auto, size)");
+    bad("width", "calc-size(none, size)");
+    bad("max-width", "calc-size(none, size)");
+    ok("max-height", "calc-size(max-content, size)", "calc-size(max-content, size)");
+    ok("height", "calc-size(min-content, size * 2)", "calc-size(min-content, 2 * size)");
+    ok("max-width", "calc-size(max-content, size / 2)", "calc-size(max-content, 0.5 * size)");
+    ok("max-height", "calc-size(fit-content, 30px + size / 2)",
+       "calc-size(fit-content, 30px + (0.5 * size))");
+    ok("width", "calc-size(fit-content, 50% + size / 2)",
+       "calc-size(fit-content, 50% + (0.5 * size))");
+    ok("width", "calc-size(any, 25em)", "calc-size(any, 25em)");
+    ok("width", "calc-size(any, 40%)", "calc-size(any, 40%)");
+    ok("width", "calc-size(any, 50px + 30%)", "calc-size(any, 30% + 50px)");
+    ok("width", "calc-size(calc-size(any, 30px), size)", "calc-size(calc-size(any, 30px), size)");
+    bad("width", "calc-size(any, size)");
+    bad("width", "calc-size(any, fit-content)");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    bad("width", "size");
+    bad("width", "calc-size(any, calc-size(10px, sign(size) * size))");
+    bad("width", "calc(calc-size(auto, size))");
+    ok("width", "calc-size(calc-size(2in, 30px), 25em)", "calc-size(calc-size(192px, 30px), 25em)");
+    ok("width", "calc-size(calc-size(min-content, size), size)",
+       "calc-size(calc-size(min-content, size), size)");
+    bad("width", "calc-size(30px)");
+    bad("width", "calc-size(any)");
+    bad("width", "calc-size(calc-size(fit-content, size * 2))");
+    ok("flex-basis", "calc-size(content, size)", "calc-size(content, size)");
+    bad("width", "calc-size(content, size)");
+    ok("width", "calc-size(0px, 0px)", "calc-size(0px, 0px)");
+    bad("width", "calc-size(0, 0px)");
+    bad("width", "calc-size(0px, 0)");
+}
+
+// random-serialize: a specified random() spells its key - the dashed name,
+// `element-scoped`, and the UA ident the scoping words mean - and its bounds
+// in canonical units.
+void test_random_spells_its_key() {
+    ok("width", "random(0px, 100px)", "random(element-scoped ua-width-1, 0px, 100px)");
+    ok("height", "random(auto, 0px, 100px)", "random(element-scoped ua-height-1, 0px, 100px)");
+    ok("width", "random(fixed 0.5, 0px, 100px)", "random(fixed 0.5, 0px, 100px)");
+    ok("width", "random(--foo, 0px, 100px)", "random(--foo, 0px, 100px)");
+    ok("width", "random(--foo element-scoped, 0px, 100px)",
+       "random(--foo element-scoped, 0px, 100px)");
+    ok("width", "random(element-scoped, 0px, 100px)", "random(element-scoped, 0px, 100px)");
+    ok("font-size", "random(property-scoped, 0px, 100px)", "random(ua-font-size, 0px, 100px)");
+    ok("width", "random(--foo property-index-scoped, 0px, 100px)",
+       "random(--foo ua-width-1, 0px, 100px)");
+    ok("height", "random(property-scoped element-scoped, 0px, 100px)",
+       "random(element-scoped ua-height, 0px, 100px)");
+    ok("width", "random(ua-height-1 element-scoped, 10px, 20%)",
+       "random(element-scoped ua-height-1, 10px, 20%)");
+    ok("width", "random(10 * 100px, 200em / 2)",
+       "random(element-scoped ua-width-1, 1000px, 100em)");
+    ok("width", "random(fixed calc(2 / 4), 0px, 100px)", "random(fixed calc(0.5), 0px, 100px)");
+    ok("rotate", "random(25deg, 1turn)", "random(element-scoped ua-rotate-1, 25deg, 360deg)");
+    ok("transition-delay", "random(--foo, 25ms, 50s, 5s)", "random(--foo, 0.025s, 50s, 5s)");
+    ok("margin", "random(0px, 1px) random(0px, 1px)",
+       "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // ...and the sharing grammar (random-invalid).
+    ok("width", "random(--foo ua-width-1, 10px, 20%)", "random(--foo ua-width-1, 10px, 20%)");
+    ok("width", "random(--foo ua-x element-scoped, 10px, 20%)",
+       "random(--foo element-scoped ua-x, 10px, 20%)");
+    bad("width", "random(--foo --bar, 1px, 2px)");
+    bad("width", "random(fixed 0.5 auto, 1px, 2px)");
+    bad("width", "random(fixed -1, 1px, 2px)");
+    bad("width", "random(--foo element-scoped element-scoped, 1px, 2px)");
+    bad("width", "random(property-scoped ua-width-1, 1px, 2px)");
+    bad("width", "random(property-scoped property-index-scoped, 1px, 2px)");
+    bad("width", "random(foo, 1px, 2px)");
+    bad("width", "random(1px)");
+}
+
+// urls/url-request-modifiers-*: the modifiers in one order, the unknown ones
+// dropped, duplicates and anything that is not an ident or a function refused.
+void test_url_request_modifiers() {
+    const std::string u = "url(\"a.png\"";
+    ok("background-image", u + " cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\"))");
+    ok("background-image",
+       u + " referrer-policy(no-referrer) integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\") referrer-policy(no-referrer))");
+    ok("background-image", u + " integrity(\"\"))", u + " integrity(\"\"))");
+    ok("background-image", u + " foobar(baz))", u + ")");
+    ok("background-image", u + " foobar cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " foobar([brackets {braces}]) referrer-policy(same-origin))",
+       u + " referrer-policy(same-origin))");
+    ok("background-image", u + " crossorigin(anonymous))", u + ")");
+    ok("background-image", u + " foobar foobar(42))", u + ")");
+    bad("background-image", u + " cross-origin())");
+    bad("background-image", u + " cross-origin(,))");
+    bad("background-image", u + " cross-origin(anonymous,))");
+    bad("background-image", u + " cross-origin(anonymous foobar))");
+    bad("background-image", u + " cross-origin(anonymous) cross-origin(use-credentials))");
+    bad("background-image", u + " integrity(sha384-x))");
+    bad("background-image", u + " referrer-policy(no-referrer same-origin))");
+    bad("background-image", u + " foobar(baz) foobar(qux))");
+    bad("background-image", u + " FooBar foobar)");
+    bad("background-image", u + " 42)");
+    bad("background-image", u + " \"foobar\")");
+    bad("background-image", "url(a.png cross-origin(anonymous))");
+    CHECK(supports_declaration("background-image", u + " cross-origin(anonymous))"));
+}
+
+// calc-rounds-to-integer: `steps()` takes an <integer>, which `1e1` is not.
+void test_steps_takes_an_integer() {
+    ok("animation-timing-function", "steps(10)", "steps(10)");
+    ok("transition-timing-function", "steps(calc(10.1))", "steps(calc(10.1))");
+    ok("max-lines", "10", "10");
+    ok("max-lines", "calc(10.1)", "calc(10.1)");
+    bad("max-lines", "1e1");
+    bad("hyphenate-limit-lines", "10.1");
+    bad("animation-timing-function", "steps(1e1)");
+    bad("animation-timing-function", "steps(10.1)");
+    bad("transition-timing-function", "steps(1.1e1, start)");
+    // ...and so do the <integer> slots of the freeform properties: a counter's
+    // step, a grid line, repeat()'s count, a feature tag's value, and the
+    // second value of initial-letter - but not its first, which is a <number>.
+    ok("counter-increment", "foo 10", "foo 10");
+    CHECK(check_declaration("counter-increment", "foo calc(1e1)").valid);
+    bad("counter-increment", "foo 1e1");
+    bad("counter-reset", "foo 10.1");
+    bad("font-feature-settings", "\"liga\" 1.1e1");
+    bad("grid-row", "1e1");
+    ok("grid-template-rows", "repeat(10, 10px)", "repeat(10, 10px)");
+    bad("grid-template-rows", "repeat(10.1, 10px)");
+    ok("initial-letter", "1.1 10", "1.1 10");
+    bad("initial-letter", "1.1 10.1");
+    bad("text-combine-upright", "digits 1e1");
+}
+
+// A three-channel colour function takes three or four components.
+void test_colour_function_arity() {
+    bad("background-color", "rgb(0)");
+    bad("color", "rgb(1, 2)");
+    bad("color", "hsl(1 2 3 4 5)");
+    ok("color", "rgb(1, 2, 3)", "rgb(1, 2, 3)");
+    ok("color", "rgb(1 2 3 / 0.5)", "rgb(1 2 3 / 0.5)");
+    ok("color", "rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)");
+    ok("color", "rgb(calc(1 + 1) 2 3)", "rgb(calc(2) 2 3)");
+    ok("color", "rgb(from red r g b)", "rgb(from red r g b)");
+    ok("color", "color(srgb 1 0 0)", "color(srgb 1 0 0)");
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -836,6 +1065,11 @@ int main() {
     test_css_supports();
     test_an_integer_property_rounds_its_math();
     test_the_random_item_argument_list();
+    test_calc_size();
+    test_random_spells_its_key();
+    test_url_request_modifiers();
+    test_steps_takes_an_integer();
+    test_colour_function_arity();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

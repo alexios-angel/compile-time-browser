@@ -88,6 +88,24 @@ mlir::Block * lowering::caught_or_failure(compiled_entry & scope, mlir::OpBuilde
     return sorted;
 }
 
+// THE CONTINUATION GOES RIGHT AFTER THE BLOCK IT CONTINUES, not at the end
+// of the function. Block order is emission order for mlir-translate, and an
+// `emitc.literal` is printed inline at each use rather than declared at the
+// top - so a literal defined in the continuation and used in a block that
+// was ALREADY in the list (CSE merges equal constants across a function, and
+// a split moves the surviving definition into the new block) printed its
+// use before its definition and came out as an undeclared name. Keeping the
+// continuation adjacent keeps every definition ahead of its uses in the
+// text, which is what the translator assumes.
+mlir::Block * continuation_after(compiled_entry & scope, mlir::OpBuilder & build) {
+    mlir::Region & body = scope.entry.getBody();
+    mlir::Block * current = build.getInsertionBlock();
+    if (current == nullptr || current->getParent() != &body) { return scope.entry.addBlock(); }
+    auto * fresh = new mlir::Block();
+    body.getBlocks().insertAfter(current->getIterator(), fresh);
+    return fresh;
+}
+
 // A HELPER THAT ANSWERS WITH A STATUS AND A VALUE THROUGH A POINTER.
 //
 // Most of the ABI has this shape, so it is written once: declare a local
@@ -140,7 +158,7 @@ mlir::Value lowering::status_call(compiled_entry & scope, mlir::OpBuilder & buil
     auto survived = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
                                       ec::CmpPredicate::eq, answered.getResult(0), ok);
 
-    mlir::Block * carry_on = scope.entry.addBlock();
+    mlir::Block * carry_on = continuation_after(scope, build);
     mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
                                    caught_or_failure(scope, build, where),
                                    mlir::ValueRange{answered.getResult(0)});
@@ -168,7 +186,7 @@ void lowering::status_call_void(compiled_entry & scope, mlir::OpBuilder & build,
                                    "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)");
     auto survived = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
                                       ec::CmpPredicate::eq, answered.getResult(0), ok);
-    mlir::Block * carry_on = scope.entry.addBlock();
+    mlir::Block * carry_on = continuation_after(scope, build);
     mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
                                    caught_or_failure(scope, build, where),
                                    mlir::ValueRange{answered.getResult(0)});

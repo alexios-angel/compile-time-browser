@@ -78,6 +78,15 @@ void browser::refresh_author_styles() {
     // sees it applied. BEFORE the early return: an inserted <link> whose href
     // resolved to nothing changes no text and still owes an `error`.
     announce_resource_loads();
+    // ONCE THE PAGE HAS EDITED THROUGH THE CSSOM, THE CSSOM IS THE SHEET. The
+    // DOM's text never had the rule `insertRule` added or the sheet
+    // `adoptedStyleSheets` adopted, so re-collecting it here undid both the
+    // moment anything else restyled - a `<style>` appended after an adoption
+    // dropped the adopted sheet (CSSStyleSheet-constructable), and a `<style>`
+    // whose text was rewritten kept the inserted rule the object model had
+    // already re-parsed away (css-style-reparse). The walk above still runs
+    // for the `load` events it records.
+    if (bindings_ && bindings_->style_stamp() != 0) { css = bindings_->author_style_text(); }
     if (css == author_css_) { return; }
     author_css_ = std::move(css);
     styles_->clear_origin(ctbrowser::style::author_origin);

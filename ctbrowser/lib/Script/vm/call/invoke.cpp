@@ -8,6 +8,7 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -264,10 +265,16 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
                                      value callee) {
     const std::string what =
         name.empty() ? std::string{"the value"} : "`" + std::string{name} + "`";
+    // A PRIMITIVE IS SPELLED OUT; an object is not - ToString of an object
+    // runs its own toString, which is page code, and page code must not run
+    // while a TypeError is being built: an object inheriting
+    // Function.prototype.toString (`new F()` where `F.prototype` is a
+    // function) had that native throw a SECOND TypeError under the first,
+    // which consumed the page's own catch and left the first uncaught.
+    const bool spell = !callee.is_undefined() && !callee.is_null() && !callee.is_object_like();
     return what + " is " + std::string{type_of(callee)} +
-           (callee.is_undefined() || callee.is_null() ? "" : " (" + to_string(callee) + ")") +
-           ", not a function - in " +
-           (fn.name.empty() ? std::string{"<anonymous>"} : "`" + fn.name + "`");
+           (spell ? " (" + to_string(callee) + ")" : "") + ", not a function - in " +
+           (fn.display_name().empty() ? std::string{"<anonymous>"} : "`" + fn.display_name() + "`");
 }
 
 // The handler's trap of this name, if it has one. An ABSENT trap is not an
@@ -301,6 +308,17 @@ value context::proxy_trap(value proxy, const std::string & name) {
     if (!p->handler.is_object()) { return value::undefined(); }
     value * found = static_cast<object_object *>(p->handler.as_heap())->find(name);
     return found == nullptr ? value::undefined() : *found;
+}
+
+value context::spread_values(value v) {
+    if (v.is_nullish() || (!v.is_heap() && !v.is_string())) {
+        throw_error("TypeError", std::string{v.is_null()        ? "null"
+                                             : v.is_undefined() ? "undefined"
+                                                                : type_of(v)} +
+                                     " is not iterable");
+        return make_array();
+    }
+    return iterable_values(v);
 }
 
 value context::iterable_values(value v) {
@@ -351,6 +369,11 @@ value context::iterable_values(value v) {
     // diagnosable one instead of a silent freeze.
     if (value * co = obj->find("__co"); co != nullptr && co->is_kind(heap_kind::coroutine)) {
         value out = make_array();
+        // ROOTED ACROSS THE RESUMES: the body can allocate, allocation can
+        // collect, and the list under construction is reachable from nothing
+        // else. (It was freed under the loop and the pushes corrupted the
+        // heap - a SIGSEGV in a later free, nowhere near here.)
+        const rooted keep{*this, out};
         auto * items = static_cast<array_object *>(out.as_heap());
         for (std::size_t guard = 0; guard < 1u << 20; ++guard) {
             const value step = generator_resume(v, value::undefined(), resume_mode::next);
@@ -379,6 +402,49 @@ value context::iterable_values(value v) {
             static_cast<array_object *>(items->as_heap())->items;
         return out;
     }
+    // AN ITERABLE OF THE PAGE'S OWN - `[Symbol.iterator]() { ... }` on a
+    // class or a literal - run through the protocol (7.4.3-7.4.8) and drained.
+    // Everything above is the standard library's fast path for values whose
+    // iterator is known; this is everything else, and it is eager like the
+    // rest of this function: an infinite iterator here is the bound below.
+    // NOT WHILE THIS VERY VALUE IS BEING MATERIALISED THROUGH ITS OWN
+    // @@iterator: the shell's collections answer `[Symbol.iterator]()` with
+    // an iterator built from iterable_values(this), which would come straight
+    // back here and recurse until the stack went. Those fall through to the
+    // array-like walk below, as they always did.
+    const bool materialising =
+        std::find_if(materialising_.begin(), materialising_.end(),
+                     [&](value held) { return held.bits() == v.bits(); }) != materialising_.end();
+    if (const value method = lookup_property(v, "@@iterator");
+        method.is_callable() && !materialising) {
+        materialising_.push_back(v);
+        const value iterator = get_iterator(v);
+        const rooted keep_iterator{*this, iterator};
+        value out = make_array();
+        const rooted keep{*this, out}; // see the generator branch above
+        if (iterator.is_object()) {
+            auto * items = static_cast<array_object *>(out.as_heap());
+            const value next = lookup_property(iterator, "next");
+            const rooted keep_next{*this, next};
+            std::size_t guard = 0;
+            for (; guard < 1u << 20 && !throw_pending(); ++guard) {
+                bool done = false;
+                const value item = iterator_step(iterator, next, done);
+                if (done || throw_pending()) { break; }
+                items->items.push_back(item);
+            }
+            // An iterator that never finishes is an infinite loop under an
+            // eager materialisation; a diagnosable throw beats an
+            // out-of-memory kill (test262's for-of IteratorClose tests are
+            // exactly this shape: `next` never says done and the body breaks).
+            if (guard == 1u << 20 && !throw_pending()) {
+                throw_error("RangeError", "iterator did not finish in 1,048,576 steps - "
+                                          "for-of materialises its source (docs/script.md)");
+            }
+        }
+        materialising_.pop_back();
+        return out;
+    }
     // An ARRAY-LIKE: anything with a numeric length and indexed properties, which
     // is what a NodeList, `arguments` and a page's own collection look like.
     if (value * length = obj->find("length"); length != nullptr && length->is_number()) {
@@ -391,6 +457,91 @@ value context::iterable_values(value v) {
         return out;
     }
     return make_array();
+}
+
+value context::get_iterator(value v) {
+    // null AND undefined FIRST: lookup_property throws its own TypeError for
+    // them, and the "not iterable" throw below would then be a SECOND throw
+    // after the first had already landed on the handler - which unwinds past
+    // it and reports the pattern's TypeError as uncaught. One throw, the
+    // right one (7.4.3 GetIterator -> GetMethod -> GetV -> ToObject).
+    if (v.is_nullish()) {
+        throw_error("TypeError",
+                    std::string{v.is_null() ? "null" : "undefined"} + " is not iterable");
+        return value::undefined();
+    }
+    const std::size_t unwound = unwinds_;
+    const value method = lookup_property(v, "@@iterator");
+    if (unwinds_ != unwound || throw_pending()) { return value::undefined(); } // a getter threw
+    if (!method.is_callable()) {
+        // A TYPED ARRAY, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has
+        // no @@iterator of its own here but is iterable all the same: its
+        // values come from iterable_values, and the iterator is a native over
+        // that list. An ordinary array and a string are NOT in this set any
+        // more: both prototypes carry a real @@iterator, so reaching here
+        // means a page deleted or replaced it, and `[x] = []` is then the
+        // TypeError every engine throws (7.4.3). A number, a boolean or a
+        // plain object is the TypeError too.
+        const bool typed = v.is_array() &&
+                           static_cast<array_object *>(v.as_heap())->elements != element_kind::none;
+        const bool known =
+            typed || v.is_kind(heap_kind::proxy) ||
+            (v.is_object() && (static_cast<object_object *>(v.as_heap())->find("__entries") ||
+                               static_cast<object_object *>(v.as_heap())->find("__items") ||
+                               static_cast<object_object *>(v.as_heap())->find("__co")));
+        if (!known) {
+            throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
+            return value::undefined();
+        }
+        const value items = iterable_values(v);
+        if (throw_pending()) { return value::undefined(); }
+        const rooted keep{*this, items};
+        auto * state = static_cast<object_object *>(make_object().as_heap());
+        const rooted keep_state{*this, value::object(state)};
+        state->set("items", items);
+        state->set("at", value::number(0));
+        const value iterator = make_object();
+        auto * it = static_cast<object_object *>(iterator.as_heap());
+        it->set("next", value::object(allocate<native_object>("next", [state](context & c,
+                                                                              std::span<value>) {
+                    const value list = *state->find("items");
+                    auto * arr = static_cast<array_object *>(list.as_heap());
+                    const auto at = static_cast<std::size_t>(state->find("at")->as_number());
+                    value out = c.make_object();
+                    auto * record = static_cast<object_object *>(out.as_heap());
+                    const bool done = at >= arr->items.size();
+                    record->set("value", done ? value::undefined() : arr->items[at]);
+                    record->set("done", value::boolean(done));
+                    if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
+                    return out;
+                })));
+        it->set("state", value::object(state)); // keeps the list reachable
+        return iterator;
+    }
+    const value iterator = call(method, {}, v);
+    if (throw_pending()) { return value::undefined(); }
+    if (!iterator.is_object()) {
+        throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
+        return value::undefined();
+    }
+    return iterator;
+}
+
+value context::iterator_step(value iterator, value next, bool & done) {
+    done = true;
+    if (!next.is_callable()) {
+        throw_error("TypeError", "iterator.next is not a function");
+        return value::undefined();
+    }
+    const value result = call(next, {}, iterator);
+    if (throw_pending()) { return value::undefined(); }
+    if (!result.is_object()) {
+        throw_error("TypeError", "Iterator result is not an object");
+        return value::undefined();
+    }
+    done = truthy(lookup_property(result, "done"));
+    if (done || throw_pending()) { return value::undefined(); }
+    return lookup_property(result, "value");
 }
 
 std::vector<value> context::spread_arguments(value arg_array) {

@@ -20,6 +20,10 @@ namespace {
 // refused correctly, and a shorthand this file got half right is the one way it
 // could break a page that works today.
 constexpr property_syntax table[] = {
+    // CSS Cascade 4 §3.1: every longhand but `direction` and `unicode-bidi`,
+    // and it takes the CSS-wide keywords only. The declaration block in
+    // shorthands.cpp expands it; here so `'all' in style` answers.
+    {"all", k::freeform, "", "", false, false, true},
     // --- the box ---------------------------------------------------------
     {"display", k::keyword_only,
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
@@ -32,8 +36,10 @@ constexpr property_syntax table[] = {
      false},
     {"visibility", k::keyword_only, "visible hidden collapse", "visible", true, false},
     {"overflow", k::freeform, "", "visible", false, false, true},
-    {"overflow-x", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
-    {"overflow-y", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
+    {"overflow-x", k::keyword_only, "visible hidden clip scroll auto overlay", "visible", false,
+     false},
+    {"overflow-y", k::keyword_only, "visible hidden clip scroll auto overlay", "visible", false,
+     false},
     {"box-sizing", k::keyword_only, "content-box border-box", "content-box", false, false},
 
     {"width", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
@@ -67,17 +73,57 @@ constexpr property_syntax table[] = {
     {"margin-right", k::length_percentage, "auto", "0px", false, false},
     {"margin-bottom", k::length_percentage, "auto", "0px", false, false},
     {"margin-left", k::length_percentage, "auto", "0px", false, false},
+    // The flow-relative sides, CSS Logical 1 §4. The cascade does not map them
+    // yet; they are here because the CSSOM's shorthand rules are about the
+    // logical property GROUP a declaration sits in, and `margin-inline: 10px`
+    // written between two halves of `margin` decides whether `margin` folds.
+    {"margin-inline", k::freeform, "", "0px", false, false, true},
+    {"margin-inline-start", k::length_percentage, "auto", "0px", false, false},
+    {"margin-inline-end", k::length_percentage, "auto", "0px", false, false},
+    {"margin-block", k::freeform, "", "0px", false, false, true},
+    {"margin-block-start", k::length_percentage, "auto", "0px", false, false},
+    {"margin-block-end", k::length_percentage, "auto", "0px", false, false},
     {"padding", k::freeform, "", "0px", false, false, true},
     {"padding-top", k::length_percentage, "", "0px", false, true},
     {"padding-right", k::length_percentage, "", "0px", false, true},
     {"padding-bottom", k::length_percentage, "", "0px", false, true},
     {"padding-left", k::length_percentage, "", "0px", false, true},
+    {"padding-inline", k::freeform, "", "0px", false, false, true},
+    {"padding-inline-start", k::length_percentage, "", "0px", false, true},
+    {"padding-inline-end", k::length_percentage, "", "0px", false, true},
+    {"padding-block", k::freeform, "", "0px", false, false, true},
+    // The logical border longhands, which getComputedStyle answers as the
+    // physical ones of horizontal-tb (computed_style/entries.cpp).
+    {"border-block-start-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-block-end-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-inline-start-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-inline-end-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-block-start-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-block-end-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-inline-start-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-inline-end-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-block-start-color", k::color, "", "currentcolor", false, false},
+    {"border-block-end-color", k::color, "", "currentcolor", false, false},
+    {"border-inline-start-color", k::color, "", "currentcolor", false, false},
+    {"border-inline-end-color", k::color, "", "currentcolor", false, false},
+    {"padding-block-start", k::length_percentage, "", "0px", false, true},
+    {"padding-block-end", k::length_percentage, "", "0px", false, true},
 
     {"top", k::length_percentage, "auto", "auto", false, false},
     {"right", k::length_percentage, "auto", "auto", false, false},
     {"bottom", k::length_percentage, "auto", "auto", false, false},
     {"left", k::length_percentage, "auto", "auto", false, false},
     {"inset", k::freeform, "", "auto", false, false, true},
+    {"inset-inline", k::freeform, "", "auto", false, false, true},
+    {"inset-inline-start", k::length_percentage, "auto", "auto", false, false},
+    {"inset-inline-end", k::length_percentage, "auto", "auto", false, false},
+    {"inset-block", k::freeform, "", "auto", false, false, true},
+    {"inset-block-start", k::length_percentage, "auto", "auto", false, false},
+    {"inset-block-end", k::length_percentage, "auto", "auto", false, false},
 
     // --- borders ---------------------------------------------------------
     {"border", k::freeform, "", "medium none currentcolor", false, false, true},
@@ -96,10 +142,19 @@ constexpr property_syntax table[] = {
      "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
     {"border-left-style", k::keyword_only,
      "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"border-top-color", k::freeform, "", "currentcolor", false, false},
-    {"border-right-color", k::freeform, "", "currentcolor", false, false},
-    {"border-bottom-color", k::freeform, "", "currentcolor", false, false},
-    {"border-left-color", k::freeform, "", "currentcolor", false, false},
+    {"border-top-color", k::color, "", "currentcolor", false, false},
+    {"border-right-color", k::color, "", "currentcolor", false, false},
+    {"border-bottom-color", k::color, "", "currentcolor", false, false},
+    {"border-left-color", k::color, "", "currentcolor", false, false},
+    // `border` RESETS border-image (CSS Backgrounds 3 §5.3), so the CSSOM
+    // cannot fold twelve side longhands back into `border` without knowing
+    // these five are at their initial values. Nothing paints them.
+    {"border-image", k::freeform, "", "none", false, false, true},
+    {"border-image-source", k::freeform, "", "none", false, false},
+    {"border-image-slice", k::freeform, "", "100%", false, false},
+    {"border-image-width", k::freeform, "", "1", false, false},
+    {"border-image-outset", k::freeform, "", "0", false, false},
+    {"border-image-repeat", k::freeform, "", "stretch", false, false},
     {"border-radius", k::freeform, "", "0px", false, false, true},
     // The four per-side shorthands. Named here rather than left out because
     // `css/cssom/getComputedStyle-getter-v-properties` asks for all four by
@@ -118,13 +173,13 @@ constexpr property_syntax table[] = {
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
     {"outline-style", k::keyword_only,
      "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"outline-color", k::freeform, "", "currentcolor", false, false},
+    {"outline-color", k::color, "", "currentcolor", false, false},
     {"outline-offset", k::length, "", "0px", false, false},
 
     // --- colour and background ------------------------------------------
-    {"color", k::freeform, "", "rgb(0, 0, 0)", true, false},
+    {"color", k::color, "", "rgb(0, 0, 0)", true, false},
     {"background", k::freeform, "", "none", false, false, true},
-    {"background-color", k::freeform, "", "rgba(0, 0, 0, 0)", false, false},
+    {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
     {"background-position", k::freeform, "", "0% 0%", false, false},
     {"background-repeat", k::freeform, "", "repeat", false, false},
@@ -153,6 +208,16 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
+    // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
+    // with them, but each is a real property whose value a page sets and reads
+    // back through getComputedStyle, with a math function inside it folded
+    // (using-font-relative-units-in-font-properties).
+    {"font-width", k::freeform, "", "normal", true, false},
+    {"font-feature-settings", k::freeform, "", "normal", true, false},
+    {"font-variation-settings", k::freeform, "", "normal", true, false},
+    {"font-variant-alternates", k::freeform, "", "normal", true, false},
+    {"font-size-adjust", k::freeform, "", "none", true, false},
+    {"font-palette", k::freeform, "", "normal", true, false},
     // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
     // font-variant-alternates, font-variation-settings and font-width, which
     // using-font-relative-units-in-font-properties asks to exist. Adding the
@@ -175,7 +240,7 @@ constexpr property_syntax table[] = {
      "none capitalize uppercase lowercase full-width full-size-kana", "none", true, false},
     {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
-    {"text-decoration-color", k::freeform, "", "currentcolor", false, false},
+    {"text-decoration-color", k::color, "", "currentcolor", false, false},
     {"text-decoration-style", k::keyword_only, "solid double dotted dashed wavy", "solid", false,
      false},
     {"text-overflow", k::freeform, "", "clip", false, false},
@@ -224,6 +289,12 @@ constexpr property_syntax table[] = {
     // do. `1e1` is a <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
     {"orphans", k::integer, "", "2", true, true},
     {"widows", k::integer, "", "2", true, true},
+    // Three more `<integer>` properties nothing lays out, so that `1e1` and
+    // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
+    // ponytail: hyphenate-limit-chars takes one value here, not the spec's three.
+    {"max-lines", k::integer, "none", "none", false, true},
+    {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
+    {"hyphenate-limit-chars", k::integer, "auto", "auto", true, true},
     {"column-span", k::keyword_only, "none all", "none", false, false},
 
     // --- tables and lists ------------------------------------------------
@@ -249,9 +320,39 @@ constexpr property_syntax table[] = {
     {"animation-duration", k::time, "", "0s", false, false},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
+    // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
+    // Nothing transitions here; it is the property ident-function-computed
+    // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
+    // did not publish it at all.
+    {"view-transition-name", k::freeform, "", "none", false, false},
     {"animation-iteration-count", k::freeform, "", "1", false, false},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
+    // PROPERTIES WITH NO CONSUMER YET, carried so a page can set and read
+    // them back - every one is a `<length-percentage>` or freeform text, and as
+    // unknown ones getComputedStyle did not publish them (random-computed).
+    {"offset-distance", k::length_percentage, "", "0px", false, false},
+    {"offset-path", k::freeform, "", "none", false, false},
+    {"shape-margin", k::length_percentage, "", "0px", false, true},
+    {"stroke-dasharray", k::freeform, "", "none", true, false},
+    {"stroke-dashoffset", k::length_percentage, "", "0px", true, false},
+    {"stroke-width", k::length_percentage, "", "1px", true, true},
+    {"background-position-x", k::freeform, "", "0%", false, false},
+    {"background-position-y", k::freeform, "", "0%", false, false},
+    {"scroll-padding-top", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-right", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-bottom", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-left", k::length_percentage, "auto", "auto", false, true},
+    {"cx", k::length_percentage, "", "0px", false, false},
+    {"cy", k::length_percentage, "", "0px", false, false},
+    {"rx", k::length_percentage, "auto", "auto", false, true},
+    {"ry", k::length_percentage, "auto", "auto", false, true},
+    {"x", k::length_percentage, "", "0px", false, false},
+    {"y", k::length_percentage, "", "0px", false, false},
+    {"math-depth", k::freeform, "", "0", true, false},
+    {"aspect-ratio", k::freeform, "", "auto", false, false},
+    {"animation-timeline", k::freeform, "", "auto", false, false},
+    {"corner-shape", k::freeform, "", "round", false, false},
     {"pointer-events", k::freeform, "", "auto", true, false},
     {"user-select", k::keyword_only, "auto text none contain all", "auto", false, false},
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
@@ -273,6 +374,50 @@ const property_syntax * find_property(std::string_view name) {
 
 std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{table, std::size(table)};
+}
+
+// CSSOM §2.1 "serialize an identifier".
+std::string serialize_identifier(std::string_view text) {
+    std::string out;
+    const auto hex_escape = [&out](unsigned char c) {
+        static constexpr char digits[] = "0123456789abcdef";
+        out += '\\';
+        if (c >= 16) { out += digits[c >> 4]; }
+        out += digits[c & 0xF];
+        out += ' ';
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same U+FFFD
+        // substitution the CSS tokenizer does to its input.
+        if (c == 0) {
+            out += "\xEF\xBF\xBD";
+            continue;
+        }
+        if (c <= 0x1F || c == 0x7F) {
+            hex_escape(c);
+            continue;
+        }
+        // A LEADING DIGIT, or a digit after a leading `-`, would make the
+        // identifier a number: both are escaped numerically rather than with a
+        // backslash, because `\1` is not a valid identifier start either.
+        if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
+            hex_escape(c);
+            continue;
+        }
+        if (c == '-' && text.size() == 1) {
+            out += "\\-";
+            continue;
+        }
+        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z')) {
+            out += static_cast<char>(c);
+            continue;
+        }
+        out += '\\';
+        out += static_cast<char>(c);
+    }
+    return out;
 }
 
 std::string css_name_of(std::string_view idl) {

@@ -56,7 +56,19 @@ void browser::run_scripts() {
     // write. `styles` is the honest level: the only callers are script mutating
     // the document, and every one of them can change which rules match.
     bindings_ = std::make_unique<dom_bindings>(
-        *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::styles); },
+        *doc_, atoms_, canvases_, forms_,
+        [this] {
+            mark(dirty::styles);
+            // HTML's focus fixup rule: a focused element that left the
+            // document is focused no more, and the next `focus()` on it is a
+            // real one - moveBefore/fire-focusin-focusout.html re-focuses a
+            // button its cleanup re-appended. Silently, as the rule says.
+            if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved())) {
+                (void)set_state(focused_, state_focus, false);
+                focused_ = node_id{};
+                bindings_->observe_focus(focused_);
+            }
+        },
         [this](node_id id) { (void)focus(id); });
     // The back end a caller chose before the page loaded - see
     // browser::prefer_angle_webgl. Applied here because this is the first
@@ -139,6 +151,12 @@ void browser::run_scripts() {
         flushing->retained.push_back(inner);
         script_->define_global("getComputedStyle", script::value::object(flushing));
     }
+    // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
+    bindings_->set_layout_hook([this] {
+        if (dirty_ >= dirty::styles) { resolve_styles(); }
+        if (dirty_ >= dirty::layout) { run_layout(); }
+        if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
+    });
     install_embedder_natives();
     script_error_.clear();
 
@@ -156,6 +174,7 @@ void browser::run_scripts() {
     // script to a function declared in a LATER one. Chrome makes that a
     // ReferenceError; this engine used to make it work.
     std::vector<std::string> classic_scripts;
+    std::vector<node_id> classic_elements; // beside each, for document.currentScript
     // MODULES ARE COLLECTED SEPARATELY AND RUN SEPARATELY, because that is the
     // one thing they cannot share with a classic script: its top level is the
     // global scope and theirs is not. Concatenating them all - which is what
@@ -227,6 +246,11 @@ void browser::run_scripts() {
                 *into += '\n';
                 if (is_module) {
                     modules.emplace_back(std::move(module_text), std::move(specifier));
+                } else if (src.empty() && classic_text.size() <= 1) {
+                    // EMPTY, SO NEVER STARTED: "prepare" returns before it sets
+                    // the flag when there is no src and no source text, and
+                    // text a script appends later runs it (HTML 4.12.1).
+                    bindings_->note_unstarted_script(at);
                 } else if (classic_text.find_first_not_of(" \t\r\n\f\v") != std::string::npos) {
                     // A CONTRIBUTION THAT IS ONLY THE NEWLINES THIS WALK ADDED
                     // IS NOT A SCRIPT, and it is dropped HERE rather than
@@ -236,9 +260,23 @@ void browser::run_scripts() {
                     // that built an image for it would be building one nothing
                     // will ever look up.
                     classic_scripts.push_back(std::move(classic_text));
+                    classic_elements.push_back(at);
                 }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
+            // A <template>'s contents are inert: a script in them never ran
+            // and is not `already started`, so a clone of it runs when the
+            // clone connects (HTML 4.12.3). Noted, never run from here.
+            if (const node_id contents = doc_->template_content(at)) {
+                const auto note = [&](auto && again, node_id inert) -> void {
+                    if (txn.tag(inert).value_or(atom{}) == script_tag &&
+                        txn.element_ns(inert) == ctbrowser::node_ns::html) {
+                        bindings_->note_unstarted_script(inert);
+                    }
+                    for (const node_id child : txn.children(inert)) { again(again, child); }
+                };
+                note(note, contents);
+            }
         };
         walk(walk, txn.root());
     }
@@ -264,7 +302,13 @@ void browser::run_scripts() {
     // full and never overwrite it, so every later parse error and uncaught
     // throw was silently discarded.
     bool a_script_failed = false;
-    for (const std::string & text : classic_scripts) {
+    bindings_->set_current_script(node_id{});
+    // THE PARSER'S SCRIPTS SEE "loading". The document is parsed whole before
+    // any of them runs here, so this is the one point where the state a
+    // parser-inserted script observes can be set.
+    bindings_->set_ready_state("loading");
+    for (std::size_t index = 0; index < classic_scripts.size(); ++index) {
+        const std::string & text = classic_scripts[index];
         // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
         // times faster on every corpus measured. Two things make it safe, and
@@ -301,12 +345,16 @@ void browser::run_scripts() {
         if (script_prepared_hook_) { script_prepared_hook_(*compiled, text); }
         const script::program & running = *compiled;
         classic_programs_.push_back(std::move(compiled));
+        bindings_->set_current_script(classic_elements[index]);
         const script::run_result result = script_->run(running);
         // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
         // belongs to a document that is being replaced, so it does not run -
         // and the replacement happens in load_html, after this returns, rather
         // than under our feet.
-        if (pending_load_) { return; }
+        if (pending_load_) {
+            bindings_->set_current_script(node_id{});
+            return;
+        }
         // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
         // runs. That is what the specification says: a script that throws or
         // does not parse is that script's problem.
@@ -335,8 +383,13 @@ void browser::run_scripts() {
             // page is a HANDOFF, and the page cannot be handed anything while
             // the VM is still refusing to run its code.
             (void)script_->take_error();
+            // STILL THE CURRENT SCRIPT while its error is reported: a
+            // window.onerror reading document.currentScript sees the script
+            // that failed - to parse, too - which Document.currentScript.html
+            // asserts by id.
             (void)bindings_->dispatch_error(result.error);
         }
+        bindings_->set_current_script(node_id{});
     }
 
     // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own

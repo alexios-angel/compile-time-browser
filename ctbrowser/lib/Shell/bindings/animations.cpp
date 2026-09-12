@@ -236,31 +236,54 @@ private:
 [[nodiscard]] std::string interpolate_text(std::string_view property, const std::string & from,
                                            const std::string & to, double p,
                                            const style::css::length_context & ctx) {
-    if (p == 0) { return from; }
-    if (p == 1) { return to; }
     const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
     const style::css::math_answer a = style::css::evaluate_math(from, ctx);
     const style::css::math_answer b = style::css::evaluate_math(to, ctx);
-    if (a.outcome == style::css::math_outcome::resolved &&
-        b.outcome == style::css::math_outcome::resolved && a.value.type == b.value.type &&
-        a.value.is_number == b.value.is_number) {
-        style::css::calc_result out;
-        out.type = a.value.type;
-        out.is_number = a.value.is_number;
-        out.px = lerp(a.value.px, b.value.px);
-        out.has_percent = a.value.has_percent || b.value.has_percent;
-        out.percent = lerp(a.value.has_percent ? a.value.percent : 0.0,
-                           b.value.has_percent ? b.value.percent : 0.0);
-        // CSS Values 4 §3.2: an interpolated <integer> rounds half up.
-        const style::css::property_syntax * known = style::css::find_property(property);
-        if (out.is_number && known != nullptr && known->kind == style::css::value_kind::integer) {
-            out.px = std::floor(out.px + 0.5);
-        }
-        return style::css::serialize_calc(out);
-    }
+    const bool numeric = a.outcome == style::css::math_outcome::resolved &&
+                         b.outcome == style::css::math_outcome::resolved &&
+                         a.value.type == b.value.type && a.value.is_number == b.value.is_number;
+    // An endpoint's own text at 0 and 1 when it is not arithmetic, so a
+    // keyword's computed value is exactly the declared one. A numeric endpoint
+    // goes through the interpolation like every other progress: its value is
+    // the same and its text is the COMPUTED spelling - `random(300, 100)` is
+    // `300` at progress 1 and not the function (random-in-animations) - and
+    // an infinity is clamped below like every value on the way there
+    // (calc-interpolation).
     // ponytail: colours, transforms and lists flip at the midpoint; add a
     // colour lerp beside this when a test reads an animated colour.
-    return p < 0.5 ? from : to;
+    if (!numeric) { return p < 0.5 ? from : to; }
+    style::css::calc_result out;
+    out.type = a.value.type;
+    out.is_number = a.value.is_number;
+    out.px = lerp(a.value.px, b.value.px);
+    out.has_percent = a.value.has_percent || b.value.has_percent;
+    out.percent = lerp(a.value.has_percent ? a.value.percent : 0.0,
+                       b.value.has_percent ? b.value.percent : 0.0);
+    // CLAMPED AS A COMPUTED VALUE IS: an infinity lands on the bound it
+    // overflowed and a NaN is zero (CSS Values 4 §10.10), after the
+    // interpolation rather than before - `0px` to `calc(infinity * 1px)`
+    // is the bound at every progress past zero, which is what the corpus
+    // reads. The bound is the fold's (lib/Style/css/calc/fold.cpp).
+    constexpr double bound = 33554432.0;
+    const auto clamped = [](double v) {
+        if (std::isnan(v)) { return 0.0; }
+        return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
+    };
+    out.px = clamped(out.px);
+    out.percent = clamped(out.percent);
+    // CSS Values 4 §3.2: an interpolated <integer> rounds half up.
+    const style::css::property_syntax * known = style::css::find_property(property);
+    if (out.is_number && known != nullptr && known->kind == style::css::value_kind::integer) {
+        out.px = std::floor(out.px + 0.5);
+    }
+    // ...AND IS CLAMPED TO THE PROPERTY'S RANGE, as a computed value is
+    // (CSS Values 4 §10.10): the table's floor at zero, and font-weight's own
+    // [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
+    // ponytail: the one property with a range that is not "non-negative";
+    // give the table a range when a second one animates.
+    if (known != nullptr && known->nonnegative && out.px < 0) { out.px = 0; }
+    if (property == "font-weight") { out.px = std::clamp(out.px, 1.0, 1000.0); }
+    return style::css::serialize_calc(out);
 }
 
 // The keyframe property name as the CSS spelling: `marginLeft` -> `margin-left`,

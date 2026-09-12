@@ -88,18 +88,22 @@
         window.__wpt_done = true;
     }
 
+    // PIECES, THEN ONE JOIN. `json += piece` copies the whole string each
+    // time in this engine (strings are immutable bytes, no ropes), so a file
+    // with 8,000 subtests built a 12 GB series of copies and died at the
+    // driver's 4 GB cap - which is what the seven html/dom/reflection-*.html
+    // "timeouts" were. Not the engine's collector, the harness's own report.
     function report(status_name, message, tests) {
-        var json = '{"harness":' + quote(status_name) + ',"message":' + quote(message || "") +
-                   ',"subtests":[';
+        var parts = [];
         for (var i = 0; i < tests.length; i++) {
-            if (i > 0) { json += ","; }
-            json += '{"name":' + quote(tests[i].name) + ',"status":' +
-                    quote(subtest_status(tests[i].status)) + ',"message":' +
-                    quote(tests[i].message === null || tests[i].message === undefined
-                              ? ""
-                              : tests[i].message) + "}";
+            parts.push('{"name":' + quote(tests[i].name) + ',"status":' +
+                       quote(subtest_status(tests[i].status)) + ',"message":' +
+                       quote(tests[i].message === null || tests[i].message === undefined
+                                 ? ""
+                                 : tests[i].message) + "}");
         }
-        return json + "]}";
+        return '{"harness":' + quote(status_name) + ',"message":' + quote(message || "") +
+               ',"subtests":[' + parts.join(",") + "]}";
     }
 
     // THE HARNESS ITSELF MAY NOT BE THERE. `<script src="/resources/testharness.js">`

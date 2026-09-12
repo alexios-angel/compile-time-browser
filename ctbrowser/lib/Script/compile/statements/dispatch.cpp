@@ -121,7 +121,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
-                    compile_expr(decl.a, r);
+                    compile_named_expr(decl.a, r, decl.b >= 0 ? "" : decl.text);
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
@@ -175,7 +175,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 if (decl.a >= 0) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
-                    compile_expr(decl.a, tmp);
+                    compile_named_expr(decl.a, tmp, decl.text);
                     emit_write(decl.text, tmp);
                     release_to(mark);
                 }
@@ -183,7 +183,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
             if (decl.a >= 0) {
-                compile_expr(decl.a, r);
+                compile_named_expr(decl.a, r, decl.text);
             } else {
                 proto().emit(instruction{op::load_undef, r});
             }
@@ -218,6 +218,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
     case vp::nk::labeled: compile_labeled(n); break;
     case vp::nk::try_stmt: compile_try(n); break;
     case vp::nk::throw_stmt: compile_throw(n); break;
+    case vp::nk::with_stmt: compile_with(n); break;
     case vp::nk::return_stmt: {
         const std::uint16_t r = alloc_reg();
         if (n.a >= 0) {
@@ -235,6 +236,12 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // Return evaluation), so the record never carries a promise.
         if (fn().is_async && fn().is_generator && n.a >= 0) {
             proto().emit(instruction{op::await_value, r, r});
+        }
+        // A DERIVED CONSTRUCTOR'S RETURN is checked - see emit_derived_return -
+        // unless a finally is open, which takes the value as it is.
+        if (!fn().derived_flag.empty() && finallies_.empty()) {
+            emit_derived_return(r);
+            break;
         }
         // AN OPEN `finally` GETS IT FIRST. Returning straight out of a try
         // block skipped the finally entirely - see compile_try_with_finally.

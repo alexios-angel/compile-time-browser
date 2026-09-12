@@ -87,6 +87,15 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         walk_loop_body(n.b, vars);
         return;
 
+    // 14.11.1: `with` is not allowed in strict mode code. Its body is a
+    // Statement, so a declaration there is the same error an `if` body has.
+    case nk::with_stmt:
+        if (strict()) { report("`with` is not allowed in strict mode code", idx); }
+        walk_expression(n.a);
+        check_nested_declaration(n.b, false);
+        walk_statement(n.b, nested, vars);
+        return;
+
     case nk::do_stmt:
         check_nested_declaration(n.a, false);
         walk_loop_body(n.a, vars);
@@ -316,6 +325,20 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
         std::vector<binding> parameter;
         if (!clause.text.empty()) {
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
+            check_strict_binding(clause.text, n.b);
+        } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names
+            bound_names(clause.b, binding_kind::let_, parameter);
+            check_strict_bindings(parameter);
+            walk_pattern(clause.b);
+            // 14.15.1: BoundNames of the CatchParameter has no duplicate.
+            for (std::size_t i = 1; i < parameter.size(); ++i) {
+                for (std::size_t j = 0; j < i; ++j) {
+                    if (parameter[i].name != parameter[j].name) { continue; }
+                    report(quoted(parameter[i].name) + " is bound twice by the catch parameter",
+                           parameter[i].node);
+                    break;
+                }
+            }
         }
         // 14.15.1: the catch parameter may not be redeclared lexically in
         // the block. A `var` of the same name IS allowed in sloppy mode

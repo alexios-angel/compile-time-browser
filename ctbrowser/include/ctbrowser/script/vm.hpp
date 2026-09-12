@@ -156,6 +156,11 @@ struct native_object final : heap_object {
     // 400 others - has no own entry and still has to answer.
     bool name_erased = false;
     value proto_link = value::null();
+    // IsConstructor (7.2.4) for a native: a built-in METHOD, a getter and a
+    // promise reaction have no [[Construct]], so `new Math.abs()` is a
+    // TypeError. True by default because every native an embedder defines
+    // (`Image`, `DOMParser`, ...) is constructed and has no other way to say so.
+    bool is_constructor = true;
 
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
@@ -327,6 +332,9 @@ public:
     [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
 
     void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
+    // `delete globalThis.x`: the binding is a table entry, and every global
+    // is { configurable: true } (clause 17), so the delete succeeds.
+    bool erase_global(std::string_view name) { return globals_.erase(name) != 0; }
     void define_native(std::string name, native_fn fn) {
         value v = value::object(allocate<native_object>(name, std::move(fn)));
         globals_[std::move(name)] = v;
@@ -347,20 +355,35 @@ public:
 
     // WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer. HTML
     // 7.3.3: an element with an `id` is reachable as a bare identifier, and
-    // web-platform-tests leans on it constantly.
-    //
-    // A HOOK RATHER THAN A LOOK AT `window`, deliberately. Going through the
-    // window proxy would also inherit Object.prototype, so a bare `toString`
-    // would stop being undefined. The shell installs a function that answers
-    // named elements and nothing else. Consulted ONLY when the name is not a
-    // global, so the declared path is one map lookup.
+    // web-platform-tests leans on it constantly. The shell installs a
+    // function that answers named elements; it is consulted ONLY when the
+    // name is not a global, so the declared path is one map lookup.
     void set_undeclared_name_hook(std::function<value(std::string_view)> hook) {
         undeclared_name_ = std::move(hook);
     }
-    [[nodiscard]] value global_or_named(std::string_view name) {
+    // GetValue OF AN IDENTIFIER REFERENCE (6.2.5.5, 9.1.1.4.6). The global
+    // environment's object record IS the global object, so a name that is
+    // not in the binding table is read off `globalThis` - own, inherited
+    // (`toString` resolves to Object.prototype's) or what the embedder's hook
+    // answers - and a name that is nowhere is an unresolvable reference:
+    // ReferenceError, catchable, exactly what feature detection written as
+    // `try { x } catch (e) {}` expects - unless the read is the operand of
+    // `typeof` (13.5.3 step 2), which is the one silent one: `silent` is how
+    // the run loop and the AOT bridge ask for it.
+    [[nodiscard]] value global_or_named(std::string_view name, bool silent = false) {
         const auto it = globals_.find(name);
         if (it != globals_.end()) { return it->second; }
-        return undeclared_name_ ? undeclared_name_(name) : value::undefined();
+        if (undeclared_name_) {
+            const value named = undeclared_name_(name);
+            if (!named.is_undefined()) { return named; }
+        }
+        // The global object is a PROXY in both embeddings, and a proxy is not
+        // is_object() - it is a heap value of its own kind.
+        if (global_this_.is_heap() && has_property(global_this_, string(std::string{name}))) {
+            return lookup_property(global_this_, std::string{name});
+        }
+        if (!silent) { throw_error("ReferenceError", std::string{name} + " is not defined"); }
+        return value::undefined();
     }
 
     // The realm's script receiver is independent of the writable globalThis
@@ -516,13 +539,18 @@ public:
             // DOMException. Error.prototype plus an own `name` is the honest
             // fallback: the name is still right and `e instanceof Error` holds.
             table = prototype(proto_kind::error);
-            o->set("name", string(std::string{kind}));
+            o->define("name", string(std::string{kind}), attr_builtin);
         }
-        o->set("message", string(message));
+        // { true, false, true }, as 20.5.1.1 step 3 installs it.
+        o->define("message", string(message), attr_builtin);
         // The frames it happened on, exactly as a constructed Error gets them -
         // a page catching a TypeError the VM raised should be able to report
-        // where as easily as one it threw itself.
-        o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
+        // where as easily as one it threw itself. IN THE [[ErrorData]] SLOT
+        // the Error constructor uses (builtins/objects/errors.cpp's
+        // error_stack_slot): Error.prototype's `stack` accessor answers it,
+        // and Error.isError tests for it.
+        o->define("@#ErrorData", string(std::string{kind} + ": " + message + current_stack()),
+                  attr_none);
         if (table != nullptr) { o->prototype = value::object(table); }
         return made;
     }
@@ -723,6 +751,23 @@ public:
     // through, so a host that drives callbacks must ask.
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
+    // See store_rejected_: a store from strict code asks this afterwards.
+    void clear_store_rejected() noexcept { store_rejected_ = false; }
+    void strict_store_check(std::string_view name) {
+        if (!store_rejected_) { return; }
+        store_rejected_ = false;
+        throw_error("TypeError",
+                    "Cannot assign to read only property '" + std::string{name} + "' of object");
+    }
+    // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s and is
+    // parked for rethrow at its call site, or the run has failed outright.
+    // Every further `call` would answer undefined without running anything.
+    [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
+    // HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
+    // through throw_error is not parked - it has already landed on a handler
+    // by the time the native's next line runs, and throw_pending cannot see
+    // it - so a native that keeps going compares this before and after.
+    [[nodiscard]] std::size_t unwinds() const noexcept { return unwinds_; }
     // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
     // constructor rather than print it (`tools/ct262` on a `negative:` test).
     // Undefined when a run failed WITHOUT a throw (the allocation ceiling, the
@@ -742,6 +787,20 @@ public:
     // for-of, spread and Array.from share. See the definition for what it
     // covers.
     [[nodiscard]] value iterable_values(value v);
+    // op::iterable - a SPREAD's source (`[...x]`, `f(...x)`), which is
+    // iterable_values with the one thing a spread adds: null, undefined and a
+    // primitive that is not a string are the TypeError of 13.2.5.1's
+    // GetIterator, where a library constructor given null (`new Map(null)`)
+    // is content with nothing. Both tiers call this one.
+    [[nodiscard]] value spread_values(value v);
+    // GetIterator(v, sync) (7.4.3): `v[Symbol.iterator]()`, checked to be an
+    // object. A TypeError (thrown, catchable) and undefined when it is not
+    // iterable or the method answers a non-object.
+    [[nodiscard]] value get_iterator(value v);
+    // IteratorStep + IteratorValue (7.4.8): `next()` on the iterator; `done`
+    // says whether the result was the end. Throws (catchable) when the
+    // result is not an object.
+    [[nodiscard]] value iterator_step(value iterator, value next, bool & done);
 
     // `new callee(...args)` where the argument count is only known at run time.
     // op::construct keeps its own inline path because it does not need a nested
@@ -750,6 +809,11 @@ public:
     [[nodiscard]] value construct(value callee, std::span<const value> args);
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
+    // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the
+    // object's @@toPrimitive, then OrdinaryToPrimitive. False means a
+    // TypeError is in flight. to_primitive, to_number_value and
+    // to_primitive_string are this one walk.
+    bool to_primitive_hint(value v, const char * hint, value & out);
     [[nodiscard]] static bool truthy(value v);
 
     // The handler's trap of this name, or undefined when it has none. Public
@@ -1152,6 +1216,8 @@ public:
     // JavaScript however many methods a primitive resolves. `delete` on
     // anything that is not an object is a silent no-op.
     [[nodiscard]] bool has_property(value target, value key);
+    // The same walk for a name already a string - no key object made.
+    [[nodiscard]] bool has_property(value target, const std::string & name);
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);
 
@@ -1509,6 +1575,12 @@ public:
         bool async_gen = false;
         bool awaiting = false;
         value self;
+        // THE ITERATOR RECORD OF A `yield*` IN PROGRESS (see yield_delegate_open_name),
+        // undefined otherwise. While it is set, `.next()` on a sync generator
+        // hands the inner result object out as it is, and `.throw()` /
+        // `.return()` are forwarded to the inner iterator by generator_resume
+        // instead of resuming the frame (27.5.3.7 / 14.4.14).
+        value delegate;
         struct async_request {
             resume_mode how;
             value sent;
@@ -1518,6 +1590,14 @@ public:
         coroutine_object() : heap_object(heap_kind::coroutine) {}
     };
 
+    // The generator whose frame is running - a native called from a
+    // generator body sees that frame on top, since natives push none.
+    [[nodiscard]] coroutine_object * current_generator() const noexcept;
+    // See return_marker_key: a `.return(v)` in flight through the body's
+    // finally blocks, and how to tell one from a page's own throw.
+    [[nodiscard]] value make_return_marker(value v);
+    [[nodiscard]] bool is_return_marker(value v) const;
+    [[nodiscard]] value return_marker_value(value marker) const;
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
@@ -1592,6 +1672,18 @@ public:
         if (!v.is_object()) { return false; }
         value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
         return settled != nullptr && !truthy(*settled);
+    }
+    // THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
+    // rejected) -> resume. One native per context, made on first use.
+    [[nodiscard]] value await_job() {
+        if (await_job_.is_undefined()) {
+            await_job_ =
+                value::object(allocate<native_object>("await", [](context & c, std::span<value> a) {
+                    if (a.size() >= 3) { c.resume(a[0], a[1], truthy(a[2])); }
+                    return value::undefined();
+                }));
+        }
+        return await_job_;
     }
     // Ask a pending promise to put this coroutine back when it settles. The
     // record goes on the promise's own handler list, so a resumption is queued
@@ -1902,6 +1994,7 @@ private:
             visit(root_label::microtasks, job.fn);
             for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
         }
+        visit(root_label::microtasks, await_job_); // the one native every settled await queues
         // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
         // register once the module has finished evaluating, so without this a
         // collection between two modules frees the bindings the second one is
@@ -2133,9 +2226,21 @@ private:
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;
+    // The values iterable_values is materialising through their own
+    // @@iterator right now - see the re-entrancy note there. Held by the
+    // caller's register too, so not a root of its own.
+    std::vector<value> materialising_;
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;
+    // WHETHER THE LAST [[Set]] WAS REJECTED - a non-writable or inherited
+    // non-writable property, a non-extensible receiver, a getter with no
+    // setter, a primitive receiver. store_property/store_index set it and
+    // carry on silently, which is sloppy mode; the run loop and the AOT
+    // bridge read it after a store from STRICT code and throw the TypeError
+    // (10.1.9.2 / 13.15.2 PutValue step 6.b).
+    bool store_rejected_ = false;
+    value await_job_ = value::undefined(); // see await_job(); a root in each_root
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;
@@ -2156,5 +2261,9 @@ private:
     bool failed_ = false;
     std::string error_;
 };
+
+// IsConstructor, 7.2.4: a native with [[Construct]], a non-arrow, non-generator
+// closure, or a proxy whose target is one. Defined in vm/call/construct.cpp.
+[[nodiscard]] bool is_constructor(value v);
 
 } // namespace ctbrowser::script

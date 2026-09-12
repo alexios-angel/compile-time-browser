@@ -24,6 +24,9 @@ namespace {
     if (ascii_iequals(name, "hover")) { return state_hover; }
     if (ascii_iequals(name, "active")) { return state_active; }
     if (ascii_iequals(name, "focus")) { return state_focus; }
+    // `:target` is UI state of the same shape: one element at a time, set by the
+    // shell (from the URL fragment rather than the pointer), no document fact.
+    if (ascii_iequals(name, "target")) { return state_target; }
     return 0;
 }
 
@@ -148,7 +151,9 @@ namespace {
     return in_names(name, names);
 }
 
-[[nodiscard]] bool known_pseudo_element(std::string_view name) {
+} // namespace
+
+bool known_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"before",
                                                  "after",
                                                  "first-line",
@@ -174,6 +179,8 @@ namespace {
     return in_names(name, names) || ascii_istarts_with(name, "-webkit-") ||
            ascii_istarts_with(name, "-moz-");
 }
+
+namespace {
 
 [[nodiscard]] bool known_functional_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"part",
@@ -499,13 +506,17 @@ private:
                 return false;
             }
             if (body.empty()) { return false; }
+            // A LANGUAGE RANGE IS KEPT AS WRITTEN: it is matched ASCII
+            // case-insensitively (Selectors 4 §7.2) but `selectorText` answers
+            // `:lang(zh-CN)`. A direction keyword is compared as-is and folds.
+            const std::string piece = single ? ascii_lower_copy(body) : std::string{body};
             if (want_argument) {
-                out.push_back(ascii_lower_copy(body));
+                out.push_back(piece);
                 want_argument = false;
             } else if (spaced) {
                 return false; // two arguments with no comma
             } else {
-                out.back() += ascii_lower_copy(body);
+                out.back() += piece;
             }
             spaced = false;
         }
@@ -672,12 +683,12 @@ private:
             // the only such callers are `querySelector` and `matches`, and Selectors
             // API §2 gives them no namespace resolver at all: `ns|div` there is a
             // SyntaxError in every browser.
+            const namespace_declaration * bound = nullptr;
             if (kind == ns_prefix::named) {
-                bool declared = false;
                 for (const namespace_declaration & each : sheet_->namespaces) {
-                    declared = declared || (!each.prefix.empty() && each.prefix == prefix);
+                    if (!each.prefix.empty() && each.prefix == prefix) { bound = &each; }
                 }
-                if (!declared) { return false; }
+                if (bound == nullptr) { return false; }
             }
             if (at + 1 >= run.size() || run[at + 1].kind != cv_kind::token) { return false; }
             const css_token & local = token(run[at + 1]);
@@ -690,11 +701,14 @@ private:
                 return false;
             }
             b.part.ns = kind;
-            if (kind == ns_prefix::named) { b.part.ns_name = atoms_->intern(prefix); }
-            // The null namespace and a named one are answered by nothing in the
-            // matcher, which knows an element's namespace only as html, svg or
-            // other; `*|` constrains nothing and matches as the bare name does.
-            if (kind != ns_prefix::any) { dead = true; }
+            if (kind == ns_prefix::named) {
+                b.part.ns_name = atoms_->intern(prefix);
+                b.part.ns_uri = atoms_->intern(bound->uri);
+            }
+            // The null namespace is answered by nothing in the matcher, which
+            // knows an element's namespace only as html, svg or other; `*|`
+            // constrains nothing and matches as the bare name does.
+            if (kind == ns_prefix::none) { dead = true; }
             return true;
         };
 
@@ -715,10 +729,6 @@ private:
                     continue;
                 }
                 building & b = compounds.back();
-                // A NAMESPACED attribute is matched and not serialised: the CSSOM
-                // has no field for the prefix, so `selectorText` falls back to the
-                // author's bytes for the compound that holds one.
-                if (match.ns != ns_prefix::unset) { b.part.dropped = true; }
                 b.part.attributes.push_back(std::move(match));
                 ++b.classes; // an attribute selector is class-level for specificity
                 continue;
@@ -900,7 +910,11 @@ private:
                     }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
-                    dead = true;
+                    // A PSEUDO-ELEMENT HAS A CASCADE - engine::resolve_pseudo runs
+                    // it for getComputedStyle(el, "::before") - and the matcher
+                    // keeps the compound from every element (`pseudo_wanted_`). A
+                    // vendor's is whatever the vendor says it is, and matches nothing.
+                    if (name.starts_with('-')) { dead = true; }
                     continue;
                 }
                 if (const std::uint32_t bit = state_bit_of(name); bit != 0) {
@@ -946,6 +960,16 @@ private:
         if (dead) {
             compounds.back().part.never_matches = true;
             compounds.back().part.dropped = lossy;
+        }
+
+        // A DEFAULT NAMESPACE PUTS EVERY UNPREFIXED COMPOUND IN IT, the implied
+        // `*` of `.style1` included (Selectors 4 §6.1.1): with `@namespace
+        // url(xhtml)` declared, `.style1` no longer names an <svg>.
+        for (const namespace_declaration & each : sheet_->namespaces) {
+            if (!each.prefix.empty()) { continue; }
+            for (building & b : compounds) {
+                if (b.part.ns == ns_prefix::unset) { b.part.ns_uri = atoms_->intern(each.uri); }
+            }
         }
 
         compiled_selector out;

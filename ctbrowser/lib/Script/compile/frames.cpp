@@ -364,17 +364,35 @@ void compiler_impl::compile_parameter_prologue(
         if (p.d == 1 || p.a < 0) { continue; }
         const auto slot = static_cast<std::uint16_t>(i);
         const std::uint32_t mark = reg_mark();
+        // This parameter and every one after it are in their TDZ while the
+        // default runs - see tdz_names_.
+        tdz_names_.clear();
+        for (std::size_t j = i; j < params.size(); ++j) {
+            if (at(params[j]).b >= 0) {
+                pattern_names(at(params[j]).b, tdz_names_);
+            } else {
+                tdz_names_.emplace_back(at(params[j]).text);
+            }
+        }
+        tdz_frame_ = frames_.size() - 1;
+        const struct leave_tdz {
+            compiler_impl & self;
+            ~leave_tdz() {
+                self.tdz_names_.clear();
+                self.tdz_frame_ = static_cast<std::size_t>(-1);
+            }
+        } leaving{*this};
         if (boxed[i]) {
             // `jump_if_defined` on the cell would always jump: test the value.
             const std::uint16_t current = alloc_reg();
             proto().emit(instruction{op::cell_get, current, slot});
             const std::size_t skip = proto().emit(instruction{op::jump_if_defined, current});
-            compile_expr(p.a, current);
+            compile_named_expr(p.a, current, p.b >= 0 ? "" : p.text);
             proto().emit(instruction{op::cell_set, slot, current});
             patch_here(skip);
         } else {
             const std::size_t skip = proto().emit(instruction{op::jump_if_defined, slot});
-            compile_expr(p.a, slot);
+            compile_named_expr(p.a, slot, p.b >= 0 ? "" : p.text);
             patch_here(skip);
         }
         release_to(mark);
@@ -386,6 +404,17 @@ void compiler_impl::compile_parameter_prologue(
         const vp::node & p = at(params[i]);
         if (p.b >= 0) { compile_pattern_binding(p.b, static_cast<std::uint16_t>(i), true); }
     }
+}
+
+void compiler_impl::emit_throw(std::string_view kind, std::string message) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t ctor = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, ctor, intern_name(std::string{kind})));
+    const std::uint16_t reason = alloc_reg();
+    emit_string(reason, std::move(message));
+    proto().emit(instruction{op::construct, ctor, 1});
+    proto().emit(instruction{op::throw_value, ctor});
+    release_to(mark);
 }
 
 std::string compiler_impl::kind_name(vp::nk kind) {

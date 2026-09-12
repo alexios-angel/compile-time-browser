@@ -32,12 +32,17 @@ class keeps its statics, its `prototype` and the `__home` that makes `super`
 resolve against the class a method was WRITTEN in rather than against `this`
 (three-deep hierarchies recurse forever otherwise).
 
-**Promises are SETTLED-ONLY**, like the previous engine's: no job queue, no `new Promise(executor)`,
-`then` runs its callback immediately. `async function` returns a settled promise
-(`op::wrap_promise`, through a factory hook the standard library installs — the
-VM cannot build a promise by itself). Enough for `await fetch(url)` and
-`.then(r => r.json())`; NOT enough for code that depends on ordering between a
-`then` and the statements around it.
+**Promises** — this paragraph used to say "settled-only, `then` runs its
+callback immediately", which stopped being true on 2026-08-09 (a job queue,
+`new Promise(executor)`, `await` on a pending promise suspends the frame; see
+"A `value` captured by a native lambda" below). Since 2026-09-12 the rest of
+the standard's shape is in as well: a throwing `then` handler rejects the next
+promise (`call_fenced` in `deliver`), an async body's uncaught throw rejects
+the promise it returned (the compiler's fence), async generators queue their
+requests, `for await` runs the async iteration protocol, and `Array.fromAsync`
+is written over it. `async function` returns a promise through `op::wrap_promise`,
+via a factory hook the standard library installs — the VM cannot build a
+promise by itself.
 
 **`===` compares STRINGS BY CONTENT** — it compared the NaN-boxed words, which
 is right for objects (identity) and singletons and wrong for strings, since two
@@ -289,9 +294,9 @@ constructors - so `new Set(otherSet)` and `f(...map.keys())` work, and all of th
 agree. It covers arrays, strings, Maps, Sets, the views those hand out, and
 anything array-LIKE.
 
-**The limit that remains**: there is no `Symbol.iterator` dispatch, so an object
-with a `next()` of its own is not iterated. A generator would need the same
-machinery and is out of scope (below).
+`Symbol.iterator` dispatch came on 2026-09-12: `iterable_values` runs a page's
+own `[Symbol.iterator]()` through the protocol, and for-of pulls such an
+iterator lazily (the generators section below).
 
 ### Reading a property of undefined throws (since 2026-09-12)
 
@@ -301,6 +306,61 @@ was undefined, and the error surfaced one step later naming `TableRow`. It is a
 TypeError now, in `lookup_property`/`store_property` so both tiers agree:
 "Cannot read properties of undefined (reading 'x')". `?.` is the way to ask
 without one.
+
+### Every `await` in a function is a job (since 2026-09-12)
+
+`await x` on a settled promise or a plain value read it straight out and
+carried on in the same turn; 27.7.5.3 makes the continuation a job even
+then. The frame is now lifted out exactly as for a pending promise and put
+back by one native job (`context::await_job`) queued at the await, so `await
+1` runs after the microtasks queued before it - which is what every ordering
+test and every MutationObserver callback relies on. A classic script's top
+level keeps the synchronous read (`return await 3` in a test script has no
+caller to hand a promise to) - and when what it awaits is a PENDING promise
+it drains the microtask queue first, because with every inner await a job,
+`return await g()` for an async `g` is pending until those jobs run.
+
+### Private names are keys per class, and a read is a brand check (since 2026-09-12)
+
+`#x` compiles to the property key `@#x:N`, N numbering the class body that
+declares it (`compiler_impl::private_scopes_`), so an inner class's `#x` is
+never an outer instance's and two classes' `#x` never alias. `lookup_property`
+treats any `@#` key as 7.3.31 PrivateGet: an object the class did not
+initialise - or any proxy - is the TypeError "Cannot read private member #x
+from an object whose class did not declare it". A WRITE is not checked yet:
+`this.#x = v` on a foreign object creates the element instead of throwing,
+because the field initialiser still defines through `set_prop` and a checked
+store would need a define native there. `#x in obj` is not parsed.
+
+### Strict mode, the part that changes what runs (since 2026-09-12)
+
+`function_proto::is_strict` is set by a `"use strict"` directive, inherited by
+nested functions, and always on inside a class body or a module. What it
+changes: a rejected [[Set]] - non-writable, inherited non-writable,
+non-extensible receiver, getter without setter, primitive receiver - is a
+TypeError (`store_rejected_`, read by `set_prop`/`set_index` and by the AOT
+bridge off the frame's proto) instead of the silent drop sloppy code gets, and
+an assignment to an unresolvable name is a ReferenceError (the compiler emits
+a `get_global` probe before the `set_global`). NOT in a module's top level,
+deliberately: ctcompile's module fixtures publish to their host through
+`OUT = ...` and rely on the write. Still sloppy everywhere: `this` in a plain
+call (undefined, not globalThis - the AOT contract pins it), `arguments`
+aliasing, `delete` of a non-configurable property, the early errors.
+
+### Reading an unresolvable name throws (since 2026-09-12)
+
+A bare identifier that is neither a local, a global binding nor a property of
+the global object read `undefined`; it is a ReferenceError now, "x is not
+defined", catchable, in `context::global_or_named` so both tiers agree (the
+`get_global` row and `ct_aot_global_get` became may_throw with a status and an
+out-slot in the same change). The global object is the global environment's
+object record, so an inherited name resolves - a bare `toString` is
+`Object.prototype.toString`, as in every browser - and the shell's named-access
+hook (an element with an `id`) is still asked before the throw. `typeof x` is
+the one read that stays silent (13.5.3): it compiles to get_global + type_of on
+one register as it always did, the run loop peeks at the next instruction on a
+miss, and the AOT tier routes a load_global whose only use is typeof through
+`ct_aot_global_get_soft`. It was 1,180 files of test262 by itself.
 
 ### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
 
@@ -553,18 +613,41 @@ which is precisely what a pawl that records the blocker is for:
 
 ### What is NOT implemented, by name
 
-* **`yield*`** - delegation. Zero uses across all three corpora; it would be a
-  loop over the inner iterator and is not written because nothing asks.
-* **`.return(v)` does not run `finally` blocks.** It marks the generator done
-  and answers `{value: v, done: true}`. The spec resumes the body to run any
-  pending `finally`, which needs the unwinder rather than the resumer.
-* **`for (x of gen())` MATERIALIZES.** `op::iterable` hands back an array by
-  construction, so the generator is drained - up to 2^20 values - rather than
-  pulled lazily. An INFINITE generator hangs there instead of looping for ever,
-  which is a bounded failure rather than a silent one. Laziness means a real
-  iterator protocol in the loop opcodes, which no corpus has asked for.
-* **Async generators** (`async function*`) parse and run as plain generators;
-  `for await` is not implemented.
+* **`yield*` delegates since 2026-09-12** (14.4.14): a bytecode loop around
+  three hidden natives (`__ctbrowser_delegate_open/call/settle`); a sync
+  generator hands the inner result object out as it is, and `.throw()` /
+  `.return()` while delegating reach the inner iterator first
+  (`generator_resume` keeps the record on the coroutine). An ASYNC generator
+  delegates on the `next` path only; throw/return into one still take the old
+  path.
+* **`.return(v)` runs `finally` blocks since 2026-09-12** - for a SYNC
+  generator: the return completion is a marker object (`@#return`) thrown at
+  the yield under a fence `generator_resume` pushes beneath the frame, every
+  catch clause in a generator starts with `__ctbrowser_catch_filter` which
+  hands a marker on, and the marker escaping the frame is what answers
+  `{value: v, done: true}`. A `yield` inside the finally suspends again; a
+  finally that returns overrides. An async generator's `.return()` still
+  finishes on the spot.
+* **`for (x of gen())` IS LAZY (since 2026-09-12).** The loop opens its
+  source through `__ctbrowser_for_of_open`, which answers undefined for what
+  `op::iterable` materialises exactly (arrays, strings, proxies, Map/Set and
+  their views, array-likes) and an iterator record for everything else; one
+  register tested per iteration picks the index loop or `__ctbrowser_iter_next`,
+  and `break` runs `__ctbrowser_iter_close`. So an infinite generator ends at
+  `break`, a page's own `[Symbol.iterator]` is pulled one value at a time, and
+  a non-iterable is the TypeError. Spread, `Array.from` and the Map/Set
+  constructors still drain through `iterable_values` (bounded at 2^20 steps,
+  then a RangeError). Not closed on a `return` or a throw out of the body -
+  that needs a handler, which ctcompile's importer refuses a function for.
+* **Async generators and `for await` exist since 2026-09-12** — the request
+  queue lives on `coroutine_object`, `yield`/`return` await their operands,
+  and `for await` lowers to the real protocol (see `docs/test262.md`). Array
+  DESTRUCTURING runs the real protocol since 2026-09-12 (three natives,
+  `__ctbrowser_iter_open/next/close`, IteratorClose on the normal early exit;
+  not on a throw out of a default - a handler there costs the function its
+  native body in ctcompile), and a
+  page's own `[Symbol.iterator]()` iterates everywhere `iterable_values`
+  is asked - still eagerly.
 
 ## THE TWO INSTRUMENTS, AND WHY BOTH
 
