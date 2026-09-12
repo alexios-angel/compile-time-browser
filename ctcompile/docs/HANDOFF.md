@@ -40,8 +40,8 @@ mutations**. Two refusal controls leave undefined globals; the observer now
 checks those names and their exact type counts in both engines. There is no
 oracle discrepancy or skipped check.
 
-**01aad175** adds `--jobs` to the existing ownership driver, defaulting to one,
-and runs its existing full lit workflow with **two workers**. Only independent
+**01aad175** initially adds `--jobs` to the existing ownership driver, defaulting
+to one, and runs its existing full lit workflow with **two workers**. Only independent
 positive-program checks run concurrently; source observations and refusal
 controls keep their order. The same focused group passes in **69.11 seconds
 serially / 41.82 seconds with two workers** (**39.5% lower wall time**), with
@@ -53,10 +53,27 @@ builds**. Run the existing `--group object-keys` command with `--jobs 2`.
 The **320-step rebuild**, final no-op rebuild and **4/4 focused CTests in
 3.01 seconds** pass. Stable clang-format **22.1.8** passes **795 files**;
 the actual bundled-23 check retains the same nine pre-existing differences,
-byte-identical to the prior gate. All **1238 frozen input hashes** match before
-the full run. **The full 530-CTest gate is running; its result is pending.**
-The previous full Bootstrap measurement was **19/574 native functions** in
-both modes; these focused admissions do not establish a new bundle total.
+byte-identical to the prior gate. The completed alias gate passes **530/530
+CTests in 1719.28 seconds**, including **158 browser tests** and **168/168 lit
+cases in 886.75 seconds**. All **1238 frozen committed input hashes** match the
+devbox before/after. Fresh full Bootstrap remains **19/574 native functions**
+in both modes; exact Data remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**.
+
+The user then requested full devbox CPU utilization. **ce7ea791** defaults the
+Map program pool to available CPUs and reserves that CPU count for lit using
+CTest's `PROCESSORS` property. **4d022514** changes `tools/remote-build.sh` to
+query remote `nproc` and pass explicit build/CTest job counts; `CT_BUILD_JOBS`
+and `CT_TEST_JOBS` retain overrides. This devbox exposes **8 logical CPUs and
+31 GiB RAM**. Its CTest **3.28.3** ran the preset's `jobs: 0` serially; the gate
+now explicitly uses **8 jobs**, while lit keeps its own eight workers.
+The same focused cohort passes with eight workers in **26.30 seconds**, and
+all **1251 artifacts** still match serial/two-worker results. The rebuild,
+**4/4 concurrent focused CTests in 1.33 seconds**, and lit's **8-slot reservation**
+check pass. The output-path audit found no collisions or missing dependency.
+**The new full parallel gate is running against 1240 frozen inputs; its result
+is pending.** Evidence: `/tmp/ctcompile-all-cores-{focused,full}.log`,
+`/tmp/ctcompile-all-cores-{comparison,frozen}.json` and
+`/tmp/ctcompile-devbox-parallel-probe.log`.
 Evidence: `/tmp/ctcompile-key-alias-focused-fixed.log`,
 `/tmp/ctcompile-key-alias-{full.log,frozen.json,matrix.json}`,
 `/tmp/ctcompile-key-alias-parallel-comparison.json`,
@@ -70,9 +87,22 @@ publication; preserve every load/store. Both HostContract's direct-predecessor
 restriction and the independent owner restriction must advance together.
 Reuse the current leaf identity and global lifetime checks for three owning
 bindings. Unread one-hop alias **ddfc4ee9** remains a separate refusal.
-The bounded review is `/tmp/ctcompile-key-alias-next-chain.md`. Full native
-Bootstrap, field/nested-Map ownership, direct browser API integration and the
-independent ordinary-object own-data/prototype escape proof remain unfinished.
+The bounded review is `/tmp/ctcompile-key-alias-next-chain.md`.
+
+The next existing Bootstrap-facing payload isolate is **ca0f13c2**
+(`object_argument_global_object_payload`: four functions/five calls/trace=1).
+It retains the caller's key with `t.set(e,e)` and still measures **0/4 native**
+in both modes. Prove caller-owned payload retention independently of key use;
+current nonprimitive payload admission covers only proved method-local leaves.
+Actual Bootstrap Data at `bootstrap.bundle.js:13` also stores inner Maps, and
+BaseComponent at line 300 passes an instance with `_element`/`_config` fields.
+Those ownership requirements and full host/publication proofs remain open.
+The second alias hop does not appear in Data; neither small isolate establishes
+full Data admission or a bundle-count increase. Exact source hashes, measured
+refusals and static requirements are separated in
+`/tmp/ctcompile-key-alias-bootstrap-next.md`. Full native Bootstrap, direct
+browser API integration and the independent ordinary-object own-data/prototype
+escape proof remain unfinished.
 
 ## Named global object keys, 2026-09-11
 
