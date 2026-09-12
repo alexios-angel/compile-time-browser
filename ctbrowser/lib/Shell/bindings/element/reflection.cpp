@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <charconv>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -736,7 +738,12 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         // <base> resolves against the document's own address instead. That is a
         // real difference from a browser and it is the honest one to have -
         // inventing a base URL would be worse than using the document's.
-        if (!present) { return cx.string(""); }
+        // `action` and `formAction` are the two rows HTML sends to the
+        // document's URL when the attribute is absent (4.10.18.6, 4.10.19.6).
+        if (!present) {
+            const bool document_url = row.content == "action" || row.content == "formaction";
+            return cx.string(document_url ? location_href_ : std::string{});
+        }
         if (location_href_.empty()) { return cx.string(std::string{raw}); }
         const std::string resolved = resolve(location_href_, raw);
         return cx.string(resolved.empty() ? std::string{raw} : resolved);
@@ -1124,6 +1131,165 @@ void dom_bindings::element_reference_set(context & cx, std::string_view idl,
     mutated();
     object->define(explicit_slot(idl), kept, script::attr_none);
     object->define(explicit_source_slot(idl), cx.string(""), script::attr_none);
+}
+
+// --- DOUBLES: `progress.max` AND `<meter>`'s SIX ---------------------------
+//
+// HTML 2.6.12/2.6.13, "double" and "double limited to only positive numbers",
+// over the rules for parsing floating-point number values (2.4.4.3). The
+// getter answers the default when the attribute is absent or does not parse
+// - or, limited, is not positive; the setter writes the number's JavaScript
+// string, and a limited row leaves the attribute alone for a value that is
+// not positive. NOT in the table: its types are integers and strings, and the
+// six meter rows have a custom getter in the specification (each is clamped
+// against the others) that this does not attempt - reflection-forms.html
+// tests only their setters, which is what "customGetter" there means.
+namespace {
+
+struct double_row {
+    std::string_view interface;
+    std::string_view idl;
+    double fallback;
+    bool positive;
+};
+
+constexpr double_row double_rows[] = {
+    {"HTMLProgressElement", "max", 1.0, true},   {"HTMLMeterElement", "value", 0.0, false},
+    {"HTMLMeterElement", "min", 0.0, false},     {"HTMLMeterElement", "max", 0.0, false},
+    {"HTMLMeterElement", "low", 0.0, false},     {"HTMLMeterElement", "high", 0.0, false},
+    {"HTMLMeterElement", "optimum", 0.0, false},
+};
+
+// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3, as a
+// syntax check that hands the matched text to from_chars: HTML whitespace,
+// a sign, digits or a fraction, an optional fraction, an optional exponent
+// with its own sign - and anything after that is ignored rather than fatal.
+[[nodiscard]] bool parse_html_float(std::string_view text, double & out) {
+    std::size_t at = 0;
+    while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
+    std::string canonical;
+    if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
+        if (text[at] == '-') { canonical += '-'; }
+        ++at;
+    }
+    const auto digit = [&](std::size_t i) {
+        return i < text.size() && text[i] >= '0' && text[i] <= '9';
+    };
+    if (!digit(at) && !(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
+    if (!digit(at)) { canonical += '0'; }
+    while (digit(at)) { canonical += text[at++]; }
+    if (at < text.size() && text[at] == '.') {
+        ++at;
+        canonical += '.';
+        if (!digit(at)) { canonical += '0'; }
+        while (digit(at)) { canonical += text[at++]; }
+    }
+    if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
+        std::size_t look = at + 1;
+        std::string exponent = "e";
+        if (look < text.size() && (text[look] == '-' || text[look] == '+')) {
+            if (text[look] == '-') { exponent += '-'; }
+            ++look;
+        }
+        if (digit(look)) {
+            while (digit(look)) { exponent += text[look++]; }
+            canonical += exponent;
+        }
+    }
+    const auto result = std::from_chars(canonical.data(), canonical.data() + canonical.size(), out);
+    if (result.ec != std::errc{} || !std::isfinite(out)) { return false; }
+    if (out == 0) { out = 0; } // -0 is 0, as the specification's algorithm yields
+    return true;
+}
+
+} // namespace
+
+void dom_bindings::install_double_reflection(context & cx) {
+    for (const double_row & row : double_rows) {
+        const value iface = interface_prototype(row.interface);
+        if (!iface.is_object()) { continue; }
+        auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        const std::string name{row.idl};
+        proto->define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name,
+                [this, &row](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::number(row.fallback); }
+                    const auto txn = doc_->read();
+                    const atom attribute = atoms_->intern(row.idl);
+                    double parsed = 0;
+                    if (!txn.has_attribute(id, attribute) ||
+                        !parse_html_float(txn.attribute_value(id, attribute), parsed) ||
+                        (row.positive && parsed <= 0)) {
+                        return value::number(row.fallback);
+                    }
+                    return value::number(parsed);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                name, [this, &row](context & c, std::span<value> a) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::undefined(); }
+                    const double given = arg_number(a, 0);
+                    // WebIDL's `double` is a finite number or a TypeError.
+                    if (!std::isfinite(given)) {
+                        c.throw_error("TypeError", "Failed to set '" + std::string{row.idl} +
+                                                       "': the value is not a finite number.");
+                        return value::undefined();
+                    }
+                    if (row.positive && given <= 0) { return value::undefined(); }
+                    (void)doc_->set_attribute(id, atoms_->intern(row.idl),
+                                              c.to_string(value::number(given)));
+                    mutated();
+                    return value::undefined();
+                })));
+    }
+}
+
+// --- `option.label` AND `option.value`: THE ATTRIBUTE, ELSE THE TEXT ---------
+//
+// HTML 4.10.10: both read the content attribute when it is present and the
+// option's text otherwise - its descendant text, stripped and collapsed -
+// and both write the attribute. Not a table row because of that fallback.
+void dom_bindings::install_option_reflection(context & cx) {
+    const value iface = interface_prototype("HTMLOptionElement");
+    if (!iface.is_object()) { return; }
+    auto * proto = static_cast<script::object_object *>(iface.as_heap());
+    for (const char * name : {"label", "value"}) {
+        proto->define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name,
+                [this, name](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return c.string(""); }
+                    {
+                        const auto txn = doc_->read();
+                        const atom attribute = atoms_->intern(name);
+                        if (txn.has_attribute(id, attribute)) {
+                            return c.string(std::string{txn.attribute_value(id, attribute)});
+                        }
+                    }
+                    // "Strip and collapse ASCII whitespace" over the text.
+                    std::string collapsed;
+                    for (const char each : text_of(id)) {
+                        const bool space = html_whitespace.find(each) != std::string_view::npos;
+                        if (space && (collapsed.empty() || collapsed.back() == ' ')) { continue; }
+                        collapsed += space ? ' ' : each;
+                    }
+                    if (!collapsed.empty() && collapsed.back() == ' ') { collapsed.pop_back(); }
+                    return c.string(collapsed);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                name, [this, name](context & c, std::span<value> a) {
+                    if (const node_id id = receiver(c)) {
+                        (void)doc_->set_attribute(id, atoms_->intern(name), arg_string(c, a, 0));
+                        mutated();
+                    }
+                    return value::undefined();
+                })));
+    }
 }
 
 } // namespace ctbrowser::shell

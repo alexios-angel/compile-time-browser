@@ -1929,6 +1929,11 @@ public:
     // 2.6.1's Element and FrozenArray<Element> reflection, with the explicitly
     // set attr-element kept on the wrapper. See element/reflection.cpp.
     void install_element_reflection(context & cx);
+    // `progress.max` and `<meter>`'s six: HTML's double reflections, on
+    // their interface prototypes. See element/reflection.cpp.
+    void install_double_reflection(context & cx);
+    // `option.label` and `option.value`, which fall back to the option's text.
+    void install_option_reflection(context & cx);
     [[nodiscard]] value element_reference_get(context & cx, std::string_view idl,
                                               std::string_view content, bool list);
     void element_reference_set(context & cx, std::string_view idl, std::string_view content,

@@ -103,6 +103,29 @@ void test_the_rows_the_element_tables_name_are_all_there() {
     is("(function () { var s = document.createElement('select'); s.autocomplete = 'off';"
        " return typeof s.autocomplete + ':' + s.getAttribute('autocomplete'); })()",
        "string:off");
+    // `progress.max` is a double limited to positive numbers over HTML's
+    // float rules: " 7" and "1.e2" parse, "\v7" and "-1" are the default 1,
+    // and a non-positive IDL set leaves the attribute alone. A meter's rows
+    // write the number's JavaScript string.
+    is("(function () { var p = document.createElement('progress'); var seen = [typeof p.max, "
+       "p.max];"
+       " ['  7', '1.e2', '\v7', '-1', '.5', '1e-10'].forEach(function (t) {"
+       " p.setAttribute('max', t); seen.push(p.max); });"
+       " p.setAttribute('max', 'kept'); p.max = -1; seen.push(p.getAttribute('max'));"
+       " p.max = 1e25; seen.push(p.getAttribute('max'));"
+       " var m = document.createElement('meter'); m.low = -0; m.high = 1e-10;"
+       " seen.push(m.getAttribute('low'), m.getAttribute('high'), m.optimum);"
+       " return seen.join(); })()",
+       "number,1,7,100,1,1,0.5,1e-10,kept,1e+25,0,1e-10,0");
+    // `option.label` and `option.value` fall back to the option's text.
+    is("(function () { var o = document.createElement('option'); o.textContent = ' a  b ';"
+       " var seen = [o.label, o.value]; o.value = 'v'; o.label = 'l';"
+       " seen.push(o.value, o.getAttribute('value'), o.label); return seen.join('|'); })()",
+       "a b|a b|v|v|l");
+    // `form.action` with no attribute is the document's URL, not "".
+    is("(function () { var f = document.createElement('form');"
+       " return f.action === document.URL; })()",
+       "true");
 }
 
 // --- HTMLHyperlinkElementUtils ----------------------------------------------

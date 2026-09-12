@@ -1398,6 +1398,8 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
     ensure_dom_interfaces(cx);
     install_frame_accessors(cx); // the prototypes exist now, and this is the first to need one
     install_element_reflection(cx);
+    install_double_reflection(cx);
+    install_option_reflection(cx);
     std::vector<script::object_object *> hosts;
     for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
         if (const value proto = interface_prototype(interface); proto.is_object()) {
