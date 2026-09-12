@@ -157,7 +157,7 @@ struct function_span {
 // between an honest gap and a wrong number. An empty unit is a plain number and
 // answers with itself, because that is what a calc term needs. Defined in
 // units.cpp.
-[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
-                                              const length_context & ctx);
+[[nodiscard]] std::optional<double> unit_to_px(double value, std::string_view unit,
+                                               const length_context & ctx);
 
 } // namespace ctbrowser::style::css::detail

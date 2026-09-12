@@ -67,6 +67,11 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
     CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
     CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
+    // Two infinities that cancel for any basis are a NaN, and so zero.
+    CHECK_EQ(fold_math("calc(infinity * 1px - infinity * 1%)", ctx, math_context::length).text,
+             std::string{"0%"});
+    CHECK_EQ(fold_math("calc(infinity * 1px + infinity * 1%)", ctx, math_context::length).text,
+             std::string{"calc(33554432% + 33554432px)"});
     // ...and only when computed: `el.style` reads the calc() back.
     CHECK_EQ(simplify_math("calc(NaN * 1px)"), std::string{"calc(NaN * 1px)"});
     CHECK_EQ(simplify_math("calc(1 / 0)"), std::string{"calc(infinity)"});
@@ -175,6 +180,19 @@ void test_typed_arithmetic() {
     CHECK(evaluate_math("10% * 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("52px * 1px / 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("10% / 1px", ctx).outcome == math_outcome::unresolved);
+    // A percentage over a percentage cancels its basis.
+    CHECK_EQ(number("10% / 20%"), 0.5);
+    CHECK(evaluate_math("(10% + 1px) / 20%", ctx).outcome == math_outcome::unresolved);
+    // The container units fall back to the small viewport without a container.
+    ctx.viewport_width = 1024.0f;
+    ctx.viewport_height = 768.0f;
+    CHECK_EQ(number("sign(0cqi / 1px)"), 0.0);
+    CHECK_EQ(number("10cqw"), 102.4);
+    CHECK_EQ(number("10cqmin"), 76.8);
+    // ...and the bases are applied in double: `mod(18vw, 5vw)` is exactly what
+    // `3vw` is, which single-precision bases put five millionths off
+    // (round-mod-rem-computed).
+    CHECK_EQ(static_cast<float>(number("mod(18vw, 5vw)")), static_cast<float>(number("3vw")));
     // calc-unit-analysis: an area and an inverse length are still invalid.
     CHECK(evaluate_math("calc(2px * 1px)", ctx).outcome == math_outcome::invalid);
     CHECK(evaluate_math("calc(20 / 0.75rem)", ctx).outcome == math_outcome::invalid);

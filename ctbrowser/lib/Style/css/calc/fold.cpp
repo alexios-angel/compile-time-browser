@@ -314,6 +314,16 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
                 if (std::isnan(v) || (angle && std::isinf(v))) { return 0.0; }
                 return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
             };
+            // AN INFINITE LENGTH AGAINST AN OPPOSITE INFINITE PERCENTAGE is a
+            // NaN however the percentage resolves - `calc(infinity * 1px -
+            // infinity * 1%)` is `infinity - infinity` for any basis - and a
+            // NaN is censored to zero (CSS Values 4 §10.9). Clamping the two
+            // halves separately would hand layout two bounds that do not cancel.
+            if (computed.has_percent && std::isinf(computed.px) && std::isinf(computed.percent) &&
+                std::signbit(computed.px) != std::signbit(computed.percent)) {
+                computed.px = 0.0;
+                computed.percent = 0.0;
+            }
             computed.px = clamped(computed.px);
             computed.percent = clamped(computed.percent);
             // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10

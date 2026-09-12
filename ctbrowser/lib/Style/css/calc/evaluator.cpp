@@ -118,6 +118,19 @@ struct arithmetic {
     // A divisor carrying a percentage has no magnitude until layout, and a
     // symbolic one has none at all.
     if (!b.is_number() || b.has_percent) {
+        // A PERCENTAGE OVER A PERCENTAGE IS A NUMBER: the basis cancels, so
+        // `calc(10% / 20%)` is 0.5 with nothing left to resolve
+        // (typed_arithmetic) - provided each side is nothing but its
+        // percentage, since `(10% + 1px) / 20%` needs the basis after all.
+        if (a.has_percent && b.has_percent && no_plain_part(a) && no_plain_part(b) &&
+            a.symbols.empty() && b.symbols.empty()) {
+            term out;
+            for (std::size_t i = 0; i < out.dims.size(); ++i) {
+                out.dims[i] = static_cast<std::int8_t>(a.dims[i] - b.dims[i]);
+            }
+            out.value = a.percent / b.percent;
+            return {out};
+        }
         if (b.has_percent || !b.symbols.empty() || !a.symbols.empty()) {
             return {std::nullopt, true};
         }
