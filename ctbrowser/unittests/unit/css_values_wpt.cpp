@@ -410,6 +410,31 @@ void test_a_transform_computes_to_a_matrix() {
                          "matrix(0, 0, 0, 0, 0, 0)"});
 }
 
+// rem-unit-root-element and lh-rlh-on-root-001: the root element's own
+// font-size and line-height read back from the cascade, whose `rem` and `lh`
+// on the root resolve against the initial values, not from the viewport's box.
+void test_the_root_reads_its_own_font_size_back() {
+    using ctbrowser::shell::browser;
+    using ctbrowser::shell::browser_options;
+    using ctbrowser_test::logged;
+    browser page{browser_options{400, 200}};
+    page.load_html(R"html(<html><head><style>
+      :root { font-size: 50px; margin-left: 2rem; line-height: 2rem }
+    </style></head><body>
+    <script>
+        const r = document.documentElement;
+        const cs = () => getComputedStyle(r);
+        const a = [cs().fontSize, cs().marginLeft, cs().lineHeight];
+        r.style.fontSize = '3rem';
+        a.push(cs().fontSize);
+        r.style.cssText = 'font-size: 2lh; line-height: 142px';
+        a.push(cs().fontSize);
+        console.log('root=' + a.join('|'));
+    </script></body></html>)html");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "root="), std::string{"root=50px|100px|100px|48px|40px"});
+}
+
 // getComputedStyle-border-radius-001 and -003: a corner is a pair of radii and
 // the shorthand puts the horizontal four before a slash and the vertical four
 // after it - no slash when the two lists agree.
@@ -444,6 +469,7 @@ int main() {
     test_attr_substitution();
     test_what_a_page_reads_back();
     test_a_transform_computes_to_a_matrix();
+    test_the_root_reads_its_own_font_size_back();
     test_border_radius_reassembles_its_corners();
     REPORT("css_values_wpt");
 }

@@ -305,7 +305,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // length can be honoured here; a percentage or an em needs the parent's
     // computed size, and the cascade does not resolve one for a box that was
     // never built.
-    if (at.box == nullptr) {
+    //
+    // ...AND OF THE ROOT, whose box is the viewport's and carries the default
+    // size whatever `:root { font-size }` said (rem-unit-root-element). The
+    // cascade folded the root's own size to pixels, so the declared text is
+    // the answer there too.
+    const bool is_root_element = at.chain.size() == 2; // <html>, then the Document
+    if (at.box == nullptr || is_root_element) {
         const layout::length declared_size = layout::parse_length(declared("font-size"));
         if (!declared_size.is_auto() && declared_size.u != layout::unit::percent &&
             declared_size.u != layout::unit::em) {
@@ -470,7 +476,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "line-height") {
             const std::string_view given = declared(property);
             if (given.empty() || ascii_iequals(given, "normal")) { return "normal"; }
-            return at.box != nullptr ? px_text(at.box->line_height) : std::string{};
+            // Resolved from the cascade's text the way the box builder resolves
+            // it, rather than read off the box: the ROOT's box is the viewport
+            // and does not carry one, so `:root { line-height: 2rem }` read
+            // back as `normal`'s figure (rem-unit-root-element).
+            return px_text(layout::box_builder::resolve_line_height(given, at.font_size));
         }
         const std::string_view text = declared(property);
         // 2b. DISPLAY, from the box tree when nothing declared it. The CSS initial
