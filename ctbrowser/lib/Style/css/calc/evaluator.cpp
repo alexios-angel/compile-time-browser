@@ -92,7 +92,7 @@ struct arithmetic {
 // A SYMBOL THAT IS A FUNCTION rather than a unit - `sibling-index()` in a
 // specified value - and a term made only of those.
 [[nodiscard]] bool function_symbol(std::string_view key) noexcept {
-    return key.ends_with("()");
+    return key.ends_with("()") || key == "size";
 }
 [[nodiscard]] bool function_only(const term & t) noexcept {
     return !t.symbols.empty() && t.value == 0.0 && !t.has_percent &&
@@ -325,8 +325,8 @@ enum class basis : std::uint8_t {
 class evaluator {
 public:
     evaluator(const token_stream & tokens, const length_context & ctx,
-              basis measure = basis::against_context)
-        : t_(tokens), ctx_(ctx), basis_(measure) {}
+              basis measure = basis::against_context, bool size_symbol = false)
+        : t_(tokens), ctx_(ctx), basis_(measure), size_symbol_(size_symbol) {}
 
     [[nodiscard]] math_answer run() {
         const std::optional<term> value = settle();
@@ -542,6 +542,11 @@ private:
             out.value = -std::numeric_limits<double>::infinity();
         } else if (ascii_iequals(name, "nan")) {
             out.value = std::nan("");
+        } else if (size_symbol_ && basis_ == basis::symbolic && ascii_iequals(name, "size")) {
+            // `size` INSIDE calc-size(): the basis, a <length> with no
+            // magnitude until layout (CSS Values 5 §calc-size).
+            out.set_type(numeric_type::length);
+            add_symbol(out, "size", 1.0);
         } else {
             return fail();
         }
@@ -639,6 +644,7 @@ private:
         if (named("sign(")) { return sign_or_abs(true); }
         if (named("progress(")) { return progress_of(); }
         if (named("random(")) { return random_of(); }
+        if (named("calc-mix(")) { return calc_mix(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -918,9 +924,16 @@ private:
         // computed-value time and nowhere earlier (random-serialize).
         if (basis_ == basis::symbolic) { return unresolvable(); }
         // The options: everything before the first comma, read as tokens.
+        // `[ [ auto | <dashed-ident> ] || <ua-ident> || element-scoped |
+        // property-scoped | property-index-scoped ] | fixed <number>`: one
+        // dashed name and one UA ident at most, each scoping word at most once,
+        // `property-scoped` and `property-index-scoped` exclusive of each other
+        // and of a UA ident, and `fixed` alone with its number in [0, 1]
+        // (random-invalid, random-serialize).
         std::string options;
         bool fixed = false;
         double base = 0.0;
+        int names = 0, element = 0, property = 0, index = 0, ua = 0;
         skip_whitespace();
         for (;;) {
             skip_whitespace();
@@ -929,7 +942,15 @@ private:
             if (tok.type == token_type::ident) {
                 const std::string_view word = t_.text_of(tok);
                 if (ascii_iequals(word, "fixed")) {
+                    if (fixed || !options.empty()) { return fail(); }
                     ++at_;
+                    skip_whitespace();
+                    // A literal outside [0, 1] is a syntax error; a computed
+                    // one is clamped (random-invalid, random-computed).
+                    if (peek().type == token_type::number &&
+                        (peek().number < 0.0 || peek().number > 1.0)) {
+                        return fail();
+                    }
                     const std::optional<term> given = sum();
                     if (!given || !given->is_number() || given->has_percent ||
                         !given->symbols.empty()) {
@@ -941,15 +962,29 @@ private:
                     base = std::min(std::max(given->value, 0.0), 1.0 - 1e-9);
                     continue;
                 }
-                if (word.starts_with("--") || ascii_iequals(word, "element-scoped") ||
-                    ascii_iequals(word, "property-index-scoped") || ascii_iequals(word, "auto")) {
+                const bool is_name = word.starts_with("--") || ascii_iequals(word, "auto");
+                const bool is_ua = ascii_istarts_with(word, "ua-");
+                const bool is_element = ascii_iequals(word, "element-scoped");
+                const bool is_property = ascii_iequals(word, "property-scoped");
+                const bool is_index = ascii_iequals(word, "property-index-scoped");
+                if (is_name || is_ua || is_element || is_property || is_index) {
+                    if (fixed) { return fail(); }
+                    names += is_name ? 1 : 0;
+                    ua += is_ua ? 1 : 0;
+                    element += is_element ? 1 : 0;
+                    property += is_property ? 1 : 0;
+                    index += is_index ? 1 : 0;
+                    if (names > 1 || ua > 1 || element > 1 || property + index > 1 ||
+                        (ua > 0 && property + index > 0)) {
+                        return fail();
+                    }
                     if (!options.empty()) { options += ' '; }
                     options += word;
                     ++at_;
                     continue;
                 }
                 // `NaN`, `infinity`, `pi`: the first argument, with no options.
-                if (!options.empty()) { return fail(); }
+                if (!options.empty() || fixed) { return fail(); }
                 break;
             }
             // A number or a dimension: the first argument, with no options.
@@ -988,6 +1023,96 @@ private:
             args.size() == 3 ? std::optional<double>{scalar_of(args[2])} : std::nullopt;
         return with_scalar(args.front(),
                            random_one(base, scalar_of(args[0]), scalar_of(args[1]), step));
+    }
+
+    // calc-mix( [ <calc-sum> <percentage>? ]# ), CSS Values 5 §calc-mix: a
+    // weighted sum, its weights normalised the way color-mix() normalises
+    // them. Each weight is clamped to [0%, 100%]; the omitted ones share what
+    // is left below 100% equally; a total over 100% is scaled down to it and a
+    // total under is not scaled up. Weights all zero is the zero of the first
+    // value's kind (calc-mix-serialize, calc-mix-computed).
+    //
+    // A SPECIFIED VALUE FOLDS ONLY WHEN EVERYTHING IN IT HAS A MAGNITUDE. With
+    // a `3em`, a `sibling-index()` or a weight that is itself unresolved, §10.12
+    // keeps the function - normalised, which simplify.cpp writes - because
+    // `calc-mix(10px 50%, 3em 50%)` is not `calc(5px + 1.5em)` to the page.
+    [[nodiscard]] std::optional<term> calc_mix() {
+        ++at_; // the function token, `(` included
+        std::vector<term> values;
+        std::vector<std::optional<double>> weights;
+        for (;;) {
+            const std::optional<term> one = sum();
+            if (!one) { return std::nullopt; }
+            values.push_back(*one);
+            skip_whitespace();
+            std::optional<double> weight;
+            if (peek().type == token_type::percentage) {
+                // A literal weight outside [0%, 100%] is a syntax error; only
+                // a computed one is clamped (calc-mix-invalid).
+                if (peek().number < 0.0 || peek().number > 100.0) { return fail(); }
+                weight = peek().number;
+                ++at_;
+            } else if (peek().type == token_type::function) {
+                // A weight written as a function keeps the specified value as
+                // written, resolvable or not (calc-mix-serialize).
+                if (basis_ == basis::symbolic) { return unresolvable(); }
+                const std::optional<term> given = math_function();
+                if (!given) { return std::nullopt; }
+                // A weight is a bare percentage; one with a magnitude of its
+                // own or a symbol in it is a type error or waits for the
+                // cascade.
+                if (!given->has_percent || given->value != 0.0 || !given->symbols.empty()) {
+                    return given->symbols.empty() ? fail() : unresolvable();
+                }
+                weight = given->percent;
+            }
+            if (weight) { weight = std::min(std::max(*weight, 0.0), 100.0); }
+            weights.push_back(weight);
+            skip_whitespace();
+            if (peek().type == token_type::comma) {
+                ++at_;
+                continue;
+            }
+            break;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        for (const term & one : values) {
+            if (one.dims != values.front().dims) { return fail(); }
+        }
+        double given = 0.0;
+        double missing = 0.0;
+        for (const std::optional<double> & w : weights) {
+            if (w) {
+                given += *w;
+            } else {
+                missing += 1.0;
+            }
+        }
+        const double share = missing == 0.0 ? 0.0 : std::max(0.0, 100.0 - given) / missing;
+        const double total = std::max(100.0, given);
+        std::optional<term> out;
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            const double w = weights[i].value_or(share) / total;
+            if (w == 0.0) { continue; }
+            // A value with no magnitude yet - `3em`, `sibling-index()` - keeps
+            // the specified value a calc-mix(); one weighing nothing does not.
+            if (basis_ == basis::symbolic && !values[i].symbols.empty()) { return unresolvable(); }
+            const term part = scaled(values[i], w);
+            out = out ? add(*out, part, false) : std::optional<term>{part};
+            if (!out) { return fail(); }
+        }
+        if (out) { return out; }
+        // Every weight zero: nought, of the first value's kind - which in a
+        // symbolic sum is a `0px` term of its own, so `calc(10% +
+        // calc-mix(1px 0%, 3% 0%))` keeps its `0px`.
+        term zero;
+        zero.dims = values.front().dims;
+        zero.has_percent = values.front().has_percent && values.front().symbols.empty();
+        if (basis_ == basis::symbolic && !zero.has_percent && !zero.is_number()) {
+            add_symbol(zero, canonical_unit(zero.type()), 0.0);
+        }
+        return zero;
     }
 
     [[nodiscard]] std::optional<term> hypot_of() {
@@ -1092,6 +1217,7 @@ private:
     const token_stream & t_;
     const length_context & ctx_;
     basis basis_ = basis::against_context;
+    bool size_symbol_ = false; // `size` is a term: the calculation of a calc-size()
     math_outcome outcome_ = math_outcome::invalid;
     std::size_t at_ = 0;
     bool ok_ = true;
@@ -1107,10 +1233,15 @@ private:
 
 // THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
 // the same every time the same KEY asks for it, so a page reflows to the same
-// random layout it first had. The key is what the sharing options say -
+// random layout it first had. The key is what the sharing options say, read
+// the way random-serialize spells them: a `<dashed-ident>`, a UA ident
+// (`ua-width-1`, which `property-index-scoped` means and `property-scoped`
+// means without the index), and `element-scoped` -
 //
-//   nothing                 this element, this property, this position
-//   property-index-scoped   this property and position, on every element
+//   nothing                 element-scoped ua-<property>-<position>
+//   property-index-scoped   ua-<property>-<position>, on every element
+//   property-scoped         ua-<property>, every position, every element
+//   element-scoped alone    this element, whatever the property
 //   --name                  the name alone, everywhere
 //   --name element-scoped   the name, on this element
 //
@@ -1119,25 +1250,33 @@ private:
 // same reason.
 [[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
     std::string name;
+    std::string ua;
     bool element_scoped = false;
     bool property_scoped = false;
+    bool property_index_scoped = false;
     for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
         if (word.starts_with("--")) {
             name = std::string{word};
+        } else if (ascii_istarts_with(word, "ua-")) {
+            ua = ascii_lower_copy(word);
         } else if (ascii_iequals(word, "element-scoped")) {
             element_scoped = true;
-        } else if (ascii_iequals(word, "property-index-scoped")) {
+        } else if (ascii_iequals(word, "property-scoped")) {
             property_scoped = true;
+        } else if (ascii_iequals(word, "property-index-scoped")) {
+            property_index_scoped = true;
         }
     }
-    std::string key;
-    if (!name.empty()) {
-        key = name;
-        if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
-    } else {
-        key = std::string{ctx.property} + '|' + std::to_string(ctx.random_index);
-        if (!property_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    if (property_scoped) {
+        ua = "ua-" + std::string{ctx.property};
+    } else if (property_index_scoped) {
+        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
+    } else if (name.empty() && ua.empty() && !element_scoped) {
+        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
+        element_scoped = true;
     }
+    std::string key = name + '|' + ua;
+    if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
     std::uint64_t hash = 14695981039346656037ull;
     for (const char c : key) {
         hash ^= static_cast<unsigned char>(c);
@@ -1155,10 +1294,11 @@ namespace detail {
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,
 // because a sum of units that could not be added has no single magnitude.
-[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression) {
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
+                                                              bool size_symbol) {
     const token_stream tokens = tokenize(expression);
     const length_context none; // deliberately unused: nothing is measured here
-    evaluator run{tokens, none, basis::symbolic};
+    evaluator run{tokens, none, basis::symbolic, size_symbol};
     return run.run_symbolic();
 }
 
@@ -1168,6 +1308,16 @@ math_answer evaluate_math(std::string_view expression, const length_context & ct
     const token_stream tokens = tokenize(expression);
     evaluator run{tokens, ctx};
     return run.run();
+}
+
+std::optional<calc_result> math_type_of(std::string_view expression) {
+    const auto [outcome, sum] = detail::evaluate_symbolic(expression);
+    if (outcome != math_outcome::resolved || !sum.simple()) { return std::nullopt; }
+    calc_result out;
+    out.type = sum.type();
+    out.is_number = sum.is_number();
+    out.has_percent = sum.has_percent;
+    return out;
 }
 
 } // namespace ctbrowser::style::css

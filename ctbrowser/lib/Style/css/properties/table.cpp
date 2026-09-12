@@ -92,6 +92,24 @@ constexpr property_syntax table[] = {
     {"padding-inline-start", k::length_percentage, "", "0px", false, true},
     {"padding-inline-end", k::length_percentage, "", "0px", false, true},
     {"padding-block", k::freeform, "", "0px", false, false, true},
+    // The logical border longhands, which getComputedStyle answers as the
+    // physical ones of horizontal-tb (computed_style/entries.cpp).
+    {"border-block-start-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-block-end-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-inline-start-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-inline-end-width", k::length, "thin medium thick", "medium", false, true},
+    {"border-block-start-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-block-end-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-inline-start-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-inline-end-style", k::keyword_only,
+     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"border-block-start-color", k::color, "", "currentcolor", false, false},
+    {"border-block-end-color", k::color, "", "currentcolor", false, false},
+    {"border-inline-start-color", k::color, "", "currentcolor", false, false},
+    {"border-inline-end-color", k::color, "", "currentcolor", false, false},
     {"padding-block-start", k::length_percentage, "", "0px", false, true},
     {"padding-block-end", k::length_percentage, "", "0px", false, true},
 
@@ -190,6 +208,16 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
+    // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
+    // with them, but each is a real property whose value a page sets and reads
+    // back through getComputedStyle, with a math function inside it folded
+    // (using-font-relative-units-in-font-properties).
+    {"font-width", k::freeform, "", "normal", true, false},
+    {"font-feature-settings", k::freeform, "", "normal", true, false},
+    {"font-variation-settings", k::freeform, "", "normal", true, false},
+    {"font-variant-alternates", k::freeform, "", "normal", true, false},
+    {"font-size-adjust", k::freeform, "", "none", true, false},
+    {"font-palette", k::freeform, "", "normal", true, false},
     // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
     // font-variant-alternates, font-variation-settings and font-width, which
     // using-font-relative-units-in-font-properties asks to exist. Adding the
@@ -261,6 +289,12 @@ constexpr property_syntax table[] = {
     // do. `1e1` is a <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
     {"orphans", k::integer, "", "2", true, true},
     {"widows", k::integer, "", "2", true, true},
+    // Three more `<integer>` properties nothing lays out, so that `1e1` and
+    // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
+    // ponytail: hyphenate-limit-chars takes one value here, not the spec's three.
+    {"max-lines", k::integer, "none", "none", false, true},
+    {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
+    {"hyphenate-limit-chars", k::integer, "auto", "auto", true, true},
     {"column-span", k::keyword_only, "none all", "none", false, false},
 
     // --- tables and lists ------------------------------------------------
@@ -286,9 +320,39 @@ constexpr property_syntax table[] = {
     {"animation-duration", k::time, "", "0s", false, false},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
+    // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
+    // Nothing transitions here; it is the property ident-function-computed
+    // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
+    // did not publish it at all.
+    {"view-transition-name", k::freeform, "", "none", false, false},
     {"animation-iteration-count", k::freeform, "", "1", false, false},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
+    // PROPERTIES WITH NO CONSUMER YET, carried so a page can set and read
+    // them back - every one is a `<length-percentage>` or freeform text, and as
+    // unknown ones getComputedStyle did not publish them (random-computed).
+    {"offset-distance", k::length_percentage, "", "0px", false, false},
+    {"offset-path", k::freeform, "", "none", false, false},
+    {"shape-margin", k::length_percentage, "", "0px", false, true},
+    {"stroke-dasharray", k::freeform, "", "none", true, false},
+    {"stroke-dashoffset", k::length_percentage, "", "0px", true, false},
+    {"stroke-width", k::length_percentage, "", "1px", true, true},
+    {"background-position-x", k::freeform, "", "0%", false, false},
+    {"background-position-y", k::freeform, "", "0%", false, false},
+    {"scroll-padding-top", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-right", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-bottom", k::length_percentage, "auto", "auto", false, true},
+    {"scroll-padding-left", k::length_percentage, "auto", "auto", false, true},
+    {"cx", k::length_percentage, "", "0px", false, false},
+    {"cy", k::length_percentage, "", "0px", false, false},
+    {"rx", k::length_percentage, "auto", "auto", false, true},
+    {"ry", k::length_percentage, "auto", "auto", false, true},
+    {"x", k::length_percentage, "", "0px", false, false},
+    {"y", k::length_percentage, "", "0px", false, false},
+    {"math-depth", k::freeform, "", "0", true, false},
+    {"aspect-ratio", k::freeform, "", "auto", false, false},
+    {"animation-timeline", k::freeform, "", "auto", false, false},
+    {"corner-shape", k::freeform, "", "round", false, false},
     {"pointer-events", k::freeform, "", "auto", true, false},
     {"user-select", k::keyword_only, "auto text none contain all", "auto", false, false},
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},

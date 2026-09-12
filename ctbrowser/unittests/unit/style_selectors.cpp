@@ -385,10 +385,68 @@ void test_resolving_twice_does_not_leak_siblings() {
     CHECK(g.value_of(g.find_id("first"), "color").empty());
 }
 
+// A NAMESPACED TYPE SELECTOR MATCHES BY URI, and a default `@namespace` puts
+// every unprefixed compound in it - the implied `*` of `.c` included (Selectors
+// 4 §6.1.1). cssom/CSSStyleRule-set-selectorText-namespace asks both.
+void test_namespaces() {
+    fixture f;
+    f.load("<p id=p class=c></p><svg id=s class=c></svg>",
+           "@namespace url(http://www.w3.org/1999/xhtml);"
+           "@namespace svg url(http://www.w3.org/2000/svg);"
+           "svg|*.c { color: #010101 }"
+           ".c { background-color: #020202 }"
+           "*|*.c { outline-color: #030303 }"
+           "|*.c { caret-color: #040404 }");
+    expect_value(f, f.find_id("s"), "color", "#010101", "svg|* names the <svg>");
+    expect_value(f, f.find_id("p"), "color", "", "...and not the <p>");
+    expect_value(f, f.find_id("p"), "background-color", "#020202", ".c is xhtml|*.c");
+    expect_value(f, f.find_id("s"), "background-color", "", "...so not the <svg>");
+    expect_value(f, f.find_id("s"), "outline-color", "#030303", "*|* is any");
+    expect_value(f, f.find_id("p"), "outline-color", "#030303", "*|* is any");
+    expect_value(f, f.find_id("p"), "caret-color", "", "|* is the null namespace");
+}
+
+// getComputedStyle-pseudo: a `::before` rule matches no element, and
+// resolve_pseudo cascades it for the element, inheriting from the element.
+void test_pseudo_elements() {
+    fixture f;
+    f.load("<div id=a style=\"padding-top: 3px\"><p id=b></p></div>",
+           "#a { color: #010101 } #a::before { content: \"x\"; width: 50%; color: #020202 }"
+           "div:after { height: 2px } p::before { width: 1px }");
+    const node_id a = f.find_id("a");
+    expect_value(f, a, "width", "", "the ::before rule is not the element's");
+    expect_value(f, a, "content", "", "nor its content");
+    const auto txn = f.doc.read();
+    const computed_style_ptr before =
+        f.styles.resolve_pseudo(txn, a, f.atoms.intern("before"), f.style_of(a));
+    CHECK(before);
+    CHECK_EQ(std::string{before->get(f.atoms.intern("width"))}, std::string{"50%"});
+    CHECK_EQ(std::string{before->get(f.atoms.intern("content"))}, std::string{"\"x\""});
+    CHECK_EQ(std::string{before->get(f.atoms.intern("color"))}, std::string{"#020202"});
+    // The element's style attribute is not the pseudo-element's.
+    CHECK_EQ(std::string{before->get(f.atoms.intern("padding-top"))}, std::string{});
+    const computed_style_ptr after =
+        f.styles.resolve_pseudo(txn, a, f.atoms.intern("after"), f.style_of(a));
+    CHECK(after);
+    CHECK_EQ(std::string{after->get(f.atoms.intern("height"))}, std::string{"2px"});
+    CHECK_EQ(std::string{after->get(f.atoms.intern("width"))}, std::string{});
+    // ...inheriting from the element: the colour it did not set itself.
+    CHECK_EQ(std::string{after->get(f.atoms.intern("color"))}, std::string{"#010101"});
+    // A different element's ::before is not this one's.
+    const computed_style_ptr b_before = f.styles.resolve_pseudo(
+        txn, f.find_id("b"), f.atoms.intern("before"), f.style_of(f.find_id("b")));
+    CHECK_EQ(std::string{b_before->get(f.atoms.intern("width"))}, std::string{"1px"});
+    // The ordinary cascade still resolves the element afterwards.
+    f.resolved = f.styles.resolve_all(txn);
+    expect_value(f, a, "width", "", "still not the element's");
+}
+
 } // namespace
 
 int main() {
     test_simple_selectors();
+    test_namespaces();
+    test_pseudo_elements();
     test_bucketing_uses_the_rightmost_compound();
     test_descendant_and_child_combinators();
     test_a_selector_is_compiled_once_per_selector();

@@ -92,6 +92,38 @@ bool match_color(const token_stream & ts, const scan & found, std::string_view n
     if (t.type == token_type::function && !body.empty() &&
         in_list(color_functions, body.substr(0, body.size() - 1)) &&
         ts.tokens[found.significant.back()].type == token_type::close_paren) {
+        // THE ARITY OF THE THREE-CHANNEL FUNCTIONS, and only that: `rgb(0)` is
+        // no colour (attr-all-types), `rgb(from red r g b)` is one and its
+        // channels are the colour grammar's to judge. Three or four top-level
+        // components, whether comma- or space-separated, a `/` counted as the
+        // comma before the alpha.
+        const std::string_view fn = body.substr(0, body.size() - 1);
+        if (ascii_iequals(fn, "rgb") || ascii_iequals(fn, "rgba") || ascii_iequals(fn, "hsl") ||
+            ascii_iequals(fn, "hsla") || ascii_iequals(fn, "hwb")) {
+            std::size_t components = 0;
+            int depth = 0;
+            bool relative = false;
+            for (std::size_t k = 1; k + 1 < found.significant.size(); ++k) {
+                const css_token & a = ts.tokens[found.significant[k]];
+                if (depth == 0) {
+                    if (components == 0 && a.type == token_type::ident &&
+                        ascii_iequals(ts.text_of(a), "from")) {
+                        relative = true;
+                        break;
+                    }
+                    const bool separator = a.type == token_type::comma ||
+                                           (a.type == token_type::delim && ts.text_of(a) == "/");
+                    if (separator) { continue; }
+                    ++components; // a token at the top is a component; a function is one
+                }
+                if (a.type == token_type::function || a.type == token_type::open_paren) {
+                    ++depth;
+                } else if (a.type == token_type::close_paren) {
+                    --depth;
+                }
+            }
+            if (!relative && (components < 3 || components > 4)) { return false; }
+        }
         out = std::string{normalized};
         return true;
     }

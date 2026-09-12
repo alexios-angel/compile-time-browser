@@ -300,7 +300,8 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
 }
 
 // `flex`, whose omitted parts are NOT the longhands' initial values:
-// `flex: 1` is `1 1 0%`, Flexbox 1 §7.1.1.
+// `flex: 1` is `1 1 0`, Flexbox 1 §7.1.1 - the omitted basis is the length 0
+// (`0px` serialised), not `0%`: cssom/flex-serialization asks for `0 1 0px`.
 split split_flex(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     if (parts.empty() || parts.size() > 3) { return split::invalid; }
     const auto number = [](std::string_view part, std::string & text) {
@@ -323,7 +324,7 @@ split split_flex(std::span<const std::string_view> parts, std::vector<std::strin
             return split::ok;
         }
     }
-    std::string grow, shrink = "1", b = "0%";
+    std::string grow, shrink = "1", b = "0px";
     std::size_t i = 0;
     if (number(parts[0], grow)) {
         i = 1;
@@ -661,12 +662,13 @@ bool set_declaration(declaration_block & block, std::string_view name, std::stri
 }
 
 void parse_declaration_block(declaration_block & block, std::string_view text,
-                             bool (*allow)(std::string_view, const void *), const void * ctx) {
+                             bool (*allow)(std::string_view, std::string_view, const void *),
+                             const void * ctx) {
     atom_table atoms;
     const stylesheet parsed = parse_declaration_list(text, atoms);
     for (const raw_declaration & d : parsed.declarations) {
         const std::string_view property = atoms.text(d.property);
-        if (allow != nullptr && !allow(property, ctx)) { continue; }
+        if (allow != nullptr && !allow(property, parsed.text_of(d), ctx)) { continue; }
         (void)put(block, property, parsed.text_of(d), d.important, true);
     }
 }

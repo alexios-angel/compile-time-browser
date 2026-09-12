@@ -318,7 +318,19 @@ void test_the_rest_of_the_math_functions() {
     // is `test_valid_value` in the corpus, and calling them invalid deleted 34
     // declarations across `css/css-values/tree-counting/`.
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
+    // ...BUT ITS TYPE IS KNOWN BEFORE ITS VALUE IS (§10.2), and a length is no
+    // more a rotation for being unresolved (calc-sibling-function-parsing).
+    bad("left", "calc(10 * sibling-index())");
+    bad("rotate", "calc(1px * sibling-index())");
+    bad("rotate", "calc(1s * sibling-index())");
+    bad("opacity", "calc(1ms * sibling-index())");
+    bad("animation-duration", "calc(1deg * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
+    // The blocks EOF closed are written out, or the serialised declaration
+    // swallows the one after it (attr-all-types 59-61).
+    ok("background-color", "attr(data-foo type(<color>)", "attr(data-foo type(<color>))");
+    ok("width", "attr(data-foo type(<length> | <percentage>)",
+       "attr(data-foo type(<length> | <percentage>))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
     // (CSS Values 5 §calc-size, calc-size-parsing).
@@ -589,17 +601,31 @@ void test_important_and_the_empty_value() {
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
     // `el.style` still stores the value. Five `css/css-values` files guard
     // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // running and failing when this said yes to everything. The substitution
+    // functions are all performed now, so all six are support.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(supports_declaration("font-family", "random-item(auto, serif)"));
+    CHECK(supports_declaration("color", "random-item(fixed 0, rgb(1, 0, 0), rgb(0, 1, 0))"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
+    // `random()` is a math function (CSS Values 5 §random), and random-computed
+    // guards a hundred and forty assertions on this answer.
+    CHECK(supports_declaration("width", "random(0px, 100px)"));
+    CHECK(supports_declaration("scale", "random(--foo element-scoped, 2, 12)"));
+    // A `!` INSIDE A BLOCK IS A DELIM, not a priority: `if(style(--x!): a; else:
+    // b)` is a value whose condition is false (if-conditionals 39, 117, 118).
+    CHECK(check_declaration("--p", "if(style(--x!): 1px; else: 2px)").valid);
+    CHECK(check_declaration("width", "calc(1px * var(--x!))").valid);
+    CHECK(!check_declaration("--p", "1px !").valid);
+    CHECK(!check_declaration("width", "1px !").valid);
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
     CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
     // An empty value is reported invalid because both callers want the same
     // thing from it - store nothing - and `el.style.width = ""` is how a page
     // removes a declaration.
@@ -669,25 +695,28 @@ void test_css_supports() {
     CHECK(!supports_condition("(width: 10px) and (display: flexx)"));
     CHECK(supports_condition("(width: 10px) or (display: flexx)"));
     CHECK(supports_condition("((width: 10px))"));
+    // `selector()` is supported when it parses (if-conditionals 176, 177).
+    CHECK(supports_condition("selector(h2 > p)"));
+    CHECK(supports_condition("(selector(h2 > p))"));
+    CHECK(!supports_condition("selector(h2 >)"));
+    CHECK(supports_condition("not selector(h2 >)"));
     // A bare declaration with no parentheses is not a <supports-condition>.
     CHECK(!supports_condition("width: 10px"));
     CHECK(!supports_condition(""));
     // `!important` is part of a <declaration> and does not change the answer.
     CHECK(supports_condition("(width: 10px !important)"));
     // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
-    // `el.style` still stores the value. Five `css/css-values` files guard
-    // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything.
-    CHECK(!supports_declaration("content", "attr(data-foo)"));
-    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    // `el.style` still stores the value; a substitution it performs is.
+    CHECK(supports_declaration("content", "attr(data-foo)"));
+    CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
     CHECK(!supports_declaration("background-color", "var(--x type(*))"));
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
     // ...and the value is still STORED, which is the difference between the two
     // questions this file answers.
-    CHECK(check_declaration("content", "attr(data-foo)").valid);
-    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
+    CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
 }
 
 // AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
@@ -776,13 +805,149 @@ void test_the_random_item_argument_list() {
        "random-item(auto, {Times, serif}, sans-serif)");
     // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
     // is a value and not a parse error.
-    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif)");
 }
 
 // `interpolate-size` is a real property with a real two-keyword grammar. As an
 // UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
 // did not publish the property at all - which is the two assertions of
 // `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+// calc-size-parsing: the basis is judged against the property, the
+// calculation is a length over `size`, and both are written canonically.
+void test_calc_size() {
+    ok("width", "calc-size(auto, size)", "calc-size(auto, size)");
+    ok("min-height", "calc-size(auto, size)", "calc-size(auto, size)");
+    bad("max-width", "calc-size(auto, size)");
+    bad("width", "calc-size(none, size)");
+    bad("max-width", "calc-size(none, size)");
+    ok("max-height", "calc-size(max-content, size)", "calc-size(max-content, size)");
+    ok("height", "calc-size(min-content, size * 2)", "calc-size(min-content, 2 * size)");
+    ok("max-width", "calc-size(max-content, size / 2)", "calc-size(max-content, 0.5 * size)");
+    ok("max-height", "calc-size(fit-content, 30px + size / 2)",
+       "calc-size(fit-content, 30px + (0.5 * size))");
+    ok("width", "calc-size(fit-content, 50% + size / 2)",
+       "calc-size(fit-content, 50% + (0.5 * size))");
+    ok("width", "calc-size(any, 25em)", "calc-size(any, 25em)");
+    ok("width", "calc-size(any, 40%)", "calc-size(any, 40%)");
+    ok("width", "calc-size(any, 50px + 30%)", "calc-size(any, 30% + 50px)");
+    ok("width", "calc-size(calc-size(any, 30px), size)", "calc-size(calc-size(any, 30px), size)");
+    bad("width", "calc-size(any, size)");
+    bad("width", "calc-size(any, fit-content)");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    bad("width", "size");
+    bad("width", "calc-size(any, calc-size(10px, sign(size) * size))");
+    bad("width", "calc(calc-size(auto, size))");
+    ok("width", "calc-size(calc-size(2in, 30px), 25em)", "calc-size(calc-size(192px, 30px), 25em)");
+    ok("width", "calc-size(calc-size(min-content, size), size)",
+       "calc-size(calc-size(min-content, size), size)");
+    bad("width", "calc-size(30px)");
+    bad("width", "calc-size(any)");
+    bad("width", "calc-size(calc-size(fit-content, size * 2))");
+    ok("flex-basis", "calc-size(content, size)", "calc-size(content, size)");
+    bad("width", "calc-size(content, size)");
+    ok("width", "calc-size(0px, 0px)", "calc-size(0px, 0px)");
+    bad("width", "calc-size(0, 0px)");
+    bad("width", "calc-size(0px, 0)");
+}
+
+// random-serialize: a specified random() spells its key - the dashed name,
+// `element-scoped`, and the UA ident the scoping words mean - and its bounds
+// in canonical units.
+void test_random_spells_its_key() {
+    ok("width", "random(0px, 100px)", "random(element-scoped ua-width-1, 0px, 100px)");
+    ok("height", "random(auto, 0px, 100px)", "random(element-scoped ua-height-1, 0px, 100px)");
+    ok("width", "random(fixed 0.5, 0px, 100px)", "random(fixed 0.5, 0px, 100px)");
+    ok("width", "random(--foo, 0px, 100px)", "random(--foo, 0px, 100px)");
+    ok("width", "random(--foo element-scoped, 0px, 100px)",
+       "random(--foo element-scoped, 0px, 100px)");
+    ok("width", "random(element-scoped, 0px, 100px)", "random(element-scoped, 0px, 100px)");
+    ok("font-size", "random(property-scoped, 0px, 100px)", "random(ua-font-size, 0px, 100px)");
+    ok("width", "random(--foo property-index-scoped, 0px, 100px)",
+       "random(--foo ua-width-1, 0px, 100px)");
+    ok("height", "random(property-scoped element-scoped, 0px, 100px)",
+       "random(element-scoped ua-height, 0px, 100px)");
+    ok("width", "random(ua-height-1 element-scoped, 10px, 20%)",
+       "random(element-scoped ua-height-1, 10px, 20%)");
+    ok("width", "random(10 * 100px, 200em / 2)",
+       "random(element-scoped ua-width-1, 1000px, 100em)");
+    ok("width", "random(fixed calc(2 / 4), 0px, 100px)", "random(fixed calc(0.5), 0px, 100px)");
+    ok("rotate", "random(25deg, 1turn)", "random(element-scoped ua-rotate-1, 25deg, 360deg)");
+    ok("transition-delay", "random(--foo, 25ms, 50s, 5s)", "random(--foo, 0.025s, 50s, 5s)");
+    ok("margin", "random(0px, 1px) random(0px, 1px)",
+       "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // ...and the sharing grammar (random-invalid).
+    ok("width", "random(--foo ua-width-1, 10px, 20%)", "random(--foo ua-width-1, 10px, 20%)");
+    ok("width", "random(--foo ua-x element-scoped, 10px, 20%)",
+       "random(--foo element-scoped ua-x, 10px, 20%)");
+    bad("width", "random(--foo --bar, 1px, 2px)");
+    bad("width", "random(fixed 0.5 auto, 1px, 2px)");
+    bad("width", "random(fixed -1, 1px, 2px)");
+    bad("width", "random(--foo element-scoped element-scoped, 1px, 2px)");
+    bad("width", "random(property-scoped ua-width-1, 1px, 2px)");
+    bad("width", "random(property-scoped property-index-scoped, 1px, 2px)");
+    bad("width", "random(foo, 1px, 2px)");
+    bad("width", "random(1px)");
+}
+
+// urls/url-request-modifiers-*: the modifiers in one order, the unknown ones
+// dropped, duplicates and anything that is not an ident or a function refused.
+void test_url_request_modifiers() {
+    const std::string u = "url(\"a.png\"";
+    ok("background-image", u + " cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\"))");
+    ok("background-image",
+       u + " referrer-policy(no-referrer) integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\") referrer-policy(no-referrer))");
+    ok("background-image", u + " integrity(\"\"))", u + " integrity(\"\"))");
+    ok("background-image", u + " foobar(baz))", u + ")");
+    ok("background-image", u + " foobar cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " foobar([brackets {braces}]) referrer-policy(same-origin))",
+       u + " referrer-policy(same-origin))");
+    ok("background-image", u + " crossorigin(anonymous))", u + ")");
+    ok("background-image", u + " foobar foobar(42))", u + ")");
+    bad("background-image", u + " cross-origin())");
+    bad("background-image", u + " cross-origin(,))");
+    bad("background-image", u + " cross-origin(anonymous,))");
+    bad("background-image", u + " cross-origin(anonymous foobar))");
+    bad("background-image", u + " cross-origin(anonymous) cross-origin(use-credentials))");
+    bad("background-image", u + " integrity(sha384-x))");
+    bad("background-image", u + " referrer-policy(no-referrer same-origin))");
+    bad("background-image", u + " foobar(baz) foobar(qux))");
+    bad("background-image", u + " FooBar foobar)");
+    bad("background-image", u + " 42)");
+    bad("background-image", u + " \"foobar\")");
+    bad("background-image", "url(a.png cross-origin(anonymous))");
+    CHECK(supports_declaration("background-image", u + " cross-origin(anonymous))"));
+}
+
+// calc-rounds-to-integer: `steps()` takes an <integer>, which `1e1` is not.
+void test_steps_takes_an_integer() {
+    ok("animation-timing-function", "steps(10)", "steps(10)");
+    ok("transition-timing-function", "steps(calc(10.1))", "steps(calc(10.1))");
+    ok("max-lines", "10", "10");
+    ok("max-lines", "calc(10.1)", "calc(10.1)");
+    bad("max-lines", "1e1");
+    bad("hyphenate-limit-lines", "10.1");
+    bad("animation-timing-function", "steps(1e1)");
+    bad("animation-timing-function", "steps(10.1)");
+    bad("transition-timing-function", "steps(1.1e1, start)");
+}
+
+// A three-channel colour function takes three or four components.
+void test_colour_function_arity() {
+    bad("background-color", "rgb(0)");
+    bad("color", "rgb(1, 2)");
+    bad("color", "hsl(1 2 3 4 5)");
+    ok("color", "rgb(1, 2, 3)", "rgb(1, 2, 3)");
+    ok("color", "rgb(1 2 3 / 0.5)", "rgb(1 2 3 / 0.5)");
+    ok("color", "rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)");
+    ok("color", "rgb(calc(1 + 1) 2 3)", "rgb(calc(2) 2 3)");
+    ok("color", "rgb(from red r g b)", "rgb(from red r g b)");
+    ok("color", "color(srgb 1 0 0)", "color(srgb 1 0 0)");
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -861,6 +1026,11 @@ int main() {
     test_css_supports();
     test_an_integer_property_rounds_its_math();
     test_the_random_item_argument_list();
+    test_calc_size();
+    test_random_spells_its_key();
+    test_url_request_modifiers();
+    test_steps_takes_an_integer();
+    test_colour_function_arity();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

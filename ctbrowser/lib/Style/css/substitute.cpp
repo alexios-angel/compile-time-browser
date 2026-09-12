@@ -32,6 +32,7 @@ struct call {
     bool is_if = false;
     bool is_ident = false;
     bool is_random_item = false;
+    bool is_inherit = false; // `inherit(--x, fallback)`: var()'s shape, the parent's value
     // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
     // which is read only once that function has been substituted.
     bool name_is_call = false;
@@ -61,12 +62,17 @@ struct call {
             !is_var && !is_attr && !is_if && is_function_named(s, s.tokens[i], "ident");
         const bool is_random_item = !is_var && !is_attr && !is_if && !is_ident &&
                                     is_function_named(s, s.tokens[i], "random-item");
-        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item) { continue; }
+        const bool is_inherit = !is_var && !is_attr && !is_if && !is_ident && !is_random_item &&
+                                is_function_named(s, s.tokens[i], "inherit");
+        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item && !is_inherit) {
+            continue;
+        }
         out = call{};
         out.is_attr = is_attr;
         out.is_if = is_if;
         out.is_ident = is_ident;
         out.is_random_item = is_random_item;
+        out.is_inherit = is_inherit;
         out.open = i;
         int depth = 1;
         std::size_t j = i + 1;
@@ -557,6 +563,8 @@ public:
             if (!identifier(s, found, depth, expansion)) { return false; }
         } else if (found.is_random_item) {
             if (!random_item(s, found, depth, expansion)) { return false; }
+        } else if (found.is_inherit) {
+            if (!inherited_value(s, found, depth, expansion)) { return false; }
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
@@ -618,6 +626,27 @@ private:
             }
         }
         if (ok) { return true; }
+        return fallback(s, found, depth, expansion);
+    }
+
+    // inherit( <custom-property-name> , <declaration-value>? ), CSS Values 5
+    // §inherit-notation: the PARENT's computed value of the property, which
+    // is what `style(--x: inherit)` already reads, and the fallback when the
+    // parent has none (inherit-function-basic).
+    //
+    // ponytail: custom properties only, and one level - the parent's own value
+    // is substituted in the parent's scope with no grandparent to ask, so
+    // `--v: e2 inherit(--v)` on the parent does not accumulate through it.
+    [[nodiscard]] bool inherited_value(const token_stream & s, const call & found, int depth,
+                                       std::string & expansion) {
+        const std::string_view name_text = s.text_of(s.tokens[found.name_at]);
+        if (!name_text.starts_with("--")) { return false; }
+        if (conditions_ != nullptr && conditions_->inherited) {
+            if (std::optional<std::string> held = conditions_->inherited(name_text)) {
+                expansion = std::move(*held);
+                return true;
+            }
+        }
         return fallback(s, found, depth, expansion);
     }
 
@@ -752,9 +781,26 @@ private:
         case kind::syntax: {
             // The text is a <declaration-value> with substitutions of its own
             // to perform before it is parsed - `attr(data-x type(*))` may hold
-            // a `var()`, and a cycle through it is a cycle.
+            // a `var()` or another `attr()`, and a cycle through it is a cycle:
+            // an attribute already being substituted makes every attr() in the
+            // ring invalid, fallbacks included, and only the attr() the
+            // declaration itself wrote takes its fallback (attr-cycle 3, 8, 12,
+            // 17, 28, 29; attr-all-types 75-79 read one attribute through
+            // another without a cycle).
+            if (std::ranges::find(attrs_resolving_, name) != attrs_resolving_.end()) {
+                attr_cycle_ = true;
+                return false;
+            }
+            attrs_resolving_.push_back(name);
             std::string substituted;
-            if (run(*held, substituted, depth + 1)) { value = match_syntax(substituted, syntax); }
+            const bool ok = run(*held, substituted, depth + 1);
+            attrs_resolving_.pop_back();
+            if (attr_cycle_) {
+                if (!attrs_resolving_.empty()) { return false; }
+                attr_cycle_ = false;
+                break;
+            }
+            if (ok) { value = match_syntax(substituted, syntax); }
             break;
         }
         }
@@ -855,8 +901,16 @@ private:
             if (conditions_ != nullptr) { ctx.property = conditions_->property; }
             // `auto` is scoped to the element like a bare `element-scoped`: the
             // base is keyed on the element either way, and a name alone is not.
+            // An auto random-item() does NOT share with an auto random() in the
+            // same value, where a bare `element-scoped` one does
+            // (random-item-computed): its automatic key names the function.
             std::string options{trimmed};
-            if (ascii_iequals(trimmed, "auto") || trimmed.empty()) { options.clear(); }
+            std::string keyed_property{ctx.property};
+            if (ascii_iequals(trimmed, "auto") || trimmed.empty()) {
+                options.clear();
+                keyed_property = "random-item:" + keyed_property;
+                ctx.property = keyed_property;
+            }
             base = random_base(options, ctx);
         }
         // The items, split at the top-level commas after the key.
@@ -1312,6 +1366,10 @@ private:
     // set because it is never more than a handful deep and a linear scan of four
     // integers beats hashing one.
     std::vector<std::uint32_t> resolving_;
+    // The attributes whose values are being substituted, outermost first, and
+    // whether a cycle through them was found (attr-cycle).
+    std::vector<std::string> attrs_resolving_;
+    bool attr_cycle_ = false;
     // The property whose value this is, the properties whose values style
     // queries are computing (innermost last), and the two cycle flags
     // `reached_again` explains.
@@ -1340,6 +1398,9 @@ bool may_have_var(std::string_view value) noexcept {
         }
         if (boundary && i + 12 <= value.size() &&
             ascii_iequals(value.substr(i, 12), "random-item(")) {
+            return true;
+        }
+        if (boundary && i + 8 <= value.size() && ascii_iequals(value.substr(i, 8), "inherit(")) {
             return true;
         }
     }

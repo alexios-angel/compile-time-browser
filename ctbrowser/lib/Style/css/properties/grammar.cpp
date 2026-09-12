@@ -33,10 +33,11 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 25> math_functions{
-    "calc",  "min", "max", "clamp",     "round",    "mod",           "rem",          "abs", "sign",
-    "sin",   "cos", "tan", "asin",      "acos",     "atan",          "atan2",        "pow", "sqrt",
-    "hypot", "log", "exp", "calc-size", "progress", "sibling-index", "sibling-count"};
+constexpr std::array<std::string_view, 27> math_functions{
+    "calc",      "min",      "max",           "clamp",         "round",  "mod",     "rem",
+    "abs",       "sign",     "sin",           "cos",           "tan",    "asin",    "acos",
+    "atan",      "atan2",    "pow",           "sqrt",          "hypot",  "log",     "exp",
+    "calc-size", "progress", "sibling-index", "sibling-count", "random", "calc-mix"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
@@ -45,33 +46,37 @@ constexpr std::array<std::string_view, 25> math_functions{
 // known until substitution, so the declaration survives parsing with its tokens
 // intact. CSS Variables 1 §3.
 //
-// `attr()` IS IN THIS LIST AND NOT IN `performed_substitutions` below, and the
-// split is the point: it is a substitution in the specification, so a
-// declaration using one is not a syntax error and must survive - and this engine
-// does not PERFORM it, so `CSS.supports` has to say no.
-//
 // `random-item()`, `inherit()` and `ident()` are three more of them, and naming
 // them is what makes `width: random-item(auto, 1px, 2px, 3px)` and
 // `left: inherit(--x)` declarations rather than lengths the grammar could not
 // read. CSS Values 5 calls all of these ARBITRARY SUBSTITUTION FUNCTIONS: their
 // specified value is their arguments and what those arguments mean is decided
 // later. `substitution_grammar_ok` below is the part that IS decided now.
+//
+// EVERY ONE OF THEM IS PERFORMED - css/substitute.cpp runs all six - so
+// `CSS.supports` says yes to all six. `attr()` and `random-item()` were kept
+// off the performed list from before the engine could substitute them, and
+// random-item-computed guards twenty-three assertions on the answer.
 constexpr std::array<std::string_view, 6> substitution_functions{"var",         "env",     "attr",
                                                                  "random-item", "inherit", "ident"};
-constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
+constexpr std::array<std::string_view, 6> performed_substitutions{
+    "var", "env", "attr", "random-item", "inherit", "ident"};
 
-// THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
+// THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the
 // substitutions. `CSS.supports` is "would this declaration be dropped", and a
 // value calling a function nothing here can evaluate WOULD be - so answering
-// true for `attr()`, `random-item()` or `type(*)` is a lie: five `css/css-values`
-// files guard their assertions on `CSS.supports`.
+// true for `type(*)` or `image-set()` is a lie: five `css/css-values` files
+// guard their assertions on `CSS.supports`.
 //
 // AN ALLOW-LIST rather than a list of what is missing, because the missing set
 // is the whole of CSS Values 5 and grows every month while this one grows only
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-constexpr std::array<std::string_view, 27> value_functions{"rgb",
+constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
+                                                           "integrity",
+                                                           "referrer-policy",
+                                                           "rgb",
                                                            "rgba",
                                                            "hsl",
                                                            "hsla",
@@ -328,7 +333,12 @@ namespace detail {
         if (t.type == token_type::bad_string || t.type == token_type::bad_url) {
             out.malformed = true;
         }
-        if (t.type == token_type::delim && ts.text_of(t) == "!") { out.important = true; }
+        // A `!` AT THE TOP LEVEL ONLY. Inside a block it is a delim like any
+        // other - `if(style(--x!): a; else: b)` is a value whose condition is
+        // false, not a declaration with a priority (CSS Syntax 3 §5.4.6).
+        if (depth == 0 && t.type == token_type::delim && ts.text_of(t) == "!") {
+            out.important = true;
+        }
         if (t.type == token_type::function) {
             const std::string_view fn = function_name(ts, t);
             if (in_list(substitution_functions, fn)) { out.substituted = true; }
@@ -352,6 +362,7 @@ namespace detail {
     // over with `calc(min(1em, 21px) * 2`, and refusing it deleted a declaration
     // every browser folds to 40px. A block closed too MANY times still is
     // malformed, because there is no rule that invents an opener.
+    out.unclosed = depth > 0 ? depth : 0;
     return out;
 }
 
@@ -359,6 +370,19 @@ namespace detail {
     for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
         if (ts.tokens[i].type != token_type::function) { continue; }
         const std::string_view fn = function_name(ts, ts.tokens[i]);
+        // `steps( <integer>, <step-position>? )`, CSS Easing 1 §3.2: a
+        // <number-token> that is not an integer - `1e1`, `10.1` - is a
+        // syntax error where a math function still rounds
+        // (calc-rounds-to-integer).
+        if (ascii_iequals(fn, "steps")) {
+            std::size_t j = i + 1;
+            while (j < ts.tokens.size() && ts.tokens[j].type == token_type::whitespace) { ++j; }
+            if (j < ts.tokens.size() && ts.tokens[j].type == token_type::number &&
+                (ts.tokens[j].flags & flag_integer) == 0) {
+                return false;
+            }
+            continue;
+        }
         if (ascii_iequals(fn, "random-item")) {
             if (!random_item_arguments_ok(ts, i)) { return false; }
             continue;
@@ -455,13 +479,21 @@ namespace detail {
 // syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
 // same reason `rotate: 1s` is.
 //
-// AN UNRESOLVED ANSWER IS ACCEPTED, always. `min(10px, 5%)` and `calc(1px +
-// 1cqw)` are well formed and have no answer until layout; §10.11 says their
-// computed value is the function as written, and refusing them here would delete
-// declarations that work today.
-[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer) {
-    if (answer.outcome != math_outcome::resolved) { return true; }
-    const calc_result & v = answer.value;
+// AN UNRESOLVED ANSWER IS ACCEPTED unless its TYPE is already known and wrong.
+// `min(10px, 5%)` and `calc(1px + 1cqw)` are well formed and have no answer
+// until layout; §10.11 says their computed value is the function as written, and
+// refusing them here would delete declarations that work today. But `rotate:
+// calc(1px * sibling-index())` has no answer AND is a length, and §10.2 types it
+// before anything is measured - `math_type_of` is that reading.
+[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
+                                  std::string_view text) {
+    if (answer.outcome == math_outcome::invalid) { return true; }
+    std::optional<calc_result> typed;
+    if (answer.outcome == math_outcome::unresolved) {
+        typed = math_type_of(text);
+        if (!typed) { return true; }
+    }
+    const calc_result & v = typed ? *typed : answer.value;
     // A PERCENTAGE travels as a length carrying an unresolved part, so "this
     // answer is a bare percentage" is the pair below rather than a type tag.
     const bool bare_percentage = v.has_percent && v.px == 0;
@@ -636,7 +668,97 @@ namespace detail {
     return {comma - 1, close};
 }
 
-[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text) {
+// url( <string> <url-modifier>* ), CSS Values 4 §4.5.1 and §4.5.4: the
+// modifiers this engine knows written in one order, an unknown one dropped, a
+// duplicate of either kind a syntax error, and anything that is not an ident
+// or a function one too (urls/url-request-modifiers-*). Answers the index of
+// the token after the closing paren, or `npos` when the url is invalid; a
+// `url()` whose first argument is not a string is copied through as it came,
+// because `url(var(--x))` is decided elsewhere.
+[[nodiscard]] std::size_t canonical_url(const token_stream & ts, std::size_t open,
+                                        std::string & out) {
+    std::size_t i = open + 1;
+    const auto skip_ws = [&] {
+        while (ts.tokens[i].type == token_type::whitespace) { ++i; }
+    };
+    skip_ws();
+    if (ts.tokens[i].type != token_type::string) { return std::string_view::npos - 1; }
+    const std::string_view quoted = ts.text_of(ts.tokens[i]);
+    if (quoted.size() < 2) { return std::string_view::npos; }
+    std::string url = "url(" + string_text(quoted.substr(1, quoted.size() - 2));
+    ++i;
+    std::string cross, integrity, referrer;
+    std::vector<std::string> seen; // lowercased name, `(` appended for the function form
+    for (;;) {
+        skip_ws();
+        const css_token & t = ts.tokens[i];
+        if (t.type == token_type::close_paren || t.type == token_type::eof) { break; }
+        if (t.type == token_type::ident) {
+            const std::string key = ascii_lower_copy(ts.text_of(t));
+            if (std::ranges::find(seen, key) != seen.end()) { return std::string_view::npos; }
+            seen.push_back(key);
+            ++i;
+            continue;
+        }
+        if (t.type != token_type::function) { return std::string_view::npos; }
+        const std::string name = ascii_lower_copy(function_name(ts, t));
+        // A substitution among the modifiers is read once it has been made.
+        if (in_list(substitution_functions, name)) { return std::string_view::npos - 1; }
+        const std::string key = name + '(';
+        if (std::ranges::find(seen, key) != seen.end()) { return std::string_view::npos; }
+        seen.push_back(key);
+        // The argument list, to its matching paren.
+        std::vector<std::size_t> args;
+        int depth = 1;
+        for (++i; depth > 0; ++i) {
+            const css_token & a = ts.tokens[i];
+            if (a.type == token_type::eof) { break; }
+            if (a.type == token_type::function || a.type == token_type::open_paren ||
+                a.type == token_type::open_square || a.type == token_type::open_curly) {
+                ++depth;
+            } else if (a.type == token_type::close_paren || a.type == token_type::close_square ||
+                       a.type == token_type::close_curly) {
+                if (--depth == 0) { break; }
+            }
+            if (a.type != token_type::whitespace) { args.push_back(i); }
+        }
+        if (ts.tokens[i].type == token_type::close_paren) { ++i; }
+        const bool known =
+            name == "cross-origin" || name == "integrity" || name == "referrer-policy";
+        if (!known) { continue; }
+        if (args.size() != 1) { return std::string_view::npos; }
+        const css_token & arg = ts.tokens[args.front()];
+        if (name == "integrity") {
+            if (arg.type != token_type::string) { return std::string_view::npos; }
+            const std::string_view body = ts.text_of(arg);
+            integrity = string_text(body.substr(1, body.size() - 2));
+            continue;
+        }
+        if (arg.type != token_type::ident) { return std::string_view::npos; }
+        const std::string word = ascii_lower_copy(ts.text_of(arg));
+        if (name == "cross-origin") {
+            if (word != "anonymous" && word != "use-credentials") { return std::string_view::npos; }
+            cross = word;
+        } else {
+            if (!has_keyword("no-referrer no-referrer-when-downgrade same-origin origin "
+                             "strict-origin origin-when-cross-origin "
+                             "strict-origin-when-cross-origin unsafe-url",
+                             word)) {
+                return std::string_view::npos;
+            }
+            referrer = word;
+        }
+    }
+    if (ts.tokens[i].type == token_type::close_paren) { ++i; }
+    if (!cross.empty()) { url += " cross-origin(" + cross + ")"; }
+    if (!integrity.empty()) { url += " integrity(" + integrity + ")"; }
+    if (!referrer.empty()) { url += " referrer-policy(" + referrer + ")"; }
+    out += url + ')';
+    return i;
+}
+
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
+                                                 bool * invalid) {
     std::string out;
     out.reserve(text.size());
     std::pair<std::size_t, std::size_t> skip{0, 0};
@@ -658,6 +780,17 @@ namespace detail {
         const css_token & t = ts.tokens[i];
         if (t.type == token_type::eof) { break; }
         if (i >= skip.first && i < skip.second) { continue; }
+        if (t.type == token_type::function && ascii_iequals(function_name(ts, t), "url")) {
+            const std::size_t after = canonical_url(ts, i, out);
+            if (after == std::string_view::npos) {
+                if (invalid != nullptr) { *invalid = true; }
+                return std::string{text};
+            }
+            if (after != std::string_view::npos - 1) {
+                skip = {i, after};
+                continue;
+            }
+        }
         if (t.type == token_type::function) {
             skip = default_counter_style_in(ts, i);
             ++depth;

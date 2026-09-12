@@ -44,7 +44,7 @@ constexpr std::array<std::string_view, 12> length_properties{
     return property == "color" || property == "background-color" || property == "border-color" ||
            property == "border-top-color" || property == "border-right-color" ||
            property == "border-bottom-color" || property == "border-left-color" ||
-           property == "outline-color";
+           property == "outline-color" || property == "caret-color";
 }
 
 // A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
@@ -154,6 +154,9 @@ struct probe {
     rect containing{};          // the padding box of the nearest positioned ancestor
     std::vector<node_id> chain; // self first, then ancestors
     bool is_root = false;       // the document element itself
+    // A PSEUDO-ELEMENT: `chain.front()` is the originating element, whose box
+    // and fragment stand in for the parent's, and `declared` reads this style.
+    style::computed_style_ptr pseudo;
 };
 
 } // namespace
@@ -166,9 +169,15 @@ struct probe {
 // The order is the object's: the leading run is exactly the set CSSOM's indexed
 // properties enumerate, and it is already sorted.
 std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(node_id id) {
+    return computed_style_entries(id, {});
+}
+
+std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(
+    node_id id, const style::computed_style_ptr & pseudo) {
     std::vector<std::pair<std::string, std::string>> answers;
 
     probe at;
+    at.pseudo = pseudo;
     at.box = box_for(boxes_, id);
     at.frag = fragment_for(fragments_, id);
     at.font_size = at.box != nullptr ? at.box->font_size : 16.0f;
@@ -191,6 +200,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         connected = !at.chain.empty() && at.chain.back() == txn.root();
         at.is_root = id == txn.root();
+        // A pseudo-element's parent is its originating element, so the element
+        // takes the parent's place in the chain and the pseudo has no box.
+        if (pseudo) {
+            at.chain.insert(at.chain.begin(), id);
+            at.is_root = false;
+            at.box = nullptr;
+            at.frag = nullptr;
+        }
         // The containing-block width a percentage resolves against: the parent's
         // CONTENT width, or the viewport at the root. That is the parent's
         // fragment less its padding, which is what content_width_of computes
@@ -290,9 +307,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         animated_values(id, at.font_size, [&](std::string_view property) {
             return declared_on(at.chain.front(), property);
         });
-    const auto declared = [declared_on, at,
+    const auto declared = [declared_on, at, atoms,
                            &animated](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
+        if (at.pseudo) { return at.pseudo->get(atoms->intern(property)); }
         for (const auto & [name, text] : animated) {
             if (std::string_view{name} == property) { return text; }
         }
@@ -322,6 +340,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // THE PRINCIPAL BOX, and the two ways there is not one.
     const std::string declared_display = collapse_keyword(declared("display"));
     at.has_box = at.box != nullptr && declared_display != "none" && declared_display != "contents";
+    // A PSEUDO-ELEMENT GENERATES A BOX when its `content` says so (CSS Pseudo 4
+    // §5.1): then a percentage width resolves against the element, as a box
+    // of its own would; without one it answers computed values.
+    if (at.pseudo) {
+        const std::string content = collapse_keyword(declared("content"));
+        at.has_box = !content.empty() && content != "none" && content != "normal" &&
+                     declared_display != "none" && declared_display != "contents";
+    }
     at.inline_non_replaced = at.box != nullptr && at.box->kind == layout::box_kind::inline_;
 
     // A LENGTH AS A COMPUTED VALUE - CSS Values 3 §5.2 and CSSOM's "otherwise,
@@ -484,6 +510,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    min/max is NOT clamped, because clamping is something the used value
         //    goes through and there is no used value here.
         if (property == "width" || property == "height") {
+            if (at.pseudo && at.has_box) {
+                const layout::length len = layout::parse_length(declared(property));
+                if (len.is_auto()) { return "auto"; }
+                return used_px_text(
+                    len.resolve(property == "width" ? at.basis : at.basis_height, at.font_size));
+            }
             if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) {
                 return computed_length(declared(property));
             }
@@ -548,6 +580,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     `display` agrees with Chrome and the missing flex algorithm shows up
         //     where it actually bites - in the geometry.
         if (property == "display" && text.empty()) {
+            // A pseudo-element's initial display is `inline`, blockified as a
+            // flex or grid item is (CSS Display 3 §2.7).
+            if (at.pseudo) { return at.flex_item || at.grid_item ? "block" : "inline"; }
             if (at.box == nullptr) { return "none"; } // display:none generates no box
             switch (at.box->kind) {
             case layout::box_kind::block:
@@ -783,6 +818,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
+            if (const std::optional<color> c = system_color(text)) { return color_text(*c); }
             return std::string{text};
         }
         // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`
@@ -843,9 +879,30 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // `border-left` are shorthands there and were missing from the list, so all
     // four were enumerated as longhands - which is the exact assertion
     // getComputedStyle-getter-v-properties makes about each of them by name.
+    // A LOGICAL BORDER LONGHAND IS ITS PHYSICAL ONE in horizontal-tb, which is
+    // the only writing mode this engine lays out: `border-block-start-color`
+    // answers as `border-top-color` (getComputedStyle-resolved-colors).
+    const auto physical_of = [](std::string_view property) -> std::string_view {
+        constexpr std::string_view block = "border-block-";
+        constexpr std::string_view inline_ = "border-inline-";
+        const bool is_block = property.starts_with(block);
+        if (!is_block && !property.starts_with(inline_)) { return {}; }
+        const std::string_view rest = property.substr(is_block ? block.size() : inline_.size());
+        const bool start = rest.starts_with("start-");
+        if (!start && !rest.starts_with("end-")) { return {}; }
+        const std::string_view suffix = rest.substr(start ? 6 : 4);
+        static constexpr std::string_view sides[2][2][3] = {
+            {{"border-bottom-width", "border-bottom-style", "border-bottom-color"},
+             {"border-top-width", "border-top-style", "border-top-color"}},
+            {{"border-right-width", "border-right-style", "border-right-color"},
+             {"border-left-width", "border-left-style", "border-left-color"}}};
+        const std::size_t kind = suffix == "width" ? 0 : (suffix == "style" ? 1 : 2);
+        return sides[is_block ? 0 : 1][start ? 1 : 0][kind];
+    };
     for (const style::css::property_syntax & p : style::css::known_properties()) {
         if (p.shorthand) { continue; }
-        std::string text = value_of(p.name);
+        const std::string_view physical = physical_of(p.name);
+        std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
         answers.emplace_back(std::string{p.name}, std::move(text));
@@ -970,25 +1027,31 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     answers.insert(answers.end(), std::make_move_iterator(shorthands.begin()),
                    std::make_move_iterator(shorthands.end()));
 
-    // AND EVERY PROPERTY THE ELEMENT ITSELF DECLARED that the table has never
-    // heard of - a CUSTOM property above all, which no fixed table can enumerate.
-    // Readable, and answering to `in`, but NOT indexed: CSSOM's indexed
-    // properties are the supported longhands and a page's `--brand` is not one.
+    // AND EVERY PROPERTY THE ELEMENT HAS that the table has never heard of -
+    // a CUSTOM property above all, which no fixed table can enumerate: its
+    // own, the ones it inherited, and the registered ones the cascade gave it
+    // an initial value for. Indexed after the longhands (object.cpp), which
+    // is where cssstyledeclaration-custom-properties and
+    // -registered-custom-properties look for them.
     if (styles_ != nullptr) {
         const auto found = styles_->find(style::engine::key_of(id));
         if (found != styles_->end() && found->second) {
-            for (const style::declaration & d : found->second->declarations) {
-                const std::string_view name = atoms_->text(d.property);
-                if (style::css::find_property(name) != nullptr) { continue; }
-                const auto seen =
-                    std::find_if(answers.begin(), answers.end(), [name](const auto & e) {
-                        return std::string_view{e.first} == name;
-                    });
-                if (seen != answers.end()) { continue; }
-                std::string text = value_of(name);
-                if (text.empty()) { continue; }
-                answers.emplace_back(std::string{name}, std::move(text));
-            }
+            const auto add = [&](const style::declaration_list & list) {
+                for (const style::declaration & d : list) {
+                    const std::string_view name = atoms_->text(d.property);
+                    if (style::css::find_property(name) != nullptr) { continue; }
+                    const auto seen =
+                        std::find_if(answers.begin(), answers.end(), [name](const auto & e) {
+                            return std::string_view{e.first} == name;
+                        });
+                    if (seen != answers.end()) { continue; }
+                    std::string text = value_of(name);
+                    if (text.empty()) { continue; }
+                    answers.emplace_back(std::string{name}, std::move(text));
+                }
+            };
+            add(found->second->declarations);
+            if (found->second->inherited) { add(found->second->inherited->declarations); }
         }
     }
     // ...and an ANIMATED custom property nothing declared, which the walk

@@ -20,9 +20,9 @@ namespace {
 // function: this file cannot evaluate it, and a name here is a promise to try.
 constexpr std::string_view math_names[] = {
     "sibling-index(", "sibling-count(", "progress(", "random(", "clamp(", "atan2(", "hypot(",
-    "round(",         "sqrt(",          "asin(",     "acos(",   "atan(",  "sign(",  "calc(",
-    "min(",           "max(",           "mod(",      "rem(",    "abs(",   "pow(",   "log(",
-    "exp(",           "sin(",           "cos(",      "tan("};
+    "calc-mix(",      "round(",         "sqrt(",     "asin(",   "acos(",  "atan(",  "sign(",
+    "calc(",          "min(",           "max(",      "mod(",    "rem(",   "abs(",   "pow(",
+    "log(",           "exp(",           "sin(",      "cos(",    "tan("};
 
 } // namespace
 
@@ -462,13 +462,18 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                 std::string_view options;
                 std::size_t first = 0;
                 // The options are the first argument when it is one: a name,
-                // a scope keyword, `auto` or `fixed`.
+                // a UA ident, a scope keyword, `auto` or `fixed` - any
+                // identifier that is not one of the numeric constants.
                 if (!arguments.empty()) {
                     const std::string_view head = trim(arguments.front(), html_whitespace);
-                    if (head.starts_with("--") || ascii_istarts_with(head, "fixed") ||
-                        ascii_iequals(head, "auto") || ascii_iequals(head, "element-scoped") ||
-                        ascii_iequals(head, "property-index-scoped") ||
-                        head.find("-scoped") != std::string_view::npos) {
+                    const token_stream head_tokens = tokenize(head);
+                    const bool ident = !head_tokens.tokens.empty() &&
+                                       head_tokens.tokens.front().type == token_type::ident;
+                    const std::string_view word =
+                        ident ? head_tokens.text_of(head_tokens.tokens.front()) : head;
+                    if (ident && !ascii_iequals(word, "nan") && !ascii_iequals(word, "infinity") &&
+                        !ascii_iequals(word, "-infinity") && !ascii_iequals(word, "pi") &&
+                        !ascii_iequals(word, "e")) {
                         options = head;
                         first = 1;
                     }

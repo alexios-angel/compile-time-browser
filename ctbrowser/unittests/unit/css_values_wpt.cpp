@@ -215,6 +215,62 @@ void test_typed_arithmetic() {
     CHECK(!check_declaration("width", "calc(2px * 1px)").valid);
 }
 
+// calc-mix-serialize, calc-mix-computed: a weighted sum whose weights are
+// normalised like color-mix()'s - filled equally when omitted, scaled down
+// over 100%, not scaled up under - and whose specified value folds only when
+// every value in it has a magnitude.
+void test_calc_mix() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    const auto specified = [](std::string_view property, std::string_view v) {
+        return check_declaration(property, v).serialized;
+    };
+    CHECK_EQ(specified("scale", "calc-mix(1 100%)"), std::string{"calc(1)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 50%, 3 50%)"), std::string{"calc(2)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 25%, 3 25%, 7 0%, 5 50%)"), std::string{"calc(3.5)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 50%, 3)"), std::string{"calc(2)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 75%, 3 75%, 5, 7)"), std::string{"calc(2)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 25%, 3 25%, 5, 7)"), std::string{"calc(4)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 25%, 3 25%)"), std::string{"calc(1)"});
+    CHECK_EQ(specified("text-indent", "calc-mix(10px 75%, 3em 75%)"),
+             std::string{"calc-mix(10px 50%, 3em 50%)"});
+    CHECK_EQ(specified("text-indent", "calc-mix(10px 75%, 3em 75%, 5em, 7em)"),
+             std::string{"calc-mix(10px 50%, 3em 50%)"});
+    CHECK_EQ(specified("text-indent", "calc-mix(10px 25%, 3em 25%, 5em, 7em)"),
+             std::string{"calc-mix(10px 25%, 3em 25%, 5em 25%, 7em 25%)"});
+    CHECK_EQ(specified("text-indent", "calc(10px + calc-mix(1% 0%, 3px 0%))"),
+             std::string{"calc(0% + 10px)"});
+    CHECK_EQ(specified("text-indent", "calc-mix(1% 0%, 3% 0%, 5% * sibling-index() 0%)"),
+             std::string{"calc(0%)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 * sibling-index() 50%, 3 50%, 5, 7)"),
+             std::string{"calc-mix(1 * sibling-index() 50%, 3 50%)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 calc(50% * sibling-index()), 3)"),
+             std::string{"calc-mix(1 calc(50% * sibling-index()), 3)"});
+    CHECK_EQ(specified("scale", "calc-mix(1 calc(150%), 3 100%)"),
+             std::string{"calc-mix(1 calc(150%), 3 100%)"});
+    CHECK_EQ(specified("scale", "calc(sign(calc-mix(1 50%, 3 50%)) + 10)"),
+             std::string{"calc(11)"});
+    CHECK_EQ(specified("scale", "calc-mix(1px 50%, 3 50%)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 150%, 3)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 -50%, 3)"), std::string{});
+    CHECK_EQ(specified("scale", "calc-mix(1 * sibling-index() 0%, 3 100%)"),
+             std::string{"calc(3)"});
+
+    length_context ctx;
+    ctx.font_size = 10.0f;
+    ctx.sibling_index = 1;
+    ctx.sibling_count = 1;
+    const auto fold = [&](std::string_view v) { return fold_math(v, ctx).text; };
+    CHECK_EQ(fold("calc-mix(1 25%, 3 25%, 7 0%, 5 50%)"), std::string{"3.5"});
+    CHECK_EQ(fold("calc-mix(10px 75%, 3em 75%)"), std::string{"20px"});
+    CHECK_EQ(fold("calc-mix(10em 50%, 30px 50%)"), std::string{"65px"});
+    CHECK_EQ(fold("calc-mix(1 calc(150%), 3 100%)"), std::string{"2"});
+    CHECK_EQ(fold("calc-mix(1 calc(-50%), 3 100%)"), std::string{"3"});
+    CHECK_EQ(fold("calc-mix(1 * sibling-index() 50%, 3 50%)"), std::string{"2"});
+    CHECK_EQ(fold("calc(10px + calc-mix(10% 50%, 30% 50%))"), std::string{"calc(20% + 10px)"});
+}
+
 // random-computed: random() picks between its bounds on a base that is fixed
 // per key, so the same declaration lands on the same value, and the corners
 // of its range are the specification's.
@@ -253,6 +309,15 @@ void test_random() {
     const std::string waiting = fold("random(10%, 100%)");
     CHECK(waiting.starts_with("random(fixed 0.") && waiting.ends_with(", 10%, 100%)"));
     CHECK_EQ(fold(waiting), waiting);
+    // A UA ident is a key like a dashed name: shared across elements, and
+    // replaced by the base it drew when the value waits (random-computed).
+    const std::string ua = fold("random(ua-width-1, 10%, 100%)");
+    CHECK(ua.starts_with("random(fixed 0.") && ua.ends_with(", 10%, 100%)"));
+    CHECK_EQ(fold("random(ua-width-1, 0, 1000000)"), [&] {
+        length_context other = ctx;
+        other.element_key = 9;
+        return fold_math("random(ua-width-1, 0, 1000000)", other).text;
+    }());
 }
 
 // tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
@@ -304,11 +369,20 @@ void test_attr_substitution() {
         if (name == "data-len") { return "3EM"; }
         if (name == "data-calc") { return "calc(1px + 3px)"; }
         if (name == "data-empty") { return ""; }
+        if (name == "data-nested") { return "attr(data-foo type(*), 2px)"; }
+        if (name == "data-ring") { return "attr(data-ring2 type(*), 2px)"; }
+        if (name == "data-ring2") { return "attr(data-ring type(*), 3px)"; }
         return std::nullopt;
     };
     const auto sub = [&](std::string_view value) {
         return substitute_var(value, none, atoms, attrs).value_or("<invalid>");
     };
+    // One attribute read through another, and a ring of them: the ring is a
+    // cycle, invalid throughout, and only the outermost fallback applies
+    // (attr-cycle).
+    CHECK_EQ(sub("attr(data-nested type(*), 1px)"), std::string{"10"});
+    CHECK_EQ(sub("attr(data-ring type(*), 1px)"), std::string{"1px"});
+    CHECK_EQ(sub("attr(data-ring type(*))"), std::string{"<invalid>"});
     // No type: a string, whatever the text says.
     CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
     CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});
@@ -465,6 +539,7 @@ int main() {
     test_the_range_of_a_property_is_applied_when_computed();
     test_typed_arithmetic();
     test_random();
+    test_calc_mix();
     test_the_tree_counting_functions();
     test_attr_substitution();
     test_what_a_page_reads_back();

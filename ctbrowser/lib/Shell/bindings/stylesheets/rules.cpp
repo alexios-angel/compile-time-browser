@@ -5,6 +5,8 @@
 
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <charconv>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -419,12 +421,20 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                     bool ok = true;
                     for (const std::string_view part :
                          split_top_level(parsed.text_of(d), " \t\n\r\f")) {
+                        // A NUMBER, and only a number: `random(1, 3)` is a
+                        // valid `order` and no feature value, and reading its
+                        // digits out of the text was a std::stod that threw
+                        // (random-in-descriptors).
                         const style::css::value_check n = check_declaration("order", part, false);
-                        if (!n.valid) {
+                        double number = 0.0;
+                        const auto [end, ec] = std::from_chars(
+                            n.serialized.data(), n.serialized.data() + n.serialized.size(), number);
+                        if (!n.valid || ec != std::errc{} ||
+                            end != n.serialized.data() + n.serialized.size()) {
                             ok = false;
                             break;
                         }
-                        entry.numbers.push_back(std::stod(n.serialized));
+                        entry.numbers.push_back(number);
                     }
                     if (!ok || entry.numbers.empty()) { continue; }
                     std::erase_if(made.features, [&](const css_rule_record::feature_value & f) {

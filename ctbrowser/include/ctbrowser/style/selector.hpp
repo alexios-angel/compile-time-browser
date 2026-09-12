@@ -190,10 +190,14 @@ struct compound {
     // empty and because the type is recursive; tested LAST of everything in a
     // compound, since a nested selector list runs the matcher again.
     std::vector<pseudo_ref> pseudos;
-    // THE NAMESPACE PREFIX on the type selector - see ns_prefix. The matcher
-    // answers neither `none` nor `named` for an element and `never_matches` says so.
+    // THE NAMESPACE PREFIX on the type selector - see ns_prefix - and the URI
+    // it binds: the prefix's `@namespace`, or the sheet's default namespace for
+    // an unprefixed compound (Selectors 4 §6.1.1 puts the implied `*` in it
+    // too). Empty constrains nothing. The matcher knows an element's namespace
+    // as html or svg, so those two URIs match and `none` never does.
     ns_prefix ns = ns_prefix::unset;
     atom ns_name;
+    atom ns_uri;
     // A PSEUDO-ELEMENT - `::before`, interned lowercase - or empty. The engine
     // generates no boxes for one, so a compound carrying it never matches an
     // element; the name is kept so `selectorText` can be canonical, which is how

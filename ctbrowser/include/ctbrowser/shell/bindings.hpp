@@ -424,6 +424,9 @@ private:
     // `getComputedStyle`, on `window` and as a bare global.
     void install_computed_style(context & cx);
     [[nodiscard]] value computed_style_object(context & cx, node_id id);
+    // ...for `getComputedStyle(el, "::before")`: `pseudo` is the pseudo-element's
+    // name (`before`/`after`), resolved through the style engine on every read.
+    [[nodiscard]] value computed_style_object(context & cx, node_id id, atom pseudo);
     // ONE ELEMENT'S WHOLE COMPUTED STYLE, as (CSS name, value) pairs: the
     // supported longhands lexicographically, then the shorthands, then whatever
     // the element declared that the property table has never heard of. Empty for
@@ -437,6 +440,11 @@ private:
     // and that now happens inside a script turn.
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
         node_id id);
+    // ...and of the element's `::before`/`::after`: `pseudo` is the style
+    // engine::resolve_pseudo made for it, read in the element's place - no box,
+    // percentages against the element's content box, the element as parent.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
+        node_id id, const style::computed_style_ptr & pseudo);
 
     // --- DOMException, and the CSS interface --------------------------------
     //

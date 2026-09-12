@@ -183,6 +183,34 @@ enum class math_context : std::uint8_t {
 // `min(...)`, `max(...)` or `clamp(...)`. The three outcomes are above.
 [[nodiscard]] math_answer evaluate_math(std::string_view expression, const length_context & ctx);
 
+// THE TYPE OF A WELL-FORMED MATH FUNCTION THAT HAS NO ANSWER YET. `calc(1px *
+// sibling-index())` is unresolved everywhere but in the cascade, and is a
+// <length> all the same: CSS Values 4 §10.2 types the expression before anything
+// is measured, which is what lets `rotate` refuse it on sight. The answer is a
+// `calc_result` whose magnitudes are left at zero - only `type`, `is_number` and
+// `has_percent` mean anything - and `nullopt` for an expression whose type
+// cannot be settled without a basis, such as `min(10px, 5%)`.
+[[nodiscard]] std::optional<calc_result> math_type_of(std::string_view expression);
+
+// calc-size( <calc-size-basis>, <calc-sum> ), CSS Values 5 §calc-size, AS A
+// SPECIFIED VALUE: the basis canonical - a keyword, a nested calc-size() or a
+// <length-percentage> - and the calculation simplified with `size` as a term
+// of its own, so `size * 2` is `2 * size`. `keywords` are the property's own
+// size keywords (`auto` for width, `none` for max-width); the intrinsic ones
+// and `any` are always a basis, and `size` may not be used over `any`.
+// `nullopt` when `value` is not one valid calc-size() and nothing else
+// (calc-size-parsing).
+[[nodiscard]] std::optional<std::string> calc_size_text(std::string_view value,
+                                                        std::string_view keywords);
+
+// EVERY random() IN A SPECIFIED VALUE, ITS KEY SPELLED OUT (CSS Values 5
+// §random-caching, as random-serialize reads it): the sharing words become
+// the `<dashed-ident>`, `element-scoped` and UA-ident triple `random_base`
+// keys on - `random(0px, 100px)` in `width` is `random(element-scoped
+// ua-width-1, 0px, 100px)`, `property-scoped` is `ua-width` - and the
+// bounds take their canonical units. `fixed` keeps its number.
+[[nodiscard]] std::string canonical_random(std::string_view value, std::string_view property);
+
 // A folded value, and whether every calc() in it actually evaluated.
 //
 // The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a
