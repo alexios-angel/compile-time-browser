@@ -58,6 +58,25 @@ void test_at_property_in_the_cascade() {
         expect_value(f, f.find_id("a"), "width", "3px", "and var() reads the computed value");
     }
     {
+        // A substituted CSS-wide keyword is that keyword (attr-css-wide-keywords).
+        fixture f;
+        f.load("<div id=outer><p id=a data-i=inherit data-u=unset data-n=initial></p></div>",
+               "@property --own { syntax: \"<length>\"; inherits: false; initial-value: 5px }"
+               "@property --shared { syntax: \"<length>\"; inherits: true; initial-value: 5px }"
+               "#outer { --own: 4px; --shared: 4px }"
+               "#a { --own: attr(data-i type(*)); --shared: attr(data-u type(*)) }");
+        expect_value(f, f.find_id("a"), "--own", "4px", "inherit from an attribute");
+        expect_value(f, f.find_id("a"), "--shared", "4px", "unset inherits when it inherits");
+        fixture g;
+        g.load("<div id=outer><p id=a data-n=initial data-u=unset></p></div>",
+               "@property --own { syntax: \"<length>\"; inherits: false; initial-value: 5px }"
+               "@property --shared { syntax: \"<length>\"; inherits: true; initial-value: 5px }"
+               "#outer { --own: 4px; --shared: 4px }"
+               "#a { --own: attr(data-u type(*)); --shared: attr(data-n type(*)) }");
+        expect_value(g, g.find_id("a"), "--own", "5px", "unset is initial when it does not");
+        expect_value(g, g.find_id("a"), "--shared", "5px", "initial from an attribute");
+    }
+    {
         // A rule missing a required descriptor registers nothing; the first
         // registration of a name stands.
         fixture f;

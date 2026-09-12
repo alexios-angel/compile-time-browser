@@ -411,6 +411,19 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 //    which a custom property serialises as nothing at all.
                 if (!done) { return {}; }
                 text = std::move(*done);
+                // A SUBSTITUTED CSS-WIDE KEYWORD IS THAT KEYWORD (CSS Values 5
+                //    §arbitrary-substitution): on an unregistered property
+                //    `inherit` and `unset` are the parent's value and `initial`
+                //    the guaranteed-invalid one (attr-css-wide-keywords). A
+                //    registered property had this settled in the cascade.
+                const std::string_view word = trim(text, html_whitespace);
+                const bool registered = conditions.registered && conditions.registered(property);
+                if (!registered &&
+                    (ascii_iequals(word, "inherit") || ascii_iequals(word, "unset") ||
+                     ascii_iequals(word, "revert"))) {
+                    return conditions.inherited(property).value_or("");
+                }
+                if (!registered && ascii_iequals(word, "initial")) { return {}; }
             }
             return text;
         }

@@ -1048,7 +1048,20 @@ public:
                     substituted = done.has_value();
                     if (done) { text = std::move(*done); }
                 }
-                if (substituted) {
+                // A SUBSTITUTED CSS-WIDE KEYWORD IS THAT KEYWORD (CSS Values 5
+                // §arbitrary-substitution): `attr(data-x type(*))` holding
+                // `inherit` is the parent's value, `unset` whichever the
+                // registration says (attr-css-wide-keywords).
+                const std::string_view word = trim(text, html_whitespace);
+                const bool from_parent = ascii_iequals(word, "inherit") ||
+                                         (registration.inherits && (ascii_iequals(word, "unset") ||
+                                                                    ascii_iequals(word, "revert")));
+                if (substituted && from_parent) {
+                    const std::string_view held =
+                        parent && parent->inherited ? parent->inherited->get(name) : "";
+                    if (!held.empty()) { computed = std::string{held}; }
+                } else if (substituted && !ascii_iequals(word, "initial") &&
+                           !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
                     computed = css::compute_registered(text, registration.syntax, lengths);
                 }
             } else if (own == nullptr && registration.inherits && parent) {
