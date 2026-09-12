@@ -6,6 +6,65 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native nullable output and canonical String indices, 2026-09-12
+
+Continued clean **3e60248f** and the **11:04:32 UTC** journal. The preceding
+nullable-child work was fully gated; `codex-wip-20260907` was already an ancestor.
+Resumed its promised unchanged **99954bab** native result/output boundary. Three
+agents prepared escape, output and lifetime checks; root integrated and gated them.
+
+**850cada4** admits global observations only when the complete source-store lattice
+fits an existing scalar or String carrier. Optional observations print actual
+Null/Undefined/Number/Boolean/String tags; definite observations keep their existing
+tag checks. No return type, Map membership or Host annotation supplies new authority.
+Unsupported mixed String/scalar and object outputs still refuse. Both layouts,
+GCC/Clang, both optimization policies and no-Script checks pass for **21 typed globals /
+nine functions**, including negative zero, NaN, embedded-NUL Strings, missing/present
+fields, saved early reads, wrong guards and forged reports. The original split-JS
+statements remain unchanged. Historical **size_one_present_field** and
+**constant_undefined_candidate** now execute **5/5 native** in both modes; stale/fresh
+controls and their unchanged refusal siblings pass.
+
+**382dff40** executes the unchanged **99954bab** as **4/4 native**, both modes,
+**nine calls**, complete proof budget **2479 / 29 incomplete cutoffs**. Seven other
+historical nullable sources also become native; six appended sources observe actual
+Undefined after sibling replacement/delete/clear. All **40 historical JavaScript
+bodies** remain byte-identical. The cohort passes **24 native programs / 22 refusals**,
+**111 typed Node/VM observations / 125 distinguishing mutations** in **41.87s**.
+Both C++ layouts pass GCC/Clang/no-Script and ASan/UBSan/leaks through **128 future
+calls**, saved children, detached methods, outer recreation, entry reexecution and
+final release. Original uncalled-removal **0205c78a** remains **0/6**.
+
+**14920c37** proves original canonical String array indices through the existing
+origin, bounds and budget checks. Sparse/missing elements, lookalike spellings,
+computed keys and ordinary-object/prototype effects remain refused. The old escape
+fixture is an exact **26,888-byte prefix**. Four appended witnesses observe ten
+literal sites, four confined and six retained; the provisional final-array PC **29**
+was corrected to measured **27**, with all verdict rows unchanged. The fixture
+measures **811 sites / 33 unclaimed / zero violations / precision 13/152**.
+
+The **262-step rebuild** passes. The corrected gate passes **13/13 focused CTests
+in 0.85s**, all four affected lit tests pass **2.98s**, and the historical ownership
+controls pass both layouts/compilers. Stable clang-format22 passes **800 files**;
+bundled23 retains exactly the same **nine baseline files / 28 diagnostics**. No
+browser/runtime, inference, Map ownership or carrier definition changed.
+
+**The standard 534-CTest gate is running**, with **1,368 frozen inputs**; no full-gate
+success is claimed yet. The fresh exact ordinary Data **8359592c** probe remains
+**0/7 native** in both modes, with `property receiver lacks a fresh own-data object
+proof`. Full Bootstrap counts will be refreshed from the running gate.
+
+Next: exact Data's mixed Number/field-bearing caller payloads, owning object
+returns/identity, and its original recorder callback (`Array.from(s.keys())` and the
+template diagnostic). Component/DOM ownership follows through ctbrowser public APIs.
+The next independent escape increment is original decimal BigInt array indices.
+Details: `/tmp/ctcompile-output-next.md`, `/tmp/ctcompile-string-indices-next.md`.
+
+Evidence: `/tmp/ctcompile-output-{focused.log,probe.log,corrected.log,
+corrected-detail.log,full.log,full-frozen.json,full-revision.json}`. Parser remains
+**8eb3375**; reread Claude's pending runtime/ABI journals through **10:48:07 UTC**
+after integration. All three code commits are local; nothing was pushed.
+
 ## Nullable child contents and dynamic mixed Add, 2026-09-12
 
 Continued clean **14dabe42** and the **09:21:23 UTC** journal. The prior guard
