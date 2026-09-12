@@ -47,6 +47,10 @@ void compiler_impl::compile_try(const vp::node & n) {
         push_scope();
         emit_catch_filter(caught_reg);
         if (!caught_name.empty()) { declare_local_at(caught_name, caught_reg); }
+        // `catch ({message})`: the parameter is a pattern in `b` (14.15.3).
+        if (at(catch_clause).b >= 0) {
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+        }
         compile_stmt(at(catch_clause).a);
         pop_scope();
     }
@@ -109,6 +113,9 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
         const std::size_t catch_guard = proto().emit(instruction{op::push_handler, value_reg});
         ++handler_depth_;
         emit_catch_filter(caught_reg); // inside the guard, so the finally still runs
+        if (at(catch_clause).b >= 0) {
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+        }
         compile_stmt(at(catch_clause).a);
         proto().emit(instruction{op::pop_handler});
         --handler_depth_;

@@ -197,6 +197,12 @@ void test_labeled_break() {
 
 void test_try_catch() {
     expect_result("var r = 0; try { throw 7; } catch (e) { r = e; } return r;", "7");
+    // A catch parameter may be a pattern (14.15.3), and it is a binding the
+    // block's closures capture like any other.
+    expect_result("try { throw { code: 4, tags: ['a', 'b'] }; }"
+                  " catch ({ code, tags: [first] }) { return code + first; }",
+                  "4a");
+    expect_result("try { throw [1, 2]; } catch ([x, y]) { return (() => x + y)(); }", "3");
     expect_result("var r = 0; try { r = 1; } catch (e) { r = 2; } return r;", "1");
     expect_result("var r = ''; try { throw 'boom'; } catch (e) { r = e; } return r;", "boom");
 }
@@ -355,6 +361,14 @@ void test_for_of() {
         " return { done: n > 2, value: n }; }, return() { returned++; return {}; } }; } };"
         "var t = 0; for (const x of it) { t += x; } return t + ',' + returned;",
         "3,0");
+    // The head may be an assignment pattern over bindings that already exist,
+    // in for-of and for-in alike.
+    expect_result("var a, b, out = []; for ([a, b] of [[1, 2], [3, 4]]) { out.push(a * b); }"
+                  "return out.join(',');",
+                  "2,12");
+    expect_result("var k, out = []; var o = { x: 1 }; for ({ length: k } in o) { out.push(k); }"
+                  "return out.join(',');",
+                  "1");
     // A non-iterable is the TypeError the specification says, not zero turns.
     expect_result("try { for (const x of 5) {} return 'ran'; } catch (e) { return e.name; }",
                   "TypeError");

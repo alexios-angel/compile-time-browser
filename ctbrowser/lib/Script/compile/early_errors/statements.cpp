@@ -317,6 +317,10 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
         if (!clause.text.empty()) {
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
             check_strict_binding(clause.text, n.b);
+        } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names
+            bound_names(clause.b, binding_kind::let_, parameter);
+            check_strict_bindings(parameter);
+            walk_pattern(clause.b);
         }
         // 14.15.1: the catch parameter may not be redeclared lexically in
         // the block. A `var` of the same name IS allowed in sloppy mode
