@@ -15,12 +15,10 @@ from .driver_common import (
     owned,
     re,
     source_calls,
+    shutil,
     subprocess,
     zero_size_cases,
     zero_size_observer_source,
-)
-from .driver_fields import (
-    string_field_method_graph,
 )
 
 def check_zero_size_census(args, ir, name):
@@ -114,19 +112,24 @@ def check_exact_size_refusals(args, positives, cases, census):
         for mode, options in (('default', ''), ('disabled', 'optimize=false')):
             label = name + '-' + mode
 
-            def reject(input_ir, current, current_config):
+            def check_current(input_ir, current, current_config):
                 owner = row.get('owner', False)
                 if owner:
-                    failed = owned.lower(args, input_ir, current, current_config, options=options, cleanup=False)
-                    text = methods.census(failed, 5, current, admitted=0)
-                    check_exact_size_field_preparation(text, input_ir.read_text(), current, row)
+                    failed = owned.lower(args, input_ir, current, current_config, options=options)
+                    text = methods.census(failed, 5, current, admitted=5)
+                    if 'ctnative.host_owner_proved = true' not in text:
+                        raise RuntimeError(f'{current}: optional field output lost ownership')
+                    compilers = [shutil.which('g++-13') or shutil.which('g++'),
+                                 shutil.which('clang++-18') or shutil.which('clang++')]
+                    owned.standalone(args, failed, current, f'trace={row["expected_trace"]}\n',
+                                     compilers, shutil.which('nm'))
+                    return failed
                 else:
                     failed = methods.refused(args, input_ir, current, current_config, options=options, admitted=0)
                     text = failed.read_text()
                     check_call_preservation(input_ir.read_text(), text, current)
                 expected_owner = 'ctnative.host_owner_proved = ' + str(owner).lower()
-                reason = ('store to global `trace` may be null or undefined' if owner else
-                          'property call lacks a current source getter proof')
+                reason = 'property call lacks a current source getter proof'
                 if (expected_owner not in text or reason not in text or 'fingerprint mismatch' in text):
                     raise RuntimeError(f'{current}: unknown size bypassed independent current source proof')
                 return failed
@@ -134,7 +137,7 @@ def check_exact_size_refusals(args, positives, cases, census):
             stale = methods.refused(args, ir, label + '-changed-source', repaired_config, options=options,
                                     reason='fingerprint mismatch', admitted=0)
             check_call_preservation(ir.read_text(), stale.read_text(), label + '-changed-source')
-            reject(ir, label, config)
+            check_current(ir, label, config)
             repaired = owned.lower(args, restored, label + '-restored', repaired_config, options=options)
             if 'ctnative.host_owner_proved = true' not in methods.census(repaired, 5, label, admitted=5):
                 raise RuntimeError(f'{label}: exact size repair lost native ownership')
@@ -146,33 +149,11 @@ def check_exact_size_refusals(args, positives, cases, census):
                                         reason='fingerprint mismatch', admitted=0)
                 check_call_preservation(forged.read_text(), stale.read_text(), current + '-stale')
                 fresh = contract(args, forged, current)
-                failed = reject(forged, current + '-fresh', fresh)
+                failed = check_current(forged, current + '-fresh', fresh)
+                if row.get('owner'):
+                    continue  # Successful lowering leaves no source calls for a refusal rerun.
                 rerun = methods.refused(args, failed, current + '-rerun', fresh, options=options, admitted=0)
                 check_call_preservation(failed.read_text(), rerun.read_text(), current + '-rerun')
-
-
-def check_exact_size_field_preparation(text, original, name, row):
-    if (re.search(r'\bemitc\.func @main\(', text)
-            or len(source_calls(original)) != row['prepared_calls']
-            or len(source_calls(text)) != row['prepared_calls']):
-        raise RuntimeError(f'{name}: optional field refusal changed the evaluated call census')
-    for function in ('fn$3', 'fn$4'):
-        if string_field_method_graph(original, function, False) != string_field_method_graph(text, function, True):
-            raise RuntimeError(f'{name}: optional field refusal changed saved-size/Map/field operands')
-    published = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) '
-                           r'\{ctnative\.stored_call = 1 : i32\}', text, re.M)
-    actuals = [arguments.split(', ') for _, _, arguments in published]
-    if ([target for _, target, _ in published] != ['fn$3', 'fn$4']
-            or list(map(len, actuals)) != [4, 5]
-            or f'ctjs.store_global "trace", {published[-1][0]}' not in text):
-        raise RuntimeError(f'{name}: optional field refusal changed published calls or trace result')
-    getters = dict(re.findall(r'^\s*(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', text, re.M))
-    captures = dict(re.findall(r'^\s*(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', text, re.M))
-    for arguments in actuals:
-        if getters.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
-            raise RuntimeError(f'{name}: optional field refusal lost receiver/callee/Map capture')
-    if f'{actuals[1][-1]} = ctjs.constant #ctjs.number<4619567317775286272>' not in text:
-        raise RuntimeError(f'{name}: optional field refusal lost the original Number actual seven')
 
 
 def check_one_size_census(args, ir, name):

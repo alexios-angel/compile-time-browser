@@ -445,3 +445,123 @@ if (primitiveUShrNormal[0] !== 4 || typeof primitiveUShrNormal[0] !== "number" |
     primitiveUShrSavedError === primitiveUShrUnknownError ||
     typeof primitiveUShrError.message !== "string" ||
     typeof primitiveUShrSavedError.stack !== "string") throw "BigInt unsigned shift independent TypeError witness";
+
+// --- MIXED STATIC BIGINT: independent TypeError, original dense operands ---
+function primitiveMixedStaticEarly(choice) {
+    var child = {}, items = [child], value, shift;
+    if (choice) { value = 8n; shift = 1; }
+    else { value = 8; shift = 1; }
+    var result = value >> shift;
+    items[0] = result;
+    return items;
+}
+function primitiveMixedStaticRetained(choice) {
+    var child = {}, items = [child], saved = items[0], value, shift;
+    if (choice) { value = 8; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value >> shift;
+    items[0] = result;
+    return saved;
+}
+function primitiveMixedStaticOpaque(value, shift) {
+    var child = {}, items = [child];
+    var result = value >> shift;
+    items[0] = result;
+    return items;
+}
+var primitiveMixedStaticNormal = primitiveMixedStaticEarly(false);
+var primitiveMixedStaticSaved = primitiveMixedStaticRetained(false);
+var primitiveMixedStaticUnknown = primitiveMixedStaticOpaque(8, 1);
+H.push(primitiveMixedStaticNormal); H.push(primitiveMixedStaticSaved); H.push(primitiveMixedStaticUnknown);
+var primitiveMixedStaticError = primitiveUShrCatch(primitiveMixedStaticEarly, true);
+var primitiveMixedStaticSavedError = primitiveUShrCatch(primitiveMixedStaticRetained, true);
+var primitiveMixedStaticUnknownError = primitiveUShrCatch(primitiveMixedStaticOpaque, 8n, 1);
+if (primitiveMixedStaticNormal[0] !== 4 || typeof primitiveMixedStaticNormal[0] !== "number" ||
+    typeof primitiveMixedStaticSaved !== "object" || Array.isArray(primitiveMixedStaticSaved) ||
+    primitiveMixedStaticUnknown[0] !== 4 || typeof primitiveMixedStaticUnknown[0] !== "number" ||
+    !(primitiveMixedStaticError instanceof TypeError) || primitiveMixedStaticError.name !== "TypeError" ||
+    !(primitiveMixedStaticSavedError instanceof TypeError) ||
+    !(primitiveMixedStaticUnknownError instanceof TypeError) ||
+    primitiveMixedStaticError === primitiveMixedStaticSavedError ||
+    primitiveMixedStaticError === primitiveMixedStaticUnknownError ||
+    primitiveMixedStaticSavedError === primitiveMixedStaticUnknownError ||
+    typeof primitiveMixedStaticError.message !== "string" ||
+    typeof primitiveMixedStaticSavedError.stack !== "string") throw "mixed static BigInt independent TypeError witness";
+
+// --- MIXED DYNAMIC BIGINT ADD: independent TypeError, original dense operands ---
+function primitiveMixedAddEarly(choice) {
+    var child = {}, items = [child], value, shift;
+    if (choice) { value = 8n; shift = 1; }
+    else { value = 8; shift = 1; }
+    var result = value + shift;
+    items[0] = result;
+    return items;
+}
+function primitiveMixedAddRetained(choice) {
+    var child = {}, items = [child], saved = items[0], value, shift;
+    if (choice) { value = 8; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value + shift;
+    items[0] = result;
+    return saved;
+}
+function primitiveMixedAddOpaque(value, shift) {
+    var child = {}, items = [child];
+    var result = value + shift;
+    items[0] = result;
+    return items;
+}
+var primitiveMixedAddNormal = primitiveMixedAddEarly(false);
+var primitiveMixedAddSaved = primitiveMixedAddRetained(false);
+var primitiveMixedAddUnknown = primitiveMixedAddOpaque(8, 1);
+H.push(primitiveMixedAddNormal); H.push(primitiveMixedAddSaved); H.push(primitiveMixedAddUnknown);
+var primitiveMixedAddError = primitiveUShrCatch(primitiveMixedAddEarly, true);
+var primitiveMixedAddSavedError = primitiveUShrCatch(primitiveMixedAddRetained, true);
+var primitiveMixedAddUnknownError = primitiveUShrCatch(primitiveMixedAddOpaque, 8n, 1);
+if (primitiveMixedAddNormal[0] !== 9 || typeof primitiveMixedAddNormal[0] !== "number" ||
+    typeof primitiveMixedAddSaved !== "object" || Array.isArray(primitiveMixedAddSaved) ||
+    primitiveMixedAddUnknown[0] !== 9 || typeof primitiveMixedAddUnknown[0] !== "number" ||
+    !(primitiveMixedAddError instanceof TypeError) || primitiveMixedAddError.name !== "TypeError" ||
+    !(primitiveMixedAddSavedError instanceof TypeError) ||
+    !(primitiveMixedAddUnknownError instanceof TypeError) ||
+    primitiveMixedAddError === primitiveMixedAddSavedError ||
+    primitiveMixedAddError === primitiveMixedAddUnknownError ||
+    primitiveMixedAddSavedError === primitiveMixedAddUnknownError ||
+    typeof primitiveMixedAddError.message !== "string" ||
+    typeof primitiveMixedAddSavedError.stack !== "string") throw "mixed dynamic BigInt Add independent TypeError witness";
+
+// --- CANONICAL STRING INDICES: exact dense slots, saved identity, lookalikes ---
+function canonicalStringReleased() {
+    var child = {}, items = [child];
+    items["0"] = 9;
+    return items;
+}
+function canonicalStringSaved() {
+    var child = {}, items = [child], saved = items["0"];
+    items["0"] = 9;
+    return saved;
+}
+function canonicalStringLookalike() {
+    var child = {}, items = [child];
+    items["00"] = 9;
+    return items;
+}
+function canonicalStringLoaded() {
+    var child = {}, items = [child], keys = ["0"];
+    var key = keys[0], saved = items[key];
+    items[key] = 9;
+    return [items, saved === child];
+}
+var canonicalStringNormal = canonicalStringReleased();
+var canonicalStringRetained = canonicalStringSaved();
+var canonicalStringNamed = canonicalStringLookalike();
+var canonicalStringForwarded = canonicalStringLoaded();
+H.push(canonicalStringNormal); H.push(canonicalStringRetained);
+H.push(canonicalStringNamed); H.push(canonicalStringForwarded);
+if (canonicalStringNormal[0] !== 9 || typeof canonicalStringNormal[0] !== "number" ||
+    typeof canonicalStringRetained !== "object" || canonicalStringRetained === null ||
+    Array.isArray(canonicalStringRetained) ||
+    typeof canonicalStringNamed[0] !== "object" || canonicalStringNamed[0] === null ||
+    canonicalStringNamed["00"] !== 9 || canonicalStringNamed.length !== 1 ||
+    canonicalStringForwarded[0][0] !== 9 || typeof canonicalStringForwarded[0][0] !== "number" ||
+    canonicalStringForwarded[1] !== true) throw "canonical String index and saved identity witness";

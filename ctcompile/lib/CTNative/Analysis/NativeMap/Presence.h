@@ -10,6 +10,10 @@
 
 #include <string>
 
+namespace ctcompile::ctnative {
+class OwnedGlobalRoots;
+}
+
 namespace ctcompile::ctnative::map_detail {
 
 // Schema families are consulted only to invalidate possible aliases. A fact
@@ -24,6 +28,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
-                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters);
+                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
+                          const OwnedGlobalRoots * globals);
 
 } // namespace ctcompile::ctnative::map_detail

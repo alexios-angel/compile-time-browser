@@ -1,5 +1,5 @@
-// Scalar-only unions have an exact tagged carrier. Wider unions and numeric
-// publication boundaries remain refusals; the differential fixture checks the
+// Scalar-only unions have an exact tagged carrier, including global output.
+// Wider unions remain refusals; the differential fixture checks the
 // runtime distinction among booleans, numbers, null and undefined.
 //
 // RUN: split-file %s %t
@@ -18,8 +18,11 @@
 // NATIVE-DAG: emitc.func @retainedData_{{[0-9]+}}() -> f64
 // NATIVE-DAG: emitc.field @value : !emitc.opaque<"ctnative::nullable_scalar">
 
-// GLOBAL: ctjs.func @_script_$0
-// GLOBAL-SAME: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite Number, Boolean or String"
+// GLOBAL-NOT: ctnative.not_native
+// GLOBAL: emitc.func @main
+// GLOBAL: call_opaque "ctnative::print_scalar"
+// GLOBAL: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
+// GLOBAL-NOT: ctnative.not_native
 // STRING: ctnative.not_native = "a Bool/String temporary needs a single proved return type"
 // MAP-KEY: ctnative.not_native = "mixed native Map key needs one proved scalar alternative"
 // MAP-VALUE: ctnative.not_native = "mixed native Map write needs one proved scalar alternative"

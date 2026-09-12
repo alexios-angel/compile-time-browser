@@ -274,12 +274,38 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
-        while (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
-            if (!step()) { return false; }
-            condition = truthy.getValue();
+        while (true) {
+            if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+                if (!step()) { return false; }
+                condition = truthy.getValue();
+            } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
+                       unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                if (!step()) { return false; }
+                branch = !branch;
+                condition = unary.getOperand();
+            } else {
+                break;
+            }
         }
         if (auto found = alternatives.find(condition); found != alternatives.end()) {
             found->second = found->second.filtered(branch);
+        }
+        if (auto compare = condition.getDefiningOp<ctjs::CompareOp>();
+            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            for (unsigned index = 0; index < 2; ++index) {
+                if (!step()) { return false; }
+                auto literal = compare->getOperand(index).getDefiningOp<ctjs::ConstantOp>();
+                if (!literal ||
+                    !llvm::isa<ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue())) {
+                    continue;
+                }
+                if (auto found = alternatives.find(compare->getOperand(1 - index));
+                    found != alternatives.end()) {
+                    const auto mask = PrimitiveAlternatives::literal(literal.getValue()).falsy;
+                    found->second.truthy &= branch ? mask : ~mask;
+                    found->second.falsy &= branch ? mask : ~mask;
+                }
+            }
         }
         auto call = condition.getDefiningOp<ctjs::CallOp>();
         if (!branch || !call || !maps.contains(call.getReceiver())) { return true; }
@@ -349,6 +375,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         return true;
     };
     ctjs::ReturnOp returned;
+    ctjs::FrameEnterOp frame;
+    llvm::DenseSet<mlir::Operation *> frameUses;
+    bool frameExited = false;
     // SSA scalar facts and the complete use census are immutable across paths.
     // Mutable contents are copied for each arm and intersected only after both
     // arms finish. An observed startup condition never selects a future path.
@@ -356,6 +385,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         if (depth > 32 || !step()) { return false; }
         for (mlir::Operation & operation : block) {
             if (!step()) { return false; }
+            // An exited entry frame can only flow through the scalar return
+            // joins. No later operation may use it or perform another effect.
+            if (frameExited && !llvm::isa<ctjs::ReturnOp, mlir::scf::YieldOp>(operation)) {
+                return false;
+            }
             if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
                 if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
@@ -471,8 +505,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 const auto incoming = mapStates;
                 const auto incomingFields = fields;
                 const auto incomingAlternatives = alternatives;
+                const bool incomingExit = frameExited;
                 if (!learn(branch.getCondition(), true)) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
+                const bool thenExit = frameExited;
                 auto thenStates = std::move(mapStates);
                 auto thenFields = std::move(fields);
                 auto thenAlternatives = std::move(alternatives);
@@ -495,10 +531,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 mapStates = incoming;
                 fields = incomingFields;
                 alternatives = incomingAlternatives;
+                frameExited = incomingExit;
                 if (!learn(branch.getCondition(), false)) { return false; }
                 if (hasElse && !self(self, branch.getElseRegion().front(), depth + 1)) {
                     return false;
                 }
+                if (frameExited != thenExit) { return false; }
                 for (const auto & item : thenStates) {
                     if (!step()) { return false; }
                     mapStates.try_emplace(item.first);
@@ -771,9 +809,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 } else if (entry.present && origin == capturedOrigin &&
                                            result.childMapContents) {
                                     // The actual returned owner is an SSA origin,
-                                    // not a constructor from an earlier call. Its
-                                    // contents start unknown. An unchanged outer
-                                    // entry can subsequently return this same owner.
+                                    // not a constructor from an earlier call. Only
+                                    // independently proved family invariants can
+                                    // describe its unknown prior contents.
                                     entry.map = invoke.getResult();
                                     maps.try_emplace(invoke.getResult(), invoke.getResult());
                                     result.returnedChildMaps.push_back(invoke.getResult());
@@ -781,24 +819,59 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 break;
                             }
                         }
+                        if (origin != capturedOrigin && result.childScalarContents.tag()) {
+                            primitives.insert(invoke.getResult());
+                            // A local exact write/absence takes precedence. The family
+                            // category alone never establishes that this key exists.
+                            alternatives.try_emplace(
+                                invoke.getResult(),
+                                result.childScalarContents.joined(PrimitiveAlternatives::forTag(
+                                    mlir::TypeID::get<ctjs::UndefinedAttr>())));
+                        }
                         if (maps.lookup(invoke.getResult()) == invoke.getResult()) {
-                            mapStates.try_emplace(invoke.getResult());
+                            auto & child = mapStates[invoke.getResult()];
+                            for (const auto & entry : result.childEntries) {
+                                if (!step()) { return false; }
+                                child.entries.push_back({entry.key, entry.alternatives, true, {}});
+                            }
                         }
                     }
                 }
             } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                if (depth != 0 || returned || !primitives.contains(ret.getValue())) {
+                if (depth != 0 || returned || &operation != &block.back() ||
+                    (frame && !frameExited) || !primitives.contains(ret.getValue())) {
                     return false;
                 }
                 returned = ret;
             } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
-                if (depth == 0) { return false; }
+                if (depth == 0 || &operation != &block.back()) { return false; }
                 for (mlir::Value value : yield.getOperands()) {
                     if (!step() || !primitives.contains(value)) { return false; }
                 }
-            } else if (!llvm::isa<ctjs::RootOp>(operation) &&
-                       (depth != 0 ||
-                        !llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(operation))) {
+            } else if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+                const auto count = enter->getAttrOfType<mlir::IntegerAttr>("reg_count");
+                if (depth != 0 || frame || enter->getNumOperands() != 0 ||
+                    enter->getNumResults() != 1 ||
+                    !llvm::isa<ctjs::ContextType>(enter->getResult(0).getType()) || !count ||
+                    !count.getType().isInteger(32) || count.getInt() < 0) {
+                    return false;
+                }
+                frame = enter;
+            } else if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
+                if (!frame || exit->getNumOperands() != 1 || exit->getNumResults() != 0 ||
+                    exit.getContext() != frame.getContext()) {
+                    return false;
+                }
+                frameExited = true;
+                frameUses.insert(exit);
+            } else if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
+                if (!frame || root->getNumOperands() != 2 || root->getNumResults() != 0 ||
+                    !llvm::isa<ctjs::ValueType>(root->getOperand(1).getType()) ||
+                    root.getContext() != frame.getContext()) {
+                    return false;
+                }
+                frameUses.insert(root);
+            } else {
                 return false;
             }
         }
@@ -808,6 +881,14 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     if (!returned || result.reads.size() == firstRead ||
         (!prepared && result.upvalues.size() == firstUpvalue)) {
         return false;
+    }
+    if (frame) {
+        for (mlir::OpOperand & use : frame.getContext().getUses()) {
+            if (!step() || use.getOperandNumber() != 0 || !frameUses.contains(use.getOwner()) ||
+                !dominance.dominates(frame.getContext(), use.getOwner())) {
+                return false;
+            }
+        }
     }
     for (mlir::BlockArgument parameter : parameters.objectKeys) {
         for (mlir::OpOperand & use : parameter.getUses()) {

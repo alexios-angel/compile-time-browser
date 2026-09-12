@@ -29,17 +29,12 @@ bool admission::boolean(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// Each global observation has one proved scalar tag. Internal optional or
-// mixed scalars are exact, but that does not establish a single output type.
+// An observation preserves the alternatives of a proved scalar carrier.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
-    if (mayBeUndefined(typeOf(v))) {
-        return refuse((where + " may be null or undefined; native global observations require "
-                               "a definite Number, Boolean or String")
-                          .str());
-    }
-    if (!llvm::isa<NumType, BoolType, StrType>(typeOf(v))) {
+    const auto stored = carrierOf(typeOf(v));
+    if (!isScalarCarrier(stored) && !isStringCarrier(stored)) {
         return refuse((where + " is " + printed(typeOf(v)) +
-                       "; native global observations require a definite Number, Boolean or String")
+                       "; native global observations require a supported scalar type")
                           .str());
     }
     return true;

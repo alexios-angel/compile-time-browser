@@ -1,7 +1,201 @@
+#include "../../../../lib/CTNative/Analysis/NativeMap/Presence.h"
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 namespace {
+
+void checkRetainedChildPresence(mlir::MLIRContext & context) {
+    namespace fixtures = ctcompile::test::owned_global_methods;
+    using namespace ctcompile;
+    const auto sourceFingerprint = [](mlir::ModuleOp module) {
+        mlir::OwningOpRef<mlir::ModuleOp> copy = module.clone();
+        copy->walk([](mlir::Operation * operation) {
+            llvm::SmallVector<mlir::StringAttr> reports;
+            for (mlir::NamedAttribute attribute : operation->getAttrs()) {
+                if (attribute.getName().getValue().starts_with("ctnative.map_")) {
+                    reports.push_back(attribute.getName());
+                }
+            }
+            for (mlir::StringAttr report : reports) { operation->removeAttr(report); }
+        });
+        return ctnative::hostContractFingerprint(*copy);
+    };
+    const std::string seed = "    %seed = ctjs.call %childSetter(%child, %innerKey, %number)\n";
+    const std::string publication =
+        "    %published = ctjs.call %outerSetter(%state, %slot, %child)\n";
+    auto source =
+        fixtures::replaced(fixtures::capturedFixture, "    ctjs.return %table",
+                           "    %putter = ctjs.create_closure %callee[4] this %u captures %cell\n"
+                           "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                           "    ctjs.set_property %table[%putKey], %putter\n"
+                           "    ctjs.return %table");
+    source = fixtures::replaced(source, "    %answer = ctjs.call %getter(%owned)",
+                                "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                                "    %putter = ctjs.get_property %owned[%putKey]\n"
+                                "    %put = ctjs.call %putter(%owned)\n"
+                                "    %answer = ctjs.call %getter(%owned)");
+    source = fixtures::replaced(source, "    %key = ctjs.constant #ctjs.string<\"size\">", R"MLIR(
+    %slot = ctjs.constant #ctjs.number<4607182418800017408>
+    %innerKey = ctjs.constant #ctjs.string<"value">
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %getKey = ctjs.constant #ctjs.string<"get">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %slot)
+    %condition = ctjs.truthy %found
+    scf.if %condition {
+      %getMethod = ctjs.get_property %state[%getKey]
+      %child = ctjs.call %getMethod(%state, %slot)
+      %innerMethod = ctjs.get_property %child[%getKey]
+      %observed = ctjs.call %innerMethod(%child, %innerKey) {check}
+      scf.yield
+    } else {
+      scf.yield
+    }
+    %key = ctjs.constant #ctjs.string<"size">
+)MLIR");
+    source = fixtures::replaced(source, "\n}\n", R"MLIR(
+  ctjs.func private @put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %state = ctjs.load_upvalue %callee[0]
+    %constructor = ctjs.load_global "Map"
+    %child = ctjs.construct %constructor(%constructor)
+    %slot = ctjs.constant #ctjs.number<4607182418800017408>
+    %innerKey = ctjs.constant #ctjs.string<"value">
+    %setKey = ctjs.constant #ctjs.string<"set">
+    %number = ctjs.constant #ctjs.number<4630967054332067840>
+    %childSetter = ctjs.get_property %child[%setKey]
+    %outerSetter = ctjs.get_property %state[%setKey]
+)MLIR" + seed + publication + R"MLIR(
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+}
+)MLIR");
+    const std::vector<std::tuple<const char *, std::string, bool>> rows = {
+        {"every retained child is seeded before publication", source, true},
+        {"constructor kind does not prove an unseeded key", fixtures::replaced(source, seed, ""),
+         false},
+        {"a seed after publication does not prove a family entry invariant",
+         fixtures::replaced(source, seed + publication, publication + seed), false},
+        {"child clear revokes the retained key", fixtures::replaced(source, publication, R"MLIR(
+    %clearKey = ctjs.constant #ctjs.string<"clear">
+    %clearMethod = ctjs.get_property %child[%clearKey]
+    %cleared = ctjs.call %clearMethod(%child)
+)MLIR" + publication),
+         false},
+        {"child delete revokes the retained key", fixtures::replaced(source, publication, R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleteMethod = ctjs.get_property %child[%deleteKey]
+    %deleted = ctjs.call %deleteMethod(%child, %innerKey)
+)MLIR" + publication),
+         false},
+        {"incompatible writes revoke a uniform retained payload",
+         fixtures::replaced(source, publication, R"MLIR(
+    %boolean = ctjs.constant #ctjs.boolean<true>
+    %changed = ctjs.call %childSetter(%child, %innerKey, %boolean)
+)MLIR" + publication),
+         false},
+        {"every publication participates in the retained key proof",
+         fixtures::replaced(source, publication, publication + R"MLIR(
+    %other = ctjs.construct %constructor(%constructor)
+    %otherSlot = ctjs.constant #ctjs.number<4611686018427387904>
+    %otherPublished = ctjs.call %outerSetter(%state, %otherSlot, %other)
+)MLIR"),
+         false},
+        {"a family key does not prove a different lookup",
+         fixtures::replaced(source, "#ctjs.string<\"value\">", "#ctjs.string<\"missing\">"), false},
+        {"saved retained contents survive outer clear",
+         fixtures::replaced(source, "      %innerMethod = ctjs.get_property", R"MLIR(
+      %clearKey = ctjs.constant #ctjs.string<"clear">
+      %clearMethod = ctjs.get_property %state[%clearKey]
+      %cleared = ctjs.call %clearMethod(%state)
+      %innerMethod = ctjs.get_property)MLIR"),
+         true},
+    };
+    for (const auto & [what, program, present] : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        if (!module) {
+            std::printf("FAIL %s: retained presence fixture did not parse\n", what);
+            ++failures;
+            continue;
+        }
+        for (const bool clone : {false, true}) {
+            mlir::OwningOpRef<mlir::ModuleOp> fresh;
+            auto current = *module;
+            if (clone) {
+                fresh = mlir::OwningOpRef<mlir::ModuleOp>{module->clone()};
+                current = *fresh;
+            }
+            auto contract = fixtures::contractFor(current);
+            contract.initialIntrinsics = {"Map"};
+            const auto sourceBefore = sourceFingerprint(current);
+            ctnative::OwnedGlobalRoots owner(current, contract);
+            if (!owner.proved() || owner.roots().size() != 1 ||
+                !owner.roots().front().methodTable ||
+                !owner.roots().front().methodTable->capturedMap) {
+                std::printf("FAIL %s: %s owner must hold independently: %s\n", what,
+                            clone ? "fresh" : "reused", owner.reason().str().c_str());
+                ++failures;
+                continue;
+            }
+            const auto & capture = *owner.roots().front().methodTable->capturedMap;
+            llvm::DenseMap<mlir::Value, mlir::Value> families;
+            auto allocation = capture.allocation;
+            const auto outer = allocation.getResult();
+            families[outer] = outer;
+            for (ctjs::LoadUpvalueOp read : capture.upvalues) {
+                families[read.getResult()] = outer;
+            }
+            auto firstChild = capture.childMaps.front();
+            const auto inner = firstChild.getResult();
+            for (ctjs::ConstructOp child : capture.childMaps) {
+                families[child.getResult()] = inner;
+            }
+            for (mlir::Value child : capture.returnedChildMaps) { families[child] = inner; }
+            const auto family = [&](mlir::Value value) {
+                while (auto call = value.getDefiningOp<ctjs::CallOp>()) {
+                    if (call.getArgs().size() != 2) { break; }
+                    value = call.getReceiver();
+                }
+                return families.lookup(value);
+            };
+            ctjs::CallOp observed;
+            current.walk([&](ctjs::CallOp call) {
+                if (call->hasAttr("check")) { observed = call; }
+            });
+            for (const bool census : {false, true}) {
+                mlir::Builder attrs(&context);
+                current.walk([&](mlir::Operation * op) {
+                    op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
+                    op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("number"));
+                });
+                // Use the real entry point to clear forged reports. This raw
+                // source has not undergone environment preparation; the direct
+                // query below uses only the separately checked owner census.
+                ctnative::prepareNativeMaps(current);
+                const llvm::DenseSet<mlir::Operation *> copies;
+                const llvm::DenseMap<mlir::Value, ctnative::PrimitiveAlternatives> parameters;
+                const auto reason = ctnative::map_detail::provePresence(
+                    current, capture.calls, {}, {}, {observed}, {observed}, copies, family,
+                    parameters, census ? &owner : nullptr);
+                const auto tag =
+                    observed->getAttrOfType<mlir::StringAttr>(ctnative::kNativeMapReadType);
+                const bool expected = present && census;
+                if (!reason.empty() || observed->hasAttr(ctnative::kNativeMapPresent) != expected ||
+                    (tag ? tag.getValue() : llvm::StringRef{}) != (expected ? "number" : "")) {
+                    std::printf("FAIL %s: %s retained presence differs, census=%d\n", what,
+                                clone ? "fresh" : "reused", static_cast<int>(census));
+                    ++failures;
+                }
+                if (sourceFingerprint(current) != sourceBefore) {
+                    std::printf("FAIL %s: retained presence changed executable source\n", what);
+                    ++failures;
+                }
+            }
+        }
+    }
+    std::printf("retained child presence: %zu rows, reused/fresh modules and forged reports\n",
+                rows.size());
+}
 
 void checkStoredMapAliases(mlir::MLIRContext & context) {
     using namespace ctcompile;
@@ -37,6 +231,14 @@ void checkStoredMapAliases(mlir::MLIRContext & context) {
 )mlir";
     const std::string overwrite = "  %overwritten = ctjs.call %setter(%outer, %one, %second)\n";
     const std::string uncertain = "  %overwritten = ctjs.call %setter(%outer, %p, %second)\n";
+    const std::string unknownChild = "  %condition = ctjs.truthy %p\n  scf.if %condition {\n" +
+                                     overwrite +
+                                     R"mlir(  } else {
+  }
+  %unknown = ctjs.call %getter(%outer, %one)
+  %unknownSetter = ctjs.get_property %unknown[%setName]
+  %unknownWritten = ctjs.call %unknownSetter(%unknown, %one, %one)
+)mlir";
     const std::string helper = R"mlir(
 ctjs.func private @mutate(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value,
                           %map: !ctjs.value, %child: !ctjs.value) -> !ctjs.value
@@ -106,6 +308,11 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
   }
 )mlir",
          "number", true},
+        {"repeated unchanged gets alias the same unknown child", unknownChild, "number", true},
+        {"replacing an entry revokes the cached unknown returned origin", unknownChild + overwrite,
+         "", true},
+        {"possible entry replacement revokes the cached unknown returned origin",
+         unknownChild + uncertain, "", true},
     };
     for (const auto & row : rows) {
         const std::string receiver = row.fresh ? "%fresh" : "%saved";
@@ -173,6 +380,7 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
 } // namespace
 
 void checkMapZeroSizePresence(mlir::MLIRContext & context) {
+    checkRetainedChildPresence(context);
     checkStoredMapAliases(context);
     using namespace ctcompile;
     const std::string prelude = R"mlir(

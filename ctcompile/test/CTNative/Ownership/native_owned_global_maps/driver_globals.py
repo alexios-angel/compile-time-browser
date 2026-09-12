@@ -25,6 +25,7 @@ from .driver_common import (
     scalar_global_output,
     scalar_global_sources,
     source_calls,
+    shutil,
     struct,
     subprocess,
 )
@@ -498,19 +499,23 @@ def check_constant_global_refusals(args, positives, node, reference):
         config = contract(args, ir, name)
         restored_config = contract(args, restored, repair + "-restored-for-" + name)
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
-            def reject(input_ir, label, current_config):
-                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
-                text = methods.census(failed, count, label, admitted=0)
+            def check_current(input_ir, label, current_config):
+                promoted = name == "constant_undefined_candidate"
+                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=promoted)
+                text = methods.census(failed, count, label, admitted=count if promoted else 0)
                 owner = name not in CONSTANT_GLOBAL_UNOWNED
                 if f"ctnative.host_owner_proved = {str(owner).lower()}" not in text:
                     raise RuntimeError(f"{label}: constant-global refusal changed its independent owner boundary")
+                if promoted:
+                    compilers = [shutil.which('g++-13') or shutil.which('g++'),
+                                 shutil.which('clang++-18') or shutil.which('clang++')]
+                    owned.standalone(args, failed, label,
+                                     scalar_global_output(name, row["expected_trace"]),
+                                     compilers, shutil.which('nm'))
+                    return failed
                 if owner:
                     attribute = "ctnative.not_native"
-                    reason = {
-                        "constant_undefined_candidate":
-                            "store to global `fixed` may be null or undefined; "
-                            "native global observations require a definite Number, Boolean or String",
-                    }.get(name, "standard Map identity is unproved with other host/global value reads")
+                    reason = "standard Map identity is unproved with other host/global value reads"
                 else:
                     attribute = "ctnative.host_owner_reason"
                     reason = {
@@ -539,7 +544,7 @@ def check_constant_global_refusals(args, positives, node, reference):
                 return failed
 
             label = name + "-" + mode
-            reject(ir, label, config)
+            check_current(ir, label, config)
             output = owned.lower(args, restored, label + "-restored", restored_config, options=options)
             if "ctnative.host_owner_proved = true" not in methods.census(output, count, label, admitted=count):
                 raise RuntimeError(f"{label}: exact constant-global repair lost ownership")
@@ -550,7 +555,9 @@ def check_constant_global_refusals(args, positives, node, reference):
             check_call_preservation(forged.read_text(), stale.read_text(), label + "-stale")
             check_scalar_global_preparation(stale.read_text(), forged.read_text(), name)
             fresh = contract(args, forged, label + "-forged")
-            failed = reject(forged, label + "-fresh", fresh)
+            failed = check_current(forged, label + "-fresh", fresh)
+            if name == "constant_undefined_candidate":
+                continue  # Successful lowering leaves no source calls for a refusal rerun.
             rerun = methods.refused(args, failed, label + "-rerun", fresh,
                 options=options, reason="fingerprint mismatch", admitted=0)
             check_call_preservation(failed.read_text(), rerun.read_text(), label + "-rerun")

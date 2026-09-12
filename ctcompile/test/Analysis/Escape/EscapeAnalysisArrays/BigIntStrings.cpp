@@ -121,10 +121,8 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                   "  %input = ctjs.binary_static add %zero, %zero\n",
                   "  %input = ctjs.binary add %zero, %zero\n"}) {
                 run({.contents = {
-                         .what = "primitive provenance alone cannot prove String for mixed Add",
+                         .what = "mixed Add proves retention without a String or completion fact",
                          .body = values + input + withBig("%input") + done,
-                         .failure = concat ? ArrayContentsFailure::None
-                                           : ArrayContentsFailure::UnsupportedOperation,
                          .arrays = "a:[x]",
                          .exit = "produced -> {}"}});
                 run({.contents = {
@@ -146,7 +144,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                          .failure = ArrayContentsFailure::UnsupportedOperation}});
             }
             for (const std::string saved : {"%text", "%zero", "%big", "%x"}) {
-                const bool supported = saved != "%x" && (concat || saved != "%zero");
+                const bool supported = saved != "%x";
                 run({.contents = {
                          .what = "saved array origins survive String Number and object overwrite",
                          .body = values + "  ctjs.set_property %a[%zero], " + saved +
@@ -186,9 +184,6 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                              "^join(%left: !ctjs.value, %right: !ctjs.value):\n"
                              "  %input = ctjs.binary add %left, %right\n" +
                              binary("%input", "%big") + done,
-                     .failure = !concat && input == "%zero"
-                                    ? ArrayContentsFailure::UnsupportedOperation
-                                    : ArrayContentsFailure::None,
                      .arrays = "a:[x] | a:[x]",
                      .exit = "produced -> {}; produced -> {}"}});
         }
@@ -301,8 +296,6 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                     constant.setValueAttr(replacement);
                     inspect(position == 1 && !llvm::isa<ctjs::NumberAttr>(replacement)
                                 ? ArrayContentsFailure::UnknownIndex
-                            : !concat && position == 0 && !llvm::isa<ctjs::StringAttr>(replacement)
-                                ? ArrayContentsFailure::UnsupportedOperation
                                 : ArrayContentsFailure::None);
                     constant.setValueAttr(old);
                     inspect(ArrayContentsFailure::None);
@@ -312,9 +305,9 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                                      ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul,
                                      ctjs::BinaryKind::Pow, static_cast<ctjs::BinaryKind>(255)}) {
                 producer.setKindAttr(ctjs::BinaryKindAttr::get(&context, other));
-                inspect(other == ctjs::BinaryKind::Add || other == ctjs::BinaryKind::Concat
-                            ? ArrayContentsFailure::None
-                            : ArrayContentsFailure::UnsupportedOperation);
+                inspect(other == static_cast<ctjs::BinaryKind>(255)
+                            ? ArrayContentsFailure::UnsupportedOperation
+                            : ArrayContentsFailure::None);
                 producer.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
                 inspect(ArrayContentsFailure::None);
             }

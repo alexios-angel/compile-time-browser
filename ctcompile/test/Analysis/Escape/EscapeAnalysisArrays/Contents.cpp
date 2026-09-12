@@ -93,23 +93,52 @@ void checkArrayContents(mlir::MLIRContext & context) {
         {.what = "contents refuses a dynamic key",
          .body = array + "  %read = ctjs.get_property %a[%p]\n" + done,
          .failure = ArrayContentsFailure::UnknownIndex},
-        {.what = "a direct String array write cannot erase the VM's unchanged child",
+        {.what = "a direct canonical String array write replaces the dense child",
          .body = array + read +
                  "  %key = ctjs.constant #ctjs.string<\"0\">\n"
                  "  ctjs.set_property %a[%key], %y\n  ctjs.return %a\n",
-         .failure = ArrayContentsFailure::UnknownIndex},
-        {.what = "an array-loaded String write key cannot erase an unchanged child",
+         .arrays = "a:[y]",
+         .reads = "a[0]=x",
+         .exit = "a -> {a,y}"},
+        {.what = "an array-loaded canonical String write key replaces the dense child",
          .body = array + "  %string = ctjs.constant #ctjs.string<\"0\">\n"
                          "  %keys = ctjs.create_array [%string]\n"
                          "  %key = ctjs.get_property %keys[%zero]\n"
                          "  ctjs.set_property %a[%key], %y\n  ctjs.return %a\n",
-         .failure = ArrayContentsFailure::UnknownIndex},
-        {.what = "an array-loaded String read key cannot assume a dense own element",
+         .arrays = "a:[y]; ctjs.create_array:[ctjs.constant]",
+         .reads = "ctjs.create_array[0]=ctjs.constant",
+         .exit = "a -> {a,y}"},
+        {.what = "an array-loaded canonical String read key keeps its exact child origin",
          .body = array + "  %string = ctjs.constant #ctjs.string<\"0\">\n"
                          "  %keys = ctjs.create_array [%string]\n"
                          "  %key = ctjs.get_property %keys[%zero]\n"
                          "  %read = ctjs.get_property %a[%key]\n  ctjs.return %read\n",
-         .failure = ArrayContentsFailure::UnknownIndex},
+         .arrays = "a:[x]; ctjs.create_array:[ctjs.constant]",
+         .reads = "ctjs.create_array[0]=ctjs.constant; a[0]=x",
+         .exit = "x -> {x}"},
+        {.what = "String one reads and overwrites only the second dense element",
+         .body = values + "  %a = ctjs.create_array [%x, %y] {storage_test_id = \"a\"}\n"
+                          "  %key = ctjs.constant #ctjs.string<\"1\">\n"
+                          "  %read = ctjs.get_property %a[%key]\n"
+                          "  ctjs.set_property %a[%key], %zero\n"
+                          "  ctjs.return %read\n",
+         .arrays = "a:[x,zero]",
+         .reads = "a[1]=y",
+         .exit = "y -> {y}",
+         .writes = "ctjs.create_array[0]:a[0]=x; ctjs.create_array[1]:a[1]=y; "
+                   "ctjs.set_property[2]:a[1]=zero"},
+        {.what = "the largest canonical String index is an absent dense element",
+         .body = array +
+                 "  %key = ctjs.constant #ctjs.string<\"4294967294\">\n"
+                 "  %read = ctjs.get_property %a[%key]\n" +
+                 done,
+         .failure = ArrayContentsFailure::MissingElement},
+        {.what = "a canonical String index cannot authorize a sparse write",
+         .body = array +
+                 "  %key = ctjs.constant #ctjs.string<\"4294967294\">\n"
+                 "  ctjs.set_property %a[%key], %y\n" +
+                 done,
+         .failure = ArrayContentsFailure::MissingElement},
         {.what = "contents refuses an uninitialized read",
          .body = array + "  %read = ctjs.get_property %a[%one]\n" + done,
          .failure = ArrayContentsFailure::MissingElement},
@@ -201,18 +230,24 @@ void checkArrayContents(mlir::MLIRContext & context) {
 
     // The key interpretation is independent of the VM's permissive numeric
     // cast. Fractional/NaN/infinite numbers must never borrow a dense slot
-    // proof. Number -0 qualifies. Even canonical String "0" stays refused
-    // because the VM's named-property path does not access dense array slots.
+    // proof. Number -0 and canonical String "0" qualify; lookalike spellings
+    // are named properties and cannot borrow an existing element's origin.
     const std::vector<std::pair<std::string, bool>> keys = {
         {"#ctjs.number<9223372036854775808>", true}, // -0
-        {"#ctjs.string<\"0\">", false},
+        {"#ctjs.string<\"0\">", true},
         {"#ctjs.string<\"-0\">", false},
         {"#ctjs.string<\"00\">", false},
         {"#ctjs.string<\"+0\">", false},
         {"#ctjs.string<\"0.0\">", false},
+        {"#ctjs.string<\" 0\">", false},
+        {"#ctjs.string<\"0 \">", false},
+        {"#ctjs.string<\"0e0\">", false},
+        {"#ctjs.string<\"0x0\">", false},
         {"#ctjs.string<\"\">", false},
         {"#ctjs.string<\"length\">", false},
         {"#ctjs.string<\"4294967295\">", false},
+        {"#ctjs.string<\"4294967296\">", false},
+        {"#ctjs.string<\"9999999999\">", false},
         {"#ctjs.string<\"100000000000000000000000000000000000\">", false},
         {"#ctjs.number<4602678819172646912>", false},  // 0.5
         {"#ctjs.number<13830554455654793216>", false}, // -1
@@ -290,7 +325,62 @@ void checkArrayContents(mlir::MLIRContext & context) {
         fail(row{.what = mutation.what, .body = mutation.body, .expected = ""},
              "the live contents mutation fixture did not parse");
     }
-    std::printf("array contents: %zu rows, %zu key controls, seven live states\n", rows.size(),
+    contents_row keyMutation{
+        .what = "loaded and forwarded String indices are reproved after live spelling changes",
+        .body = array + "  %key = ctjs.constant #ctjs.string<\"0\"> {storage_test_id = \"key\"}\n"
+                        "  %keys = ctjs.create_array [%key] {storage_test_id = \"keys\"}\n"
+                        "  %loaded = ctjs.get_property %keys[%zero]\n"
+                        "  cf.br ^next(%loaded : !ctjs.value)\n"
+                        "^next(%forwarded: !ctjs.value):\n"
+                        "  ctjs.set_property %a[%forwarded], %y\n"
+                        "  ctjs.return %a\n",
+        .arrays = "a:[y]; keys:[key]",
+        .reads = "keys[0]=key",
+        .exit = "a -> {a,y}"};
+    auto keyModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + keyMutation.body + "}\n", &context);
+    if (keyModule) {
+        ctjs::FuncOp function = *keyModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::ConstantOp index;
+        keyModule->walk([&](ctjs::ConstantOp op) {
+            if (llvm::isa<ctjs::StringAttr>(op.getValue())) { index = op; }
+        });
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*keyModule))) {
+            fail(row{.what = keyMutation.what, .body = keyMutation.body, .expected = ""},
+                 "the String index stale solver did not converge");
+        }
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        for (const auto & [spelling, failure] :
+             {std::pair{"0", ArrayContentsFailure::None},
+              std::pair{"00", ArrayContentsFailure::UnknownIndex},
+              std::pair{"4294967294", ArrayContentsFailure::MissingElement},
+              std::pair{"0", ArrayContentsFailure::None}}) {
+            index.setValueAttr(ctjs::StringAttr::get(&context, spelling));
+            keyMutation.failure = failure;
+            const bool complete = failure == ArrayContentsFailure::None;
+            checkArrayContents(*keyModule, keyMutation);
+            checkArrayRetention(*keyModule, {.what = keyMutation.what,
+                                             .body = keyMutation.body,
+                                             .discharged = complete ? "x" : "",
+                                             .complete = complete});
+            const auto current = computeVerdicts(stale, function);
+            if (current.arrayRetentionComplete != complete ||
+                current.confinedStoredSites != (complete ? 1U : 0U)) {
+                fail(row{.what = keyMutation.what, .body = keyMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied String index authority");
+            }
+        }
+    } else {
+        fail(row{.what = keyMutation.what, .body = keyMutation.body, .expected = ""},
+             "the loaded String index mutation fixture did not parse");
+    }
+    std::printf("array contents: %zu rows, %zu key controls, eleven live states\n", rows.size(),
                 keys.size());
 }
 

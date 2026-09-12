@@ -61,24 +61,27 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "a static operation cannot exclude BigInt on an opaque rhs",
                           .body = values + operation + " %zero, %p\n" + done,
                           .failure = ArrayContentsFailure::UnknownValue}},
-            {.contents = {.what = "mixed BigInt lhs can throw before static conversion",
+            {.contents = {.what = "mixed BigInt lhs errors retain no local objects",
                           .body = values + operation + " %big, %zero\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "mixed BigInt rhs can throw before static conversion",
+                          .arrays = "a:[x]",
+                          .exit = "zero -> {}"}},
+            {.contents = {.what = "mixed BigInt rhs errors retain no local objects",
                           .body = values + operation + " %zero, %big\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+                          .arrays = "a:[x]",
+                          .exit = "zero -> {}"}},
             {.contents = {.what = "two BigInts have an independent static result or error",
                           .body = values + operation + " %big, %big\n" + done,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}"}},
-            {.contents = {.what = "a forwarded BigInt arm refuses the complete transaction",
+            {.contents = {.what = "a forwarded mixed BigInt arm keeps both continuations",
                           .body = values +
                                   "  %flag = ctjs.truthy %p\n"
                                   "  cf.cond_br %flag, ^join(%zero : !ctjs.value), "
                                   "^join(%big : !ctjs.value)\n"
                                   "^join(%operand: !ctjs.value):\n" +
                                   operation + " %operand, %zero\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+                          .arrays = "a:[x] | a:[x]",
+                          .exit = "zero -> {}; zero -> {}"}},
             {.contents = {.what = "a later retained structural arm prevents Stored refinement",
                           .body =
                               values + produce + branch + overwrite + "^no:\n  ctjs.return %a\n",
@@ -112,6 +115,43 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + "  %produced = ctjs.binary add %x, %zero\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
+        const std::string mixed = operation + " %big, %zero {storage_test_id = \"produced\"}\n";
+        rows.push_back(
+            {.contents = {.what = "mixed static errors cannot prune a saved child return",
+                          .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + mixed +
+                                  "  ctjs.set_property %a[%zero], %produced\n"
+                                  "  ctjs.return %saved\n",
+                          .arrays = "a:[produced]",
+                          .reads = "a[0]=x",
+                          .exit = "x -> {x}"},
+             .discharged = ""});
+        rows.push_back(
+            {.contents = {.what = "mixed static error carriers feed independent mixed Add",
+                          .body =
+                              values + mixed + "  %next = ctjs.binary add %produced, %big\n" + done,
+                          .arrays = "a:[x]",
+                          .exit = "zero -> {}"}});
+        rows.push_back(
+            {.contents = {.what = "mixed static error carriers cannot supply literal indices",
+                          .body =
+                              values + mixed + "  %read = ctjs.get_property %a[%produced]\n" + done,
+                          .failure = ArrayContentsFailure::UnknownIndex}});
+        rows.push_back({.contents = {.what = "mixed static errors cannot hide structural effects",
+                                     .body = values + mixed + branch + done +
+                                             "^no:\n  ctjs.store_global \"held\", %x\n" + done,
+                                     .failure = ArrayContentsFailure::UnsupportedOperation}});
+        rows.push_back(
+            {.contents = {.what = "mixed static errors supply no handler or completion proof",
+                          .body = values + "  ctjs.push_handler ^body catch ^pad\n^body:\n" +
+                                  mixed + "  ctjs.pop_handler\n" + overwrite +
+                                  "^pad:\n  %id, %exception = ctjs.catch_land\n  ctjs.return %a\n",
+                          .failure = ArrayContentsFailure::UnsupportedControlFlow}});
+        for (const std::string operands : {"%big, %x", "%a, %big"}) {
+            rows.push_back(
+                {.contents = {.what = "mixed static errors require original primitive operands",
+                              .body = values + operation + " " + operands + "\n" + done,
+                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+        }
         if (kind == ctjs::BinaryKind::UShr) {
             const std::string error = operation + " %big, %big {storage_test_id = \"produced\"}\n";
             const std::string store = "  ctjs.set_property %a[%zero], %produced\n";
@@ -136,11 +176,11 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                               .exit = "x -> {x}"},
                  .discharged = ""});
             rows.push_back(
-                {.contents = {.what = "UShr error carriers never acquire a BigInt category",
+                {.contents = {.what = "UShr error carriers feed independent mixed Add",
                               .body = values + error +
-                                      "  %next = ctjs.binary_static bitand %produced, %big\n" +
-                                      done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                                      "  %next = ctjs.binary add %produced, %big\n" + done,
+                              .arrays = "a:[x]",
+                              .exit = "zero -> {}"}});
             rows.push_back(
                 {.contents = {.what = "UShr error carriers cannot supply literal indices",
                               .body = values + error +
@@ -161,11 +201,8 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                                           replacement + "\n" + operation +
                                           " %operand, %big {storage_test_id = \"produced\"}\n"
                                           "  ctjs.return %produced\n",
-                                  .failure = savedBigInt
-                                                 ? ArrayContentsFailure::None
-                                                 : ArrayContentsFailure::UnsupportedOperation,
-                                  .arrays = "a:[zero]",
-                                  .reads = "a[0]=ctjs.constant",
+                                  .arrays = savedBigInt ? "a:[zero]" : "a:[ctjs.constant]",
+                                  .reads = savedBigInt ? "a[0]=ctjs.constant" : "a[0]=zero",
                                   .exit = "produced -> {}"}});
             }
         }
@@ -217,6 +254,14 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                                       "  ctjs.return %produced\n",
                               .arrays = "a:[x]",
                               .exit = "produced -> {}"}});
+            for (const std::string operands : {"%big, %operand", "%operand, %big"}) {
+                run({.contents = {.what = "mixed static errors accept proved primitive origins",
+                                  .body = values + input + operation + " " + operands +
+                                          " {storage_test_id = \"produced\"}\n"
+                                          "  ctjs.return %produced\n",
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
+            }
         }
         for (const bool savedBigInt : {false, true}) {
             const std::string saved = savedBigInt ? "%big" : "%zero";
@@ -228,10 +273,8 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                                       replaced + "\n" + operation +
                                       " %operand, %zero {storage_test_id = \"produced\"}\n"
                                       "  ctjs.return %produced\n",
-                              .failure = savedBigInt ? ArrayContentsFailure::UnsupportedOperation
-                                                     : ArrayContentsFailure::None,
-                              .arrays = "a:[ctjs.constant]",
-                              .reads = "a[0]=zero",
+                              .arrays = savedBigInt ? "a:[zero]" : "a:[ctjs.constant]",
+                              .reads = savedBigInt ? "a[0]=ctjs.constant" : "a[0]=zero",
                               .exit = "produced -> {}"}});
         }
 
@@ -239,7 +282,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs.binary_static " + spelling +
-                      " %zero, %zero\n";
+                      " %big, %zero\n";
         }
         wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
         auto narrowModule = parse(rows.front());
@@ -287,7 +330,10 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             const mlir::Value number = binary.getLhs();
             for (unsigned position : {0U, 1U}) {
                 binary->setOperand(position, big.getResult());
+                inspect(ArrayContentsFailure::None);
+                binary->setOperand(1U - position, child.getResult());
                 inspect(ArrayContentsFailure::UnsupportedOperation);
+                binary->setOperand(1U - position, number);
                 binary->setOperand(position, function.getBody().front().getArgument(3));
                 inspect(ArrayContentsFailure::UnknownValue);
                 binary->setOperand(position, child.getResult());
@@ -329,7 +375,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
         }
         std::printf("static binary %s: %zu rows, %u live states, one wide snapshot, "
                     "%zu retention budget cutoffs\n",
-                    spelling.c_str(), rows.size() + origins.size() + 2, liveStates, budgets);
+                    spelling.c_str(), rows.size() + origins.size() * 3 + 2, liveStates, budgets);
     }
 }
 

@@ -572,11 +572,32 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // a complete census of outer writes can establish it; membership and the
     // mere presence of a constructor cannot. The body proof below still checks
     // every operation/use, including aliases and all structural continuations.
+    llvm::DenseSet<mlir::Operation *> familyInvocations;
+    for (const auto & invocations : familyCalls) {
+        for (mlir::Operation * invocation : invocations) {
+            if (!step()) { return {}; }
+            familyInvocations.insert(invocation);
+        }
+    }
     result.childMapContents = true;
-    for (const auto & parameters : result.parameters) {
+    HostChildMapEntry childEntry;
+    PrimitiveAlternatives childScalar;
+    const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
+    bool childEntryProved = !primitiveContents, childPublished = false;
+    bool childScalarProved = !primitiveContents;
+    for (auto [index, parameters] : llvm::enumerate(result.parameters)) {
         auto member = parameters.function;
         auto & memberBody = member.getBody().front();
         const auto outer = memberBody.getArgument(prepared ? 3 : 2);
+        // An invariant may not use the result of the invocation it authorizes.
+        // All actual categories must close with no family results available.
+        HostMethodParameters independent{member, {}};
+        if ((childEntryProved || childScalarProved) &&
+            !capturedMapParameters(member, prepared, familyCalls[index], familyInvocations,
+                                   noResults, independent)) {
+            childEntryProved = false;
+            childScalarProved = false;
+        }
         const auto mapOrigin = [&](auto && self, mlir::Value value,
                                    unsigned depth = 0) -> mlir::Value {
             if (!value || depth > 32 || !step()) { return {}; }
@@ -609,11 +630,20 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             }
             return {};
         };
+        llvm::SmallVector<std::pair<ctjs::CallOp, mlir::Value>> publications, childWrites;
         const auto census = member.getBody().walk([&](ctjs::CallOp invoke) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (!read || keyOf(read.getKey()) != "set") { return mlir::WalkResult::advance(); }
+            if (!read) { return mlir::WalkResult::advance(); }
+            const auto action = keyOf(read.getKey());
+            if (action != "set" && action != "delete" && action != "clear") {
+                return mlir::WalkResult::advance();
+            }
             const auto receiver = mapOrigin(mapOrigin, invoke.getReceiver());
+            if (action != "set") {
+                if (receiver != outer) { childEntryProved = false; }
+                return mlir::WalkResult::advance();
+            }
             if (read.getObject() != invoke.getReceiver() || invoke.getArgs().size() != 2 ||
                 !receiver) {
                 result.childMapContents = false;
@@ -622,10 +652,66 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 if (!payload || !payload.getDefiningOp<ctjs::ConstructOp>()) {
                     result.childMapContents = false;
                 }
+                publications.emplace_back(invoke, payload);
+            } else {
+                childWrites.emplace_back(invoke, receiver);
+                auto key = invoke.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+                PrimitiveAlternatives alternatives;
+                if (auto value = invoke.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()) {
+                    alternatives = PrimitiveAlternatives::forTag(value.getValue().getTypeID());
+                } else if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(invoke.getArgs()[1]);
+                           argument && argument.getOwner() == &memberBody &&
+                           argument.getArgNumber() >= (prepared ? 4u : 3u)) {
+                    const auto position = argument.getArgNumber() - (prepared ? 4u : 3u);
+                    if (position < independent.alternatives.size()) {
+                        alternatives = independent.alternatives[position].categories();
+                    }
+                }
+                // Category closure does not require initialization or a fixed key.
+                // Deletion and empty publication cannot introduce another category.
+                if (!alternatives.tag()) {
+                    childScalarProved = false;
+                } else if (!childScalar.known) {
+                    childScalar = alternatives.categories();
+                } else if (!(childScalar == alternatives.categories())) {
+                    childScalarProved = false;
+                }
+                // ponytail: one literal String key and one scalar category; generalize only
+                // with a per-key mutation proof when a real family needs more keys.
+                if (!key || !llvm::isa<ctjs::StringAttr>(key.getValue()) || !alternatives.tag()) {
+                    childEntryProved = false;
+                } else if (!childEntry.key) {
+                    childEntry = {key.getResult(), alternatives.categories()};
+                } else if (childEntry.key.getDefiningOp<ctjs::ConstantOp>().getValue() !=
+                               key.getValue() ||
+                           !(childEntry.alternatives == alternatives.categories())) {
+                    childEntryProved = false;
+                }
             }
             return mlir::WalkResult::advance();
         });
         if (census.wasInterrupted() || exhausted) { return {}; }
+        for (auto [publication, child] : publications) {
+            if (!step()) { return {}; }
+            childPublished = true;
+            bool seeded = false;
+            for (auto [write, receiver] : childWrites) {
+                if (!step()) { return {}; }
+                auto made = child ? child.getDefiningOp<ctjs::ConstructOp>() : ctjs::ConstructOp{};
+                if (made && receiver == child && made->getBlock() == write->getBlock() &&
+                    write->getBlock() == publication->getBlock() && made->isBeforeInBlock(write) &&
+                    write->isBeforeInBlock(publication)) {
+                    seeded = true;
+                }
+            }
+            if (!seeded) { childEntryProved = false; }
+        }
+    }
+    if (result.childMapContents && childEntryProved && childPublished && childEntry.key) {
+        result.childEntries.push_back(childEntry);
+    }
+    if (result.childMapContents && childScalarProved && childPublished && childScalar.known) {
+        result.childScalarContents = childScalar;
     }
     // Establish invocation results before joining the complete method census.
     // Two calls to one method may have an acyclic result dependency even when
@@ -635,13 +721,6 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // invocation supplies result evidence; cycles cannot authorize themselves.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
-    llvm::DenseSet<mlir::Operation *> familyInvocations;
-    for (const auto & invocations : familyCalls) {
-        for (mlir::Operation * invocation : invocations) {
-            if (!step()) { return {}; }
-            familyInvocations.insert(invocation);
-        }
-    }
     while (completed.size() != familyInvocations.size()) {
         bool progress = false;
         for (unsigned index = 0; index < result.parameters.size(); ++index) {
@@ -658,6 +737,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 // Provisional reads/calls never escape into the family plan.
                 HostCapturedMap scratch;
                 scratch.childMapContents = result.childMapContents;
+                scratch.childEntries = result.childEntries;
+                scratch.childScalarContents = result.childScalarContents;
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives)) {

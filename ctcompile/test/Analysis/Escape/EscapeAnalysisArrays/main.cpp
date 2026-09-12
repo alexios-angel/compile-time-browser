@@ -33,6 +33,7 @@ int main() {
     checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Div);
     checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Mod);
     checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Pow);
+    checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Add);
     checkBigIntUnaryProducers(context);
     checkBigIntBinaryProducers(context);
     checkStringBigIntConcatenation(context);

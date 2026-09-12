@@ -37,6 +37,16 @@ inline bool global_boolean(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
     return value.value != 0.0;
 }
+inline void print_scalar(const char * name, nullable_scalar value) {
+    switch (value.tag) {
+    case nullable_scalar::kind::undefined: std::printf("%s=undefined\n", name); return;
+    case nullable_scalar::kind::null: std::printf("%s=null\n", name); return;
+    case nullable_scalar::kind::number: std::printf("%s=%.17g\n", name, value.value); return;
+    case nullable_scalar::kind::boolean:
+        std::printf("%s=%s\n", name, value.value != 0.0 ? "true" : "false"); return;
+    }
+    std::terminate();
+}
 inline bool scalar_truthy(nullable_scalar value) {
     return (value.tag == nullable_scalar::kind::number ||
             value.tag == nullable_scalar::kind::boolean) &&

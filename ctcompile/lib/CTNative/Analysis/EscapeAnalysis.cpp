@@ -773,10 +773,8 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
-// Number -0 is index zero; 2^32-1 is not an array element. String indices
-// remain refused: current VM lookup_index/store_index use dense array slots
-// only for Number keys, so even String "0" disagrees with JavaScript here.
-// Refusal preserves sound retention claims against both execution behaviors.
+// Number -0 and canonical String "0" are index zero; 2^32-1 is not an element.
+// Only an original literal proves an index; computed String categories do not.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
@@ -784,6 +782,15 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
         const double index = number.getDouble();
         if (std::isfinite(index) && index >= 0 && index < 4294967295.0 &&
             std::floor(index) == index) {
+            return static_cast<std::size_t>(index);
+        }
+    }
+    if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
+        const llvm::StringRef key = string.getValue();
+        std::uint32_t index = 0;
+        if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
+            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
+            !key.getAsInteger(10, index) && index < 4294967295ULL) {
             return static_cast<std::size_t>(index);
         }
     }
@@ -1208,7 +1215,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     state.origins[binary.getResult()] = binary.getResult();
                     continue;
                 }
-                if ((binary.getKind() == ctjs::BinaryKind::Sub ||
+                if ((binary.getKind() == ctjs::BinaryKind::Add ||
+                     binary.getKind() == ctjs::BinaryKind::Sub ||
                      binary.getKind() == ctjs::BinaryKind::Mul ||
                      binary.getKind() == ctjs::BinaryKind::Div ||
                      binary.getKind() == ctjs::BinaryKind::Mod ||
@@ -1218,10 +1226,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                       primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
                      (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
                       bigIntOrigin(rhs, state.bigIntOrigins)))) {
-                    // bigint_binary rejects these mixed original primitive
-                    // categories before lookup, conversion or exponent checks. Its TypeError
-                    // has no input/local object edge; its VM result carrier is
-                    // independent Undefined, never a BigInt or a proved Number.
+                    // Mixed original primitives cannot retain local objects:
+                    // bigint_binary returns an independent TypeError/Undefined.
+                    // Add first makes both operands primitive and may concatenate
+                    // Strings instead; neither that result nor its depth-guard
+                    // Error aliases an input. Only the separate String proof
+                    // above supplies that category; this result is never BigInt.
                     // Calls, handlers and publication remain excluded across
                     // the whole frame. Check EVERY structural continuation:
                     // retention proves no successful completion or native effect.
@@ -1262,13 +1272,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                if (binary.getKind() == ctjs::BinaryKind::UShr &&
-                    bigIntOrigin(lhs, state.bigIntOrigins) &&
-                    bigIntOrigin(rhs, state.bigIntOrigins)) {
-                    // bigint_binary throws an independent TypeError before any
-                    // conversion. Its Undefined carrier has no operand/local
-                    // edge and no BigInt category. Keep all continuations and
-                    // whole-frame exclusions; normal completion is unproved.
+                if ((bigIntOrigin(lhs, state.bigIntOrigins) &&
+                     primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
+                    (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
+                     bigIntOrigin(rhs, state.bigIntOrigins)) ||
+                    (binary.getKind() == ctjs::BinaryKind::UShr &&
+                     bigIntOrigin(lhs, state.bigIntOrigins) &&
+                     bigIntOrigin(rhs, state.bigIntOrigins))) {
+                    // bigint_binary rejects mixed original primitives, or two
+                    // BigInts for UShr, before conversion. Its independent
+                    // TypeError/Undefined carrier has no operand/local edge or
+                    // BigInt category. Keep all continuations and whole-frame
+                    // exclusions; normal completion/native effects are unproved.
                     state.origins[binary.getResult()] = binary.getResult();
                     continue;
                 }
@@ -1289,8 +1304,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // that early exit from retaining unpublished local objects.
                     // Keep the normal result's separate per-path category; this
                     // proves neither allocation success nor normal completion
-                    // or no-throw/native effects. Mixed operands remain refused,
-                    // even on an observed success.
+                    // or no-throw/native effects.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     state.bigIntOrigins.insert(binary.getResult());
                     state.origins[binary.getResult()] = binary.getResult();

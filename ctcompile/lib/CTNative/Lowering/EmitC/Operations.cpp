@@ -499,8 +499,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
-            // Print each global with its independently proved source-store
-            // tag, one line per name. Every helper checks the generated tag.
+            // Print each global using the complete source-store type. Definite
+            // observations check their tag; optional observations retain it.
             const auto & printedGlobals = explicitObservations ? observations : globals;
             llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
                                                      printedGlobals.keys().end());
@@ -508,8 +508,20 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             for (llvm::StringRef name : names) {
                 const auto storedType = globalTypes.lookup(name);
                 if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
-                    llvm::report_fatal_error(
-                        "native global observation lacks one proved scalar type");
+                    if (!isScalarCarrier(carrierOf(storedType)) &&
+                        !isStringCarrier(carrierOf(storedType))) {
+                        llvm::report_fatal_error(
+                            "native global observation lacks a proved scalar carrier");
+                    }
+                    mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                                       globalStorageType(name));
+                    mlir::Value label = ec::LiteralOp::create(
+                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                        b.getStringAttr(cpp::c_string_literal(name.str())));
+                    callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                               b.getStringAttr("ctnative::print_scalar"),
+                                               mlir::ValueRange{label, loaded});
+                    continue;
                 }
                 if (llvm::isa<StrType>(storedType)) {
                     mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),

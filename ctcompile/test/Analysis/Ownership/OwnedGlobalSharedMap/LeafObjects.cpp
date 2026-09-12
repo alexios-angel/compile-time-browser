@@ -281,7 +281,97 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
       %childWritten = ctjs.call %childSetter(%value, %entryKey, %payload)
       %written = ctjs.call %setter(%state, %entryKey, %value)
 )MLIR");
-    refuse(priorSeed, "a constructor site's seeded contents do not identify an earlier child");
+    std::vector<std::string> nullableLegacy{priorSeed};
+    const std::string seed = "    %seeded = ctjs.call %childSetter(%value, %seedKey, %payload)\n";
+    auto cross = replaced(source, "    %value = ctjs.create_object", R"MLIR(
+    %constructor = ctjs.load_global "Map"
+    %value = ctjs.construct %constructor(%constructor)
+    %seedKey = ctjs.constant #ctjs.string<"value">
+    %childSetter = ctjs.get_property %value[%setKey]
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+)MLIR" + seed);
+    cross = replaced(cross,
+                     "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                     "    %size = ctjs.get_property %state[%key]\n"
+                     "    ctjs.return %size",
+                     R"MLIR(
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %entryKey)
+    %condition = ctjs.truthy %found
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %readKey = ctjs.constant #ctjs.string<"get">
+      %reader = ctjs.get_property %state[%readKey]
+      %saved = ctjs.call %reader(%state, %entryKey)
+      %innerKey = ctjs.constant #ctjs.string<"value">
+      %childReader = ctjs.get_property %saved[%readKey]
+      %loaded = ctjs.call %childReader(%saved, %innerKey)
+      scf.yield %loaded : !ctjs.value
+    } else {
+      %zero = ctjs.constant #ctjs.number<0>
+      scf.yield %zero : !ctjs.value
+    }
+    ctjs.return %answer
+)MLIR");
+    cross = replaced(cross, "    ctjs.store_global \"trace\", %answer",
+                     "    ctjs.store_global \"trace\", %answer\n"
+                     "    %observed = ctjs.load_global \"trace\"");
+    auto crossModule = mlir::parseSourceString<mlir::ModuleOp>(cross, &context);
+    check(static_cast<bool>(crossModule), "source/prepared cross-invocation child owner parses");
+    if (crossModule) {
+        auto contract = requested(*crossModule);
+        OwnedGlobalRoots query(*crossModule, contract);
+        check(query.proved() && query.roots().size() == 1 && query.scalarReads().size() == 1 &&
+                  query.scalarReads().front().alternatives.tag() ==
+                      mlir::TypeID::get<ctjs::NumberAttr>(),
+              "a separate getter rederives Number from every child's preserved literal entry");
+        if (!query.proved() || query.roots().empty()) {
+            std::fprintf(stderr, "cross child owner %s: %s\n", lifted ? "prepared" : "source",
+                         query.reason().str().c_str());
+        } else {
+            const auto & capture = *query.roots().front().methodTable->capturedMap;
+            check(capture.childEntries.size() == 1 && capture.returnedChildMaps.size() == 1 &&
+                      capture.childEntries.front().alternatives.tag() ==
+                          mlir::TypeID::get<ctjs::NumberAttr>() &&
+                      hostContractFingerprint(*crossModule) == contract.moduleSha256,
+                  "the owner preserves source publication and keeps entry evidence separate "
+                  "from returned identity");
+            for (const unsigned budget : {0u, query.steps() / 2, query.steps() - 1}) {
+                OwnedGlobalRoots limited(*crossModule, contract, budget);
+                check(!limited.proved() && limited.exhausted() && empty(*crossModule, limited) &&
+                          limited.steps() <= budget,
+                      "incomplete cross-invocation proof withholds every owning edge");
+            }
+            check(OwnedGlobalRoots(*crossModule, contract, query.steps()).proved(),
+                  "the exact cross-invocation budget proves the complete family");
+            mlir::Builder attributes(&context);
+            crossModule->walk([&](mlir::Operation * operation) {
+                operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+                operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
+                operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
+            });
+            check(OwnedGlobalRoots(*crossModule, requested(*crossModule)).proved(),
+                  "forged reports never replace independent child-entry ownership proof");
+        }
+    }
+    refuse(replaced(cross, seed, ""),
+           "a separate getter cannot infer membership from an unseeded publication");
+    auto lateSeed = replaced(cross, seed, "");
+    lateSeed = replaced(lateSeed, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
+                        "    %written = ctjs.call %setter(%state, %entryKey, %value)\n" + seed);
+    nullableLegacy.push_back(lateSeed);
+    for (const std::string action : {"delete", "clear"}) {
+        const auto erasure = "    %eraseKey = ctjs.constant #ctjs.string<\"" + action +
+                             "\">\n    %eraser = ctjs.get_property %value[%eraseKey]\n"
+                             "    %erased = ctjs.call %eraser(%value" +
+                             (action == "delete" ? ", %seedKey)\n" : ")\n");
+        nullableLegacy.push_back(replaced(cross, seed, seed + erasure));
+    }
+    refuse(replaced(cross, seed,
+                    seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
+                           "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
+           "mixed child payload categories revoke the getter's Number authority");
     const auto poison = [&](const std::string & payload) {
         return replaced(conditional, "    %size = ctjs.get_property %state[%key]",
                         R"MLIR(
@@ -324,7 +414,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     aliasClear = replaced(aliasClear,
                           "%otherMutation = ctjs.call %otherSetter(%other, %entryKey, %different)",
                           "%otherMutation = ctjs.call %otherSetter(%other)");
-    refuse(aliasClear, "clearing a possible returned-child alias revokes saved membership");
+    nullableLegacy.push_back(aliasClear);
     refuse(replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)\n", ""),
            "an unseeded prior-invocation child has no exact current allocation origin");
     refuse(replaced(nested, "%saved = ctjs.call %reader(%state, %entryKey)",
@@ -334,6 +424,221 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     refuse(replaced(nested, "%value = ctjs.construct %childConstructor(%childConstructor)",
                     "%value = ctjs.construct %childConstructor(%childConstructor, %entryKey)"),
            "a child constructor iterable is outside the empty Map ownership proof");
+    using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+    const auto withoutScalarRead = [&](const std::string & program) {
+        return replaced(program, "    %observed = ctjs.load_global \"trace\"", "");
+    };
+    auto prior = replaced(conditional, "    %childSetter = ctjs.get_property", R"MLIR(
+    %priorReader = ctjs.get_property %saved[%readKey]
+    %prior = ctjs.call %priorReader(%saved, %entryKey)
+    %childSetter = ctjs.get_property)MLIR");
+    const std::string selection = R"MLIR(
+    %undefined = ctjs.constant #ctjs.undefined
+    %isAbsent = ctjs.compare strict_eq %prior, %undefined
+    %absentFlag = ctjs.truthy %isAbsent
+    %selected = scf.if %absentFlag -> (!ctjs.value) {
+      scf.yield %loaded : !ctjs.value
+    } else {
+      scf.yield %prior : !ctjs.value
+    }
+    ctjs.return %selected)MLIR";
+    prior = replaced(prior, "    ctjs.return %loaded", selection);
+    // Both the child key and stored category come from complete actual censuses.
+    prior =
+        replaced(prior, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %input: !ctjs.value)");
+    prior = replaced(prior, "    %actual =",
+                     "    %input = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                     "    %actual =");
+    prior = replaced(prior, "    %payload = ctjs.constant #ctjs.number<4607182418800017408>\n", "");
+    prior = replaced(prior, "%childSetter(%saved, %entryKey, %payload)",
+                     "%childSetter(%saved, %entryKey, %input)");
+    for (const auto & [name, actual] :
+         {std::pair{"putterEnv", "actual"}, {"repeatEnv", "actual"}, {"laterEnv", "future"}}) {
+        const std::string prefix = lifted ? std::string("%") + name + ", " : "%owned, ";
+        prior = replaced(prior, prefix + "%" + actual + ")", prefix + "%" + actual + ", %input)");
+    }
+    unsigned nullableRows = 0;
+    const auto nullable = [&](const std::string & program, bool expected, const char * label,
+                              bool reverse = false, bool exhaustive = false, int scalarRead = -1) {
+        ++nullableRows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared nullable child fixture parses");
+        if (!module) { return; }
+        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        if (reverse) {
+            getter->moveAfter(setter);
+            auto factory = module->lookupSymbol<ctjs::FuncOp>("make$2");
+            ctjs::CreateClosureOp getClosure;
+            ctjs::SetPropertyOp getWrite, putWrite;
+            factory.walk([&](ctjs::SetPropertyOp write) {
+                auto closure = write.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                if (!closure) { return; }
+                if (closure.getFunction() == 3) {
+                    getClosure = closure;
+                    getWrite = write;
+                } else if (closure.getFunction() == 4) {
+                    putWrite = write;
+                }
+            });
+            check(getClosure && getWrite && putWrite, "both sibling publication orders exist");
+            if (!getClosure || !getWrite || !putWrite) { return; }
+            getClosure->moveAfter(putWrite);
+            getWrite->moveAfter(getClosure);
+        }
+        auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        check(query.proved() == expected && !query.exhausted() &&
+                  (expected || empty(*module, query)),
+              label);
+        if (query.proved() != expected || query.exhausted()) {
+            std::fprintf(stderr, "nullable child owner %s row %u: %s\n",
+                         lifted ? "prepared" : "source", nullableRows,
+                         query.reason().str().c_str());
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "nullable child proof preserves every source operation");
+        if (!expected || !query.proved() || query.roots().empty()) { return; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(capture.childMapContents && !capture.childMaps.empty() &&
+                  !capture.returnedChildMaps.empty() && capture.childEntries.empty() &&
+                  capture.childScalarContents ==
+                      Alternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()),
+              "homogeneous nullable contents supply no child membership or allocation identity");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap &&
+                      edge.capturedMap->childScalarContents == capture.childScalarContents &&
+                      edge.capturedMap->childEntries.empty() &&
+                      edge.capturedMap->calls == capture.calls,
+                  "every call retains the same complete scalar child mutation census");
+        }
+        if (scalarRead >= 0) {
+            check(query.scalarReads().size() == static_cast<unsigned>(scalarRead),
+                  "singleton absence filtering independently controls the saved scalar read");
+        }
+        if (!exhaustive) { return; }
+        const unsigned completion = query.steps();
+        check(completion < 20000, "nullable child owner proof remains bounded");
+        if (completion >= 20000) { return; }
+        for (unsigned budget = 0; budget < completion; ++budget) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "every incomplete nullable child proof withholds all owning records");
+        }
+        check(OwnedGlobalRoots(*module, contract, completion).proved(),
+              "the exact nullable child budget proves the complete family");
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.map_read_type", mlir::StringAttr::get(&context, "number"));
+        });
+        contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "forged reports cannot replace the independent nullable child proof");
+        ctjs::CallOp childSet;
+        setter.walk([&](ctjs::CallOp call) {
+            if (call.getArgs().size() == 2 && llvm::isa<mlir::BlockArgument>(call.getArgs()[1])) {
+                childSet = call;
+            }
+        });
+        check(static_cast<bool>(childSet), "nullable fixture retains its formal child payload");
+        if (!childSet) { return; }
+        const auto payload = childSet.getArgs()[1];
+        for (mlir::Value changed : {mlir::Value(childSet.getReceiver()),
+                                    mlir::Value(setter.getBody().front().getArgument(0))}) {
+            childSet->setOperand(3, changed);
+            OwnedGlobalRoots stale(*module, contract);
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale) && !fresh.proved() && !fresh.exhausted() &&
+                      empty(*module, fresh),
+                  "a cyclic or opaque live child write defeats stale and forged scalar evidence");
+            childSet->setOperand(3, payload);
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring the live scalar write restores its complete owner");
+        }
+        std::printf("nullable child owner %s: all %u incomplete budgets and live writes checked\n",
+                    lifted ? "prepared" : "source", completion);
+    };
+    nullable(prior, true, "a prior nullable child read narrows to Number on strict absence", false,
+             true, 1);
+    nullable(replaced(prior, "strict_eq %prior, %undefined", "strict_eq %undefined, %prior"), true,
+             "strict absence narrows the value on either side of equality", false, false, 1);
+    auto inverted = replaced(prior, "%absentFlag = ctjs.truthy %isAbsent",
+                             "%present = ctjs.unary not %isAbsent\n"
+                             "    %absentFlag = ctjs.truthy %present");
+    const std::string arms = "      scf.yield %loaded : !ctjs.value\n"
+                             "    } else {\n      scf.yield %prior : !ctjs.value";
+    const std::string swapped = "      scf.yield %prior : !ctjs.value\n"
+                                "    } else {\n      scf.yield %loaded : !ctjs.value";
+    nullable(replaced(inverted, arms, swapped), true,
+             "an inverted strict absence guard preserves the original scalar result", false, false,
+             1);
+    nullable(replaced(prior, arms, swapped), true,
+             "an absent result remains owned without a definite scalar read", false, false, 0);
+    nullable(replaced(prior, "%undefined = ctjs.constant #ctjs.undefined",
+                      "%undefined = ctjs.constant #ctjs.null"),
+             true, "Null equality cannot remove Undefined from a nullable Number read", false,
+             false, 0);
+    for (const auto & program : nullableLegacy) {
+        nullable(
+            program, true,
+            "the original seeded, late and deleted child sources retain only nullable contents",
+            false, false, 0);
+    }
+    nullable(withoutScalarRead(unseeded), false,
+             "no scalar writes means no prior child scalar category authority");
+    const auto removal = replaced(prior, "    %childSetter = ctjs.get_property", R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %removed = ctjs.call %deleter(%state, %entryKey)
+    %childSetter = ctjs.get_property)MLIR");
+    nullable(removal, true,
+             "a saved child survives outer removal and fresh recreation in later calls");
+    nullable(replaced(prior, "%found = ctjs.call %hasMethod(%state, %entryKey)",
+                      "%wrong = ctjs.constant #ctjs.string<\"wrong\">\n"
+                      "    %found = ctjs.call %hasMethod(%state, %wrong)"),
+             false, "scalar contents do not prove that an outer lookup contains a child");
+    const std::string sibling = R"MLIR(
+    %outerKey = ctjs.constant #ctjs.string<"x">
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %outerKey)
+    %flag = ctjs.truthy %found
+    scf.if %flag {
+      %readKey = ctjs.constant #ctjs.string<"get">
+      %reader = ctjs.get_property %state[%readKey]
+      %child = ctjs.call %reader(%state, %outerKey)
+      %setKey = ctjs.constant #ctjs.string<"set">
+      %setter = ctjs.get_property %child[%setKey]
+      %bad = BAD_VALUE
+      %changed = ctjs.call %setter(%child, %outerKey, %bad)
+      scf.yield
+    }
+)MLIR";
+    for (const char * payload : {"ctjs.constant #ctjs.boolean<true>", "ctjs.create_object",
+                                 "ctjs.load_global \"external\""}) {
+        const auto poisoned = replaced(prior, "    %size = ctjs.get_property %state[%key]",
+                                       replaced(sibling, "BAD_VALUE", payload) +
+                                           "    %size = ctjs.get_property %state[%key]");
+        for (bool reverse : {false, true}) {
+            nullable(poisoned, false,
+                     "an incompatible or opaque sibling write defeats nullable authority in "
+                     "either complete family order",
+                     reverse);
+        }
+    }
+    nullable(prior, true, "the homogeneous proof is independent of sibling order", true);
+    auto impossible =
+        replaced(withoutScalarRead(prior), "%undefined = ctjs.constant #ctjs.undefined",
+                 "%undefined = ctjs.constant #ctjs.null");
+    impossible = replaced(impossible, "      scf.yield %loaded : !ctjs.value",
+                          "      %opaque = ctjs.load_global \"external\"\n"
+                          "      scf.yield %loaded : !ctjs.value");
+    nullable(impossible, false, "an impossible filtered arm still checks every structural effect");
+    check(nullableRows == 21, "all nullable child category, absence and sibling controls ran");
 }
 
 } // namespace
@@ -377,8 +682,8 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
             table.methods.size() == 2 && table.calls.size() == 4 && capture.closures.size() == 2 &&
             capture.parameters.size() == 2 && capture.calls.size() == 1 &&
             capture.reads.size() == 3 && capture.upvalues.size() == (lifted ? 0u : 2u) &&
-            capture.leafObjects.size() == 1 && capture.leafWrites.size() == (hasField ? 1u : 0u) &&
-            capture.leafReads.empty();
+            capture.childScalarContents == Alternatives{} && capture.leafObjects.size() == 1 &&
+            capture.leafWrites.size() == (hasField ? 1u : 0u) && capture.leafReads.empty();
         unsigned setters = 0;
         mlir::Operation * previous = nullptr;
         for (const auto & edge : table.calls) {
