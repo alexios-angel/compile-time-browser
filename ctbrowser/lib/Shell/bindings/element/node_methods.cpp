@@ -408,10 +408,9 @@ void dom_bindings::install_node_methods(context & cx) {
                                        "'" + selector + "' is not a valid selector");
                    return value::undefined();
                }
-               value out = c.make_array();
-               auto * items = static_cast<script::array_object *>(out.as_heap());
-               for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
-               return out;
+               // A STATIC NodeList - the members are fixed at the call, and
+               // `instanceof NodeList` is a subtest by name.
+               return make_live_collection(c, [found] { return found; }, "NodeList");
            });
     // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
     // did not, so a page that scoped its search to a subtree found the method

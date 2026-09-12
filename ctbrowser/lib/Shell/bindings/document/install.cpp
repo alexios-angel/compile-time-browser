@@ -380,13 +380,8 @@ void dom_bindings::install_document(context & cx) {
             throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
             return value::undefined();
         }
-        // An ARRAY, not a NodeList: everything a page does with one - index it,
-        // read length, walk it - an array already does, and p5 spreads the
-        // result into an array anyway.
-        value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
-        return out;
+        // A STATIC NodeList: the members are fixed at the call.
+        return make_live_collection(c, [found] { return found; }, "NodeList");
     });
     method("hasFocus", [](context &, std::span<value>) {
         // There is one window and a page in it is the thing being looked at.
