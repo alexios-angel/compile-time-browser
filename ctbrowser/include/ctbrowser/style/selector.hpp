@@ -65,6 +65,19 @@ enum class attr_op : std::uint8_t {
     substring, // [a*=v]
 };
 
+// THE NAMESPACE PREFIX, Selectors 4 §3.2, on a type selector or an attribute
+// selector. `any` is `*|`, which constrains nothing - and is also what an unprefixed
+// TYPE means, because this engine models no default namespace. `none` is `|`: the
+// null namespace, which no element the HTML parser makes is in, and which every
+// attribute `setAttribute` makes is. `named` keeps the prefix for the CSSOM, whose
+// serialiser resolves it against the sheet's `@namespace` rules.
+enum class ns_prefix : std::uint8_t {
+    unset,
+    any,
+    none,
+    named
+};
+
 struct attribute_match {
     // THE NAME TWICE: folded to lowercase, and exactly as the author wrote it.
     // Which one applies is a question about the ELEMENT, not about the selector -
@@ -81,6 +94,13 @@ struct attribute_match {
     // Level 4 and Bootstrap uses neither, but they are two lines here and a
     // silent wrong answer without them.
     bool case_insensitive = false;
+    // `[*|title]`, `[|title]`, `[xlink|href]`. Unset is the plain `[title]`, which
+    // the matcher answers by qualified name; the other three are answered by
+    // LOCAL name and the attribute's own namespace, and a named prefix carries
+    // the URI its `@namespace` bound so the matcher can compare it with the one
+    // the DOM stored on the attribute.
+    ns_prefix ns = ns_prefix::unset;
+    atom ns_uri;
 };
 
 // Structural requirements that are a question about the element's POSITION rather
@@ -105,15 +125,10 @@ inline constexpr std::uint32_t structural_link = 1u << 11;
 // `:visited` is always FALSE and will stay that way. Chrome restricts it to colour
 // for privacy reasons; never matching is the honest subset rather than a gap.
 inline constexpr std::uint32_t structural_visited = 1u << 12;
+// `:scope` - the query's root, or `:root` when there is none. See engine::scope_.
+inline constexpr std::uint32_t structural_scope = 1u << 13;
 
 struct compiled_selector;
-
-enum class ns_prefix : std::uint8_t {
-    unset,
-    any,
-    none,
-    named
-};
 
 // The pseudo-classes that carry an ARGUMENT, so a bit will not do: an `An+B`
 // pattern, or a nested selector list.
@@ -143,6 +158,14 @@ struct pseudo_ref {
     // `:not(:is(.a))` is legal - and std::vector is the container that may name an
     // incomplete type.
     std::vector<compiled_selector> args;
+    // `:has()`. Its arguments are RELATIVE selectors - `> .a`, `~ .b`, or `.c` for
+    // a descendant - and each is compiled with a synthetic `:scope` compound on
+    // its left, so `:has(> .a)` holds `:scope > .a` and the matcher answers it by
+    // running a scoped query from the subject. Carried as `is_` plus this flag
+    // rather than as a kind of its own, because the CSSOM serialiser switches
+    // over the kinds and lives outside this subsystem; a compound holding one is
+    // marked `dropped`, which sends the serialiser to the author's bytes anyway.
+    bool relative = false;
     // The argument of `:lang()` - a comma-separated list of language RANGES, kept
     // as written because a range is not an identifier: `*-Latn` is a legal one and
     // interning it would put a wildcard in the atom table. `:dir()` stores its one
@@ -167,12 +190,8 @@ struct compound {
     // empty and because the type is recursive; tested LAST of everything in a
     // compound, since a nested selector list runs the matcher again.
     std::vector<pseudo_ref> pseudos;
-    // THE NAMESPACE PREFIX, Selectors 4 §3.2. `any` is `*|`, which constrains
-    // nothing - and is also what an unprefixed name means, because this engine
-    // models no default namespace. `none` is `|`: the null namespace, which no
-    // element the HTML parser makes is in. `named` keeps the prefix for the CSSOM,
-    // whose serialiser resolves it against the sheet's `@namespace` rules; the
-    // matcher answers neither of the last two and `never_matches` says so.
+    // THE NAMESPACE PREFIX on the type selector - see ns_prefix. The matcher
+    // answers neither `none` nor `named` for an element and `never_matches` says so.
     ns_prefix ns = ns_prefix::unset;
     atom ns_name;
     // A PSEUDO-ELEMENT - `::before`, interned lowercase - or empty. The engine

@@ -225,12 +225,13 @@ that same cursor. Once the cursor was a `(depth, index)` pair rather than a node
 which S2b needed anyway for `+` - that was a wrapper around the existing walk rather
 than a second matcher.
 
-`:has()` is deliberately absent and stays unmatchable. It looks FORWARD at
-descendants, and the traversal that answers everything else here has not visited them
-yet, so it would need a second pass over the subtree rather than a lookup. Bootstrap
-uses none. An argument the engine cannot represent also makes the whole pseudo
-unmatchable rather than vacuously true - the direction matters, because a dead branch
-inside `:not()` would otherwise read as "matches nothing, therefore `:not` passes".
+`:has()` was deliberately absent at this rung: it looks FORWARD at descendants the
+traversal has not visited yet. It arrived on 2026-09-12 as exactly the second pass
+that paragraph predicted - a scoped query run by a second `engine` from the subject,
+because the first is mid-traversal (`engine::has_walker_`). Bootstrap still uses
+none. An argument the engine cannot represent makes the whole pseudo unmatchable
+rather than vacuously true - the direction matters, because a dead branch inside
+`:not()` would otherwise read as "matches nothing, therefore `:not` passes".
 
 The measured effect on the render is the first one the parity harness could see:
 

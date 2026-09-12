@@ -23,6 +23,7 @@ bool engine::set_state(node_id id, std::uint32_t bits, bool on) {
 }
 
 std::uint32_t engine::state_of(node_id id) const {
+    if (states_source_ != nullptr) { return states_source_->state_of(id); }
     const auto it = states_.find(key_of(id));
     return it == states_.end() ? 0u : it->second;
 }
@@ -165,12 +166,12 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
     split_classes(txn.attribute_value(id, class_name()), f.classes);
     f.states = state_of(id);
-    // The document element: no ELEMENT parent. Asked here rather than by comparing
-    // against the document root, because the root node is the document itself and
-    // <html>'s parent is that - so "parent is not an element" is the test that does
-    // not depend on how the tree is rooted.
-    const node_id parent = txn.parent(id);
-    f.is_root = !parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element;
+    // The document element: THE TREE'S ROOT, which is <html> itself here - there
+    // is no Document node above it. Not "no element parent": a fragment's
+    // top-level children and a detached element have none either, and Selectors
+    // 4 §14.1 makes `:root` the document's root element alone -
+    // `fragment.querySelectorAll(":root")` asserts the miss.
+    f.is_root = id == txn.root();
     // The form-control facts. `disabled` is an attribute, so `:disabled` is a
     // question about the document rather than about UI state.
     const std::string_view tag_text = atoms_->text(f.tag);
@@ -180,8 +181,10 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     f.is_disabled = f.can_be_disabled && txn.has_attribute(id, atoms_->intern("disabled"));
     f.is_checked =
         txn.has_attribute(id, atoms_->intern("checked")) || (f.states & state_checked) != 0;
-    f.is_link = (tag_text == "a" || tag_text == "area" || tag_text == "link") &&
-                txn.has_attribute(id, atoms_->intern("href"));
+    // `a` and `area` ONLY, HTML §4.16.2: a `<link href>` used to be one, and the spec
+    // moved it out - `#head :link` in ParentNode-querySelector-All.html asserts the miss.
+    f.is_link =
+        (tag_text == "a" || tag_text == "area") && txn.has_attribute(id, atoms_->intern("href"));
     // `:empty` - no element children and no text. WHITESPACE COUNTS as content per
     // the spec, so `<p> </p>` is not empty; a comment does not.
     f.is_empty = true;
@@ -213,12 +216,14 @@ style_map engine::resolve_all(const read_txn & txn) {
     // here, from the document node - which is what gives <html> a sibling count and
     // makes `:only-child` true of it.
     enter_level(txn, txn.root(), 0);
+    scope_ = {}; // a stylesheet's `:scope` is `:root`
     resolve_subtree(txn, txn.root(), ancestors, out);
     return out;
 }
 
 std::vector<node_id> engine::select(const read_txn & txn, node_id root,
-                                    std::span<const compiled_selector> list, bool first_only) {
+                                    std::span<const compiled_selector> list, bool first_only,
+                                    node_id scope) {
     std::vector<node_id> found;
     if (list.empty()) { return found; }
     // The cascade's traversal state, reset exactly as resolve_all resets it: the
@@ -233,7 +238,15 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     node_id top = root ? root : txn.root();
     while (const node_id up = txn.parent(top)) { top = up; }
     enter_level(txn, top, 0);
+    scope_ = scope ? scope : root;
 
+    // ONLY THE PATH TO THE ROOT IS WALKED ABOVE IT. Every element on the way down
+    // is visited - a sibling combinator needs the earlier siblings at each level -
+    // but a subtree that does not contain the root holds nothing the query can
+    // answer with, and descending into it made `el.querySelectorAll` cost the
+    // whole document. `:has()` runs one of these per subject, and paid that
+    // per element.
+    const auto toward_root = [&](node_id node) { return root && txn.is_ancestor_of(node, root); };
     // Returns false to unwind the whole walk, which is how first_only stops.
     const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
@@ -242,6 +255,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
             // still BE the root - a ShadowRoot is a fragment - and its children
             // are the descendants a subtree search collects.
             const bool below = collect || node == root;
+            if (!below && !toward_root(node)) { return true; }
             for (const node_id child : txn.children(node)) {
                 if (!self(self, child, depth, below)) { return false; }
             }
@@ -267,7 +281,10 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
                 break;
             }
         }
-        if (keep_going) {
+        // A subtree search collects from BELOW the root, never the root itself:
+        // `element.querySelectorAll(s)` is over descendants.
+        const bool below = collect || node == root;
+        if (keep_going && (below || toward_root(node))) {
             // Read back from levels_ rather than from `my_facts`: matches() may have
             // grown the vector and moved it, exactly as resolve_subtree warns.
             const visited_element & me = levels_[depth][path_[depth]];
@@ -276,9 +293,6 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
             const boost::container::small_vector<atom, 4> my_classes = me.facts.classes;
             ancestors.push(my_tag, my_id, my_classes);
             enter_level(txn, node, depth + 1);
-            // A subtree search collects from BELOW the root, never the root itself:
-            // `element.querySelectorAll(s)` is over descendants.
-            const bool below = collect || node == root;
             for (const node_id child : txn.children(node)) {
                 if (!self(self, child, depth + 1, below)) {
                     keep_going = false;
@@ -296,7 +310,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
 }
 
 bool engine::element_matches(const read_txn & txn, node_id node,
-                             std::span<const compiled_selector> list) {
+                             std::span<const compiled_selector> list, node_id scope) {
     if (list.empty()) { return false; }
     if (txn.kind(node).value_or(node_kind::text) != node_kind::element) { return false; }
     // The element chain from the document down to `node`. Only elements occupy a
@@ -307,6 +321,7 @@ bool engine::element_matches(const read_txn & txn, node_id node,
     }
     if (chain.empty()) { return false; }
     std::ranges::reverse(chain);
+    scope_ = scope ? scope : node;
 
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
     ancestor_filter ancestors;
@@ -530,13 +545,37 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     if ((c.states & f.states) != c.states) { return false; }
     // STRUCTURAL requirements, all answered from facts the traversal gathered.
     if (c.structural != 0 && !structural_matches(f, c.structural)) { return false; }
+    if ((c.structural & structural_scope) != 0 && (scope_ ? node != scope_ : !f.is_root)) {
+        return false;
+    }
     // ATTRIBUTES: everything above compares interned integers, and this reads the
     // element's attribute list and then compares strings.
     for (const attribute_match & want : c.attributes) {
         const atom name = folds ? want.name : want.name_exact;
-        if (!txn.has_attribute(node, name)) { return false; }
-        if (want.op == attr_op::present) { continue; }
-        if (!attribute_matches(txn.attribute_value(node, name), want)) { return false; }
+        if (want.ns == ns_prefix::unset) {
+            if (!txn.has_attribute(node, name)) { return false; }
+            if (want.op == attr_op::present) { continue; }
+            if (!attribute_matches(txn.attribute_value(node, name), want)) { return false; }
+            continue;
+        }
+        // A NAMESPACED attribute selector is a question about the LOCAL name and
+        // the namespace the DOM stored, so it walks the element's attributes: an
+        // element may hold `title` in no namespace and `title` in another, and
+        // `[*|title]` is satisfied by whichever of them matches the value.
+        const std::string_view local_want = atoms_->text(name);
+        bool held = false;
+        for (const attribute & have : txn.attributes(node)) {
+            const bool ns_fits = want.ns == ns_prefix::any ||
+                                 (want.ns == ns_prefix::none ? !have.ns : have.ns == want.ns_uri);
+            if (!ns_fits) { continue; }
+            const std::string_view local = attribute_local_name(*atoms_, have);
+            if (!(folds ? ascii_iequals(local, local_want) : local == local_want)) { continue; }
+            if (want.op == attr_op::present || attribute_matches(have.value, want)) {
+                held = true;
+                break;
+            }
+        }
+        if (!held) { return false; }
     }
     // AND THE ARGUMENT-CARRYING PSEUDO-CLASSES LAST OF ALL, because a nested
     // selector list runs the matcher again - possibly with combinators of its own.
@@ -559,6 +598,33 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         case pseudo_kind::not_:
         case pseudo_kind::is_:
         case pseudo_kind::where_: {
+            if (want.relative) {
+                // `:has()`: does any argument - `:scope > .a`, `:scope ~ .b` -
+                // match something with this element as the scope? A scoped query
+                // from the subject finds a descendant; a sibling argument needs
+                // the search to start one level up, and the argument's own
+                // combinator says which. The walker is a second engine because
+                // this one is mid-traversal - see has_walker_.
+                if (!has_walker_) {
+                    has_walker_ = std::make_unique<engine>(*atoms_);
+                    has_walker_->states_source_ = states_source_ ? states_source_ : this;
+                }
+                bool any = false;
+                for (const compiled_selector & arg : want.args) {
+                    const bool sideways =
+                        !arg.links.empty() && (arg.links.back() == combinator::next_sibling ||
+                                               arg.links.back() == combinator::subsequent_sibling);
+                    const node_id parent = txn.parent(node);
+                    const node_id from = sideways && parent ? parent : node;
+                    const std::span<const compiled_selector> one{&arg, 1};
+                    if (!has_walker_->select(txn, from, one, true, node).empty()) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (!any) { return false; }
+                break;
+            }
             // A nested selector's SUBJECT is this element, so each argument is run
             // from the same cursor the outer selector is at. `:is()` and `:where()`
             // pass if any argument matches; `:not()` passes only if none does.

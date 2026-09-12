@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -1232,17 +1233,25 @@ public:
     //
     // `first_only` stops at the first match, which is what `querySelector` wants
     // and what keeps it from walking a large document to build a list of one.
+    //
+    // `scope` is what `:scope` names when it is not the root: `:has()` searches
+    // from the subject's PARENT so a sibling argument can be found, and the
+    // subject stays the scope. Empty means the root.
     [[nodiscard]] std::vector<node_id> select(const read_txn & txn, node_id root,
                                               std::span<const compiled_selector> list,
-                                              bool first_only);
+                                              bool first_only, node_id scope = {});
 
     // WHETHER ONE ELEMENT MATCHES, without walking the document to find out - what
     // `matches` and `closest` ask, per call, so `select` would make them
     // O(document). Matching ONE element needs its ancestor chain and the earlier
     // siblings at each step of it, and nothing else: this builds exactly that
     // cursor and then runs the same matcher.
+    //
+    // `scope` is what `:scope` names; empty means the subject. `closest` walks
+    // the ancestors and must keep the element it was called on as the scope,
+    // or `div > :scope` would be true of whichever ancestor sits under a div.
     [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
-                                       std::span<const compiled_selector> list);
+                                       std::span<const compiled_selector> list, node_id scope = {});
 
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
@@ -1672,6 +1681,19 @@ private:
     // elements and across documents, so a steady-state resolve allocates nothing.
     std::vector<std::vector<visited_element>> levels_;
     std::vector<std::size_t> path_;
+    // THE SCOPING ROOT, Selectors 4 §3.5: what `:scope` names. `select` sets it to
+    // its root and `element_matches` to its subject; empty means there is none -
+    // a whole-document query, or the cascade - and `:scope` is then `:root`. A
+    // root that is not an element (a fragment) is a scope no element can equal.
+    node_id scope_{};
+    // THE `:has()` WALKER: a second engine, made on first use, that runs the
+    // scoped query a `:has()` argument is. A nested query cannot share this
+    // engine's traversal state - `levels_` and `path_` ARE the outer match's
+    // position - and swapping them out around every `:has()` would cost more than
+    // the 4 KiB ancestor filter the walker carries. It answers `:hover` and the
+    // other interactive bits from this engine, through `states_source_`.
+    mutable std::unique_ptr<engine> has_walker_;
+    const engine * states_source_ = nullptr;
     // Per level, the totals the traversal cannot know from what it has already seen:
     // how many element children the level has in all, and how many of each tag.
     // Counted once when the level is entered.
