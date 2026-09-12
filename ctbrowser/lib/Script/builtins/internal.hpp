@@ -1249,39 +1249,12 @@ struct json_reader {
         if (at + 4 > text.size()) { return false; }
         out = 0;
         for (int i = 0; i < 4; ++i) {
-            const char h = text[at + static_cast<std::size_t>(i)];
-            int digit = 0;
-            if (h >= '0' && h <= '9') {
-                digit = h - '0';
-            } else if (h >= 'a' && h <= 'f') {
-                digit = h - 'a' + 10;
-            } else if (h >= 'A' && h <= 'F') {
-                digit = h - 'A' + 10;
-            } else {
-                return false;
-            }
+            const int digit = hex_value(text[at + static_cast<std::size_t>(i)]);
+            if (digit < 0) { return false; }
             out = out * 16 + static_cast<std::uint32_t>(digit);
         }
         at += 4;
         return true;
-    }
-
-    static void append_utf8(std::uint32_t code, std::string & out) {
-        if (code < 0x80) {
-            out += static_cast<char>(code);
-        } else if (code < 0x800) {
-            out += static_cast<char>(0xC0 | (code >> 6));
-            out += static_cast<char>(0x80 | (code & 0x3F));
-        } else if (code < 0x10000) {
-            out += static_cast<char>(0xE0 | (code >> 12));
-            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (code & 0x3F));
-        } else {
-            out += static_cast<char>(0xF0 | (code >> 18));
-            out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
-            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (code & 0x3F));
-        }
     }
 
     [[nodiscard]] bool parse_string(std::string & out) {
@@ -1341,7 +1314,7 @@ struct json_reader {
                 // ill-formed string. It is the same deviation that makes
                 // `isWellFormed` unimplementable here.
                 if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
-                append_utf8(code, out);
+                append_utf8(out, code);
                 break;
             }
             default: fail(); return false;

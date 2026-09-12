@@ -655,38 +655,21 @@ void install_promise(context & cx) {
         const auto stat = [&](const char * name, double arity, native_fn fn) {
             detail::method(cx, string_ctor, name, arity, std::move(fn));
         };
-        // UTF-8 out, because strings here are bytes: a code point above 0x7F
-        // becomes its encoding rather than one char, which is what makes the
-        // round trip through String.prototype work.
-        const auto encode = [](std::string & out, std::uint32_t code) {
-            if (code < 0x80) {
-                out += static_cast<char>(code);
-            } else if (code < 0x800) {
-                out += static_cast<char>(0xC0 | (code >> 6));
-                out += static_cast<char>(0x80 | (code & 0x3F));
-            } else if (code < 0x10000) {
-                out += static_cast<char>(0xE0 | (code >> 12));
-                out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-                out += static_cast<char>(0x80 | (code & 0x3F));
-            } else {
-                out += static_cast<char>(0xF0 | (code >> 18));
-                out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
-                out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-                out += static_cast<char>(0x80 | (code & 0x3F));
-            }
-        };
-        stat("fromCharCode", 1, [encode](context & c, std::span<value> a) {
+        // UTF-8 out (core's append_utf8), because strings here are bytes: a
+        // code point above 0x7F becomes its encoding rather than one char,
+        // which is what makes the round trip through String.prototype work.
+        stat("fromCharCode", 1, [](context & c, std::span<value> a) {
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // ToUint16 of ToNumber (22.1.2.1): an object's valueOf runs.
                 if (!numeric_arg(c, a[i])) { return value::undefined(); }
                 const double n = c.to_number_value(a[i]);
                 if (c.throw_pending()) { return value::undefined(); }
-                encode(out, context::to_uint32(value::number(n)) & 0xFFFFu);
+                append_utf8(out, context::to_uint32(value::number(n)) & 0xFFFFu);
             }
             return c.string(out);
         });
-        stat("fromCodePoint", 1, [encode](context & c, std::span<value> a) {
+        stat("fromCodePoint", 1, [](context & c, std::span<value> a) {
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // 22.1.2.2 step 2c: a code point must be an INTEGER in
@@ -699,7 +682,7 @@ void install_promise(context & cx) {
                     c.throw_error("RangeError", "Invalid code point");
                     return c.string(std::string{});
                 }
-                encode(out, static_cast<std::uint32_t>(code));
+                append_utf8(out, static_cast<char32_t>(code));
             }
             return c.string(out);
         });
