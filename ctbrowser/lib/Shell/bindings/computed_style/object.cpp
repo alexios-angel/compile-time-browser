@@ -77,10 +77,41 @@ struct computed_cache {
     if (text.size() < 2 || text.front() != ':') { return {}; }
     const bool doubled = text[1] == ':';
     text.remove_prefix(doubled ? 2 : 1);
+    using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
-    if (ts.tokens.size() != 2 || ts.tokens.front().type != style::css::token_type::ident) {
-        return {};
+    // A FUNCTIONAL PSEUDO-ELEMENT - `::highlight(name)`, `::picker(select)`,
+    // `::view-transition-group(name)` - takes exactly one identifier, with
+    // whitespace around it and the `)` optional, since EOF closes a block
+    // (getComputedStyle-pseudo-with-argument). It names the pseudo-element
+    // the cascade knows as `name(argument)`, the argument case-folded the
+    // way the selector compiler interns it.
+    if (doubled && ts.tokens.front().type == token_type::function) {
+        std::string_view function = ts.text_of(ts.tokens.front());
+        if (function.ends_with('(')) { function.remove_suffix(1); }
+        const std::string name = ascii_lower_copy(function);
+        std::string argument;
+        bool closed = false;
+        for (std::size_t i = 1; i < ts.tokens.size(); ++i) {
+            const style::css::css_token & t = ts.tokens[i];
+            if (t.type == token_type::whitespace) { continue; }
+            if (t.type == token_type::eof) { break; }
+            if (closed) { return {}; } // `::highlight(name)a`
+            if (t.type == token_type::close_paren) {
+                closed = true;
+            } else if (t.type == token_type::ident && argument.empty()) {
+                argument = ascii_lower_copy(ts.text_of(t));
+            } else {
+                return {};
+            }
+        }
+        if (argument.empty()) { return {}; }
+        const bool takes_ident = name == "highlight" || name == "view-transition-group" ||
+                                 name == "view-transition-image-pair" ||
+                                 name == "view-transition-old" || name == "view-transition-new";
+        if (!takes_ident && !(name == "picker" && argument == "select")) { return {}; }
+        return name + "(" + argument + ")";
     }
+    if (ts.tokens.size() != 2 || ts.tokens.front().type != token_type::ident) { return {}; }
     const std::string name = ascii_lower_copy(ts.text_of(ts.tokens.front()));
     const bool legacy =
         name == "before" || name == "after" || name == "first-line" || name == "first-letter";
@@ -326,7 +357,19 @@ void dom_bindings::install_computed_style(context & cx) {
     // needs the same flush and reaches it back through this same global.
     cx.define_native("getComputedStyle", [this](context & c, std::span<value> args) {
         const node_id id = args.empty() ? node_id{} : handle_of(args[0]);
-        if (!id) { return c.make_object(); }
+        if (!id) {
+            // A NODE OF ANOTHER DOCUMENT - a frame's, which `handle_of` refuses
+            // because its handle names a different slab - is an element this
+            // document does not render, and gets the empty declaration an
+            // unrendered element gets (getComputedStyle-detached-subtree asks
+            // it of a `display: none` frame's root, through both windows).
+            if (!args.empty() && args[0].is_object() &&
+                static_cast<script::object_object *>(args[0].as_heap())
+                        ->find(std::string{handle_property}) != nullptr) {
+                return computed_style_object(c, node_id{});
+            }
+            return c.make_object();
+        }
         // A SECOND ARGUMENT NAMING A PSEUDO-ELEMENT gets an EMPTY declaration,
         // for the reason `names_a_pseudo_element` sets out - and it is spelled
         // as an empty node handle rather than as a flag, because

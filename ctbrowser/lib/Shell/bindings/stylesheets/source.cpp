@@ -319,14 +319,22 @@ void set_indexed(script::object_object & obj, std::span<const value> items) {
 [[nodiscard]] value collection_item(context & cx, std::span<value> args) {
     const value self = cx.current_this();
     script::object_object * obj = as_object(self);
-    if (obj == nullptr) { return value::null(); }
+    // A PROXY RECEIVER - `document.styleSheets` is one - answers through its
+    // `get` trap, which is where its list is brought up to date.
+    const bool proxied = obj == nullptr && self.is_kind(script::heap_kind::proxy);
+    if (obj == nullptr && !proxied) { return value::null(); }
     const double at = args.empty() ? 0 : context::to_number(args[0]);
     // BOUNDED BEFORE THE CAST. `list.item(1e30)` is one keystroke, and a
     // float-to-integer conversion out of the destination's range is undefined
     // behaviour rather than a large number - the same hazard `el.style[1e30]`
     // has in element/views.cpp, answered the same way.
     if (!(at >= 0) || at > 4294967294.0) { return value::null(); }
-    const value * held = obj->find(std::to_string(static_cast<std::uint32_t>(at)));
+    const std::string key = std::to_string(static_cast<std::uint32_t>(at));
+    if (proxied) {
+        const value found = cx.lookup_property(self, key);
+        return found.is_undefined() ? value::null() : found;
+    }
+    const value * held = obj->find(key);
     return held == nullptr ? value::null() : *held;
 }
 

@@ -153,28 +153,68 @@ script::object_object * dom_bindings::cssom_internals(context & cx) {
     return as_object(cssom_internals_);
 }
 
+// `document.styleSheets`: LIVE, THROUGH A PROXY. The target under
+// `internals.list` holds the prototype, `length` and the indices that
+// sync_style_sheets writes; what the page holds is a proxy over it whose every
+// read re-derives the document's sheets first, so `length` on a list held in
+// a variable across a DOM change is the count NOW
+// (ttwf-cssom-doc-ext-load-count removes a <link> and reads the list it took
+// before). `length` itself stays a data property on the target, because the
+// VM's iteration reads it as one - and a proxy is array-like through its traps
+// (context::iterable_values), which is how every other live DOM collection
+// already iterates. [SameObject]: one proxy, kept beside the target.
 value dom_bindings::style_sheet_list(context & cx) {
     script::object_object * internals = cssom_internals(cx);
     if (internals == nullptr) { return value::undefined(); }
-    if (const value * found = internals->find("list")) { return *found; }
-    const value list = cx.make_object();
-    if (script::object_object * obj = as_object(list)) {
+    if (const value * found = internals->find("list_view")) { return *found; }
+    const value target = cx.make_object();
+    if (script::object_object * obj = as_object(target)) {
         if (const value * proto = internals->find("StyleSheetList.prototype")) {
             obj->prototype = *proto;
         }
         obj->define("length", value::number(0), script::attr_none);
     }
-    internals->set("list", list);
-    return list;
+    internals->set("list", target);
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto trap = [&](const char * name, script::native_fn fn) {
+        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    trap("get", [this](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::undefined(); }
+        sync_style_sheets(c);
+        return c.lookup_property(args[0], c.to_string(args[1]));
+    });
+    trap("has", [this](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::boolean(false); }
+        sync_style_sheets(c);
+        return value::boolean(c.has_property(args[0], args[1]));
+    });
+    trap("getOwnPropertyDescriptor", [this](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::undefined(); }
+        sync_style_sheets(c);
+        script::context::property_descriptor found;
+        if (!c.own_property(args[0], c.to_string(args[1]), found)) { return value::undefined(); }
+        return c.from_property_descriptor(found);
+    });
+    // An index and `length` are read-only; anything else is an expando.
+    trap("set", [](context & c, std::span<value> args) {
+        if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
+        const std::string key = c.to_string(args[1]);
+        if (key == "length" ||
+            (!key.empty() && key.find_first_not_of("0123456789") == std::string::npos)) {
+            return value::boolean(false);
+        }
+        c.store_property(args[0], key, args[2]);
+        return value::boolean(true);
+    });
+    const value view =
+        value::object(cx.allocate<script::proxy_object>(target, value::object(handler)));
+    internals->set("list_view", view);
+    return view;
 }
 
-// LIVE ENOUGH, AND NOT LIVE. `item()` re-derives the list from the tree
-// first, and so does every read of `document.styleSheets`; `length` is an own
-// data property, because the VM's iteration reads it as one (Array.from,
-// spread and for-of all go through context::iterable_values) and a prototype
-// accessor emptied all three. So a list held in a variable across a DOM change
-// answers a stale `length` - ttwf-cssom-doc-ext-load-count.html is one subtest
-// of exactly that, and it is the price of `Array.from(document.styleSheets)`.
+// `item()` re-derives the list from the tree first - the document's, or the
+// shadow root's the list carries in `tree_key`.
 void dom_bindings::resync_sheet_list(context & cx, script::object_object & list) {
     if (const value * tree = list.find(tree_key)) {
         if (const node_id root = handle_of(*tree)) { sync_sheet_list(cx, root, list, nullptr); }
@@ -222,7 +262,10 @@ value dom_bindings::rule_object_for(context & cx, std::size_t rule) {
 }
 
 void dom_bindings::sync_style_sheets(context & cx) {
-    script::object_object * list_obj = as_object(style_sheet_list(cx));
+    (void)style_sheet_list(cx);
+    script::object_object * internals = cssom_internals(cx);
+    const value * target = internals != nullptr ? internals->find("list") : nullptr;
+    script::object_object * list_obj = target != nullptr ? as_object(*target) : nullptr;
     if (list_obj == nullptr) { return; }
     const node_id root = doc_->read().root();
     sync_sheet_list(cx, root, *list_obj, &css_document_sheets_);

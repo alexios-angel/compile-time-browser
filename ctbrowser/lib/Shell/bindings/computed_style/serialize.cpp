@@ -292,6 +292,68 @@ namespace detail {
     return out;
 }
 
+// A SHADOW LIST AS ITS RESOLVED VALUE. CSS Backgrounds 3 §7.2 and CSS Text
+// Decoration 3 §4: each shadow's colour computes to a colour - a system colour
+// or a named one becomes its `rgb()`, an absent one is `currentcolor`, which
+// the caller substitutes - and its lengths become px, the omitted ones zero.
+// Serialised colour first, then the lengths, then `inset`, which is the order
+// every engine prints (getComputedStyle-resolved-colors asks that
+// `box-shadow: 1px 1px Menu` begin with `rgb(`). `none` stays `none`; a shadow
+// this reader cannot take apart keeps its text.
+[[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box) {
+    const std::string_view whole = trim(text, html_whitespace);
+    if (whole.empty() || ascii_iequals(whole, "none")) { return "none"; }
+    // Split at depth zero - a comma or a space inside `rgb(1, 2, 3)` is the
+    // colour's, not the list's.
+    const auto split = [](std::string_view in, bool on_comma) {
+        std::vector<std::string_view> out;
+        int depth = 0;
+        std::size_t start = 0;
+        for (std::size_t i = 0; i <= in.size(); ++i) {
+            const bool end = i == in.size();
+            const char c = end ? '\0' : in[i];
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            const bool cut =
+                end || (depth == 0 && (on_comma ? c == ',' : html_whitespace.contains(c)));
+            if (!cut) { continue; }
+            const std::string_view piece = trim(in.substr(start, i - start), html_whitespace);
+            if (!piece.empty()) { out.push_back(piece); }
+            start = i + 1;
+        }
+        return out;
+    };
+    std::string out;
+    for (const std::string_view shadow : split(whole, true)) {
+        std::string colour;
+        std::vector<std::string> lengths;
+        bool inset = false;
+        for (const std::string_view part : split(shadow, false)) {
+            if (ascii_iequals(part, "inset")) {
+                inset = true;
+            } else if (ascii_iequals(part, "currentcolor")) {
+                colour = "currentcolor";
+            } else if (const std::optional<color> c = paint::parse_color(part)) {
+                colour = color_text(*c);
+            } else if (const std::optional<color> s = system_color(part)) {
+                colour = color_text(*s);
+            } else {
+                const layout::length len = layout::parse_length(part);
+                if (len.is_auto() || len.u == layout::unit::percent) { return std::string{text}; }
+                lengths.push_back(px_text(len.resolve(0.0f, font_size)));
+            }
+        }
+        const std::size_t wanted = box ? 4 : 3;
+        if (lengths.size() < 2 || lengths.size() > wanted) { return std::string{text}; }
+        while (lengths.size() < wanted) { lengths.emplace_back("0px"); }
+        if (!out.empty()) { out += ", "; }
+        out += colour.empty() ? std::string{"currentcolor"} : colour;
+        for (const std::string & len : lengths) { out += ' ' + len; }
+        if (inset) { out += " inset"; }
+    }
+    return out;
+}
+
 [[nodiscard]] std::string collapse_keyword(std::string_view text) {
     std::string out;
     bool gap = false;
