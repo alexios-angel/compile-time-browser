@@ -129,9 +129,11 @@ void common_subsequence(const std::vector<node_id> & before, const std::vector<n
                                   : std::max(table[at(i + 1, j)], table[at(i, j + 1)]);
         }
     }
-    // Backtrack, preferring to advance the BEFORE cursor on a tie. The
-    // preference is arbitrary and is what decides which of two swapped siblings
-    // is called the moved one - see the header note.
+    // Backtrack, preferring to advance the AFTER cursor on a tie: the node
+    // that now sits earlier than its old neighbours is the one called moved,
+    // which is `insertBefore(second, first)` naming the second - what
+    // MutationObserver-childList.html asserts. The preference is what decides
+    // which of two swapped siblings is the moved one - see the header note.
     std::size_t i = 0;
     std::size_t j = 0;
     while (i < n && j < m) {
@@ -140,7 +142,7 @@ void common_subsequence(const std::vector<node_id> & before, const std::vector<n
             kept_after[j] = 1;
             ++i;
             ++j;
-        } else if (table[at(i + 1, j)] >= table[at(i, j + 1)]) {
+        } else if (table[at(i + 1, j)] > table[at(i, j + 1)]) {
             ++i;
         } else {
             ++j;

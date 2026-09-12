@@ -836,9 +836,17 @@ void dom_bindings::install_node_methods(context & cx) {
             walk(walk, self);
         }
         if (merged.empty() && removed.empty()) { return value::undefined(); }
-        for (const auto & [node, data] : merged) { (void)doc_->set_text(node, data); }
-        for (const node_id node : removed) { (void)doc_->remove_child(node); }
-        mutated();
+        // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
+        // is a record and every removal is its own, with the siblings the node
+        // had when it went - MutationObserver-childList.html counts them.
+        for (const auto & [node, data] : merged) {
+            (void)doc_->set_text(node, data);
+            mutated();
+        }
+        for (const node_id node : removed) {
+            (void)doc_->remove_child(node);
+            mutated();
+        }
         return value::undefined();
     });
     method(node, "contains", 1, [this](context & c, std::span<value> args) {
