@@ -882,9 +882,11 @@ void dom_bindings::install_node_methods(context & cx) {
                }
                if (!self || parsed.selectors.empty()) { return value::null(); }
                const auto txn = doc_->read();
-               // INCLUSIVE, and upward: the element itself is the first candidate.
+               // INCLUSIVE, and upward: the element itself is the first candidate,
+               // and it stays `:scope` for every ancestor tried (Element-closest:
+               // `div > :scope` is about the element, not the ancestor).
                for (node_id at = self; at; at = txn.parent(at)) {
-                   if (selector_engine().element_matches(txn, at, parsed.selectors)) {
+                   if (selector_engine().element_matches(txn, at, parsed.selectors, self)) {
                        return wrap(c, at);
                    }
                }
