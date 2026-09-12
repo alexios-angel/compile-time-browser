@@ -1193,11 +1193,87 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
     return made;
 }
 
+// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
+// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
+// onload="init()">` and `document.body.onresize = f` both address the window.
+[[nodiscard]] bool forwards_to_window(std::string_view name) {
+    for (const std::string_view each :
+         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
+        if (name == each) { return true; }
+    }
+    return false;
+}
+
+// The body or frameset element `self` wraps, or none.
+node_id dom_bindings::body_or_frameset_of(value self) {
+    const node_id id = handle_of(self);
+    if (!id || doc_ == nullptr) { return {}; }
+    const auto txn = doc_->read();
+    const atom tag = txn.tag(id).value_or(atom{});
+    const bool is =
+        txn.element_ns(id) == node_ns::html &&
+        (tag == atoms_->intern_lower("body") || tag == atoms_->intern_lower("frameset"));
+    return is ? id : node_id{};
+}
+
+// A forwarded CONTENT attribute reaches the window from here, lazily: there is
+// no attribute-change hook, so the element's `on<name>` text is compared with
+// what was last compiled from it on every read of the handler - through the
+// element or through the window - and a changed text is compiled onto the
+// window's slot, a removed one clears it. The element that last supplied the
+// window's handler is remembered so its removal is seen from the window side
+// too. What this cannot see is a detached body whose attribute changed and
+// which nothing reads through; a real hook in setAttribute would.
+void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
+                                             const std::string & name) {
+    auto * window = window_object();
+    if (window == nullptr || !element) { return; }
+    const value self = wrap(cx, element);
+    if (!self.is_object()) { return; }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const value * before = object->find(source_slot(name));
+    const bool had = before != nullptr;
+    const std::string was = had && before->is_string() ? cx.to_string(*before) : "";
+    const value made = compile_handler_attribute(cx, self, name);
+    const value * after = object->find(source_slot(name));
+    const auto supplier = forwarded_from_.find(name);
+    if (after == nullptr) {
+        // Gone. If it was this element's text the window was running, the
+        // window's handler goes with it ("deactivate an event handler").
+        if (had && supplier != forwarded_from_.end() && supplier->second == element) {
+            window->define(assigned_slot(name), value::null(), script::attr_none);
+            cx.define_global(name, value::null());
+            forwarded_from_.erase(supplier);
+        }
+        return;
+    }
+    if (had && cx.to_string(*after) == was) { return; } // unchanged since last seen
+    const value handler = made.is_callable() ? made : value::null();
+    window->define(assigned_slot(name), handler, script::attr_none);
+    cx.define_global(name, handler);
+    forwarded_from_[name] = element;
+}
+
 // THE GETTER. Null when unset, and "unset" is the ABSENCE of the assigned slot
 // rather than a null in it - see assigned_slot.
 value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
     if (!self.is_object()) { return value::null(); }
     auto * object = static_cast<script::object_object *>(self.as_heap());
+    if (forwards_to_window(name) && window_object() != nullptr) {
+        if (object == window_object()) {
+            node_id seen{};
+            if (const auto from = forwarded_from_.find(name); from != forwarded_from_.end()) {
+                seen = from->second;
+                refresh_forwarded_handler(cx, seen, name);
+            }
+            if (const node_id body = find_by_tag("body"); body && body != seen) {
+                refresh_forwarded_handler(cx, body, name);
+            }
+        } else if (const node_id element = body_or_frameset_of(self)) {
+            refresh_forwarded_handler(cx, element, name);
+            object = window_object();
+        }
+    }
     if (const value * held = object->find(assigned_slot(name))) { return *held; }
     if (const value made = compile_handler_attribute(cx, self, name); made.is_callable()) {
         return made;
@@ -1230,6 +1306,10 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
                                      value given) {
     if (!self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());
+    // `body.onload = f` IS `window.onload = f` - see forwards_to_window.
+    if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {
+        object = window_object();
+    }
     const value stored = given.is_object_like() ? given : value::null();
     object->define(assigned_slot(name), stored, script::attr_none);
     // AND THE ASSIGNMENT DISCARDS THE CONTENT ATTRIBUTE'S HANDLER - HTML's

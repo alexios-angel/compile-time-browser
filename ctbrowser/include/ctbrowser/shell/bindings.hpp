@@ -1881,6 +1881,15 @@ private:
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+
+    // HTML's window-reflecting body element event handler set: `body.onload`
+    // is the window's, and a `<body onload>` content attribute is compiled onto
+    // the window. Lazy - checked on read - because there is no attribute-change
+    // hook; see events/dispatch.cpp. `forwarded_from_` is the element whose
+    // attribute last supplied each window handler.
+    [[nodiscard]] node_id body_or_frameset_of(value self);
+    void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
+    flat_map<std::string, node_id> forwarded_from_;
 };
 
 } // namespace ctbrowser::shell

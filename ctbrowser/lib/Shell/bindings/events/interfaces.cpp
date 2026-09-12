@@ -713,6 +713,13 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
                  });
 
+    // `HashChangeEvent` (HTML 7.4.6.2): two USVStrings defaulting to "".
+    interface_of("HashChangeEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("oldURL", c.string(dict_string(c, init, "oldURL")));
+                     e.set("newURL", c.string(dict_string(c, init, "newURL")));
+                 });
+
     // `ErrorEvent`, which is what an uncaught exception is reported as. It is
     // here rather than beside dispatch_error because a page CONSTRUCTS one:
     // window-event-restored-after-throwing-onerror.html dispatches its own.
