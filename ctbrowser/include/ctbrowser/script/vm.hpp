@@ -332,6 +332,9 @@ public:
     [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
 
     void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
+    // `delete globalThis.x`: the binding is a table entry, and every global
+    // is { configurable: true } (clause 17), so the delete succeeds.
+    bool erase_global(std::string_view name) { return globals_.erase(name) != 0; }
     void define_native(std::string name, native_fn fn) {
         value v = value::object(allocate<native_object>(name, std::move(fn)));
         globals_[std::move(name)] = v;
@@ -536,13 +539,18 @@ public:
             // DOMException. Error.prototype plus an own `name` is the honest
             // fallback: the name is still right and `e instanceof Error` holds.
             table = prototype(proto_kind::error);
-            o->set("name", string(std::string{kind}));
+            o->define("name", string(std::string{kind}), attr_builtin);
         }
-        o->set("message", string(message));
+        // { true, false, true }, as 20.5.1.1 step 3 installs it.
+        o->define("message", string(message), attr_builtin);
         // The frames it happened on, exactly as a constructed Error gets them -
         // a page catching a TypeError the VM raised should be able to report
-        // where as easily as one it threw itself.
-        o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
+        // where as easily as one it threw itself. IN THE [[ErrorData]] SLOT
+        // the Error constructor uses (builtins/objects/errors.cpp's
+        // error_stack_slot): Error.prototype's `stack` accessor answers it,
+        // and Error.isError tests for it.
+        o->define("@#ErrorData", string(std::string{kind} + ": " + message + current_stack()),
+                  attr_none);
         if (table != nullptr) { o->prototype = value::object(table); }
         return made;
     }

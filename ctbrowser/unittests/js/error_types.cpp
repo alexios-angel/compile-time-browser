@@ -138,6 +138,11 @@ int main() {
     js_expect("Error.isError({__proto__: Error.prototype, message: '', stack: 's'})", "false");
     js_expect("Error.isError(Error.prototype)", "false");
     js_expect("Error.isError(1)", "false");
+    // ...and an ENGINE-RAISED error has [[ErrorData]] too: make_error records
+    // its trace in the same slot, with `message` non-enumerable (20.5.1.1).
+    js_expect(caught("(void 0)()", "Error.isError(e)"), "true");
+    js_expect(caught("(void 0)()", "e.hasOwnProperty('stack')"), "false");
+    js_expect(caught("(void 0)()", "Object.keys(e).length"), "0");
     // 20.5.1.1 step 4: `cause` off the options, after `message`; a Symbol
     // message refuses; 20.5.3.4 toString on a non-object refuses and fills in
     // the defaults.

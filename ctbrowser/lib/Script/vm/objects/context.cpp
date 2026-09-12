@@ -82,6 +82,17 @@ context::context() {
         return cx.from_property_descriptor(
             property_descriptor::data(cx.global(name), attr_writable | attr_configurable));
     });
+    // `delete globalThis.x` reaches the binding table the way `set` does;
+    // an own property of the target deletes as one.
+    trap("deleteProperty", [](context & cx, std::span<value> args) {
+        const std::string name = cx.to_string(args[1]);
+        property_descriptor found;
+        if (cx.own_property(args[0], name, found)) {
+            return value::boolean(cx.delete_own_property(args[0], name));
+        }
+        (void)cx.erase_global(name);
+        return value::boolean(true);
+    });
     set_global_this(value::object(allocate<proxy_object>(target, value::object(handler))));
 }
 
