@@ -791,7 +791,13 @@ private:
         // with nothing left to resolve; but `progress(5%, 0px, 10px)` does not
         // have three arguments that agree on what they measure, and that is a
         // type error rather than a comparison awaiting layout.
+        // ...AND EACH IS A <number>, A <dimension> OR A <percentage>, which is
+        // what the specification's "the argument calculations can resolve to
+        // any" lists. Typed arithmetic makes `10px * 10px` a term with a
+        // type, and the three would agree on it - but an area is not one of
+        // the three and `progress-invalid` says the whole is a syntax error.
         for (const term & one : *args) {
+            if (!one.simple()) { return fail(); }
             if (one.dims != args->front().dims || one.has_percent != args->front().has_percent) {
                 return fail();
             }

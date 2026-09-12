@@ -282,6 +282,10 @@ void test_the_rest_of_the_math_functions() {
     // A MIXED PERCENTAGE IS A TYPE ERROR HERE and not an undecidable comparison:
     // three arguments that do not agree on what they measure have no ratio.
     bad("opacity", "progress(5%, 0px, 10px)");
+    // AN AREA IS A TYPE AND NOT AN ARGUMENT: three that agree on being
+    // <length>^2 still have nothing progress() can take.
+    bad("opacity", "progress(10px * 10px, 10px * 10px, 10px * 10px)");
+    bad("opacity", "progress(10px, 10px * 10px, 10px * 10px)");
     bad("letter-spacing", "calc(1px * progress(10deg, 0, 10))");
     // A CONSTANT IS NOT A VALUE ON ITS OWN. `infinity` and `NaN` are not
     // <number-token>s, which is the whole reason §10.9 spells them as keywords

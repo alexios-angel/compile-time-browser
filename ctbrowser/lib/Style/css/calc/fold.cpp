@@ -303,9 +303,15 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
             // ponytail: one bound for every family and every property; the
             // per-property range (opacity's [0, 1], a non-negative width) is
             // the cascade's to apply after this.
+            // AN ANGLE HAS NO BOUND TO LAND ON: `rotate(calc(infinity * 1deg))`
+            // is `rotate(0deg)` in Chrome, and calc-infinity-nan-computed
+            // compares the two matrices fifteen times over. A 2^25 degree
+            // rotation is 272 degrees, which is no more the spec's answer and
+            // agrees with nobody.
             constexpr double bound = 33554432.0;
-            const auto clamped = [](double v) {
-                if (std::isnan(v)) { return 0.0; }
+            const bool angle = computed.type == numeric_type::angle;
+            const auto clamped = [angle](double v) {
+                if (std::isnan(v) || (angle && std::isinf(v))) { return 0.0; }
                 return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
             };
             computed.px = clamped(computed.px);
