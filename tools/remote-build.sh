@@ -39,12 +39,6 @@ host="${DEVBOX_HOST:-devbox}"
 # The default is unchanged, so nothing that does not set it notices.
 remote_dir="${DEVBOX_DIR:-projects/compile-time-browser}"
 
-# HOW MANY COMPILES AT ONCE. Ninja defaults to nproc+2, which is 10 on this
-# box, and an MLIR translation unit peaks at 1-2 GB - so two workspaces
-# building at once can exhaust 32 GB between them. Several agents share this
-# machine, so the default is bounded rather than maximal; raise it with
-# CT_BUILD_JOBS=10 when you know you are alone on the box.
-build_jobs="${CT_BUILD_JOBS:-6}"
 # The embed repo's pinned toolchain release. sync-to-ctbrowser.sh may install a
 # locally-built one instead — the rsync protect filter keeps whichever is on the
 # server. This used to say "same knob and default as CI"; there is no CI any
@@ -71,6 +65,14 @@ or set DEVBOX_HOST=ubuntu@<ip>.
 EOF
   exit 1
 fi
+
+# Use the devbox CPU count, not the local machine's. Explicit CTest jobs also
+# work with CTest 3.28, where the preset's jobs=0 still runs tests serially.
+# The shared devbox lock serializes build sessions; either pool can be capped.
+devbox_jobs="$(ssh "$host" nproc)"
+build_jobs="${CT_BUILD_JOBS:-$devbox_jobs}"
+test_jobs="${CT_TEST_JOBS:-$devbox_jobs}"
+printf 'devbox: %s CPUs; build jobs=%s; CTest jobs=%s\n' "$devbox_jobs" "$build_jobs" "$test_jobs"
 
 repo_root=$(git rev-parse --show-toplevel)
 
@@ -197,6 +199,6 @@ else
   if [ $# -gt 0 ]; then
     ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default -j$build_jobs --target $*"
   else
-    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default -j$build_jobs && ctest --preset default"
+    ssh "$host" "cd $remote_dir/ctbrowser && $configure && cmake --build --preset default -j$build_jobs && ctest --preset default -j$test_jobs"
   fi
 fi
