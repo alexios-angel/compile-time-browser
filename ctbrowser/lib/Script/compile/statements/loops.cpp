@@ -198,7 +198,70 @@ void compiler_impl::compile_for(const vp::node & n) {
     pop_scope();
 }
 
+// `for await (x of y)`, 14.7.5.6 with iteratorKind async. Unlike the sync
+// loop below, which MATERIALISES its source through op::iterable, this one
+// runs the real protocol: GetIterator(async) through the builtin's hidden
+// native, then `next()` -> await -> `done`/`value` per iteration, so an async
+// generator is pulled lazily and a promise in a sync iterator's `value` is
+// awaited. Only the statement form; `for await` at a module's top level is
+// refused with the same message as an `await` there would be.
+// NOT DONE: AsyncIteratorClose on `break`/`throw` (the sync loop has no
+// IteratorClose either).
+void compiler_impl::compile_for_await(const vp::node & n) {
+    if (!fn().is_async) {
+        fail("`for await` outside an async function");
+        return;
+    }
+    push_scope();
+    const std::vector<std::string> label = take_labels();
+    const std::uint32_t mark = reg_mark();
+
+    const std::uint16_t iterator = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, iterator,
+                                      intern_name(std::string{async_iterator_name})));
+    const std::uint16_t source = alloc_reg();
+    compile_expr(n.b, source);
+    proto().emit(instruction{op::call, iterator, 1});
+
+    const vp::node & target = at(n.a);
+    const bool declares = (n.d & 2) == 0;
+    const bool is_shape = target.b >= 0;
+    const std::uint16_t item =
+        (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
+
+    const std::size_t top = proto().code.size();
+    loops_.push_back(loop_context{label, {}, {}, handler_depth_});
+    const std::uint16_t step = alloc_reg();
+    proto().emit(instruction{op::get_prop, step, iterator, name_operand("next")});
+    proto().emit(instruction{op::call_receiver, step, 0, iterator});
+    proto().emit(instruction{op::await_value, step, step});
+    const std::uint16_t done = alloc_reg();
+    proto().emit(instruction{op::get_prop, done, step, name_operand("done")});
+    const std::size_t exit = proto().emit(instruction{op::jump_if_true, done});
+    proto().emit(instruction{op::get_prop, item, step, name_operand("value")});
+    if (is_shape) {
+        compile_pattern_binding(target.b, item, declares);
+    } else if (!declares) {
+        emit_write(target.text, item);
+    } else if (const local * l = find_local_entry(fn(), target.text); l != nullptr && l->boxed) {
+        proto().emit(instruction{op::new_cell, item});
+    }
+    compile_stmt(n.c);
+
+    patch_continues(loops_.back(), proto().code.size());
+    patch_jump(proto().emit(instruction{op::jump}), top);
+    patch_here(exit);
+    patch_breaks(loops_.back());
+    loops_.pop_back();
+    release_to(mark);
+    pop_scope();
+}
+
 void compiler_impl::compile_for_of(const vp::node & n) {
+    if ((n.d & 4) != 0) {
+        compile_for_await(n);
+        return;
+    }
     push_scope();
     const std::vector<std::string> label = take_labels();
     const std::uint32_t mark = reg_mark();

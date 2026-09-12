@@ -46,6 +46,11 @@ inline constexpr std::string_view promise_reject_name = "__ctbrowser_reject";
 // op::set_prop has no attribute operand and a new opcode is an ABI change, so
 // this is one native call rather than one per method.
 inline constexpr std::string_view class_defined_name = "__ctbrowser_class_defined";
+// GetIterator(obj, async) for `for await`: the object's @@asyncIterator, or
+// its @@iterator wrapped so that every `next()` answers a promise of the
+// record (CreateAsyncFromSyncIterator, 27.1.6.1). The loop itself is bytecode:
+// `next()` through call_receiver, await_value, get_prop done/value.
+inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_iterator";
 
 // Install the standard library into a context.
 //

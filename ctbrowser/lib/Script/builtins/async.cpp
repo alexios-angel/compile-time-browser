@@ -278,6 +278,82 @@ void install_promise(context & cx) {
     cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
         detail::settle(c, promise, with, rejected);
     });
+    // GetIterator(obj, async) - see async_iterator_name. A sync iterator is
+    // wrapped: its `next` answers a promise, and a promise in `value` is
+    // awaited before the record is delivered (27.1.6.4 step 8-ish, the
+    // AsyncFromSyncIteratorContinuation). `return`/`throw` forward the same way.
+    cx.define_native(std::string{async_iterator_name}, [](context & c, std::span<value> a) {
+        const value source = a.empty() ? value::undefined() : a[0];
+        if (const value async = c.lookup_property(source, "@@asyncIterator"); async.is_callable()) {
+            return c.call(async, {}, source);
+        }
+        const value sync = c.lookup_property(source, "@@iterator");
+        if (!sync.is_callable()) {
+            c.throw_error("TypeError", "the value is not async iterable");
+            return value::undefined();
+        }
+        const value inner = c.call(sync, {}, source);
+        auto * wrapper = new_table(c);
+        const auto forward = [&](const char * name) {
+            auto * step = c.allocate<native_object>(name, [inner, name](context & cc,
+                                                                        std::span<value> args) {
+                const value out = pending_promise(cc);
+                const value method = cc.lookup_property(inner, name);
+                if (!method.is_callable()) {
+                    // A sync iterator with no `return`/`throw`: done, or the
+                    // reason rethrown - 27.1.6.2.2 step 7 / 27.1.6.2.3 step 8.
+                    if (std::string_view{name} == "throw") {
+                        detail::settle(cc, out, args.empty() ? value::undefined() : args[0], true);
+                    } else {
+                        auto * record = new_table(cc);
+                        record->set("value", args.empty() ? value::undefined() : args[0]);
+                        record->set("done", value::boolean(true));
+                        detail::settle(cc, out, value::object(record), false);
+                    }
+                    return out;
+                }
+                const value result = cc.call(method, args, inner);
+                if (cc.failed()) { return out; }
+                if (!result.is_object()) {
+                    detail::settle(cc, out,
+                                   cc.make_error("TypeError", "iterator result is not an object"),
+                                   true);
+                    return out;
+                }
+                const value done = cc.lookup_property(result, "done");
+                const value item = cc.lookup_property(result, "value");
+                auto * state = new_table(cc);
+                state->set("out", out);
+                state->set("done", value::boolean(context::truthy(done)));
+                const auto reaction = [&](bool rejected) {
+                    auto * made = cc.allocate<native_object>(
+                        rejected ? "rejected" : "fulfilled",
+                        [state, rejected](context & c3, std::span<value> got) {
+                            const value settled = got.empty() ? value::undefined() : got[0];
+                            if (rejected) {
+                                detail::settle(c3, slot_of(state, "out"), settled, true);
+                                return value::undefined();
+                            }
+                            auto * record = new_table(c3);
+                            record->set("value", settled);
+                            record->set("done", slot_of(state, "done"));
+                            detail::settle(c3, slot_of(state, "out"), value::object(record), false);
+                            return value::undefined();
+                        });
+                    made->retained.push_back(value::object(state));
+                    return made;
+                };
+                react(cc, item, reaction(false), reaction(true));
+                return out;
+            });
+            step->retained.push_back(inner);
+            wrapper->define(name, value::object(step), attr_builtin);
+        };
+        forward("next");
+        forward("return");
+        forward("throw");
+        return value::object(wrapper);
+    });
     // `Promise.reject` under the compiler's name for it: what an async body's
     // fence returns for a throw it did not catch. See promise_reject_name.
     cx.define_native(std::string{promise_reject_name}, [](context & c, std::span<value> a) {

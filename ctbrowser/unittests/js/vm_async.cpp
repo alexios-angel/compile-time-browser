@@ -325,6 +325,34 @@ void test_async_generators() {
         "TypeError");
 }
 
+// `for await (x of y)`: an async generator pulled lazily, a sync iterable
+// whose values are promises, `break`, and a rejection reaching the body's
+// caller.
+void test_for_await() {
+    expect_after_turn(
+        "var result = ''; async function* g() { yield 1; await null; yield 2; yield 3; }"
+        "(async () => { for await (const v of g()) { result += v; } result += '.'; })();",
+        "123.");
+    expect_after_turn(
+        "var result = '';"
+        "(async () => { for await (const v of [Promise.resolve('a'), 'b']) { result += v; } })();",
+        "ab");
+    expect_after_turn(
+        "var result = ''; async function* g() { yield 1; yield 2; yield 3; }"
+        "(async () => { for await (const v of g()) { if (v === 2) { break; } result += v; } "
+        "  result += '|'; })();",
+        "1|");
+    expect_after_turn("var result = ''; async function* g() { yield 1; throw new Error('bad'); }"
+                      "(async () => { try { for await (const v of g()) { result += v; } } "
+                      "  catch (e) { result += e.message; } })();",
+                      "1bad");
+    expect_after_turn("var result = ''; var x;"
+                      "(async () => { for await (x of [1, 2]) { result += x; } })();",
+                      "12");
+    // Outside an async function it is refused at compile time.
+    CHECK(!compiler::compile("function f() { for await (const v of []) {} }").ok);
+}
+
 } // namespace
 
 int main() {
@@ -334,5 +362,6 @@ int main() {
     test_promise_handlers_are_microtasks();
     test_async_rejection();
     test_async_generators();
+    test_for_await();
     REPORT("vm_async");
 }

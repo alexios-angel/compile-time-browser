@@ -699,6 +699,7 @@ public:
     // an object with a `next()` of its own is not iterated, because nothing
     // dispatches through Symbol.iterator.
     void compile_for_of(const vp::node & n);
+    void compile_for_await(const vp::node & n);
 
     // switch.
     //
