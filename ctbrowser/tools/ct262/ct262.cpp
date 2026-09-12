@@ -64,6 +64,13 @@ using ctbrowser::script::run_result;
 using ctbrowser::script::value;
 
 [[nodiscard]] std::string read_file(const std::filesystem::path & path, bool & ok) {
+    // A DIRECTORY OPENS. `import('')` resolves to the test's own directory,
+    // and libstdc++ opens it fine and then throws ios_failure from the read -
+    // which nothing here catches, so the process aborted. Not a file, not ok.
+    if (!std::filesystem::is_regular_file(path)) {
+        ok = false;
+        return {};
+    }
     std::ifstream in{path, std::ios::binary};
     if (!in) {
         ok = false;
