@@ -356,11 +356,15 @@ void test_attr_substitution() {
         if (name == "data-len") { return "3EM"; }
         if (name == "data-calc") { return "calc(1px + 3px)"; }
         if (name == "data-empty") { return ""; }
+        if (name == "data-nested") { return "attr(data-foo type(*), 2px)"; }
         return std::nullopt;
     };
     const auto sub = [&](std::string_view value) {
         return substitute_var(value, none, atoms, attrs).value_or("<invalid>");
     };
+    // An attribute's value cannot reach another attribute (attr-cycle).
+    CHECK_EQ(sub("attr(data-nested type(*), 1px)"), std::string{"1px"});
+    CHECK_EQ(sub("attr(data-nested type(*))"), std::string{"<invalid>"});
     // No type: a string, whatever the text says.
     CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
     CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});

@@ -782,8 +782,20 @@ private:
             // The text is a <declaration-value> with substitutions of its own
             // to perform before it is parsed - `attr(data-x type(*))` may hold
             // a `var()`, and a cycle through it is a cycle.
+            //
+            // ...BUT NOT AN attr() OF ITS OWN. An attribute's value cannot
+            // reach another attribute: `attr(data-foo type(*))` holding
+            // `attr(data-bar type(*), 2px)` is invalid, and the outer fallback
+            // is what applies (attr-cycle 3, 8, 12, 17, 28, 29).
+            const token_stream inner_tokens = tokenize(*held);
+            const bool nested_attr =
+                std::ranges::any_of(inner_tokens.tokens, [&](const css_token & t) {
+                    return is_function_named(inner_tokens, t, "attr");
+                });
             std::string substituted;
-            if (run(*held, substituted, depth + 1)) { value = match_syntax(substituted, syntax); }
+            if (!nested_attr && run(*held, substituted, depth + 1)) {
+                value = match_syntax(substituted, syntax);
+            }
             break;
         }
         }
