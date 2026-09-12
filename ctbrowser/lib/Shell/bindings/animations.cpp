@@ -236,14 +236,21 @@ private:
 [[nodiscard]] std::string interpolate_text(std::string_view property, const std::string & from,
                                            const std::string & to, double p,
                                            const style::css::length_context & ctx) {
-    if (p == 0) { return from; }
-    if (p == 1) { return to; }
     const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
     const style::css::math_answer a = style::css::evaluate_math(from, ctx);
     const style::css::math_answer b = style::css::evaluate_math(to, ctx);
-    if (a.outcome == style::css::math_outcome::resolved &&
-        b.outcome == style::css::math_outcome::resolved && a.value.type == b.value.type &&
-        a.value.is_number == b.value.is_number) {
+    const bool numeric = a.outcome == style::css::math_outcome::resolved &&
+                         b.outcome == style::css::math_outcome::resolved &&
+                         a.value.type == b.value.type && a.value.is_number == b.value.is_number;
+    // An endpoint's own text at 0 and 1, so its computed value is exactly the
+    // declared one - unless it is an infinity, which has to be clamped below
+    // like every value on the way there (calc-interpolation).
+    const auto finite = [](const style::css::calc_result & v) {
+        return std::isfinite(v.px) && std::isfinite(v.percent);
+    };
+    if (p == 0 && (!numeric || finite(a.value))) { return from; }
+    if (p == 1 && (!numeric || finite(b.value))) { return to; }
+    if (numeric) {
         style::css::calc_result out;
         out.type = a.value.type;
         out.is_number = a.value.is_number;
@@ -251,6 +258,18 @@ private:
         out.has_percent = a.value.has_percent || b.value.has_percent;
         out.percent = lerp(a.value.has_percent ? a.value.percent : 0.0,
                            b.value.has_percent ? b.value.percent : 0.0);
+        // CLAMPED AS A COMPUTED VALUE IS: an infinity lands on the bound it
+        // overflowed and a NaN is zero (CSS Values 4 §10.10), after the
+        // interpolation rather than before - `0px` to `calc(infinity * 1px)`
+        // is the bound at every progress past zero, which is what the corpus
+        // reads. The bound is the fold's (lib/Style/css/calc/fold.cpp).
+        constexpr double bound = 33554432.0;
+        const auto clamped = [](double v) {
+            if (std::isnan(v)) { return 0.0; }
+            return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
+        };
+        out.px = clamped(out.px);
+        out.percent = clamped(out.percent);
         // CSS Values 4 §3.2: an interpolated <integer> rounds half up.
         const style::css::property_syntax * known = style::css::find_property(property);
         if (out.is_number && known != nullptr && known->kind == style::css::value_kind::integer) {
