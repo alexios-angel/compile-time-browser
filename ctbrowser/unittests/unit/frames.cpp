@@ -255,10 +255,25 @@ void test_a_frame_document_is_a_full_member_of_the_realm() {
        "true,true,BODY,null");
 }
 
+void test_a_frame_loaded_at_a_fragment_has_a_target() {
+    // `:target` inside a frame loaded as `inner.html#greeting`, and the frame
+    // document's URL is the resolved src, fragment and all.
+    is("<iframe id=f src='inner.html#greeting'></iframe>",
+       R"JS((function () {
+        var d = document.getElementById('f').contentDocument;
+        var hit = d.querySelector(':target');
+        return [hit && hit.id, d.getElementById('greeting').matches(':target'),
+                document.querySelectorAll(':target').length,
+                /inner\.html#greeting$/.test(d.URL)].join();
+    })())JS",
+       "greeting,true,0,true");
+}
+
 } // namespace
 
 int main() {
     test_the_frames_are_indexed_on_the_window();
+    test_a_frame_loaded_at_a_fragment_has_a_target();
     test_an_inserted_frame_has_its_window_at_once();
     test_a_frame_document_is_a_full_member_of_the_realm();
     test_a_named_frame_is_its_window_on_the_window();

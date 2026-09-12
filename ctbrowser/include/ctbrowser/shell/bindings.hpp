@@ -1675,6 +1675,8 @@ private:
     node_id focused_;
     std::string location_href_;
     std::string location_hash_;
+    // The element the fragment names - `:target` - see observe_location.
+    node_id target_element_;
     // DOMException.prototype, held here as well as on the global for the reason
     // blob_prototype_ is: a page can delete a global, and an exception whose
     // prototype was collected stops being a DOMException.

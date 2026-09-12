@@ -284,6 +284,15 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     }
     made.install_document(cx);
+    // THE FRAME DOCUMENT'S ADDRESS: the src resolved against this document's,
+    // with its fragment - which is what makes `:target` match inside a frame
+    // loaded as `page.html#target` (ParentNode-querySelector-All.html's
+    // in-document cases run in one).
+    if (!src.empty()) {
+        const std::string href = location_href_.empty() ? src : resolve(location_href_, src);
+        const std::size_t hash = href.find('#');
+        made.observe_location(href, hash == std::string::npos ? std::string{} : href.substr(hash));
+    }
 
     // Hung off the WRAPPER rather than kept in a table beside it, so the frame
     // document is reachable from the element that owns it and the collector

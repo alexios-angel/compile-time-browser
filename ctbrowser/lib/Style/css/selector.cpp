@@ -24,6 +24,9 @@ namespace {
     if (ascii_iequals(name, "hover")) { return state_hover; }
     if (ascii_iequals(name, "active")) { return state_active; }
     if (ascii_iequals(name, "focus")) { return state_focus; }
+    // `:target` is UI state of the same shape: one element at a time, set by the
+    // shell (from the URL fragment rather than the pointer), no document fact.
+    if (ascii_iequals(name, "target")) { return state_target; }
     return 0;
 }
 

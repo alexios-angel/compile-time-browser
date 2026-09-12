@@ -42,6 +42,9 @@ inline constexpr std::uint32_t state_active = 1u << 1;
 inline constexpr std::uint32_t state_focus = 1u << 2;
 inline constexpr std::uint32_t state_checked = 1u << 3;
 inline constexpr std::uint32_t state_disabled = 1u << 4;
+// `:target` - the document's indicated element, set by the shell from the URL's
+// fragment the way `:focus` is set from the focus (dom_bindings::observe_location).
+inline constexpr std::uint32_t state_target = 1u << 5;
 
 enum class combinator : std::uint8_t {
     none,               // the rightmost compound
