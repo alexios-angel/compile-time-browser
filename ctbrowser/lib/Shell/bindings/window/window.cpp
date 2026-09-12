@@ -424,54 +424,30 @@ void dom_bindings::install_window(context & cx) {
         return wrapper;
     });
 
-    // `new DOMParser().parseFromString(text, type)`.
-    //
-    // p5's loadXML fetches the text and hands it to one of these, so an absent
-    // DOMParser made loadXML fail on its first line - and p5's SVG path and its
-    // FileReader-based XML loader use it too.
-    //
-    // Built on the fragment parse `innerHTML` already does: the markup is parsed
-    // into a DETACHED subtree hung off a synthetic root, and the root is wrapped
-    // like any other element. Everything p5.XML walks - children, attributes,
-    // textContent, tagName, getElementsByTagName, appendChild - is then the
-    // ordinary element surface, with nothing XML-specific to maintain.
-    //
-    // THE DEVIATION, and it is real: this is the HTML parser, not an XML one. Tag
-    // names are lowercased, HTML's implied elements apply, and a malformed
-    // document is repaired rather than rejected - where XML would report an error.
-    // For the documents p5 reads (a flat tree of elements with attributes and
-    // text) the two agree, and writing a second parser to disagree in different
-    // ways would be worse than saying this.
+    // `new DOMParser().parseFromString(text, type)`, HTML 8.6.2: a real SECOND
+    // document in the realm - this document's HTML parser for text/html, the
+    // XML parser for the four XML types (a `<parsererror>` element when the
+    // markup is not well-formed) - so `createElement`, `documentElement.tagName`
+    // and `contentType` answer as the type says. p5's loadXML and its SVG path
+    // are the callers that found DOMParser missing in the first place. Any
+    // other type is a TypeError (the WebIDL enumeration).
     cx.define_native("DOMParser", [this](context & c, std::span<value>) {
         auto * parser = static_cast<script::object_object *>(c.make_object().as_heap());
         parser->set("parseFromString",
                     value::object(c.allocate<script::native_object>(
                         "parseFromString", [this](context & inner, std::span<value> a) {
-                            // A synthetic root, so the result has ONE element to be the
-                            // document element even when the source has several - which is
-                            // what `documentElement` means and what p5 walks from.
-                            const node_id root =
-                                doc_->create_element(atoms_->intern("ctbrowser-document"));
-                            set_inner_html(root, arg_string(inner, a, 0));
-                            const value wrapper = wrap(inner, root);
-                            if (!wrapper.is_object()) { return wrapper; }
-                            auto * document_like =
-                                static_cast<script::object_object *>(wrapper.as_heap());
-                            // The document surface over the same node: `documentElement`
-                            // is the first child if there is one, and the root otherwise.
-                            value first = wrapper;
-                            {
-                                const auto txn = doc_->read();
-                                const std::span<const node_id> kids = txn.children(root);
-                                if (!kids.empty()) { first = wrap(inner, kids.front()); }
+                            const std::string markup = arg_string(inner, a, 0);
+                            const std::string type = a.size() > 1 ? arg_string(inner, a, 1) : "";
+                            for (const std::string_view known :
+                                 {"text/html", "text/xml", "application/xml",
+                                  "application/xhtml+xml", "image/svg+xml"}) {
+                                if (type == known) {
+                                    return parse_from_string(inner, markup, type);
+                                }
                             }
-                            document_like->set("documentElement", first);
-                            // A page checks this to decide whether the parse worked. It is
-                            // always empty here because the HTML parser repairs rather than
-                            // rejects - said in the comment above rather than pretended
-                            // otherwise.
-                            document_like->set("parsererror", value::null());
-                            return wrapper;
+                            inner.throw_error("TypeError", "DOMParser.parseFromString: '" + type +
+                                                               "' is not a supported type");
+                            return value::undefined();
                         })));
         return value::object(parser);
     });

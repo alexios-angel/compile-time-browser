@@ -492,8 +492,9 @@ void test_file_reader() {
 }
 
 // `new DOMParser().parseFromString(...)`, which is how p5's loadXML gets a
-// document. Built on the fragment parse innerHTML already does, so everything a
-// page walks afterwards is the ordinary element surface.
+// document. A real XML document since 2026-09-12 (dom_bindings::parse_from_string),
+// so the tag name keeps its case and everything a page walks afterwards is the
+// ordinary element surface.
 void test_dom_parser() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.load_html(R"(<body><script>
@@ -511,9 +512,7 @@ void test_dom_parser() {
                   items[0].attributes[0].nodeValue);
     </script></body>)");
     CHECK(page.script_error().empty());
-    // The tag name comes back UPPERCASE because this is the HTML parser - see the
-    // DOMParser binding, where that deviation is written down.
-    CHECK(logged(page) == "root LIST 2|attrs 1 kind=demo|items 2 first second|nested attr id=a");
+    CHECK(logged(page) == "root list 2|attrs 1 kind=demo|items 2 first second|nested attr id=a");
 }
 
 void test_fetch_from_registry() {
