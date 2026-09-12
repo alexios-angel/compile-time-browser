@@ -1182,6 +1182,59 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             static_cast<script::object_object *>(held->as_heap())->prototype =
                 interface_prototype("DOMImplementation");
         }
+        // THE DOCUMENT'S OPERATIONS ON Document.prototype TOO. install_document
+        // puts each on the document OBJECT - one closure per document over its
+        // own tree - so `Document.prototype.createTextNode` was undefined and
+        // `inner.Document.prototype.createTextNode.apply(document, ["x"])`
+        // (node-creation-realm.html, and every `.call(doc, ...)` idiom) died
+        // reading `apply`. Each name gets a forwarder that calls the RECEIVER'S
+        // own method, which is the one closed over the right document; a
+        // receiver with none - a plain object - is an illegal invocation.
+        // DOMImplementation's two-plus-three the same way. Once per realm: the
+        // secondary documents share the prototypes and their objects carry the
+        // same names.
+        const auto forward = [&cx](script::object_object & from, const value proto_value) {
+            auto * proto = prototype_object(proto_value);
+            if (proto == nullptr) { return; }
+            std::vector<std::string> names;
+            from.each_own_key([&](const std::string & key) {
+                const value * held = from.find(key);
+                // Not one the CHAIN already answers: appendChild is Node's and
+                // addEventListener is EventTarget's, and Document.prototype
+                // must not grow its own copies of either.
+                if (held != nullptr && held->is_callable() && !key.starts_with("@@") &&
+                    cx.lookup_property(proto_value, key).is_undefined()) {
+                    names.push_back(key);
+                }
+            });
+            for (const std::string & name : names) {
+                // The forwarder's own identity, so a receiver that has no
+                // method of that name and reaches the forwarder again through
+                // the chain is told apart from one that has.
+                const auto self_slot = std::make_shared<const script::heap_object *>(nullptr);
+                auto * native = cx.allocate<script::native_object>(
+                    name, [name, self_slot](context & c, std::span<value> args) {
+                        const value self = c.current_this();
+                        const value own = self.is_object_like() ? c.lookup_property(self, name)
+                                                                : value::undefined();
+                        if (own.is_callable() && own.as_heap() != *self_slot) {
+                            return c.call(own, args, self);
+                        }
+                        c.throw_error("TypeError", "Illegal invocation: " + name +
+                                                       " called on something that is not a " +
+                                                       "Document");
+                        return value::undefined();
+                    });
+                *self_slot = native;
+                proto->define(name, value::object(native), script::attr_builtin);
+            }
+        };
+        forward(*doc, interface_prototype("Document"));
+        if (const value * held = doc->find("implementation");
+            held != nullptr && held->is_object()) {
+            forward(*static_cast<script::object_object *>(held->as_heap()),
+                    interface_prototype("DOMImplementation"));
+        }
     }
     if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
     // "Window objects must also have a ... property named HTMLDocument whose
