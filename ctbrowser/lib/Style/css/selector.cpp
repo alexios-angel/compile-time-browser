@@ -148,7 +148,9 @@ namespace {
     return in_names(name, names);
 }
 
-[[nodiscard]] bool known_pseudo_element(std::string_view name) {
+} // namespace
+
+bool known_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"before",
                                                  "after",
                                                  "first-line",
@@ -174,6 +176,8 @@ namespace {
     return in_names(name, names) || ascii_istarts_with(name, "-webkit-") ||
            ascii_istarts_with(name, "-moz-");
 }
+
+namespace {
 
 [[nodiscard]] bool known_functional_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"part",
@@ -903,12 +907,11 @@ private:
                     }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
-                    // `::before` and `::after` HAVE A CASCADE - engine::resolve_pseudo
-                    // runs it for getComputedStyle(el, "::before") - and the matcher
-                    // keeps them from any element (`pseudo_wanted_`). The rest still
-                    // match nothing.
-                    const std::string lower = ascii_lower_copy(name);
-                    if (lower != "before" && lower != "after") { dead = true; }
+                    // A PSEUDO-ELEMENT HAS A CASCADE - engine::resolve_pseudo runs
+                    // it for getComputedStyle(el, "::before") - and the matcher
+                    // keeps the compound from every element (`pseudo_wanted_`). A
+                    // vendor's is whatever the vendor says it is, and matches nothing.
+                    if (name.starts_with('-')) { dead = true; }
                     continue;
                 }
                 if (const std::uint32_t bit = state_bit_of(name); bit != 0) {

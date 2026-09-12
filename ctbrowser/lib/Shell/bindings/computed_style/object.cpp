@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/style/css/selector.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -65,20 +67,25 @@ struct computed_cache {
     return !text.empty() && text.front() == ':';
 }
 
-// THE TWO PSEUDO-ELEMENTS THIS ENGINE RESOLVES, `before` and `after`, from a
-// second argument that parses as a <pseudo-element-selector> naming one: one
-// or two colons, then exactly one identifier - escapes decoded, case folded -
-// and nothing after it. `::before ` and `::before,` are not selectors
-// (getComputedStyle-pseudo); anything else colon-prefixed is empty.
+// THE PSEUDO-ELEMENT A SECOND ARGUMENT NAMES, when it parses as a
+// <pseudo-element-selector> the selector parser knows: one or two colons -
+// one only for the four legacy names - then exactly one identifier, escapes
+// decoded, case folded, and nothing after it. `::before ` and `::before,` are
+// not selectors (getComputedStyle-pseudo); anything else colon-prefixed is the
+// empty declaration.
 [[nodiscard]] std::string resolvable_pseudo(std::string_view text) {
     if (text.size() < 2 || text.front() != ':') { return {}; }
-    text.remove_prefix(text[1] == ':' ? 2 : 1);
+    const bool doubled = text[1] == ':';
+    text.remove_prefix(doubled ? 2 : 1);
     const style::css::token_stream ts = style::css::tokenize(text);
     if (ts.tokens.size() != 2 || ts.tokens.front().type != style::css::token_type::ident) {
         return {};
     }
     const std::string name = ascii_lower_copy(ts.text_of(ts.tokens.front()));
-    return name == "before" || name == "after" ? name : std::string{};
+    const bool legacy =
+        name == "before" || name == "after" || name == "first-line" || name == "first-letter";
+    if (!doubled && !legacy) { return {}; }
+    return style::css::known_pseudo_element(name) ? name : std::string{};
 }
 
 } // namespace
