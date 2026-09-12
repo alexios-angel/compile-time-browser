@@ -159,7 +159,8 @@ bool analyzer::capturedMapParameters(
                         if (use.getOperandNumber() != 0 || write->getParentOp() != entry ||
                             !dominance.dominates(alias, write) ||
                             !dominance.dominates(write.getKey(), write) ||
-                            !ordinaryKey(keyOf(write.getKey())) || !payload.tag()) {
+                            !ctjs::ordinaryKey(ctjs::constantKey(write.getKey())) ||
+                            !payload.tag()) {
                             return false;
                         }
                         writes.push_back(write);
@@ -186,13 +187,14 @@ bool analyzer::capturedMapParameters(
                         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
                             if (use.getOperandNumber() != 0 || read->getParentOp() != entry ||
                                 !dominance.dominates(read.getKey(), read) ||
-                                !ordinaryKey(keyOf(read.getKey()))) {
+                                !ctjs::ordinaryKey(ctjs::constantKey(read.getKey()))) {
                                 return false;
                             }
                             bool initialized = false;
                             for (ctjs::SetPropertyOp write : writes) {
                                 if (!step()) { return false; }
-                                if (keyOf(write.getKey()) == keyOf(read.getKey()) &&
+                                if (ctjs::constantKey(write.getKey()) ==
+                                        ctjs::constantKey(read.getKey()) &&
                                     dominance.properlyDominates(write.getOperation(), read)) {
                                     initialized = true;
                                 }
