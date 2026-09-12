@@ -341,27 +341,16 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
     proto.define("keys", through_array("keys", "keys"), script::attr_builtin);
     proto.define("values", through_array("values", "values"), script::attr_builtin);
     proto.define("entries", through_array("entries", "entries"), script::attr_builtin);
-    proto.define("forEach",
-                 native("forEach", 1,
-                        [](context & c, std::span<value> a) {
-                            const value self = c.current_this();
-                            const value callback = arg(a, 0);
-                            if (!callback.is_callable()) {
-                                c.throw_error("TypeError", "NodeList.forEach: not a function");
-                                return value::undefined();
-                            }
-                            const value items = c.iterable_values(self);
-                            const auto * held =
-                                static_cast<script::array_object *>(items.as_heap());
-                            for (std::size_t i = 0; i < held->items.size(); ++i) {
-                                const value args[3] = {held->items[i],
-                                                       value::number(static_cast<double>(i)), self};
-                                (void)c.call(callback, args, arg(a, 1));
-                                if (c.failed()) { break; }
-                            }
-                            return value::undefined();
-                        }),
-                 script::attr_builtin);
+    // `forEach` IS %Array.prototype.forEach% - WebIDL says so of an iterable
+    // declaration, Node-childNodes.html asserts the identity, and the array's
+    // is generic over array-likes. keys/values/entries would be the same
+    // functions too, but this engine's answer only for a real Array (see
+    // builtins/collections/array_iteration.cpp), so those three stay above.
+    if (const value array = cx.global("Array"); array.is_object_like()) {
+        const value for_each =
+            cx.lookup_property(cx.lookup_property(array, "prototype"), "forEach");
+        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_builtin); }
+    }
 }
 
 } // namespace
@@ -393,6 +382,15 @@ value dom_bindings::make_live_collection(context & cx,
     };
     const auto held = std::make_shared<state>();
     held->live = std::move(members);
+    // A MEMBER IS THE WRAPPER IT ALREADY HAS, without the refresh `wrap` does
+    // - that re-measures the element's box on every read, and `list[j]` in a
+    // loop is the hottest thing a page does with a collection. A wrapper
+    // held in a variable is no fresher, and every wrapper is refreshed before
+    // a frame and a dispatch regardless.
+    const auto member = [this](context & c, node_id id) {
+        const value already = value_of_wrapper(id);
+        return already.is_object() ? already : wrap(c, id);
+    };
     // Allocating in the context the CALL arrives in, not the one captured at
     // creation: `refresh` outlives this frame.
     const auto native_in = [](context & in, std::string name, script::native_fn fn) {
@@ -417,7 +415,7 @@ value dom_bindings::make_live_collection(context & cx,
     };
 
     // BRING THE TARGET'S OWN PROPERTIES UP TO DATE, when the document moved.
-    const auto refresh = [this, target, held, named, named_member, native_in](context & c) {
+    const auto refresh = [this, target, held, named, named_member, native_in, member](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == held->version && held->version != 0) { return; }
         held->version = now;
@@ -427,9 +425,9 @@ value dom_bindings::make_live_collection(context & cx,
         for (std::size_t i = held->indices; i < held->members.size(); ++i) {
             target->define_accessor(std::to_string(i),
                                     native_in(c, std::to_string(i),
-                                              [this, held, i](context & inner, std::span<value>) {
+                                              [held, i, member](context & inner, std::span<value>) {
                                                   return i < held->members.size()
-                                                             ? wrap(inner, held->members[i])
+                                                             ? member(inner, held->members[i])
                                                              : value::undefined();
                                               }),
                                     value::undefined(),
@@ -474,42 +472,43 @@ value dom_bindings::make_live_collection(context & cx,
     };
 
     // The hidden state property the prototype's members reach the walk through.
-    target->define(collection_state_key,
-                   native("collection",
-                          [this, held, named_member, refresh](context & c, std::span<value> a) {
-                              refresh(c);
-                              const std::string what = arg_string(c, a, 0);
-                              if (what == "length") {
-                                  return value::number(static_cast<double>(held->members.size()));
-                              }
-                              if (what == "item") {
-                                  const double at = arg_number(a, 1);
-                                  if (at < 0 || at >= static_cast<double>(held->members.size())) {
-                                      return value::null();
-                                  }
-                                  return wrap(c, held->members[static_cast<std::size_t>(at)]);
-                              }
-                              if (what == "namedItem") {
-                                  const std::string want = arg_string(c, a, 1);
-                                  const node_id found =
-                                      want.empty() ? node_id{} : named_member(held->members, want);
-                                  return found ? wrap(c, found) : value::null();
-                              }
-                              return value::undefined();
-                          }),
-                   script::attr_none);
+    target->define(
+        collection_state_key,
+        native("collection",
+               [this, held, named_member, refresh, member](context & c, std::span<value> a) {
+                   refresh(c);
+                   const std::string what = arg_string(c, a, 0);
+                   if (what == "length") {
+                       return value::number(static_cast<double>(held->members.size()));
+                   }
+                   if (what == "item") {
+                       const double at = arg_number(a, 1);
+                       if (at < 0 || at >= static_cast<double>(held->members.size())) {
+                           return value::null();
+                       }
+                       return member(c, held->members[static_cast<std::size_t>(at)]);
+                   }
+                   if (what == "namedItem") {
+                       const std::string want = arg_string(c, a, 1);
+                       const node_id found =
+                           want.empty() ? node_id{} : named_member(held->members, want);
+                       return found ? wrap(c, found) : value::null();
+                   }
+                   return value::undefined();
+               }),
+        script::attr_none);
 
     // ONCE NOW: `Object.getOwnPropertyNames(list)` reads the target through no
     // trap at all, and a collection nothing has touched must already own its
     // indices.
     refresh(cx);
 
-    handler->set("get", native("get", [this, held, refresh](context & c, std::span<value> args) {
+    handler->set("get", native("get", [held, refresh, member](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::undefined(); }
                      refresh(c);
                      const std::string key = c.to_string(args[1]);
                      if (const std::optional<std::size_t> at = whole_index(key)) {
-                         return *at < held->members.size() ? wrap(c, held->members[*at])
+                         return *at < held->members.size() ? member(c, held->members[*at])
                                                            : value::undefined();
                      }
                      return c.lookup_property(args[0], key);
