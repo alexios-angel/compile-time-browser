@@ -73,6 +73,18 @@ void test_private_names_are_distinct() {
                   "8");
     // and the public field of the same name is untouched from outside
     expect_result("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
+    // A PRIVATE NAME IS NOT A PROPERTY KEY (its key is `@#n`, which no source
+    // can spell): reflection, `in`, hasOwnProperty and the string index see
+    // nothing, and a public `"#n"` string key is a different property.
+    expect_result("class C { #n = 1; #m() {} static #s = 2; } const c = new C();"
+                  "return Object.getOwnPropertyNames(c).length + ',' + Object.keys(c).length + ','"
+                  " + ('#n' in c) + ',' + c.hasOwnProperty('#n') + ',' + c['#n'] + ','"
+                  " + Object.getOwnPropertyNames(C.prototype).join('|') + ','"
+                  " + Object.getOwnPropertyNames(C).indexOf('#s') + ',' + JSON.stringify(c);",
+                  "0,0,false,false,undefined,constructor,-1,{}");
+    expect_result("class C { #n = 1; read() { return this.#n + ',' + this['#n']; } }"
+                  "const c = new C(); c['#n'] = 'pub'; return c.read();",
+                  "1,pub");
 }
 
 // ACCESSORS. A property that runs code when it is read, which is a different

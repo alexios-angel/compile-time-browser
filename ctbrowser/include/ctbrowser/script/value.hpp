@@ -192,6 +192,17 @@ struct string_object final : heap_object {
 // the enumeration walk, the JSON writer and the code that mints them all
 // recognise it.
 inline constexpr std::string_view symbol_key_prefix = "@@sym:";
+// A PRIVATE NAME'S KEY. `#x` is a property of the object here, not a slot in
+// a per-class private environment - but its key is `@#x`, which no source
+// text can spell as a property name, so `o["#x"]`, `"#x" in o`,
+// hasOwnProperty, Object.keys/getOwnPropertyNames/getOwnPropertySymbols,
+// for-in and JSON.stringify never see it (7.3.28-ish: private elements are
+// not properties). What is NOT modelled is the brand: an instance of another
+// evaluation of the same class body answers rather than throwing TypeError.
+inline constexpr std::string_view private_key_prefix = "@#";
+[[nodiscard]] inline bool is_private_key(std::string_view key) noexcept {
+    return key.starts_with(private_key_prefix);
+}
 
 // A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
 //
@@ -773,7 +784,10 @@ struct object_object final : heap_object {
     // above, because those two report every own property by definition.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
-            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix)) { visit(key); }
+            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix) &&
+                !is_private_key(key)) {
+                visit(key);
+            }
         });
     }
     // AN EXISTING PROPERTY KEEPS ITS ATTRIBUTES; a new one gets `attr_default`.

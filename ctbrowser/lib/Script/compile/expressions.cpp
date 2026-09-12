@@ -73,7 +73,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         } else {
             compile_expr(n.a, dst);
         }
-        const std::uint16_t name = name_operand(std::string{n.text});
+        const std::uint16_t name = member_operand(n.text);
         proto().emit(instruction{op::get_prop, dst, dst, name});
         break;
     }
@@ -312,7 +312,7 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     if (target.kind == vp::nk::member) {
         const std::uint16_t object = alloc_reg();
         compile_expr(target.a, object);
-        proto().emit(instruction{op::delete_prop, object, name_operand(std::string{target.text})});
+        proto().emit(instruction{op::delete_prop, object, member_operand(target.text)});
         emit_const(dst, value::boolean(true));
     } else if (target.kind == vp::nk::index) {
         const std::uint16_t object = alloc_reg();
@@ -468,7 +468,7 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.what = reference::kind::member;
         out.reg = alloc_reg();
         compile_expr(target.a, out.reg);
-        out.name = name_operand(std::string{target.text});
+        out.name = member_operand(target.text);
         return out;
     }
     if (target.kind == vp::nk::index) {
@@ -764,8 +764,7 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
             emit_optional_guard(self);
         }
         if (callee.kind == vp::nk::member || callee.kind == vp::nk::opt_member) {
-            proto().emit(
-                instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+            proto().emit(instruction{op::get_prop, target, self, member_operand(callee.text)});
         } else {
             const std::uint32_t mark = reg_mark();
             const std::uint16_t key = alloc_reg();
@@ -899,7 +898,7 @@ void compiler_impl::compile_optional(const vp::node & n, std::uint16_t dst) {
     const std::size_t skip = proto().emit(instruction{op::jump_if_true, test});
 
     if (n.kind == vp::nk::opt_member) {
-        proto().emit(instruction{op::get_prop, dst, object, name_operand(std::string{n.text})});
+        proto().emit(instruction{op::get_prop, dst, object, member_operand(n.text)});
     } else if (n.kind == vp::nk::opt_index) {
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);

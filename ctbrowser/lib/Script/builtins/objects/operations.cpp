@@ -15,6 +15,7 @@ namespace ctbrowser::script::detail {
 namespace {
 
 [[nodiscard]] inline bool wanted_key(key_filter which, const std::string & key) {
+    if (is_private_key(key)) { return false; } // a private name is not a property key
     const bool symbol = key.starts_with(symbol_key_prefix);
     return which == key_filter::all || (which == key_filter::symbols) == symbol;
 }

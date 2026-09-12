@@ -64,7 +64,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             compile_expr(m.a, key);
             proto().emit(instruction{op::set_index, self, key, v});
         } else {
-            proto().emit(instruction{op::set_prop, self, name_operand(std::string{m.text}), v});
+            proto().emit(instruction{op::set_prop, self, member_operand(m.text), v});
         }
         release_to(mark);
     }
@@ -224,7 +224,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
                 continue;
             }
             compile_expr(m.b, slot);
-            const std::uint16_t name = name_operand(std::string{m.text});
+            const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
             continue;
@@ -261,7 +261,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             compile_expr(m.b, slot);
         }
-        const std::uint16_t name = name_operand(std::string{m.text});
+        const std::uint16_t name = member_operand(m.text);
         proto().emit(instruction{op::set_prop, target, name, slot});
         // Each method remembers where it was WRITTEN. `super.m()` resolves
         // against that, not against `this` - in a three-deep hierarchy the
@@ -287,7 +287,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
         }
-        proto().emit(instruction{op::set_prop, dst, name_operand(std::string{m.text}), slot});
+        proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
     }
     release_to(mark);
     // Closed AFTER every method is compiled, so they capture the name, and

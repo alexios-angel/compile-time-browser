@@ -550,6 +550,13 @@ public:
 
     // The seam every property-name operand goes through.
     [[nodiscard]] std::uint16_t name_operand(std::string text);
+    // The operand for a MEMBER name as the parser spelled it: `#x` becomes the
+    // private key `@#x` (see private_key_prefix), anything else is itself.
+    [[nodiscard]] std::uint16_t member_operand(std::string_view text) {
+        return name_operand(text.starts_with('#')
+                                ? std::string{private_key_prefix} + std::string{text}
+                                : std::string{text});
+    }
 
     // Called where a frame's size is finally written, because that is the only
     // point at which high_water is the truth rather than a running total.
