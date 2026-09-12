@@ -246,6 +246,43 @@ std::string number_to_fixed(double value, int digits) {
     return text;
 }
 
+// `sig` SIGNIFICANT DIGITS OF A MAGNITUDE, with a tie rounded UP - 21.1.3.2
+// step 10.b and 21.1.3.5 step 10.b.i pick the larger n where two are equally
+// near, and to_chars picks the even one. Whether the value sits exactly on a
+// tie is decided from its EXACT decimal expansion (a double has at most 767
+// significant digits, and to_chars writes them all when asked): a '5' at the
+// first dropped place followed by nothing but zeros. Answers false when
+// to_chars refuses, which the callers turn into their own fallback.
+[[nodiscard]] bool scientific_digits(double magnitude, int sig, std::string & digits,
+                                     int & exponent) {
+    std::array<char, 1200> buffer{};
+    char * const end = buffer.data() + buffer.size();
+    const auto [stop, err] =
+        std::to_chars(buffer.data(), end, magnitude, std::chars_format::scientific, sig - 1);
+    if (err != std::errc{}) { return false; }
+    digits.clear();
+    split_scientific(buffer.data(), stop, digits, exponent);
+    if (magnitude == 0) { return true; }
+    const auto [exact_stop, exact_err] =
+        std::to_chars(buffer.data(), end, magnitude, std::chars_format::scientific, 780);
+    if (exact_err != std::errc{}) { return true; }
+    std::string exact;
+    int exact_exponent = 0;
+    split_scientific(buffer.data(), exact_stop, exact, exact_exponent);
+    const auto at = static_cast<std::size_t>(sig);
+    if (exact.size() <= at || exact[at] != '5' ||
+        exact.find_first_not_of('0', at + 1) != std::string::npos) {
+        return true; // not a tie: the correctly rounded answer stands
+    }
+    digits.assign(exact, 0, at);
+    if (round_up_in_place(digits)) {
+        digits.pop_back(); // "999" -> "1000": one digit too many
+        exact_exponent += 1;
+    }
+    exponent = exact_exponent;
+    return true;
+}
+
 // --- toExponential ---------------------------------------------------------
 std::string number_to_exponential(double value, int places) {
     std::string out;
@@ -271,12 +308,8 @@ std::string number_to_exponential(double value, int places) {
         // leading digit, a point, 100 more digits and "e+308" - 108 characters,
         // and to_chars answers value_too_large rather than truncating. That
         // made `(3).toExponential(100)` the string "0".
-        std::array<char, 128> buffer{};
-        const auto [stop, err] = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
-                                               magnitude, std::chars_format::scientific, places);
-        if (err != std::errc{}) { return "0"; }
         int exponent = 0;
-        split_scientific(buffer.data(), stop, digits, exponent);
+        if (!scientific_digits(magnitude, places + 1, digits, exponent)) { return "0"; }
         n = exponent + 1;
     }
 
@@ -318,13 +351,9 @@ std::string number_to_precision(double value, int digits) {
     // 128 for the same reason as toExponential above: `digits` reaches 100 and
     // 64 characters is not enough for the widest answer, so to_chars refused
     // and `(3).toPrecision(100)` fell back to "3".
-    std::array<char, 128> buffer{};
-    const auto [stop, err] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), magnitude,
-                                           std::chars_format::scientific, digits - 1);
-    if (err != std::errc{}) { return number_to_string(value); }
     std::string significant;
     int e = 0;
-    split_scientific(buffer.data(), stop, significant, e);
+    if (!scientific_digits(magnitude, digits, significant, e)) { return number_to_string(value); }
 
     std::string text;
     if (e < -6 || e >= digits) {
