@@ -508,6 +508,21 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     if (value * values = array_proto->find("values")) {
         array_proto->define("@@iterator", *values, attr_writable | attr_configurable);
     }
+    // 23.1.3.41 Array.prototype[@@unscopables]: a null-prototype object naming
+    // the methods a `with (array)` block must not resolve, each `true` and
+    // enumerable, in the specification's order; the property itself is
+    // { writable: false, enumerable: false, configurable: true }.
+    {
+        value made = cx.make_object();
+        auto * blocked = static_cast<object_object *>(made.as_heap());
+        blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+        for (const char * name : {"at", "copyWithin", "entries", "fill", "find", "findIndex",
+                                  "findLast", "findLastIndex", "flat", "flatMap", "includes",
+                                  "keys", "toReversed", "toSorted", "toSpliced", "values"}) {
+            blocked->set(name, value::boolean(true));
+        }
+        array_proto->define("@@unscopables", made, attr_configurable);
+    }
     // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
     //
     // `copyWithin` (23.1.3.4) and the four change-by-copy methods added in
