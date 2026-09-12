@@ -149,27 +149,6 @@ void box_builder::normalise(box_node & parent) {
     parent.children = std::move(rebuilt);
 }
 
-side_lengths box_builder::parse_sides(std::string_view shorthand) {
-    side_lengths out;
-    length parts[4];
-    std::size_t count = 0;
-    std::size_t i = 0;
-    while (i < shorthand.size() && count < 4) {
-        while (i < shorthand.size() && (shorthand[i] == ' ' || shorthand[i] == '\t')) { ++i; }
-        const std::size_t start = i;
-        while (i < shorthand.size() && shorthand[i] != ' ' && shorthand[i] != '\t') { ++i; }
-        if (i > start) { parts[count++] = parse_length(shorthand.substr(start, i - start)); }
-    }
-    switch (count) {
-    case 1: out = {parts[0], parts[0], parts[0], parts[0]}; break;
-    case 2: out = {parts[0], parts[1], parts[0], parts[1]}; break;
-    case 3: out = {parts[0], parts[1], parts[2], parts[1]}; break;
-    case 4: out = {parts[0], parts[1], parts[2], parts[3]}; break;
-    default: break;
-    }
-    return out;
-}
-
 std::string box_builder::collapse_whitespace(std::string_view text) {
     const auto is_space = [](char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
