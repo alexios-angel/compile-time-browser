@@ -277,31 +277,45 @@ namespace detail {
 // walk that carries on after its first refused write is doing work the
 // specification stopped.
 //
-// WHETHER A DIRECT throw_error HAPPENED is read off context::last_thrown: a
+// WHETHER A DIRECT throw_error HAPPENED is read off context::current_stack: a
 // throw the native raised itself is not parked (that is `call`'s doing, and
-// throw_pending sees only that), but it does replace `thrown_`, which is a
-// collector root and so cannot be re-allocated at the same address. A native
-// that must know whether its own strict_store_check threw compares before
-// and after.
-[[nodiscard]] inline bool threw_since(context & cx, value before) {
-    return cx.throw_pending() || !(cx.last_thrown() == before);
+// throw_pending sees only that) and the landing clears `thrown_`, but the
+// landing also moves the handler frame's `ip` to the catch block or pops
+// frames above it, and the trace prints both. An uncaught throw fails the
+// run, which throw_pending does see. (A compiled frame prints no offset, so
+// a catch in one is invisible here; the interpreted tier is what runs the
+// suites.) The snapshot costs a string, so the dense-array write below, which
+// no JavaScript can refuse or observe, skips it.
+[[nodiscard]] inline bool threw_since(context & cx, const std::string & before) {
+    return cx.throw_pending() || cx.current_stack() != before;
 }
+[[nodiscard]] inline array_object * dense_array_this(value self); // below
 [[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
-    const value before = cx.last_thrown();
+    if (self.is_array()) {
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        // A typed array coerces and drops out of range, never refuses; an
+        // ordinary dense one that is extensible and writable never refuses an
+        // index at or below its size. Neither can run a line of JavaScript.
+        const bool typed = arr->is_view() || arr->elements != element_kind::none;
+        if (typed ||
+            (dense_array_this(self) != nullptr && arr->extensible && arr->elements_writable &&
+             i >= 0 && i <= static_cast<double>(arr->items.size()))) {
+            cx.store_index(self, value::number(i), v);
+            return true;
+        }
+    }
+    const std::string before = cx.current_stack();
     cx.clear_store_rejected();
     cx.store_index(self, value::number(i), v);
     if (cx.throw_pending()) { return false; }
     cx.strict_store_check(number_to_string(i));
     return !threw_since(cx, before);
 }
-
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
-// Free on a dense array, which cannot have one: `delete a[i]` is specified to
-// leave a hole and array_object is a std::vector with nowhere to put one (see
-// context::delete_own_property, which answers true and removes nothing), so
-// every index below its size is present. For anything else this is the real
-// HasProperty, and it is what makes
+// Free on a dense array with no holes and no element attributes of its own
+// (array_object::element_attrs): every index below its size is present. For
+// anything else this is the real HasProperty, and it is what makes
 // `Array.prototype.forEach.call({length: 3, 1: 'x'}, f)` call back once rather
 // than three times.
 [[nodiscard]] inline bool has_element(context & cx, value self, double i) {
@@ -314,10 +328,6 @@ namespace detail {
     return cx.has_property(self, value::number(i));
 }
 
-// DeletePropertyOrThrow over an index (7.3.9), and Set(O, "length", n, true).
-// The two writes the MUTATING methods are built out of, named so that push,
-// pop, shift, unshift, splice and reverse read like their clauses in 23.1.3
-// rather than like calls on the context.
 [[nodiscard]] inline bool delete_element(context & cx, value self, double i) {
     if (cx.delete_own_property(self, number_to_string(i))) { return !cx.throw_pending(); }
     if (cx.throw_pending()) { return false; }
@@ -325,7 +335,7 @@ namespace detail {
     return false;
 }
 [[nodiscard]] inline bool put_length(context & cx, value self, double len) {
-    const value before = cx.last_thrown();
+    const std::string before = cx.current_stack();
     cx.clear_store_rejected();
     cx.store_property(self, "length", value::number(len));
     if (cx.throw_pending()) { return false; }

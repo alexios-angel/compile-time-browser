@@ -226,6 +226,12 @@ void install_collections(context & cx) {
     method(cx, map_proto, "entries", 0, [column](context & c, std::span<value>) {
         return list_iterator(c, column(c, 2), "Map Iterator");
     });
+    // 24.1.3.12: Map.prototype[@@iterator] IS `entries`, the same function
+    // object - which is what Array.from and any hand-driven iteration reach
+    // for (for-of and spread take context::iterable_values' shortcut).
+    if (value * entries = map_proto->find("entries")) {
+        map_proto->define("@@iterator", *entries, attr_builtin);
+    }
     map_proto->define_accessor(
         "size",
         value::object(cx.allocate<native_object>(
@@ -286,9 +292,11 @@ void install_collections(context & cx) {
     method(cx, set_proto, "values", 0, [members](context & c, std::span<value>) {
         return list_iterator(c, members(c), "Set Iterator");
     });
-    method(cx, set_proto, "keys", 0, [members](context & c, std::span<value>) {
-        return list_iterator(c, members(c), "Set Iterator");
-    });
+    // 24.2.3.10/11: `keys` and @@iterator are both the `values` function.
+    if (value * values = set_proto->find("values")) {
+        set_proto->define("keys", *values, attr_builtin);
+        set_proto->define("@@iterator", *values, attr_builtin);
+    }
     // A Set's `entries` pairs each member WITH ITSELF, which looks odd and is
     // the spec: it exists so a Set and a Map can be walked by the same code.
     method(cx, set_proto, "entries", 0, [members](context & c, std::span<value>) {
