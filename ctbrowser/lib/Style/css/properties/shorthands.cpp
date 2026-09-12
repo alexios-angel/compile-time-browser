@@ -300,7 +300,8 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
 }
 
 // `flex`, whose omitted parts are NOT the longhands' initial values:
-// `flex: 1` is `1 1 0%`, Flexbox 1 §7.1.1.
+// `flex: 1` is `1 1 0`, Flexbox 1 §7.1.1 - the omitted basis is the length 0
+// (`0px` serialised), not `0%`: cssom/flex-serialization asks for `0 1 0px`.
 split split_flex(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     if (parts.empty() || parts.size() > 3) { return split::invalid; }
     const auto number = [](std::string_view part, std::string & text) {
@@ -323,7 +324,7 @@ split split_flex(std::span<const std::string_view> parts, std::vector<std::strin
             return split::ok;
         }
     }
-    std::string grow, shrink = "1", b = "0%";
+    std::string grow, shrink = "1", b = "0px";
     std::size_t i = 0;
     if (number(parts[0], grow)) {
         i = 1;

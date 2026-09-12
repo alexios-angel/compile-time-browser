@@ -109,7 +109,8 @@ void test_reads_and_all() {
              std::string{"flex: initial;"});
     CHECK_EQ(round_trip("flex: initial; flex-shrink: 0;"),
              std::string{"flex-grow: initial; flex-basis: initial; flex-shrink: 0;"});
-    CHECK_EQ(round_trip("flex: 1"), std::string{"flex: 1 1 0%;"});
+    CHECK_EQ(round_trip("flex: 1"), std::string{"flex: 1 1 0px;"});
+    CHECK_EQ(round_trip("flex: 0"), std::string{"flex: 0 1 0px;"});
 
     CHECK_EQ(round_trip("width: 100px; all: inherit; height: inherit"),
              std::string{"all: inherit;"});

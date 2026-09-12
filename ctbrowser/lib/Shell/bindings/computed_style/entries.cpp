@@ -44,7 +44,7 @@ constexpr std::array<std::string_view, 12> length_properties{
     return property == "color" || property == "background-color" || property == "border-color" ||
            property == "border-top-color" || property == "border-right-color" ||
            property == "border-bottom-color" || property == "border-left-color" ||
-           property == "outline-color";
+           property == "outline-color" || property == "caret-color";
 }
 
 // A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
@@ -783,6 +783,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
+            if (const std::optional<color> c = system_color(text)) { return color_text(*c); }
             return std::string{text};
         }
         // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`

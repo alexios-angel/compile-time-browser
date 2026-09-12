@@ -99,6 +99,63 @@ namespace detail {
     return "rgba(" + rgb + ", " + number_text(std::round(alpha * 64.0f) / 64.0f) + ")";
 }
 
+// A SYSTEM COLOUR RESOLVES TO A COLOUR. CSS Color 4 §6.2 leaves the value to
+// the platform and CSSOM makes the resolved value of a colour property the
+// used one, so `background-color: Menu` reads back as an `rgb()` in every
+// browser (getComputedStyle-resolved-colors). These are the light-scheme
+// values Chromium ships; nothing here is themed, so they are the answer.
+[[nodiscard]] std::optional<color> system_color(std::string_view text) {
+    static constexpr std::pair<std::string_view, std::string_view> table[] = {
+        {"accentcolor", "#0075ff"},
+        {"accentcolortext", "#ffffff"},
+        {"activetext", "#ff0000"},
+        {"buttonborder", "#767676"},
+        {"buttonface", "#efefef"},
+        {"buttontext", "#000000"},
+        {"canvas", "#ffffff"},
+        {"canvastext", "#000000"},
+        {"field", "#ffffff"},
+        {"fieldtext", "#000000"},
+        {"graytext", "#808080"},
+        {"highlight", "#1e90ff"},
+        {"highlighttext", "#ffffff"},
+        {"linktext", "#0000ee"},
+        {"mark", "#ffff00"},
+        {"marktext", "#000000"},
+        {"selecteditem", "#1e90ff"},
+        {"selecteditemtext", "#ffffff"},
+        {"visitedtext", "#551a8b"},
+        {"activeborder", "#ffffff"},
+        {"activecaption", "#cccccc"},
+        {"appworkspace", "#ffffff"},
+        {"background", "#6363ce"},
+        {"buttonhighlight", "#ffffff"},
+        {"buttonshadow", "#808080"},
+        {"captiontext", "#000000"},
+        {"inactiveborder", "#ffffff"},
+        {"inactivecaption", "#ffffff"},
+        {"inactivecaptiontext", "#7f7f7f"},
+        {"infobackground", "#fbfcc5"},
+        {"infotext", "#000000"},
+        {"menu", "#f7f7f7"},
+        {"menutext", "#000000"},
+        {"scrollbar", "#ffffff"},
+        {"threeddarkshadow", "#666666"},
+        {"threedface", "#c0c0c0"},
+        {"threedhighlight", "#dddddd"},
+        {"threedlightshadow", "#c0c0c0"},
+        {"threedshadow", "#888888"},
+        {"window", "#ffffff"},
+        {"windowframe", "#cccccc"},
+        {"windowtext", "#000000"},
+    };
+    const std::string_view word = trim(text, html_whitespace);
+    for (const auto & [name, hex] : table) {
+        if (ascii_iequals(name, word)) { return paint::parse_color(hex); }
+    }
+    return std::nullopt;
+}
+
 // THE COMPUTED `transform` IS A MATRIX. CSS Transforms 1 §9: the resolved value
 // of a 2D transform list is the product of its functions, serialised as
 // `matrix(a, b, c, d, e, f)` - `scale(0.5)` reads back as `matrix(0.5, 0, 0,
