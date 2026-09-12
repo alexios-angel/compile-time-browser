@@ -893,6 +893,7 @@ public:
         }
         float own_font_size = parent_font_size;
         std::vector<atom> cyclic_registered;
+        std::vector<atom> read; // what the font-size's substitution looked at
         // Whether the WINNING font-size declaration actually resolved to a length.
         // `font-size: larger` and the other relative keywords are not modelled, and
         // rewriting one to a pixel value would be inventing an answer - so the text
@@ -915,7 +916,7 @@ public:
             // and Values API 1 §2.4): the font-size is invalid at computed-value
             // time - inherited - and the property takes its initial value
             // (typed_arithmetic_cycle).
-            std::vector<atom> read;
+            read.clear();
             conditions.on_read = [&read, this](std::string_view name) {
                 read.push_back(atoms_->intern(name));
             };
@@ -964,6 +965,8 @@ public:
                     font_size_resolved = false; // a keyword: leave the text alone
                 }
             });
+            // Only the font-size cares what was read.
+            conditions.on_read = nullptr;
         }
         // The root's size is what every `rem` in the document resolves against, so it
         // is recorded as the tree is descended rather than looked up per element.
