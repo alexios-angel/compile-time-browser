@@ -630,12 +630,15 @@ public:
     // loop on the existing register stack, so a listener may itself call back
     // into script.
     // A THROW THE CALLEE DOES NOT CATCH IS HELD UNTIL THE NATIVE RETURNS.
-    // Inside a native (native_scope), `call` fences the callee (see
-    // call_fenced); a throw that crosses it is parked in pending_throw_, this
-    // returns undefined, every further `call` from the same native returns
-    // undefined without calling, and the VM rethrows it at the native's own
-    // call site (rethrow_pending, at the three places a native returns to
-    // it). Outside a native the throw unwinds at once, as before. So `[1, 2].forEach(f)` with `f`
+    // Called DIRECTLY from a native (native_scope, and no interpreted frame
+    // pushed since it began), `call` fences the callee (see call_fenced); a
+    // throw that crosses it is parked in pending_throw_, this returns
+    // undefined, every further `call` from the same native returns undefined
+    // without calling, and the VM rethrows it at the native's own call site
+    // (rethrow_pending, at the three places a native returns to it). From
+    // interpreted code - a setter reached through op::set_index inside a test
+    // body that `apply` is running - the throw unwinds at once to that code's
+    // own handlers, as before. So `[1, 2].forEach(f)` with `f`
     // throwing on 1 never calls `f` for 2, and the page's `try` around the
     // forEach catches once - before, the first throw unwound to that `try`
     // while forEach kept going, and the second throw found the handler
@@ -1336,10 +1339,15 @@ public:
     // escape oracle's notion of "reachable" does not learn it.
     class native_scope {
     public:
-        explicit native_scope(context & cx) : cx_(&cx) {
+        explicit native_scope(context & cx) : cx_(&cx), saved_frames_(cx.native_frames_) {
             if (cx.native_depth_++ == 0) { cx.native_epoch_ = cx.heap_; }
+            // How deep the interpreter was when THIS native began: `call`
+            // parks a throw only while no interpreted frame has been pushed
+            // since (see `call`).
+            cx.native_frames_ = cx.frames_.size();
         }
         ~native_scope() {
+            cx_->native_frames_ = saved_frames_;
             if (--cx_->native_depth_ == 0) { cx_->native_epoch_ = nullptr; }
         }
         native_scope(const native_scope &) = delete;
@@ -1347,6 +1355,7 @@ public:
 
     private:
         context * cx_;
+        std::size_t saved_frames_;
     };
 
     // COLLECT AT EVERY SAFEPOINT, FOR TESTS.
@@ -2120,6 +2129,7 @@ private:
     // progress was entered, and how many natives are in progress.
     heap_object * native_epoch_ = nullptr;
     std::size_t native_depth_ = 0;
+    std::size_t native_frames_ = 0; // frames_.size() when the innermost native began
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;

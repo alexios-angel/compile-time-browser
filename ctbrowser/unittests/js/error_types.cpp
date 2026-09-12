@@ -177,6 +177,17 @@ int main() {
     js_expect("(function(){try{[3,1,2].sort(function(){throw new Error('cmp');});}catch(e){return "
               "e.message;}})()",
               "cmp");
+    // ...but interpreted code running UNDER a native keeps its own handlers:
+    // a setter that throws inside a test body that `apply` is running lands
+    // in the body's try, not at apply's return (css/cssom property-accessors
+    // went PASS -> FAIL on exactly this).
+    js_expect("(function(){function step(f){try{return f.apply(null,[]);}catch(e){return 'step';}}"
+              "return step(function(){var o={set x(v){throw new Error('s');}};"
+              "try{o.x=1;return 'no';}catch(e){return 'inner:'+e.message;}});})()",
+              "inner:s");
+    js_expect("(function(){return [1].map(function(){var o={get g(){throw new Error('g');}};"
+              "try{return o.g;}catch(e){return 'inner:'+e.message;}})[0];})()",
+              "inner:g");
     // The native's own result after a parked throw is discarded, not used.
     js_expect(
         "(function(){var r='unset';try{r=[1,2].map(function(x){if(x===1){throw 1;}return x;});}"

@@ -44,11 +44,14 @@ namespace ctbrowser::script {
 // caller's registers are untouched, so a listener that triggers another
 // listener works rather than corrupting the frame that dispatched it.
 value context::call(value callable, std::span<const value> args, value this_value) {
-    // NOT INSIDE A NATIVE - a getter reached from op::get_prop, an event
-    // handler from the browser's tick, a test's direct call: the throw
-    // unwinds to the JavaScript handler below at once, as it always did;
-    // there is no native to return through.
-    if (native_depth_ == 0) { return invoke(callable, args, this_value, /*constructing*/ false); }
+    // NOT CALLED DIRECTLY BY A NATIVE - a getter reached from op::get_prop,
+    // an event handler from the browser's tick, a setter hit by interpreted
+    // code running under `apply`: the throw unwinds to the JavaScript handler
+    // below at once, as it always did; there is no native to return through
+    // before that handler.
+    if (native_depth_ == 0 || frames_.size() != native_frames_) {
+        return invoke(callable, args, this_value, /*constructing*/ false);
+    }
     if (has_pending_throw_) { return value::undefined(); } // see the declaration
     bool threw = false;
     value thrown = value::undefined();
