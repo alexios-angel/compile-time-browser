@@ -18,51 +18,67 @@ namespace {
 // units and four bytes. A byte offset passes the whole English half of the
 // corpus and is wrong for every page that is not in English.
 //
-// The width of a UTF-8 sequence from its lead byte. A continuation byte or an
-// invalid lead counts as one, which keeps this total on any bytes at all - the
-// document's text comes from a tokenizer that does not promise well-formedness.
-[[nodiscard]] std::size_t utf8_width(unsigned char lead) {
-    if (lead < 0x80u) { return 1; }
-    if ((lead & 0xE0u) == 0xC0u) { return 2; }
-    if ((lead & 0xF0u) == 0xE0u) { return 3; }
-    if ((lead & 0xF8u) == 0xF0u) { return 4; }
-    return 1;
-}
-
-[[nodiscard]] std::size_t utf16_length(std::string_view text) {
-    std::size_t units = 0;
+// AND AN OFFSET MAY SPLIT A SURROGATE PAIR. A JavaScript string is a sequence
+// of code units and a lone surrogate is one of them: `substringData(1, 8)` on
+// "🌠 test 🌠 TEST" is "\uDF20 test \uD83C", and `replaceData` can put the
+// two halves back together into one character. So every operation here runs
+// on the code units and re-encodes afterwards - a lone surrogate as the
+// three bytes WTF-8 spells it with, which is what the script engine's own
+// escape decoder writes for "\uDF20", and a pair as the four bytes of the
+// code point it stands for. `CharacterData-surrogates.html` is the whole of
+// this paragraph.
+[[nodiscard]] std::u16string to_units(std::string_view text) {
+    std::u16string units;
+    units.reserve(text.size());
     for (std::size_t at = 0; at < text.size();) {
-        const std::size_t width = utf8_width(static_cast<unsigned char>(text[at]));
-        // A character outside the BMP is a SURROGATE PAIR: two code units for
-        // the four bytes UTF-8 spends on it, and the only place these two
-        // counts diverge.
-        units += width == 4 ? 2u : 1u;
+        const auto lead = static_cast<unsigned char>(text[at]);
+        std::size_t width = 1;
+        char32_t cp = lead;
+        if ((lead & 0xE0u) == 0xC0u) {
+            width = 2;
+            cp = lead & 0x1Fu;
+        } else if ((lead & 0xF0u) == 0xE0u) {
+            width = 3;
+            cp = lead & 0x0Fu;
+        } else if ((lead & 0xF8u) == 0xF0u) {
+            width = 4;
+            cp = lead & 0x07u;
+        }
+        // A truncated or invalid sequence: the byte stands for itself, which
+        // keeps this total on any bytes at all - the document's text comes
+        // from a tokenizer that does not promise well-formedness.
+        if (width == 1 || at + width > text.size()) {
+            units.push_back(static_cast<char16_t>(lead));
+            ++at;
+            continue;
+        }
+        for (std::size_t i = 1; i < width; ++i) {
+            cp = (cp << 6) | (static_cast<unsigned char>(text[at + i]) & 0x3Fu);
+        }
         at += width;
+        if (cp >= 0x10000) {
+            units.push_back(static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)));
+            units.push_back(static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 0x3FF)));
+        } else {
+            units.push_back(static_cast<char16_t>(cp));
+        }
     }
     return units;
 }
 
-// The byte offset a code-unit offset names. An offset past the end is the end.
-//
-// AN OFFSET THAT FALLS BETWEEN THE TWO HALVES OF A SURROGATE PAIR resolves to
-// the boundary BEFORE it, and that is a deviation said out loud: the DOM lets a
-// page split a pair and keep the halves, because a JavaScript string is a
-// sequence of code units and a lone surrogate is one of them. UTF-8 cannot hold
-// a lone surrogate, so `CharacterData-surrogates.html` - which asserts
-// `substringData(1, 8)` yields "\uDF20 test \uD83C" - cannot pass here whatever
-// this function does. Rounding down at least keeps the text WELL-FORMED, which
-// is the property every other reader of the document relies on.
-[[nodiscard]] std::size_t utf16_to_byte(std::string_view text, std::size_t want) {
-    std::size_t units = 0;
-    std::size_t at = 0;
-    while (at < text.size() && units < want) {
-        const std::size_t width = utf8_width(static_cast<unsigned char>(text[at]));
-        const std::size_t cost = width == 4 ? 2u : 1u;
-        if (units + cost > want) { break; }
-        units += cost;
-        at += width;
+[[nodiscard]] std::string from_units(std::u16string_view units) {
+    std::string out;
+    out.reserve(units.size());
+    for (std::size_t at = 0; at < units.size(); ++at) {
+        char32_t cp = units[at];
+        if (cp >= 0xD800 && cp <= 0xDBFF && at + 1 < units.size() && units[at + 1] >= 0xDC00 &&
+            units[at + 1] <= 0xDFFF) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (units[at + 1] - 0xDC00);
+            ++at;
+        }
+        append_utf8(out, cp);
     }
-    return at;
+    return out;
 }
 
 } // namespace
@@ -112,17 +128,24 @@ void dom_bindings::install_character_data(context & cx) {
     // and these do the same: the text is empty and the write is skipped, so
     // nothing is corrupted and nothing throws a LANGUAGE error where the page
     // was told to expect a DOMException.
-    const auto data_of = [this](context & c, node_id & id, std::string & text) {
-        id = receiver(c);
+    // THE DOCUMENT THAT OWNS THE RECEIVER answers, for the reason
+    // define_operation gives: these prototypes are shared by every document in
+    // the realm, and `foreignDoc.createTextNode("x").length` read the
+    // PRIMARY's tree at the foreign node's id before this.
+    const auto data_of = [this](context & c, dom_bindings *& self, node_id & id,
+                                std::u16string & text) {
+        self = owner_of(c.current_this());
+        if (self == nullptr) { self = this; }
+        id = self->receiver(c);
         if (!id) { return false; }
-        const auto txn = doc_->read();
+        const auto txn = self->doc_->read();
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
         // Every CharacterData kind: Text, Comment, CDATASection, PI.
         if (!is_text_kind(kind) && kind != node_kind::comment &&
             kind != node_kind::processing_instruction) {
             return false;
         }
-        text = std::string{txn.text(id)};
+        text = to_units(txn.text(id));
         return true;
     };
 
@@ -139,10 +162,11 @@ void dom_bindings::install_character_data(context & cx) {
     //   count   ToUint32'd and then CLAMPED to what is left. `-1` deletes to
     //           the end rather than throwing, and 20 on a four-character node
     //           deletes four.
-    const auto replace_data = [this](context & c, node_id id, const std::string & text,
-                                     std::string_view where, double offset_arg, double count_arg,
+    const auto replace_data = [this](context & c, dom_bindings & self, node_id id,
+                                     const std::u16string & text, std::string_view where,
+                                     double offset_arg, double count_arg,
                                      const std::string & with) {
-        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        const auto length = static_cast<unsigned long long>(text.size());
         const auto offset = static_cast<unsigned long long>(to_uint32(offset_arg));
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
@@ -153,23 +177,24 @@ void dom_bindings::install_character_data(context & cx) {
         }
         auto count = static_cast<unsigned long long>(to_uint32(count_arg));
         if (count > length - offset) { count = length - offset; }
-        std::string made{text.substr(0, utf16_to_byte(text, static_cast<std::size_t>(offset)))};
-        made += with;
-        made += text.substr(utf16_to_byte(text, static_cast<std::size_t>(offset + count)));
-        (void)doc_->set_text(id, made);
-        mutated();
+        std::u16string made = text.substr(0, static_cast<std::size_t>(offset));
+        made += to_units(with);
+        made += text.substr(static_cast<std::size_t>(offset + count));
+        (void)self.doc_->set_text(id, from_units(made));
+        self.mutated();
         return true;
     };
 
     // `length` IS IN CODE UNITS and so is every offset below it. See
-    // utf16_length: for ASCII it is the byte count and for nothing else.
+    // to_units: for ASCII it is the byte count and for nothing else.
     proto->define_accessor("length",
                            native("length",
                                   [data_of](context & c, std::span<value>) {
+                                      dom_bindings * self = nullptr;
                                       node_id id;
-                                      std::string text;
-                                      (void)data_of(c, id, text);
-                                      return value::number(static_cast<double>(utf16_length(text)));
+                                      std::u16string text;
+                                      (void)data_of(c, self, id, text);
+                                      return value::number(static_cast<double>(text.size()));
                                   }),
                            value::undefined());
 
@@ -185,10 +210,11 @@ void dom_bindings::install_character_data(context & cx) {
         // on an argument may edit the very node this is about to measure.
         const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
         auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        (void)data_of(c, id, text);
-        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        std::u16string text;
+        (void)data_of(c, self, id, text);
+        const auto length = static_cast<unsigned long long>(text.size());
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
                                 "substringData: offset " + std::to_string(offset) +
@@ -197,9 +223,8 @@ void dom_bindings::install_character_data(context & cx) {
             return value::undefined();
         }
         if (count > length - offset) { count = length - offset; }
-        const std::size_t start = utf16_to_byte(text, static_cast<std::size_t>(offset));
-        const std::size_t stop = utf16_to_byte(text, static_cast<std::size_t>(offset + count));
-        return c.string(text.substr(start, stop - start));
+        return c.string(from_units(std::u16string_view{text}.substr(
+            static_cast<std::size_t>(offset), static_cast<std::size_t>(count))));
     });
 
     method(*proto, "appendData", [data_of, replace_data](context & c, std::span<value> a) {
@@ -208,11 +233,12 @@ void dom_bindings::install_character_data(context & cx) {
             return value::undefined();
         }
         const std::string with = c.to_string(a[0]);
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        if (!data_of(c, id, text)) { return value::undefined(); }
+        std::u16string text;
+        if (!data_of(c, self, id, text)) { return value::undefined(); }
         // AT THE END, WHICH CANNOT THROW: the offset IS the length.
-        (void)replace_data(c, id, text, "appendData", static_cast<double>(utf16_length(text)), 0.0,
+        (void)replace_data(c, *self, id, text, "appendData", static_cast<double>(text.size()), 0.0,
                            with);
         return value::undefined();
     });
@@ -230,10 +256,11 @@ void dom_bindings::install_character_data(context & cx) {
         // reason: a `toString` may have edited it.
         const double offset = c.to_number_value(a[0]);
         const std::string with = c.to_string(a[1]);
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        if (!data_of(c, id, text)) { return value::undefined(); }
-        (void)replace_data(c, id, text, "insertData", offset, 0.0, with);
+        std::u16string text;
+        if (!data_of(c, self, id, text)) { return value::undefined(); }
+        (void)replace_data(c, *self, id, text, "insertData", offset, 0.0, with);
         return value::undefined();
     });
 
@@ -244,10 +271,11 @@ void dom_bindings::install_character_data(context & cx) {
         }
         const double offset = c.to_number_value(a[0]);
         const double count = c.to_number_value(a[1]);
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        if (!data_of(c, id, text)) { return value::undefined(); }
-        (void)replace_data(c, id, text, "deleteData", offset, count, std::string{});
+        std::u16string text;
+        if (!data_of(c, self, id, text)) { return value::undefined(); }
+        (void)replace_data(c, *self, id, text, "deleteData", offset, count, std::string{});
         return value::undefined();
     });
 
@@ -259,10 +287,11 @@ void dom_bindings::install_character_data(context & cx) {
         const double offset = c.to_number_value(a[0]);
         const double count = c.to_number_value(a[1]);
         const std::string with = c.to_string(a[2]);
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        if (!data_of(c, id, text)) { return value::undefined(); }
-        (void)replace_data(c, id, text, "replaceData", offset, count, with);
+        std::u16string text;
+        if (!data_of(c, self, id, text)) { return value::undefined(); }
+        (void)replace_data(c, *self, id, text, "replaceData", offset, count, with);
         return value::undefined();
     });
 
@@ -275,10 +304,11 @@ void dom_bindings::install_character_data(context & cx) {
     method(*text_proto, "splitText", [this, data_of](context & c, std::span<value> a) {
         const auto offset =
             static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
+        dom_bindings * self = nullptr;
         node_id id;
-        std::string text;
-        if (!data_of(c, id, text)) { return value::null(); }
-        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        std::u16string text;
+        if (!data_of(c, self, id, text)) { return value::null(); }
+        const auto length = static_cast<unsigned long long>(text.size());
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
                                 "splitText: offset " + std::to_string(offset) +
@@ -286,13 +316,13 @@ void dom_bindings::install_character_data(context & cx) {
                                     " code units");
             return value::null();
         }
-        const std::size_t at = utf16_to_byte(text, static_cast<std::size_t>(offset));
-        const node_id made = doc_->create_text(text.substr(at));
-        (void)doc_->set_text(id, text.substr(0, at));
+        const auto at = static_cast<std::size_t>(offset);
+        const node_id made = self->doc_->create_text(from_units(text.substr(at)));
+        (void)self->doc_->set_text(id, from_units(text.substr(0, at)));
         node_id parent;
         node_id next;
         {
-            const auto txn = doc_->read();
+            const auto txn = self->doc_->read();
             parent = txn.parent(id);
             if (parent) {
                 const std::span<const node_id> kids = txn.children(parent);
@@ -301,9 +331,9 @@ void dom_bindings::install_character_data(context & cx) {
                 }
             }
         }
-        if (parent) { (void)insert_node(parent, made, next); }
-        mutated();
-        return wrap(c, made);
+        if (parent) { (void)self->insert_node(parent, made, next); }
+        self->mutated();
+        return self->wrap(c, made);
     });
 
     // `wholeText`: the CONTIGUOUS RUN of Text siblings this node is in,
@@ -313,11 +343,13 @@ void dom_bindings::install_character_data(context & cx) {
     text_proto->define_accessor(
         "wholeText",
         native("wholeText",
-               [this, data_of](context & c, std::span<value>) {
+               [data_of](context & c, std::span<value>) {
+                   dom_bindings * self = nullptr;
                    node_id id;
-                   std::string text;
-                   if (!data_of(c, id, text)) { return c.string(std::string{}); }
-                   const auto txn = doc_->read();
+                   std::u16string units;
+                   if (!data_of(c, self, id, units)) { return c.string(std::string{}); }
+                   const auto txn = self->doc_->read();
+                   const std::string text{txn.text(id)};
                    const node_id parent = txn.parent(id);
                    if (!parent) { return c.string(text); }
                    const std::span<const node_id> kids = txn.children(parent);
