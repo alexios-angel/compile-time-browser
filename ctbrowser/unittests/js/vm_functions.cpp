@@ -393,6 +393,14 @@ void test_function_to_string() {
                   "m(a) { return a; }");
     expect_result("const o = { go(n) { return n; } }; return o.go.toString();",
                   "go(n) { return n; }");
+    // A CLASS IS ITS WHOLE TEXT (20.2.3.5), explicit constructor or not. The
+    // synthesised constructor used to keep the offsets of the "(function ()
+    // {})" it was compiled from, read against the program's own source.
+    expect_result("class C { m(a) { return a; } } return String(C);",
+                  "class C { m(a) { return a; } }");
+    expect_result("const D = class E { constructor(x) { this.x = x; } }; return String(D);",
+                  "class E { constructor(x) { this.x = x; } }");
+    expect_result("class F {} class G extends F {} return String(G);", "class G extends F {}");
     // a native says so rather than returning something a parser would accept
     expect_result("return Math.max.toString().indexOf('native code') >= 0;", "true");
 }

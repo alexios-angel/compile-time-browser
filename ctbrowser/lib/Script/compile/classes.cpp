@@ -123,8 +123,17 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // and `Object.getPrototypeOf(x).constructor.name` is a standard way to
     // identify a value, where an undefined name compares equal to the other
     // undefined it is being tested against and reports a false match.
+    // AND CARRIES THE CLASS'S SOURCE SPAN (20.2.3.5: `String(C)` is the class
+    // text). The synthesised one was compiled from "(function () {})" and kept
+    // THAT text's offsets, which read as fifteen bytes of whatever the program
+    // starts with; an explicit constructor kept its own member span.
     if (!proto().code.empty() && proto().code.back().code == op::closure) {
-        out_.functions[proto().code.back().bx()].name = std::string{n.text};
+        function_proto & ctor = out_.functions[proto().code.back().bx()];
+        ctor.name = std::string{n.text};
+        if (n.end > n.begin) {
+            ctor.source_begin = n.begin;
+            ctor.source_end = n.end;
+        }
     }
     proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
     // `C.prototype.constructor === C`, which is both what pages expect and
