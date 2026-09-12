@@ -16,6 +16,18 @@
 
 namespace ctbrowser::script {
 
+namespace {
+
+// An accessor hit on the read path: the getter runs with the ORIGINAL
+// receiver, whichever prototype the entry was found on; a set-only accessor
+// reads as undefined.
+value call_getter(context & cx, const accessor_entry & entry, value receiver) {
+    return entry.getter.is_callable() ? cx.call(entry.getter, std::span<const value>{}, receiver)
+                                      : value::undefined();
+}
+
+} // namespace
+
 // `Uint8Array.prototype` for u8: the constructor's own prototype object, found
 // through the global it is installed as (value.hpp, typed_array_global_name),
 // or null before install_typed_arrays has run. A free function with external
@@ -57,9 +69,7 @@ value context::lookup_index(value target, value key) {
                     }
                     if ((*e & array_object::elem_accessor) != 0 && arr->named) {
                         if (accessor_entry * entry = arr->named->find_accessor(std::to_string(i))) {
-                            return entry->getter.is_callable()
-                                       ? call(entry->getter, std::span<const value>{}, target)
-                                       : value::undefined();
+                            return call_getter(*this, *entry, target);
                         }
                     }
                 }
@@ -158,10 +168,7 @@ value context::lookup_property(value target, const std::string & name) {
             // there. The has_accessors test is why this costs nothing on the
             // objects that have none, which is nearly all of them.
             if (accessor_entry * entry = obj->find_accessor(name)) {
-                if (entry->getter.is_callable()) {
-                    return call(entry->getter, std::span<const value>{}, target);
-                }
-                return value::undefined(); // set-only: reading gives undefined
+                return call_getter(*this, *entry, target);
             }
             if (obj->prototype.is_object()) {
                 obj = static_cast<object_object *>(obj->prototype.as_heap());
@@ -225,9 +232,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (arr->named) {
             if (value * found = arr->named->find(name)) { return *found; }
             if (accessor_entry * entry = arr->named->find_accessor(name)) {
-                return entry->getter.is_callable()
-                           ? call(entry->getter, std::span<const value>{}, target)
-                           : value::undefined();
+                return call_getter(*this, *entry, target);
             }
         }
         // A TYPED array's own methods first, then every array's, then every
@@ -240,9 +245,7 @@ value context::lookup_property(value target, const std::string & name) {
                  table != nullptr;) {
                 if (value * found = table->find(name)) { return *found; }
                 if (accessor_entry * entry = table->find_accessor(name)) {
-                    return entry->getter.is_callable()
-                               ? call(entry->getter, std::span<const value>{}, target)
-                               : value::undefined();
+                    return call_getter(*this, *entry, target);
                 }
                 table = table->prototype.is_object()
                             ? static_cast<object_object *>(table->prototype.as_heap())
@@ -305,9 +308,7 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
         if (accessor_entry * entry = fn->find_accessor(name)) {
-            return entry->getter.is_callable()
-                       ? call(entry->getter, std::span<const value>{}, target)
-                       : value::undefined();
+            return call_getter(*this, *entry, target);
         }
         if (value * found = fn->find(name)) { return *found; }
         // A BUILT-IN FUNCTION HAS A NAME, and it was undefined for every one
@@ -324,9 +325,7 @@ value context::lookup_property(value target, const std::string & name) {
             if (up.is_kind(heap_kind::native)) {
                 auto * parent = static_cast<native_object *>(up.as_heap());
                 if (accessor_entry * entry = parent->find_accessor(name)) {
-                    return entry->getter.is_callable()
-                               ? call(entry->getter, std::span<const value>{}, target)
-                               : value::undefined();
+                    return call_getter(*this, *entry, target);
                 }
                 if (value * found = parent->find(name)) { return *found; }
                 up = parent->proto_link;
@@ -343,9 +342,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
             if (accessor_entry * entry = table->find_accessor(name)) {
-                return entry->getter.is_callable()
-                           ? call(entry->getter, std::span<const value>{}, target)
-                           : value::undefined();
+                return call_getter(*this, *entry, target);
             }
         }
         // ...AND THEN Object.prototype, because Function.prototype's own
@@ -390,10 +387,7 @@ value context::lookup_property(value target, const std::string & name) {
         // `static get w()` on a class - the constructor IS the closure, so its
         // accessors live here rather than on any object.
         if (accessor_entry * entry = closure->find_accessor(name)) {
-            if (entry->getter.is_callable()) {
-                return call(entry->getter, std::span<const value>{}, target);
-            }
-            return value::undefined();
+            return call_getter(*this, *entry, target);
         }
         // STATIC INHERITANCE: `class D extends B` makes D's own [[Prototype]]
         // B, so `D.staticMethod` finds B's. Babel wires this by hand with
@@ -407,9 +401,7 @@ value context::lookup_property(value target, const std::string & name) {
             }
             auto * parent = static_cast<native_object *>(up.as_heap());
             if (accessor_entry * entry = parent->find_accessor(name)) {
-                return entry->getter.is_callable()
-                           ? call(entry->getter, std::span<const value>{}, target)
-                           : value::undefined();
+                return call_getter(*this, *entry, target);
             }
             if (value * found = parent->find(name)) { return *found; }
             break;
@@ -421,9 +413,7 @@ value context::lookup_property(value target, const std::string & name) {
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
             if (accessor_entry * entry = table->find_accessor(name)) {
-                return entry->getter.is_callable()
-                           ? call(entry->getter, std::span<const value>{}, target)
-                           : value::undefined();
+                return call_getter(*this, *entry, target);
             }
         }
         return from_object_prototype(target, name);
@@ -442,8 +432,7 @@ value context::from_object_prototype(value receiver, const std::string & name) {
     if (table == nullptr) { return value::undefined(); }
     if (value * found = table->find(name)) { return *found; }
     if (accessor_entry * entry = table->find_accessor(name)) {
-        return entry->getter.is_callable() ? call(entry->getter, std::span<const value>{}, receiver)
-                                           : value::undefined();
+        return call_getter(*this, *entry, receiver);
     }
     return value::undefined();
 }
