@@ -16,8 +16,10 @@ NaN remains distinct from both null and undefined.
 Field storage joins every scalar write and read before selecting the C++
 type. A field stored both a number and a boolean uses tagged storage even
 when no code reads it. This keeps shape selection independent of SSA
-use-list order. A numeric standalone global still requires a definite number:
-the wider carrier must not allow a boolean/number union to pass that guard.
+use-list order. Standalone globals also join every source store: a closed
+boolean/number union prints its actual tag, including any proved nullish
+alternatives. Definite numeric observations retain their Number tag check;
+the wider carrier cannot satisfy that check with a Boolean.
 
 `ctcompile/test/CTNative/Fixtures/Scalars/scalar-unions.js` retains Bootstrap's getter expression
 verbatim:

@@ -35,6 +35,18 @@ Both C++ layouts pass GCC/Clang/no-Script and ASan/UBSan/leaks through **128 fut
 calls**, saved children, detached methods, outer recreation, entry reexecution and
 final release. Original uncalled-removal **0205c78a** remains **0/6**.
 
+**1b5f45e6** executes the original String-global case (**2/2 native**) and
+Null/Undefined getters (**3/3 native**, both modes); **71bfc11d** executes original missing Map result
+**d3b7dcee** (**4/4**). Their exact Node/VM tags, both C++ layouts/compilers, no-Script
+and stale/fresh proof checks pass without changing the historical source bodies.
+**f57cab15** executes original complete-field controls **b5804dcd / 01292145**
+as **5/5 native** in both modes. Exact Node/VM/native output, both layouts/GCC/Clang,
+no-Script and stale/fresh/rerun controls pass in **10.96s**. A source census checks
+**67 historical controls under both policies**: only these two gain native output;
+the other **65 still refuse**. Rerunning native lowering rejects the old source
+authority and retains every function; its existing duplicate forward declarations
+do not imply byte-identical C++ on rerun. Fresh forged-source output is identical.
+
 **14920c37** proves original canonical String array indices through the existing
 origin, bounds and budget checks. Sparse/missing elements, lookalike spellings,
 computed keys and ordinary-object/prototype effects remain refused. The old escape
@@ -49,21 +61,38 @@ controls pass both layouts/compilers. Stable clang-format22 passes **800 files**
 bundled23 retains exactly the same **nine baseline files / 28 diagnostics**. No
 browser/runtime, inference, Map ownership or carrier definition changed.
 
-**The standard 534-CTest gate is running**, with **1,368 frozen inputs**; no full-gate
-success is claimed yet. The fresh exact ordinary Data **8359592c** probe remains
-**0/7 native** in both modes, with `property receiver lacks a fresh own-data object
-proof`. Full Bootstrap counts will be refreshed from the running gate.
+Validation is complete across two runs. The full run at **71bfc11d** passed all
+**533 CTests outside lit**, including **162 browser tests**, in **874.79s**. After
+the three-file test correction **f57cab15**, the **ctcompile_lit** CTest passes
+**168/168 cases in 633.32s** (CTest **633.41s**). Together these cover all **534
+CTests** on identical production, browser and parser inputs; only the three test
+files differ between runs. All **1,368 frozen inputs** match locally and remotely.
+Fresh full Bootstrap is **19/574 native** in both modes; Data remains **0/7 CommonJS,
+0/7 browser, 0/8 AMD**. The exact ordinary Data **8359592c** probe is still **0/7**
+in both modes, with `property receiver lacks a fresh own-data object proof`.
 
 Next: exact Data's mixed Number/field-bearing caller payloads, owning object
 returns/identity, and its original recorder callback (`Array.from(s.keys())` and the
-template diagnostic). Component/DOM ownership follows through ctbrowser public APIs.
+template diagnostic). First extend `HostContract/Analysis.cpp::capturedMapParameters`: its
+complete-use census currently excludes field-bearing caller objects and requires one
+primitive/object category per formal. Child writes and object returns need independent
+ownership proofs; reuse the existing `object_value` and identity-field carriers. Preserve
+the exact **2,522-byte SHA256 8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**
+source. Component/DOM ownership follows through ctbrowser public APIs.
 The next independent escape increment is original decimal BigInt array indices.
 Details: `/tmp/ctcompile-output-next.md`, `/tmp/ctcompile-string-indices-next.md`.
 
-Evidence: `/tmp/ctcompile-output-{focused.log,probe.log,corrected.log,
-corrected-detail.log,full.log,full-frozen.json,full-revision.json}`. Parser remains
-**8eb3375**; reread Claude's pending runtime/ABI journals through **10:48:07 UTC**
-after integration. All three code commits are local; nothing was pushed.
+Evidence: `/tmp/ctcompile-output-complete-summary.json`,
+`/tmp/ctcompile-output-final-measured/summary.json`,
+`/tmp/ctcompile-output-final.log`,
+`/tmp/ctcompile-output-final-{detail.log,frozen.json,revision.json}`,
+`/tmp/ctcompile-field-output-{gate.log,detail.log,frozen.json}` and
+`/tmp/ctcompile-field-output-recovery.patch`.
+Parser remains **8eb3375**; reread Claude's pending runtime/ABI journals through
+**14:12:58 UTC** after integration, including live Map iterators, overridden `next`,
+microtasks, array holes, for-of, private-name checks and the newer parser commits.
+The pending differential row now expects `6/cba/TypeError` for number iteration.
+Re-gate these source witnesses after that integration. Nothing was pushed.
 
 ## Nullable child contents and dynamic mixed Add, 2026-09-12
 
