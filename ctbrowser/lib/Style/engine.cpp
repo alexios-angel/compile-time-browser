@@ -310,7 +310,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
 }
 
 bool engine::element_matches(const read_txn & txn, node_id node,
-                             std::span<const compiled_selector> list) {
+                             std::span<const compiled_selector> list, node_id scope) {
     if (list.empty()) { return false; }
     if (txn.kind(node).value_or(node_kind::text) != node_kind::element) { return false; }
     // The element chain from the document down to `node`. Only elements occupy a
@@ -321,7 +321,7 @@ bool engine::element_matches(const read_txn & txn, node_id node,
     }
     if (chain.empty()) { return false; }
     std::ranges::reverse(chain);
-    scope_ = node;
+    scope_ = scope ? scope : node;
 
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
     ancestor_filter ancestors;

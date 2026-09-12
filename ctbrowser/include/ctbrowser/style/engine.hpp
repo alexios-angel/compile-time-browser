@@ -1140,8 +1140,12 @@ public:
     // O(document). Matching ONE element needs its ancestor chain and the earlier
     // siblings at each step of it, and nothing else: this builds exactly that
     // cursor and then runs the same matcher.
+    //
+    // `scope` is what `:scope` names; empty means the subject. `closest` walks
+    // the ancestors and must keep the element it was called on as the scope,
+    // or `div > :scope` would be true of whichever ancestor sits under a div.
     [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
-                                       std::span<const compiled_selector> list);
+                                       std::span<const compiled_selector> list, node_id scope = {});
 
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
