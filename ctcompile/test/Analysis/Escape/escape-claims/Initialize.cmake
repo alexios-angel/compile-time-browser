@@ -66,6 +66,12 @@
   set(_primitive_ushr_error_pc_Early "24")
   set(_primitive_ushr_error_pc_Retained "29")
   set(_primitive_ushr_error_pc_Opaque "11")
+  set(_primitive_mixedstatic_rows "")
+  set(_primitive_mixedstatic_error_rows "")
+  set(_primitive_mixedstatic_literal_pcs "")
+  set(_primitive_mixedstatic_error_pc_Early "24")
+  set(_primitive_mixedstatic_error_pc_Retained "29")
+  set(_primitive_mixedstatic_error_pc_Opaque "11")
   set(_object_bigint_pow_rows "")
   set(_object_bigint_pow_error_rows "")
   set(_object_bigint_pow_literal_pcs "")
@@ -109,6 +115,9 @@
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "primitiveMixedStaticEarly ef3be2df7a0b7d21048156332dbfea4156ae716a2f9ba6280e35a855477b23d6"
+      "primitiveMixedStaticRetained ee20ce6b82c2abe74ca91b3da8640924ff165f3ef2ca7466416521dc5f8020e8"
+      "primitiveMixedStaticOpaque d5494416f08808ff7cd4ab6fe3bc59e4a13e544f1f853ab042500588a6e90799"
       "primitiveUShrEarly b6707f913a7adb73b19c23001c64461b1b32b837060af34b0623305fce69a37a"
       "primitiveUShrRetained 063e0330b399b9f596651c6bf895629bf12471a82f11ea9b1909a5cf4e758d20"
       "primitiveUShrOpaque d43613d400fcf41ca0b00ffa2673f6d32052827fd53d4ddb03e780a1dc95bc53"

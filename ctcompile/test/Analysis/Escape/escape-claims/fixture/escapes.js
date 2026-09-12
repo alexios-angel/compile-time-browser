@@ -445,3 +445,45 @@ if (primitiveUShrNormal[0] !== 4 || typeof primitiveUShrNormal[0] !== "number" |
     primitiveUShrSavedError === primitiveUShrUnknownError ||
     typeof primitiveUShrError.message !== "string" ||
     typeof primitiveUShrSavedError.stack !== "string") throw "BigInt unsigned shift independent TypeError witness";
+
+// --- MIXED STATIC BIGINT: independent TypeError, original dense operands ---
+function primitiveMixedStaticEarly(choice) {
+    var child = {}, items = [child], value, shift;
+    if (choice) { value = 8n; shift = 1; }
+    else { value = 8; shift = 1; }
+    var result = value >> shift;
+    items[0] = result;
+    return items;
+}
+function primitiveMixedStaticRetained(choice) {
+    var child = {}, items = [child], saved = items[0], value, shift;
+    if (choice) { value = 8; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value >> shift;
+    items[0] = result;
+    return saved;
+}
+function primitiveMixedStaticOpaque(value, shift) {
+    var child = {}, items = [child];
+    var result = value >> shift;
+    items[0] = result;
+    return items;
+}
+var primitiveMixedStaticNormal = primitiveMixedStaticEarly(false);
+var primitiveMixedStaticSaved = primitiveMixedStaticRetained(false);
+var primitiveMixedStaticUnknown = primitiveMixedStaticOpaque(8, 1);
+H.push(primitiveMixedStaticNormal); H.push(primitiveMixedStaticSaved); H.push(primitiveMixedStaticUnknown);
+var primitiveMixedStaticError = primitiveUShrCatch(primitiveMixedStaticEarly, true);
+var primitiveMixedStaticSavedError = primitiveUShrCatch(primitiveMixedStaticRetained, true);
+var primitiveMixedStaticUnknownError = primitiveUShrCatch(primitiveMixedStaticOpaque, 8n, 1);
+if (primitiveMixedStaticNormal[0] !== 4 || typeof primitiveMixedStaticNormal[0] !== "number" ||
+    typeof primitiveMixedStaticSaved !== "object" || Array.isArray(primitiveMixedStaticSaved) ||
+    primitiveMixedStaticUnknown[0] !== 4 || typeof primitiveMixedStaticUnknown[0] !== "number" ||
+    !(primitiveMixedStaticError instanceof TypeError) || primitiveMixedStaticError.name !== "TypeError" ||
+    !(primitiveMixedStaticSavedError instanceof TypeError) ||
+    !(primitiveMixedStaticUnknownError instanceof TypeError) ||
+    primitiveMixedStaticError === primitiveMixedStaticSavedError ||
+    primitiveMixedStaticError === primitiveMixedStaticUnknownError ||
+    primitiveMixedStaticSavedError === primitiveMixedStaticUnknownError ||
+    typeof primitiveMixedStaticError.message !== "string" ||
+    typeof primitiveMixedStaticSavedError.stack !== "string") throw "mixed static BigInt independent TypeError witness";

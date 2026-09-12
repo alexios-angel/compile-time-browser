@@ -632,13 +632,36 @@
       "primitiveUShrRetained obj 1 0 1 0 0 thrown:1 pc29 unclaimed"
       "primitiveUShrOpaque obj 1 0 1 0 0 thrown:1 pc11 unclaimed"
   )
-  foreach(_table IN ITEMS literal_pcs rows error_rows)
-    set(_expected "${_expected_primitive_ushr_${_table}}")
-    set(_observed_rows "${_primitive_ushr_${_table}}")
-    list(SORT _expected)
-    list(SORT _observed_rows)
-    if(NOT _observed_rows STREQUAL _expected)
-      message(FATAL_ERROR "BigInt UShr ${_table} mismatch:\nexpected: ${_expected}\nobserved: ${_observed_rows}")
-    endif()
+  set(_expected_primitive_mixedstatic_literal_pcs
+      "primitiveMixedStaticEarly 5 obj"
+      "primitiveMixedStaticEarly 7 arr"
+      "primitiveMixedStaticRetained 6 obj"
+      "primitiveMixedStaticRetained 8 arr"
+      "primitiveMixedStaticOpaque 3 obj"
+      "primitiveMixedStaticOpaque 5 arr"
+  )
+  set(_expected_primitive_mixedstatic_rows
+      "primitiveMixedStaticEarly obj 2 2 0 0 0 - confined pc5"
+      "primitiveMixedStaticEarly arr 2 1 1 0 0 temporaries:1 escapes:passed pc7"
+      "primitiveMixedStaticRetained obj 2 1 1 0 0 temporaries:1 escapes:stored pc6"
+      "primitiveMixedStaticRetained arr 2 2 0 0 0 - escapes:passed pc8"
+      "primitiveMixedStaticOpaque obj 2 2 0 0 0 - escapes:stored pc3"
+      "primitiveMixedStaticOpaque arr 2 1 1 0 0 temporaries:1 escapes:passed pc5"
+  )
+  set(_expected_primitive_mixedstatic_error_rows
+      "primitiveMixedStaticEarly obj 1 0 1 0 0 thrown:1 pc24 unclaimed"
+      "primitiveMixedStaticRetained obj 1 0 1 0 0 thrown:1 pc29 unclaimed"
+      "primitiveMixedStaticOpaque obj 1 0 1 0 0 thrown:1 pc11 unclaimed"
+  )
+  foreach(_family IN ITEMS ushr mixedstatic)
+    foreach(_table IN ITEMS literal_pcs rows error_rows)
+      set(_expected "${_expected_primitive_${_family}_${_table}}")
+      set(_observed_rows "${_primitive_${_family}_${_table}}")
+      list(SORT _expected)
+      list(SORT _observed_rows)
+      if(NOT _observed_rows STREQUAL _expected)
+        message(FATAL_ERROR "BigInt ${_family} ${_table} mismatch:\nexpected: ${_expected}\nobserved: ${_observed_rows}")
+      endif()
+    endforeach()
+    message(STATUS "imported BigInt ${_family}: six literal sites, twelve instances, three retained; three independent Errors and live claims agree")
   endforeach()
-  message(STATUS "imported BigInt UShr: six literal sites, twelve instances, three retained; three independent Errors and live claims agree")

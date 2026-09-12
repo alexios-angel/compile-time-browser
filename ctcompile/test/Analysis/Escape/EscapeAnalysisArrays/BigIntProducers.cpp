@@ -130,17 +130,11 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %big"}) {
                     const bool supported =
+                        form == "binary_static" ||
                         (form == "binary" &&
                          (operation == "concat" || operation == "sub" || operation == "mul" ||
                           operation == "div" || operation == "mod" || operation == "pow")) ||
-                        (operands == "%produced, %big" &&
-                         (form == "binary"
-                              ? operation == "add" || operation == "sub" || operation == "mul" ||
-                                    operation == "div" || operation == "mod" || operation == "pow"
-                              : operation == "add" || operation == "bitand" ||
-                                    operation == "bitor" || operation == "bitxor" ||
-                                    operation == "shl" || operation == "shr" ||
-                                    operation == "ushr"));
+                        (operands == "%produced, %big" && operation == "add");
                     run({.contents = {
                              .what =
                                  "computed BigInt requires an independent binary category proof",
@@ -407,12 +401,11 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             for (const std::string input : {"%zero", "%p", "%x", "%a"}) {
                 run({.contents = {.what = "each BigInt binary operand needs independent provenance",
                                   .body = values + operate(input) + done,
-                                  .failure = !isStatic &&
-                                                     (kind == ctjs::BinaryKind::Sub ||
-                                                      kind == ctjs::BinaryKind::Mul ||
-                                                      kind == ctjs::BinaryKind::Div ||
-                                                      kind == ctjs::BinaryKind::Mod ||
-                                                      kind == ctjs::BinaryKind::Pow) &&
+                                  .failure = (isStatic || kind == ctjs::BinaryKind::Sub ||
+                                              kind == ctjs::BinaryKind::Mul ||
+                                              kind == ctjs::BinaryKind::Div ||
+                                              kind == ctjs::BinaryKind::Mod ||
+                                              kind == ctjs::BinaryKind::Pow) &&
                                                      input == "%zero"
                                                  ? ArrayContentsFailure::None
                                              : isStatic && input == "%p"
@@ -427,13 +420,13 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                          .what = "mixed primitive arithmetic needs an independent operation proof",
                          .body = values + "  %input = ctjs.constant " + attribute + "\n" +
                                  operate("%input") + done,
-                         .failure = !isStatic && (kind == ctjs::BinaryKind::Sub ||
-                                                  kind == ctjs::BinaryKind::Mul ||
-                                                  kind == ctjs::BinaryKind::Div ||
-                                                  kind == ctjs::BinaryKind::Mod ||
-                                                  kind == ctjs::BinaryKind::Pow ||
-                                                  (kind == ctjs::BinaryKind::Add &&
-                                                   attribute == "#ctjs.string<\"2\">"))
+                         .failure = isStatic || kind == ctjs::BinaryKind::Sub ||
+                                            kind == ctjs::BinaryKind::Mul ||
+                                            kind == ctjs::BinaryKind::Div ||
+                                            kind == ctjs::BinaryKind::Mod ||
+                                            kind == ctjs::BinaryKind::Pow ||
+                                            (kind == ctjs::BinaryKind::Add &&
+                                             attribute == "#ctjs.string<\"2\">")
                                         ? ArrayContentsFailure::None
                                         : ArrayContentsFailure::UnsupportedOperation,
                          .arrays = "a:[x]",
@@ -509,7 +502,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                              .body = values + produce + "  %next = ctjs." + consumerForm + " " +
                                      operation + " " + operands +
                                      " {storage_test_id = \"next\"}\n  ctjs.return %next\n",
-                             .failure = (supported && operands == "%produced, %rhs") ||
+                             .failure = consumerForm == "binary_static" ||
+                                                (supported && operands == "%produced, %rhs") ||
                                                 (consumerForm == "binary" &&
                                                  (operation == "concat" || operation == "sub" ||
                                                   operation == "mul" || operation == "div" ||
@@ -751,10 +745,9 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 auto constant = saved.getDefiningOp<ctjs::ConstantOp>();
                 const auto oldValue = constant.getValue();
                 constant.setValueAttr(ctjs::NumberAttr::get(&context, 0));
-                inspect(!isStatic &&
-                                (kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
-                                 kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
-                                 kind == ctjs::BinaryKind::Pow)
+                inspect(isStatic || kind == ctjs::BinaryKind::Sub ||
+                                kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Div ||
+                                kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 constant.setValueAttr(oldValue);
