@@ -479,14 +479,33 @@ int main() {
     accepted("var x = 08;");
 
     // ================================================================
-    // 17. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 17. STRICT MODE CODE - 11.2.2, 13.1.1, 13.5.1.1, 12.9.3.1, 15.2.1
     // ================================================================
-    // Each of these is an early error in STRICT mode and legal sloppy
-    // JavaScript, and this engine has no strict mode. They are here so that
-    // adding one is a deliberate change to this file rather than a surprise.
+    // Legal sloppy JavaScript, an early error once a directive, a class body
+    // or a module makes the code strict. The sloppy form of each stays
+    // accepted, which is what keeps this a deliberate list.
     accepted("var x = 1; delete x;");
     accepted("var eval; eval = 1;");
     accepted("var args = function () { arguments = 1; };");
+    accepted("function f(a, a) {} var o = 010; var n8 = 08;");
+    refused("'use strict'; var x = 1; delete x;");
+    refused("'use strict'; var eval;");
+    refused("'use strict'; eval = 1;");
+    refused("'use strict'; arguments++;");
+    refused("\"use strict\"; function f(a, a) {}");
+    refused("'use strict'; var package = 1;");
+    refused("'use strict'; var n = 010;");
+    refused("'use strict'; var n = 08;");
+    refused("'use strict'; try {} catch (eval) {}");
+    refused("'use strict'; var f = function eval() {};");
+    refused("class C { m() { var eval; } }");
+    refused("function g() { 'use strict'; delete g; }");
+    // Reading `eval`/`arguments` is fine; a nested function inherits.
+    accepted("'use strict'; var v = eval; function f() { return arguments; }");
+    accepted("'use strict'; var n = 0x10; var m = 0.5; var big = 0n;");
+    refused("'use strict'; (function () { function inner(a, a) {} })();");
+    // A directive is only one at the top of the body.
+    accepted("var before = 1; 'use strict'; function f(a, a) {}");
 
     REPORT("early_errors");
 }

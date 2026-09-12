@@ -29,6 +29,7 @@
 
 #include <array>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -100,11 +101,19 @@ struct frame {
     // constructor may not Contain a SuperCall, and a class with no `extends`
     // may not either.
     bool super_call_ok = false;
+    // STRICT MODE CODE (11.2.2): a "use strict" directive here or in an
+    // enclosing frame, a module, or a class body. The rules it turns on are
+    // the ones below that say so - a binding or an assignment target named
+    // `eval`/`arguments`, `yield` and the future reserved words as
+    // identifiers, a duplicate in a simple parameter list, `with`, `delete`
+    // of a plain name, a legacy octal literal.
+    bool strict = false;
 };
 
 class checker {
 public:
-    checker(const vp::ast & tree, std::string_view source) : ast_(tree), source_(source) {}
+    checker(const vp::ast & tree, std::string_view source, bool strict_root)
+        : ast_(tree), source_(source), strict_root_(strict_root) {}
 
     void run();
 
@@ -173,6 +182,16 @@ private:
 
     // --- defined in scopes.cpp ------------------------------------------------------------
     void bound_names(std::int32_t idx, binding_kind how, std::vector<binding> & out) const;
+    // --- strict mode -------------------------------------------------------
+    [[nodiscard]] bool strict() const { return !frames_.empty() && frames_.back().strict; }
+    // Whether `body` (a block or a program) opens with a "use strict"
+    // directive (11.2.1).
+    [[nodiscard]] bool has_use_strict_directive(std::int32_t body) const;
+    // 13.1.1: in strict code neither a binding nor an assignment target may
+    // be `eval` or `arguments`, and `yield`, `let`, `static`, `implements`,
+    // `interface`, `package`, `private`, `protected`, `public` are reserved.
+    void check_strict_binding(std::string_view name, std::int32_t node);
+    void check_strict_bindings(const std::vector<binding> & names);
     void lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
                        std::vector<binding> & out) const;
     [[nodiscard]] static const char * kind_word(binding_kind how);
@@ -264,6 +283,8 @@ private:
     std::string_view source_;
     int depth_ = 0;
     std::vector<frame> frames_;
+    bool strict_root_ = false;    // a module: strict code from the first line
+    std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
     std::optional<early_error> found_;
 };
 

@@ -112,7 +112,10 @@ void checker::check_assignment(std::int32_t idx) {
     // reinterpreted as a destructuring pattern (13.15.5). No other
     // operator does: `[a] += b` is an error.
     if (n.text == "=" && destructuring(target)) { return; }
-    if (simple_target(n.a)) { return; }
+    if (simple_target(n.a)) {
+        if (target == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
+        return;
+    }
     report("the left side of `" + std::string{n.text} +
                "` is not something a value can be "
                "assigned to",
@@ -121,7 +124,10 @@ void checker::check_assignment(std::int32_t idx) {
 
 void checker::check_update(std::int32_t idx) {
     const vp::node & n = at(idx);
-    if (simple_target(n.a)) { return; }
+    if (simple_target(n.a)) {
+        if (at(n.a).kind == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
+        return;
+    }
     report("the operand of `" + std::string{n.text} +
                "` is not something a value can be assigned to",
            n.a >= 0 ? n.a : idx);
@@ -223,6 +229,12 @@ void checker::check_proto_duplicates(std::int32_t idx) {
 void checker::check_number(std::int32_t idx) {
     const std::string_view text = at(idx).text;
     if (text.empty()) { return; }
+    // 12.9.3.1: a LegacyOctalIntegerLiteral (`010`) and a NonOctalDecimal-
+    // IntegerLiteral (`08`) are SyntaxErrors in strict code.
+    if (strict() && text.size() >= 2 && text[0] == '0' && text[1] >= '0' && text[1] <= '9') {
+        report("`" + std::string{text} + "` is not allowed in strict mode code", idx);
+        return;
+    }
     const bool bigint = text.back() == 'n';
     const std::string_view body = bigint ? text.substr(0, text.size() - 1) : text;
     if (body.empty()) {
@@ -314,6 +326,11 @@ void checker::check_delete(std::int32_t operand) {
     if ((n.kind == nk::member || n.kind == nk::opt_member) && n.text.starts_with('#')) {
         report("`delete` of the private member " + quoted(n.text) + " is not allowed", operand);
     }
+    // 13.5.1.1: `delete x` of a plain name is a SyntaxError in strict code.
+    if (n.kind == nk::ident && strict()) {
+        report("`delete` of the name " + quoted(n.text) + " is not allowed in strict mode code",
+               operand);
+    }
 }
 
 // The frame `new.target` and `super` are answered against: the nearest one
@@ -385,6 +402,14 @@ void checker::walk_expression(std::int32_t idx) {
         return;
 
     case nk::num: check_number(idx); return;
+
+    // 13.1.1: in strict code `yield` and the future reserved words are not
+    // identifiers even as a reference (`eval`/`arguments` may be READ).
+    case nk::ident:
+        if (strict() && n.text != "eval" && n.text != "arguments") {
+            check_strict_binding(n.text, idx);
+        }
+        return;
 
     case nk::new_target:
         // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`

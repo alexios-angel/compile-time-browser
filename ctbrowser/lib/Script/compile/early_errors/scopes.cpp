@@ -119,8 +119,10 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
         }
     }
 
+    check_strict_bindings(lex);
     std::vector<binding> vars;
     for (const std::int32_t s : stmts) { walk_statement(s, kind, vars); }
+    check_strict_bindings(vars);
 
     if (!lex.empty() && !vars.empty()) {
         std::unordered_map<std::string_view, std::size_t> lexical;
@@ -149,6 +151,37 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
         }
     }
     return vars;
+}
+
+bool checker::has_use_strict_directive(std::int32_t body) const {
+    for (const std::int32_t st : kids(at(body))) {
+        const vp::node & stmt = at(st);
+        if (stmt.kind != nk::expr_stmt || stmt.a < 0) { return false; }
+        const vp::node & e = at(stmt.a);
+        if (e.kind != nk::str) { return false; }
+        if (e.text == "\"use strict\"" || e.text == "'use strict'") { return true; }
+    }
+    return false;
+}
+
+void checker::check_strict_binding(std::string_view name, std::int32_t node) {
+    if (!strict()) { return; }
+    if (name == "eval" || name == "arguments") {
+        report(quoted(name) + " may not be bound or assigned in strict mode code", node);
+        return;
+    }
+    for (const std::string_view reserved : {"yield", "let", "static", "implements", "interface",
+                                            "package", "private", "protected", "public"}) {
+        if (name == reserved) {
+            report(quoted(name) + " is a reserved word in strict mode code", node);
+            return;
+        }
+    }
+}
+
+void checker::check_strict_bindings(const std::vector<binding> & names) {
+    if (!strict()) { return; }
+    for (const binding & b : names) { check_strict_binding(b.name, b.node); }
 }
 
 } // namespace ctbrowser::script::detail::early

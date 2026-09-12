@@ -15,9 +15,10 @@ namespace ctbrowser::script::detail {
 namespace early {
 
 void checker::run() {
-    frames_.push_back(frame{frame_kind::script, {}, {}, 0, 0, false});
+    frames_.push_back(frame{frame_kind::script, {}, {}, 0, 0, false, false});
     const vp::node & root = at(ast_.root);
     if (root.kind != nk::program) { return; }
+    frames_.back().strict = strict_root_ || has_use_strict_directive(ast_.root);
     (void)check_list(kids(root), list_kind::script, nullptr, "");
     frames_.pop_back();
 }
@@ -26,9 +27,10 @@ void checker::run() {
 
 using early::checker;
 
-std::optional<early_error> find_early_error(const ctjs::vp::ast & tree, std::string_view source) {
+std::optional<early_error> find_early_error(const ctjs::vp::ast & tree, std::string_view source,
+                                            bool strict_root) {
     if (!tree.ok || tree.root < 0) { return std::nullopt; }
-    checker walk{tree, source};
+    checker walk{tree, source, strict_root};
     walk.run();
     return walk.result();
 }

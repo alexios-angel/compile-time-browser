@@ -37,8 +37,12 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
     // duplicate in a SIMPLE list is an error only in strict mode, which
     // this engine does not have - so `function f(a, a) {}` is accepted, as
     // sloppy JavaScript accepts it.
-    const bool must_be_unique =
-        what == frame_kind::arrow || what == frame_kind::method || !simple_parameters(params);
+    // Strictness is decided here, before the frame exists: the enclosing
+    // frame's, a class body's, or this body's own directive.
+    const bool strict_body = strict() || class_depth_ > 0 ||
+                             (at(n.a).kind == nk::block && has_use_strict_directive(n.a));
+    const bool must_be_unique = what == frame_kind::arrow || what == frame_kind::method ||
+                                strict_body || !simple_parameters(params);
     if (must_be_unique && names.size() > 1) {
         std::unordered_set<std::string_view> seen;
         seen.reserve(names.size());
@@ -59,7 +63,9 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         }
     }
 
-    frames_.push_back(frame{what, {}, {}, 0, 0, super_call_ok});
+    frames_.push_back(frame{what, {}, {}, 0, 0, super_call_ok, strict_body});
+    check_strict_bindings(names);
+    if (strict_body && n.kind == nk::func_expr) { check_strict_binding(n.text, idx); }
     for (const std::int32_t p : params) {
         const vp::node & param = at(p);
         if (param.b >= 0) { walk_pattern(param.b); }
@@ -81,6 +87,12 @@ void checker::check_class(std::int32_t idx) {
     const vp::node & n = at(idx);
     walk_expression(n.a); // `extends <expr>`
     const bool derived = n.a >= 0;
+    // 15.7.1: all parts of a class are strict mode code.
+    ++class_depth_;
+    const struct leave {
+        std::size_t & depth;
+        ~leave() { --depth; }
+    } leaving{class_depth_};
 
     std::vector<private_name> privates;
     std::size_t constructors = 0;
@@ -156,7 +168,7 @@ void checker::check_class(std::int32_t idx) {
                 is_method && !is_static && !computed && member.text == "constructor";
             check_function(member.b, frame_kind::method, derived && is_constructor);
         } else {
-            frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0, false});
+            frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0, false, true});
             walk_expression(member.b);
             frames_.pop_back();
         }

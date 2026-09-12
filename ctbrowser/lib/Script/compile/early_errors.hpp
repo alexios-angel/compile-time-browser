@@ -53,7 +53,10 @@ struct early_error {
 //
 // `source` must be the buffer the tree was parsed from - not a copy of it - or
 // the offsets are meaningless and are reported as `nowhere` instead of wrong.
+// `strict_root` says the whole program is strict code before any directive
+// is read - a module (16.2.1).
 [[nodiscard]] std::optional<early_error> find_early_error(const ctjs::vp::ast & tree,
-                                                          std::string_view source);
+                                                          std::string_view source,
+                                                          bool strict_root = false);
 
 } // namespace ctbrowser::script::detail

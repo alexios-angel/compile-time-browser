@@ -316,6 +316,7 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
         std::vector<binding> parameter;
         if (!clause.text.empty()) {
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
+            check_strict_binding(clause.text, n.b);
         }
         // 14.15.1: the catch parameter may not be redeclared lexically in
         // the block. A `var` of the same name IS allowed in sloppy mode
