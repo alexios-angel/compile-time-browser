@@ -1920,6 +1920,9 @@ public:
         return now_ms_ + 0.005 * static_cast<double>(time_reads_++);
     }
     std::uint64_t time_reads_ = 0;
+    // `contentWindow`/`contentDocument` on HTMLIFrameElement.prototype, which
+    // build a not-yet-reconciled frame on demand. See frames.cpp.
+    void install_frame_accessors(context & cx);
     // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
     // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
     // LEFT IT, which before the first frame is no layout at all. The browser

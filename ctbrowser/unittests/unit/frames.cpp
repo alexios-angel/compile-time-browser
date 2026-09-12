@@ -210,9 +210,22 @@ void test_a_named_frame_is_its_window_on_the_window() {
        "true,inner,undefined");
 }
 
+void test_an_inserted_frame_has_its_window_at_once() {
+    // event-global-extra.window.js: `appendChild(iframe).contentWindow` in the
+    // same statement, before any tick has reconciled the frames.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var w = document.body.appendChild(document.createElement('iframe'))"
+                   ".contentWindow; console.log(w.document.body.nodeName + ',' +"
+                   " (w.frameElement === document.querySelector('iframe')));"
+                   "</script></body></html>");
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"BODY,true"});
+}
+
 } // namespace
 
 int main() {
+    test_an_inserted_frame_has_its_window_at_once();
     test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
