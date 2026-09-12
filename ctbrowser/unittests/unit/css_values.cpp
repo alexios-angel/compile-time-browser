@@ -174,7 +174,7 @@ void test_what_a_math_function_may_not_be() {
     // time anything here sees it, so it belongs in the serialisation -
     // `calc-complex-unresolved-serialize` asks for it on all six of its values.
     ok("width", "calc(1px", "calc(1px)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
     // `calc-invalid-parsing` are one assertion per line and this is what they
@@ -397,7 +397,7 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // A comparison that is not ALONE inside the calc keeps it too: the root is
     // then a sum, not a Clamp.
     ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(2 * min(1em, 21px))"); // §10.13: numbers first
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot
