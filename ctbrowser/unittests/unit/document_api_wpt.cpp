@@ -166,7 +166,7 @@ void test_adopt_node_within_one_document_removes_and_returns() {
     is("(function () { var doc = document.implementation.createHTMLDocument('T');"
        " var a = document.getElementById('a'); var r = doc.adoptNode(a);"
        " return (r === a) + ',' + (a.ownerDocument === doc) + ',' + a.parentNode + ',' +"
-       " document.getElementById('a') + ',' + a.id; })()",
+       " document.getElementById('a') + ',' + a.getAttribute('id'); })()",
        "true,true,null,null,a");
     // And inserting another document's node adopts it on the way in, with its
     // wrapper following it: dom/common.js appends an XML document's CDATA

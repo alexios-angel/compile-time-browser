@@ -839,6 +839,12 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (auto * mine = document_object();
             mine != nullptr && fresh.document_object() != nullptr) {
             fresh.document_object()->prototype = mine->prototype;
+            // Written once at install, from flags that have just changed.
+            for (const char * name : {"contentType", "compatMode"}) {
+                if (const value * held = mine->find(name)) {
+                    fresh.document_object()->set(name, *held);
+                }
+            }
         }
         if (!deep) { return made; }
         std::vector<node_id> kids;
