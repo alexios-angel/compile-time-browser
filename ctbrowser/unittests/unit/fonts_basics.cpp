@@ -13,8 +13,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -25,20 +23,6 @@ using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 
 namespace {
-
-// Only the glyph-cache test reads a face off disk, and that test compiles
-// away without SDL3_ttf - so this is unused, not dead, on such a build.
-[[maybe_unused, nodiscard]] std::vector<std::byte> read_font(const char * path) {
-    std::ifstream in{path, std::ios::binary};
-    std::vector<std::byte> out;
-    if (!in) { return out; }
-    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
-    out.resize(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
 
 // Every text command the page draws, in order.
 [[nodiscard]] std::vector<paint::paint_command> text_commands(browser & page) {
@@ -475,8 +459,12 @@ void test_the_glyph_cache_is_thread_safe() {
     if (!raster::ttf_available()) { return; }
     raster::ttf_backend fonts;
     check(fonts.ok(), "SDL3_ttf started");
-    const std::vector<std::byte> regular = read_font("resources/fonts/FiraSans-Regular.ttf");
-    const std::vector<std::byte> bold = read_font("resources/fonts/FiraSans-Bold.ttf");
+    // Off disk through the registry, which probes the working directory the
+    // way a page's <link> would.
+    const std::vector<std::byte> regular =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Regular.ttf");
+    const std::vector<std::byte> bold =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Bold.ttf");
     check(!regular.empty(), "the vendored face is readable");
     check(fonts.add_face("Fira Sans", false, false, regular), "the face loads");
     check(fonts.add_face("Fira Sans", true, false, bold), "and its bold");

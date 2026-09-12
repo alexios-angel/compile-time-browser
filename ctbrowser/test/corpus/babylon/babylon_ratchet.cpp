@@ -19,9 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -82,14 +80,6 @@ struct measurement {
         if (!stopped) { level = at; }
     }
 };
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 [[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
     for (std::size_t at = 0; at < text.size();) {

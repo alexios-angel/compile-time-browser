@@ -24,8 +24,6 @@
 
 #include <cmath>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,14 +37,6 @@ namespace {
 using ctbrowser::input_event;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 [[nodiscard]] std::string ask(browser & page, const char * expression) {
     const std::size_t before = page.bindings().console_output().size();

@@ -29,8 +29,6 @@
 
 #include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,14 +86,6 @@ struct measurement {
         if (!stopped) { level = at; }
     }
 };
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 class stopwatch {
 public:

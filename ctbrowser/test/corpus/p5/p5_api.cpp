@@ -29,21 +29,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 // The probe result, as the runner in the JS reports it. Parsed by hand rather
 // than through the JSON builtin: this is the test harness, and a harness that

@@ -4,7 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <version>
@@ -36,6 +39,17 @@ inline void check(bool ok, std::string_view what) {
         std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
         ++ctbrowser_test_failures;
     }
+}
+
+// A file as bytes-in-a-string, or empty when it is not there. Every corpus
+// test slurps its bundle and its record this way; ctest runs from ctbrowser/,
+// so relative paths name the checkout. There were 14 copies of this.
+[[nodiscard]] inline std::string read_file(const std::filesystem::path & path) {
+    std::ifstream in{path, std::ios::binary};
+    if (!in) { return {}; }
+    std::ostringstream all;
+    all << in.rdbuf();
+    return all.str();
 }
 
 namespace ctbrowser_test {

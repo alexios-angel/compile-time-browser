@@ -19,7 +19,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
@@ -30,14 +29,6 @@
 #include "check.hpp"
 
 namespace {
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 struct outcome {
     std::vector<std::string> passed;

@@ -28,9 +28,7 @@
 #include "check.hpp"
 
 #include <cstdio>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,14 +80,6 @@ struct measurement {
         if (!stopped) { level = at; }
     }
 };
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
 
 // The recorded floor: `key=value` lines, the same shape the other three use.
 [[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
