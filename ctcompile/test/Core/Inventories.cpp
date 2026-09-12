@@ -340,10 +340,8 @@ int main() {
     }
 
     if (failures == 0) {
-        std::printf("ok inventories (%zu opcodes, %zu call paths, %zu gc roots, "
-                    "%zu abi helpers over %zu opcodes)\n",
-                    std::size(table), std::size(call_paths), std::size(gc_roots),
-                    std::size(helpers), std::size(covers));
+        std::printf("ok inventories (%zu opcodes, %zu abi helpers over %zu opcodes)\n",
+                    std::size(table), std::size(helpers), std::size(covers));
     }
     return failures == 0 ? 0 : 1;
 }

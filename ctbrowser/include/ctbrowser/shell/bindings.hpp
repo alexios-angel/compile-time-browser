@@ -1092,6 +1092,10 @@ public:
     // query exactly as well.
     void observe_style_engine(style::engine & engine) { selector_engine_ = &engine; }
 
+    // getElementById's walk, which the browser's fragment scroll and focus
+    // navigation share rather than keeping a second one.
+    [[nodiscard]] node_id find_by_id(const std::string & want);
+
 private:
     [[nodiscard]] style::engine & selector_engine();
     style::engine * selector_engine_ = nullptr;
@@ -1501,8 +1505,6 @@ private:
     [[nodiscard]] value value_of_wrapper(node_id id) const;
 
     // --- lookups ----------------------------------------------------------
-
-    [[nodiscard]] node_id find_by_id(const std::string & want);
 
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
     // Every element with this tag, in document order; "*" means all of them.
