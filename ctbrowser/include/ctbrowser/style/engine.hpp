@@ -566,37 +566,14 @@ public:
     // computed, so a relative unit never compounds down the tree.
     [[nodiscard]] static bool inherits(std::string_view property) {
         if (property.starts_with("--")) { return true; }
-        static constexpr std::string_view names[] = {"border-collapse",
-                                                     "border-spacing",
-                                                     "caption-side",
-                                                     "color",
-                                                     "cursor",
-                                                     "direction",
-                                                     "empty-cells",
-                                                     "font-family",
-                                                     "font-feature-settings",
-                                                     "font-palette",
-                                                     "font-size",
-                                                     "font-size-adjust",
-                                                     "font-style",
-                                                     "font-variant",
-                                                     "font-variant-alternates",
-                                                     "font-variation-settings",
-                                                     "font-weight",
-                                                     "font-width",
-                                                     "letter-spacing",
-                                                     "line-height",
-                                                     "list-style",
-                                                     "list-style-position",
-                                                     "list-style-type",
-                                                     "text-align",
-                                                     "text-decoration",
-                                                     "text-indent",
-                                                     "text-transform",
-                                                     "visibility",
-                                                     "white-space",
-                                                     "word-spacing",
-                                                     "writing-mode"};
+        static constexpr std::string_view names[] = {
+            "border-collapse", "border-spacing", "caption-side",    "color",
+            "cursor",          "direction",      "empty-cells",     "font-family",
+            "font-size",       "font-style",     "font-variant",    "font-weight",
+            "letter-spacing",  "line-height",    "list-style",      "list-style-position",
+            "list-style-type", "text-align",     "text-decoration", "text-indent",
+            "text-transform",  "visibility",     "white-space",     "word-spacing",
+            "writing-mode"};
         for (const std::string_view name : names) {
             if (name == property) { return true; }
         }
