@@ -88,16 +88,6 @@ inline bool near(float a, float b) {
     return std::fabs(a - b) < 0.01f;
 }
 
-// CHECK() from check.hpp prints the expression that failed. Layout failures
-// read far better as prose ("second block stacks below the first") than as a
-// float comparison, so these assertions carry a message instead.
-inline void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 inline void expect_near(float got, float want, std::string_view what) {
     if (!near(got, want)) {
         std::printf("FAIL %-44s got %.3f want %.3f\n", std::string{what}.c_str(),

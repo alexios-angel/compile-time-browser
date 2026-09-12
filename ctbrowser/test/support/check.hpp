@@ -6,6 +6,7 @@
 #include <exception>
 #include <format>
 #include <string>
+#include <string_view>
 #include <version>
 
 #include <csignal>
@@ -25,6 +26,17 @@
 // Same shape as the previous engine's tests: a non-zero exit fails ctest, and every failure
 // prints its own file:line so a CI log says what broke without a debugger.
 inline int ctbrowser_test_failures = 0;
+
+// CHECK() below prints the expression that failed. Layout and page failures
+// read far better as prose ("second block stacks below the first") than as a
+// float comparison or a stringified call, so most of the suite asserts with a
+// sentence instead. There were 22 file-local copies of this before it moved here.
+inline void check(bool ok, std::string_view what) {
+    if (!ok) {
+        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
+        ++ctbrowser_test_failures;
+    }
+}
 
 namespace ctbrowser_test {
 

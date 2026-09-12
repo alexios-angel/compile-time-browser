@@ -22,13 +22,6 @@
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 [[nodiscard]] std::string read(const std::string & path) {
     std::ifstream in{path};
     if (!in) { return {}; }

@@ -21,13 +21,6 @@ namespace ctbrowser_test {
 
 using ctbrowser::shell::browser;
 
-inline void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // A file as bytes, for the asset registry. p5.js is 4.4 MB on disk and the
 // registry is what a `<script src>` resolves against, so the test loads it the
 // same way a page would rather than inlining it.

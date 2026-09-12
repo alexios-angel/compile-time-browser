@@ -39,13 +39,6 @@ using ctbrowser::script::value;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++ctbrowser_test_failures;
-    }
-}
-
 std::size_t body_calls = 0;
 
 // A COMPILED BODY THAT ALLOCATES, KEEPS THE RESULT ACROSS A SAFEPOINT, AND

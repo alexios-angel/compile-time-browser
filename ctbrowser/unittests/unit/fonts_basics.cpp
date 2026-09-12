@@ -26,13 +26,6 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // Only the glyph-cache test reads a face off disk, and that test compiles
 // away without SDL3_ttf - so this is unused, not dead, on such a build.
 [[maybe_unused, nodiscard]] std::vector<std::byte> read_font(const char * path) {

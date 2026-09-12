@@ -82,13 +82,6 @@ struct fixture {
     }
 };
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 void expect_near(float got, float want, std::string_view what) {
     if (std::fabs(got - want) >= 0.01f) {
         std::printf("FAIL %-56s got %.3f want %.3f\n", std::string{what}.c_str(),

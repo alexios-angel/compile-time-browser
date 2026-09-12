@@ -38,7 +38,6 @@ using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
 // Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
 using ctbrowser_test::box_of;
-using ctbrowser_test::check;
 using ctbrowser_test::commands;
 using ctbrowser_test::draws_text;
 using ctbrowser_test::find_id;

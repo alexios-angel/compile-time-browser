@@ -27,13 +27,6 @@ using ctbrowser::shell::svg_natural;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // A solid red square filling its viewBox, so any pixel inside is the same
 // colour and the assertions do not depend on where they sample.
 constexpr std::string_view red_square =

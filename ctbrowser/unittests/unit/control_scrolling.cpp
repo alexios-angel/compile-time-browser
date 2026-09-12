@@ -28,7 +28,6 @@ using ctbrowser::shell::input_event;
 using ctbrowser_test::box_of;
 using ctbrowser_test::caret_bars;
 using ctbrowser_test::caret_of;
-using ctbrowser_test::check;
 using ctbrowser_test::click;
 using ctbrowser_test::draws_text;
 using ctbrowser_test::find_id;

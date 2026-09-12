@@ -40,16 +40,6 @@ using ctbrowser::input_event;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 
-// The same one-line helper the other page-driving tests keep locally: check.hpp
-// gives CHECK(expr), and these assertions want a sentence rather than an
-// expression printed back.
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 [[nodiscard]] std::string read_file(const std::string & path) {
     std::ifstream in{path, std::ios::binary};
     if (!in) { return {}; }

@@ -48,7 +48,6 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-using ctbrowser_test::check;
 using ctbrowser_test::log_of;
 
 namespace {

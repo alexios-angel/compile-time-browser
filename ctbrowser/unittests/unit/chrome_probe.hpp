@@ -25,13 +25,6 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::input_event;
 
-inline void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 [[nodiscard]] inline std::vector<paint::paint_command> commands(browser & page) {
     std::vector<paint::paint_command> out;
     for (const auto & layer : page.layers().layers) {

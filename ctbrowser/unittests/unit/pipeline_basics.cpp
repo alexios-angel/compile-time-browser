@@ -27,13 +27,6 @@ using ctbrowser::paint::recorder;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 struct page {
     atom_table atoms;
     document doc{atoms};
