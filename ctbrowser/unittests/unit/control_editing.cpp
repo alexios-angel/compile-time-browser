@@ -91,7 +91,7 @@ void test_a_control_draws_in_the_face_it_measures() {
         if (c.op == paint::paint_op::text_run && c.source == find_id(page, "t")) {
             drawn = c.text;
             text_x = c.bounds.x;
-            drawn_face = layout::text_face{c.face.family, c.face.bold, c.face.italic};
+            drawn_face = c.face;
         }
     }
     check(drawn == "Hello world", "the value is drawn");

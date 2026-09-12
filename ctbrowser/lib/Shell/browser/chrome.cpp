@@ -79,7 +79,7 @@ void browser::record_select_popup() {
                   font_size_of(select_open_),
                   options[i] == chosen ? color{ctbrowser::style::ua_widget_mark}
                                        : color{0xFF000000U},
-                  select_open_, paint_face_of(select_open_));
+                  select_open_, face_of(select_open_));
     }
     // A frame last, so it is not painted over by the rows.
     const color frame{ctbrowser::style::ua_widget_frame};
@@ -204,11 +204,6 @@ color browser::text_colour(const ctbrowser::style::computed_style_ptr & style) {
 ctbrowser::layout::text_face browser::face_of(node_id id) const {
     const layout::box_node * found = find_box(boxes_, id);
     return found == nullptr ? ctbrowser::layout::text_face{} : found->face;
-}
-
-ctbrowser::paint::font_face browser::paint_face_of(node_id id) const {
-    const ctbrowser::layout::text_face face = face_of(id);
-    return ctbrowser::paint::font_face{face.family, face.bold, face.italic};
 }
 
 float browser::font_size_of(node_id id) const {

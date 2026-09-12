@@ -771,7 +771,7 @@ private:
                 const float size = font_size_of(id);
                 into.text(rect{content.x, box.y + baseline_inset(box, size),
                                std::max(0.0f, content.width - 20), size * 1.25f},
-                          label, size, control_text_colour(id, style), id, paint_face_of(id));
+                          label, size, control_text_colour(id, style), id, face_of(id));
             }
             // The drop-down arrow, in the gutter the intrinsic width reserves.
             const float arrow = 4;
@@ -838,7 +838,7 @@ private:
         const rect inner = content_box_of(id, box);
         const float x = inner.x + std::max(0.0f, (inner.width - width) / 2);
         into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
-                  label, size, control_text_colour(id, style), id, paint_face_of(id));
+                  label, size, control_text_colour(id, style), id, face_of(id));
     }
 
     // Where a single line of text sits inside a control: vertically centred on
@@ -1146,7 +1146,7 @@ private:
         const rect inner = geometry.inner;
         const float size = geometry.size;
         const float line_height = geometry.line_height;
-        const ctbrowser::paint::font_face face = paint_face_of(id);
+        const ctbrowser::paint::font_face face = face_of(id);
         // MEASURED WITH THE FONT THAT DRAWS IT, and with the text that IS
         // drawn - a password's bullets are wider than its letters, so measuring
         // the letters puts the caret inside the bullets.
@@ -1300,15 +1300,11 @@ private:
     // with. Measuring a caret position with a different font from the one that
     // drew the text is how the caret ends up a character or two past the end of
     // what you typed.
-    [[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const;
-
-    // The same face, as the paint layer names it. The two types are separate on
-    // purpose - layout may not import paint - so the conversion is explicit,
-    // and every control's text MUST go through it: drawing a control's text
+    // Every control's text MUST draw with it too: drawing a control's text
     // with the default face while measuring the caret with the element's own
     // is a caret that drifts further right with every character typed. A
     // textarea is monospace by UA rule and was drawn in the default serif.
-    [[nodiscard]] ctbrowser::paint::font_face paint_face_of(node_id id) const;
+    [[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const;
 
     [[nodiscard]] float font_size_of(node_id id) const;
     [[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at,

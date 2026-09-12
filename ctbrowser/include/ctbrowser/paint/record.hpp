@@ -200,9 +200,7 @@ private:
             float size = 16;
             if (f.box != nullptr) {
                 size = f.box->font_size;
-                face.family = f.box->face.family;
-                face.bold = f.box->face.bold;
-                face.italic = f.box->face.italic;
+                face = f.box->face;
                 // Underline wins when a page asks for both, which is what a
                 // browser does and what `text-decoration: underline
                 // line-through` most often means in practice.

@@ -131,8 +131,8 @@ landed 2026-07-28 — see below.)
 was called without a face, so every control's text came out in the default
 serif while the caret was measured with the element's own — and a textarea is
 monospace by UA rule. The caret ran ahead by the difference on every character,
-which reads as a gap that grows as you type. `paint_face_of()` is the
-conversion and every control text draw goes through it.
+which reads as a gap that grows as you type. `face_of()` is the face (it is
+paint's type too) and every control text draw goes through it.
 
 **A field's geometry lives in ONE place** (`layout_of_field`): the inset, the
 line height, and where each line begins in the value. The painter draws from it

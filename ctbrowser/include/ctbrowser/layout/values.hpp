@@ -28,10 +28,10 @@ namespace ctbrowser::layout {
 // tree and the fragment tree need it. Putting it with the fragments made :box
 // import :fragment, which imports :box - a cycle the module system rejects
 // outright rather than letting it become a subtle build-order problem.
-// The face a run is measured in. Identical in shape to paint::font_face and
-// deliberately NOT that type: :values depends on nothing, and layout importing
-// the paint module to name a struct would invert the dependency the whole
-// pipeline is built on. The recorder converts.
+// The face a run is measured in, and the one it is drawn in: paint::font_face
+// is an alias of it. It lives HERE because values.hpp depends on nothing, and
+// layout naming a paint type would invert the dependency the whole pipeline is
+// built on; paint naming a layout type is the direction the pipeline already runs.
 struct text_face {
     std::string family; // "" = the backend's default
     bool bold = false;

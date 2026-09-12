@@ -11,6 +11,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/layout/values.hpp>
 
 // The display list: what to draw, recorded once and then never changed.
 //
@@ -83,14 +84,10 @@ struct bitmap {
 // `family` is the resolved name, not the CSS list - "Fira Sans", not
 // "Fira Sans, Helvetica, sans-serif". Choosing among the alternatives is
 // layout's job, and doing it once there rather than per tile is the difference
-// between resolving a font list once and resolving it for every glyph.
-struct font_face {
-    std::string family; // "" = whatever the backend calls its default
-    bool bold = false;
-    bool italic = false;
-
-    [[nodiscard]] friend bool operator==(const font_face &, const font_face &) = default;
-};
+// between resolving a font list once and resolving it for every glyph. It is
+// layout's type: paint already sits above layout, so naming it costs nothing,
+// and a second struct of the same three fields only bought a hand conversion.
+using font_face = layout::text_face;
 
 enum class text_decoration : std::uint8_t {
     none,
