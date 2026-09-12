@@ -119,7 +119,10 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
-    default: fail("unsupported destructuring target: " + kind_name(n.kind)); return;
+    default:
+        fail("unsupported destructuring target: AST kind " +
+             std::to_string(static_cast<int>(n.kind)));
+        return;
     }
 }
 

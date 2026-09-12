@@ -593,11 +593,6 @@ public:
     // of these literals reach.
     [[nodiscard]] static double number_literal(std::string_view text);
 
-    // What a node kind is CALLED. Only the kinds the compiler can refuse need
-    // a name; anything else falls back to the number, which is still better
-    // than nothing when a new kind appears in the parser.
-    [[nodiscard]] static std::string kind_name(vp::nk kind);
-
     // --- the operand limits, said out loud ----------------------------------
     //
     // These do not raise any limit. They make the compiler say which one it hit

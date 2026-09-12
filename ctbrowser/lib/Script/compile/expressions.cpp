@@ -193,11 +193,11 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         proto().emit(instruction{op::load_undef, dst});
         break;
     default:
-        // "AST kind 13" is a number, not a diagnostic. Naming the construct
-        // is the difference between a report you can act on and one you
-        // have to go and decode: kind 13 is `f(...args)`, and it stops
-        // thirteen of p5.js's seventy-one modules on its own.
-        fail(std::string{"unsupported syntax in this VM subset: "} + kind_name(n.kind));
+        // Every kind the compiler once refused by name has its own case
+        // above; what reaches here is a kind the parser grew that this
+        // switch has not.
+        fail("unsupported syntax in this VM subset: AST kind " +
+             std::to_string(static_cast<int>(n.kind)));
         proto().emit(instruction{op::load_undef, dst});
         break;
     }

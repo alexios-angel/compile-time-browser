@@ -417,18 +417,4 @@ void compiler_impl::emit_throw(std::string_view kind, std::string message) {
     release_to(mark);
 }
 
-std::string compiler_impl::kind_name(vp::nk kind) {
-    switch (kind) {
-    case vp::nk::spread: return "spread in a call, `f(...args)`";
-    case vp::nk::seq: return "the comma operator";
-    case vp::nk::regex: return "a regular expression literal";
-    case vp::nk::yield_expr: return "`yield`";
-    case vp::nk::tagged: return "a tagged template literal";
-    case vp::nk::arrow: return "an arrow function";
-    case vp::nk::class_decl: return "a class declaration";
-    case vp::nk::func_expr: return "a function expression";
-    default: return "AST kind " + std::to_string(static_cast<int>(kind));
-    }
-}
-
 } // namespace ctbrowser::script::detail
