@@ -684,11 +684,22 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // `childNodes` is EVERY child, text nodes included; `children` is the
     // elements only. Both exist because they answer different questions, and a
     // page that wants the text nodes has no other way to reach them.
-    navigate("childNodes", [this, id](context & c, std::span<value>) {
-        value list = c.make_array();
-        auto * items = static_cast<script::array_object *>(list.as_heap());
-        const auto txn = doc_->read();
-        for (const node_id child : txn.children(id)) { items->items.push_back(wrap(c, child)); }
+    // A LIVE NodeList, and THE SAME ONE on every read - `el.childNodes ===
+    // el.childNodes` is Node-childNodes.html's first assertion. It is kept on
+    // the wrapper under a symbol key, which is what roots it and what keeps it
+    // out of `for...in` and getOwnPropertyNames.
+    navigate("childNodes", [this, id, self = &obj](context & c, std::span<value>) {
+        constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
+        if (const value * held = self->find(key); held != nullptr) { return *held; }
+        const value list = make_live_collection(
+            c,
+            [this, id] {
+                const auto txn = doc_->read();
+                const std::span<const node_id> kids = txn.children(id);
+                return std::vector<node_id>{kids.begin(), kids.end()};
+            },
+            "NodeList");
+        self->define(key, list, script::attr_none);
         return list;
     });
     // AN HTMLCollection, LIVE - not an Array. `children` is the one of these

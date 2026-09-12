@@ -313,13 +313,52 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                             return found.is_undefined() ? value::null() : found;
                         }),
                  script::attr_builtin);
-    if (!named) { return; }
-    proto.define("namedItem",
-                 native("namedItem", 1,
+    // THE ITERABLE DECLARATION: `[Symbol.iterator]` on both, and NodeList's
+    // forEach/keys/values/entries. Each materialises the members through the
+    // proxy - `iterable_values` reads `length` and every index - and hands the
+    // array's own iterator back, so `list.keys()` is an Array Iterator and
+    // not an Array, which Node-childNodes.html asserts.
+    const auto through_array = [&native](const char * name, const char * array_method) {
+        return native(name, 0, [array_method](context & c, std::span<value>) {
+            const value items = c.iterable_values(c.current_this());
+            const value fn = c.lookup_property(items, array_method);
+            return fn.is_callable() ? c.call(fn, {}, items) : value::undefined();
+        });
+    };
+    proto.define("@@iterator", through_array("values", "values"), script::attr_builtin);
+    if (named) {
+        proto.define("namedItem",
+                     native("namedItem", 1,
+                            [](context & c, std::span<value> a) {
+                                const value found =
+                                    ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
+                                return found.is_undefined() ? value::null() : found;
+                            }),
+                     script::attr_builtin);
+        return;
+    }
+    proto.define("keys", through_array("keys", "keys"), script::attr_builtin);
+    proto.define("values", through_array("values", "values"), script::attr_builtin);
+    proto.define("entries", through_array("entries", "entries"), script::attr_builtin);
+    proto.define("forEach",
+                 native("forEach", 1,
                         [](context & c, std::span<value> a) {
-                            const value found =
-                                ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
-                            return found.is_undefined() ? value::null() : found;
+                            const value self = c.current_this();
+                            const value callback = arg(a, 0);
+                            if (!callback.is_callable()) {
+                                c.throw_error("TypeError", "NodeList.forEach: not a function");
+                                return value::undefined();
+                            }
+                            const value items = c.iterable_values(self);
+                            const auto * held =
+                                static_cast<script::array_object *>(items.as_heap());
+                            for (std::size_t i = 0; i < held->items.size(); ++i) {
+                                const value args[3] = {held->items[i],
+                                                       value::number(static_cast<double>(i)), self};
+                                (void)c.call(callback, args, arg(a, 1));
+                                if (c.failed()) { break; }
+                            }
+                            return value::undefined();
                         }),
                  script::attr_builtin);
 }
