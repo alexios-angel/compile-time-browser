@@ -2001,6 +2001,11 @@ private:
 
 public:
     [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }
+
+private:
+    // `form` on the form-associated elements - the form owner, HTML 4.10.17.3.
+    // element/reflection.cpp.
+    void install_form_owner(context & cx);
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

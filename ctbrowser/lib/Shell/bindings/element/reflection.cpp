@@ -1263,6 +1263,55 @@ void dom_bindings::install_double_reflection(context & cx) {
     }
 }
 
+// --- `control.form`: THE FORM OWNER, HTML 4.10.17.3 ---------------------------
+//
+// The `form` attribute names a form by id in the element's tree; otherwise the
+// nearest form ancestor; otherwise null. Read at each get rather than kept as
+// state - "reset the form owner" runs on every insertion in the specification,
+// and a walk up is what it amounts to. Node-appendChild-script-and-button-
+// from-div.html reads it from a script that ran the moment its div connected.
+void dom_bindings::install_form_owner(context & cx) {
+    for (const char * which :
+         {"HTMLButtonElement", "HTMLFieldSetElement", "HTMLInputElement", "HTMLObjectElement",
+          "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement"}) {
+        const value iface = interface_prototype(which);
+        if (!iface.is_object()) { continue; }
+        auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        proto->define_accessor(
+            "form",
+            value::object(cx.allocate<script::native_object>(
+                "form",
+                [this](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::null(); }
+                    node_id owner;
+                    {
+                        const auto txn = doc_->read();
+                        const std::string_view named =
+                            txn.attribute_value(id, atoms_->intern("form"));
+                        if (!named.empty()) {
+                            const node_id found = find_by_id(std::string{named});
+                            if (found && txn.element_ns(found) == node_ns::html &&
+                                txn.local_name(found) == "form" &&
+                                root_of_tree(txn, found, false) == root_of_tree(txn, id, false)) {
+                                owner = found;
+                            }
+                        } else {
+                            for (node_id at = txn.parent(id); at; at = txn.parent(at)) {
+                                if (txn.element_ns(at) == node_ns::html &&
+                                    txn.local_name(at) == "form") {
+                                    owner = at;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    return owner ? wrap(c, owner) : value::null();
+                })),
+            value::undefined());
+    }
+}
+
 // --- `option.label` AND `option.value`: THE ATTRIBUTE, ELSE THE TEXT ---------
 //
 // HTML 4.10.10: both read the content attribute when it is present and the
