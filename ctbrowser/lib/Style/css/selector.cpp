@@ -247,7 +247,7 @@ namespace {
             ++digits;
         }
         rest.remove_prefix(digits);
-        out = static_cast<std::int32_t>(value);
+        if (digits != 0) { out = static_cast<std::int32_t>(value); }
         return digits != 0;
     };
     const int sign = read_sign();
@@ -552,7 +552,11 @@ private:
         const bool is_is = ascii_iequals(name, "is");
         const bool is_where = ascii_iequals(name, "where");
         // `:has()` takes RELATIVE selectors, and may not nest - Selectors 4 §4.5.
-        const bool is_has = ascii_iequals(name, "has") && !relative_;
+        const bool is_has = ascii_iequals(name, "has");
+        if (is_has && relative_) {
+            invalid = true;
+            return false;
+        }
         // `:host()`, `:state()` are real CSS this engine cannot answer, and come
         // back unmatchable; a name CSS has never defined is a syntax error, and the
         // colon branch of `emit` refused it before the function was reached.
