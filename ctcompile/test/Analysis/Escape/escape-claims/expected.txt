@@ -1,0 +1,1179 @@
+# Escape fixture: source allocations, runtime observations and compiler claims.
+# Rows are sorted by program, function index, then (pc, kind).
+# alloc = source allocation; site = implicit runtime allocation; claim = no recorded allocation.
+# Row fields: tag pc kind made confined escaped unresolved unchecked routes claim.
+# Unobserved rows replace all six observation fields with unobserved.
+# No program hash, function, allocation PC, kind, count, route or claim is discarded.
+# Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
+# Measured baseline: 212 functions, 856 observed sites, 35 unclaimed, zero violations;
+# precision 19/164. Original source SHA pins remain in Initialize.cmake.
+# Family explanations retained from the preceding per-family CMake assertions.
+
+program 7d05eff38480ecd8
+fn 0 <script>
+alloc 0 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 2 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 4 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 6 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 8 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 10 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 12 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 14 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 16 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 18 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 20 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 22 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 24 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 26 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 28 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 30 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 32 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 34 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 36 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 38 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 40 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 42 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 44 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 46 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 48 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 50 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 52 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 54 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 56 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 58 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 60 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 62 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 64 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 66 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 68 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 70 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 72 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 74 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 76 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 78 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 80 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 82 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 84 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 86 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 88 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 90 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 92 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 94 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 96 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 98 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 100 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 102 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 104 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 106 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 108 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 110 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 112 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 114 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 116 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 118 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 120 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 122 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 124 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 126 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 128 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 130 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 132 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 134 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 136 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 138 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 140 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 142 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 144 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 146 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 148 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 150 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 152 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 154 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 156 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 158 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 160 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 162 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 164 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 166 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 168 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 170 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 172 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 174 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 176 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 178 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 180 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 182 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 184 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 186 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 188 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 190 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 192 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 194 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 196 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 198 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 200 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 202 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 204 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 206 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 208 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 210 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 212 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 214 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 216 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 218 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 220 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 222 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 224 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 226 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 228 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 230 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 232 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 234 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 236 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 238 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 240 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 242 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 244 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 246 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 248 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 250 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 252 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 254 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 256 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 258 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 260 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 262 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 264 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 266 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 268 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 270 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 272 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 274 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 276 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 278 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 280 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 282 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 284 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 286 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 288 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 290 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 292 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 294 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 296 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 298 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 300 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 302 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 304 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 306 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 308 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 310 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 312 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 314 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 316 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 318 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 320 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 322 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 324 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 326 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 328 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 330 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 332 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 334 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 336 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 338 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 340 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 342 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 344 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 346 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 348 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 350 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 352 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 354 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 356 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 358 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 360 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 362 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 364 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 366 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 368 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 370 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 372 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 374 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 376 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 378 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 380 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 382 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 384 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 386 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 388 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 390 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 392 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 394 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 396 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 398 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 400 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 402 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 404 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 406 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 408 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 410 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 412 arr 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 416 obj 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 3132 fn 1 0 1 0 0 globals:1 escapes:phase59
+fn 1 confinedObject
+alloc 1 obj 1 1 0 0 0 - escapes:passed
+fn 2 confinedArray
+alloc 3 arr 1 1 0 0 0 - escapes:passed
+fn 3 confinedForOf
+alloc 3 arr 1 1 0 0 0 - escapes:passed
+alloc 15 arr unobserved unclaimed
+fn 4 confinedPredicates
+alloc 8 obj 1 1 0 0 0 - escapes:passed
+alloc 12 obj 1 1 0 0 0 - escapes:passed
+alloc 41 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 5 confinedLoopCarried
+alloc 2 obj 1 1 0 0 0 - escapes:passed
+
+# These claims come from raw imported JavaScript, including frame_enter and
+# frame_exit. Pin observed retention alongside conservative compiler claims:
+# returning a loaded child after overwrite keeps the OLD child reachable;
+# a loaded array alias mutates the SAME array. Cycles stay conservative.
+fn 6 arrayFramePrivate
+alloc 2 obj 2 2 0 0 0 - confined
+alloc 4 arr 2 2 0 0 0 - confined
+fn 7 arrayFrameReturned
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 8 arrayFrameSavedRead
+alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 6 obj 1 1 0 0 0 - confined
+alloc 8 arr 1 1 0 0 0 - escapes:passed
+fn 9 arrayFrameOverwrite
+alloc 3 obj 1 1 0 0 0 - confined
+alloc 5 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 10 arrayFrameLoadedAlias
+alloc 4 obj 1 1 0 0 0 - confined
+alloc 6 arr 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 10 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 11 arrayFramePublished
+alloc 2 obj 1 0 1 0 0 globals:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 globals:1 escapes:stored_global
+fn 12 arrayFrameCall
+alloc 2 obj 1 0 1 0 0 globals:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 globals:1 escapes:passed
+fn 13 arrayFrameCycle
+alloc 1 arr 1 1 0 0 0 - escapes:passed
+fn 14 arrayFrameTransientCycle
+alloc 1 arr 1 1 0 0 0 - escapes:passed
+
+# The returned object loses its child, but a saved read retains that child.
+# The compiler now refuses the preceding ordinary-object writes, including
+# the deleted self-cycle's earlier receiver exposure.
+fn 15 objectFrameDeletedChild
+alloc 2 obj 1 1 0 0 0 - escapes:stored
+alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 16 objectFrameDeletedSavedRead
+alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 6 obj 1 1 0 0 0 - escapes:passed
+fn 17 objectFrameDeletedTransientCycle
+alloc 1 obj 1 1 0 0 0 - escapes:passed
+
+# The copy itself does not retain its source object. Its copied child stays
+# reachable through a returned target until overwritten, or through a saved
+# read even after both the original and copied fields are deleted.
+fn 18 objectFrameCopiedChild
+alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 5 obj 1 1 0 0 0 - escapes:passed
+alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:returned
+fn 19 objectFrameCopiedOverwrite
+alloc 4 obj 1 1 0 0 0 - escapes:stored
+alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 8 obj 1 1 0 0 0 - escapes:passed
+alloc 12 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 20 objectFrameCopiedSavedRead
+alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 6 obj 1 1 0 0 0 - escapes:passed
+alloc 10 obj 1 1 0 0 0 - escapes:passed
+
+# These unchanged alias and source-switch cases preserve every observed
+# retention path. Ordinary-object writes now refuse before selector proofs
+# can refine their claims, including the deleted replacements.
+fn 21 objectFrameCopiedConditionalAlias
+alloc 5 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 9 obj 2 2 0 0 0 - escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 33 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 22 objectFrameCopiedConditionalSource
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 2 0 0 0 - escapes:passed
+alloc 18 obj 2 2 0 0 0 - escapes:passed
+alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:returned
+fn 23 objectFrameCopiedSwitchSaved
+alloc 5 obj 3 0 3 0 0 temporaries:3 escapes:passed
+alloc 9 obj 3 1 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 17 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 38 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 50 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 62 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 24 objectFrameCopiedLiteralOverwrite
+alloc 5 obj 1 1 0 0 0 - escapes:passed
+alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 1 1 0 0 0 - escapes:passed
+alloc 17 obj 1 1 0 0 0 - escapes:passed
+
+# A separate source switch releases its child on every case/default path.
+# The source/target containers each remain retained on their returning arm;
+# the String default input distinguishes strict equality from coercion.
+fn 25 objectFrameSwitchReleased
+alloc 3 obj 3 3 0 0 0 - escapes:passed
+alloc 7 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 50 obj 1 0 1 0 0 temporaries:1 escapes:passed
+
+# Every negation input executes, including empty and nonempty Strings. The
+# returned graph preserves both container identities and the chosen alias,
+# while its original child is absent from every structural path.
+fn 26 objectFrameNegatedReleased
+alloc 5 obj 4 4 0 0 0 - escapes:passed
+alloc 9 obj 4 0 4 0 0 temporaries:4 escapes:passed
+alloc 13 obj 4 0 4 0 0 temporaries:4 escapes:stored
+alloc 32 obj 4 0 4 0 0 temporaries:4 escapes:passed
+
+# Primitive String/Undefined results retain neither inspected child. The
+# source void case also keeps its already-evaluated assignment observable;
+# its raw import is constant Undefined, independently of ctjs.unary Void.
+fn 27 objectFrameTypeofReleased
+alloc 6 obj 5 5 0 0 0 - escapes:passed
+alloc 10 obj 5 0 5 0 0 temporaries:5 escapes:passed
+alloc 14 obj 5 0 5 0 0 temporaries:5 escapes:stored
+alloc 38 obj 5 0 5 0 0 temporaries:5 escapes:passed
+fn 28 objectFrameVoidReleased
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 34 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Preserve the original Number/BigInt sources and observed lifetimes.
+# Primitive category proofs do not prove these writes create own properties.
+fn 29 objectFrameStaticBinaryReleased
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 72 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 30 objectFrameStaticBinaryOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 35 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 31 objectFrameStaticBinaryBigInt
+alloc 4 obj 1 1 0 0 0 - escapes:passed
+alloc 8 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 26 obj 1 0 1 0 0 temporaries:1 escapes:passed
+
+# Saved primitive values survive a BigInt field overwrite at runtime.
+# Their categories do not authorize ordinary-object contents refinement.
+fn 32 objectFrameArithmeticUnaryReleased
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 33 objectFrameArithmeticUnarySaved
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 34 objectFrameArithmeticUnaryOpaque
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 33 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 35 objectFrameArithmeticUnaryBigInt
+alloc 5 obj 1 1 0 0 0 - escapes:passed
+alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 29 obj 1 0 1 0 0 temporaries:1 escapes:passed
+
+# The original Released witness loads global undefined; Literal changes only
+# that input to void 0. Preserve both sources and their measured lifetimes;
+# neither successful comparisons nor primitive origins prove own-data writes.
+fn 36 objectFrameLooseEqualityReleased
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 67 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 37 objectFrameLooseEqualitySaved
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 57 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 38 objectFrameLooseEqualityOpaque
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 39 objectFrameLooseEqualityBigInt
+alloc 6 obj 1 1 0 0 0 - escapes:passed
+alloc 10 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 40 objectFrameLooseEqualityRelational
+alloc 9 obj 2 2 0 0 0 - escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 55 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 41 objectFrameLooseEqualityLiteral
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 68 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Saved primitive values survive later BigInt field replacement/deletion;
+# invalid numeric Strings and Undefined give unordered comparisons.
+# Returning the old child retains it after both container fields are deleted.
+# These runtime observations do not discharge the earlier property sinks.
+fn 42 objectFrameRelationalSaved
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 75 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 43 objectFrameRelationalUnordered
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 68 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 44 objectFrameRelationalOpaque
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 45 objectFrameRelationalBigInt
+alloc 9 obj 2 2 0 0 0 - escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 55 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 46 objectFrameRelationalRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Preserve numeric/BigInt arithmetic and the saved child's observed identity.
+# Ordinary-object writes refuse independently of primitive producer categories.
+fn 47 objectFrameArithmeticBinarySaved
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 73 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 48 objectFrameArithmeticBinaryNumbers
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 68 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 49 objectFrameArithmeticBinaryOpaque
+alloc 9 obj 2 2 0 0 0 - escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 55 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 50 objectFrameArithmeticBinaryBigInt
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 62 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 51 objectFrameArithmeticBinaryRetained
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 66 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Number/String addition, template conversion and BigInt controls keep their
+# original observed lifetimes. An independently returned child remains retained.
+fn 52 objectFrameAddConcatSaved
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 59 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 53 objectFrameAddConcatNumbers
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 54 objectFrameAddConcatTemplate
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 22 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 66 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 55 objectFrameAddConcatOpaqueAdd
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 40 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 56 objectFrameAddConcatOpaqueTemplate
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 57 objectFrameAddConcatBigInt
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 57 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 58 objectFrameAddConcatRetained
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Exact saved BigInt pairs compare without user conversion. A separately
+# returned child remains reachable after both owning fields have been deleted;
+# all preceding ordinary-object writes keep their conservative claims.
+# Keep all measured lifetimes and independent Error coordinates. ND-3's
+# property sinks and own-data-write refusal precede these primitive proofs.
+fn 59 objectFrameBigIntEqualitySaved
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 68 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 60 objectFrameBigIntEqualityOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 61 objectFrameBigIntEqualityMixed
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 62 objectFrameBigIntEqualityRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 42 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Four exact relational kinds preserve their original BigInt-pair inputs.
+# Independently saved children remain retained. Source bytes and observation
+# counts stay fixed while ordinary-object writes keep conservative claims.
+fn 63 objectFrameBigIntRelationalSaved
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 75 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 64 objectFrameBigIntRelationalOpaque
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 65 objectFrameBigIntRelationalMixed
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 66 objectFrameBigIntRelationalComputed
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 67 objectFrameBigIntRelationalRetained
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Computed BigInt unary results preserve the original observed lifetimes;
+# primitive categories alone do not prove the preceding own-data writes.
+fn 68 objectFrameBigIntUnarySaved
+alloc 13 obj 2 2 0 0 0 - escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 27 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 85 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 69 objectFrameBigIntUnaryPaths
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 70 objectFrameBigIntUnaryOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 71 objectFrameBigIntUnaryMixed
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 72 objectFrameBigIntUnaryRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 40 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 73 objectFrameStringBigIntSaved
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 91 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 74 objectFrameStringBigIntPaths
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 75 objectFrameStringBigIntTemplate
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 76 objectFrameStringBigIntOpaqueAdd
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 26 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 77 objectFrameStringBigIntOpaqueTemplate
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 78 objectFrameStringBigIntObject
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 79 objectFrameStringBigIntMixed
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 80 objectFrameStringBigIntRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 81 objectFrameBigIntMixedSaved
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 77 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 82 objectFrameBigIntMixedPrimitives
+alloc 9 obj 2 2 0 0 0 - escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 54 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 83 objectFrameBigIntMixedPaths
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 84 objectFrameBigIntMixedNumbers
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 85 objectFrameBigIntMixedOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 86 objectFrameBigIntMixedObject
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:converted
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 87 objectFrameBigIntMixedRetained
+alloc 6 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 37 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 88 objectFrameBigIntMixedStrings
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Computed BigInt binary results preserve the original observed lifetimes;
+# primitive categories alone do not prove the preceding own-data writes.
+fn 89 objectFrameBigIntBinarySaved
+alloc 12 obj 2 2 0 0 0 - escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 89 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 90 objectFrameBigIntBinaryPaths
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 91 objectFrameBigIntBinaryOpaque
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 92 objectFrameBigIntBinaryMixed
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 93 objectFrameBigIntBinaryRetained
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 47 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 94 objectFrameBigIntStaticSaved
+alloc 13 obj 2 2 0 0 0 - escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 94 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 95 objectFrameBigIntStaticPaths
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 96 objectFrameBigIntStaticOpaque
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 97 objectFrameBigIntStaticMixed
+alloc 7 obj 2 2 0 0 0 - escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 98 objectFrameBigIntStaticShift
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 99 objectFrameBigIntStaticRetained
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 47 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 100 objectFrameBigIntShiftSaved
+alloc 12 obj 2 2 0 0 0 - escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 93 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 101 objectFrameBigIntShiftPaths
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 102 objectFrameBigIntShiftOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 103 objectFrameBigIntShiftMixed
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 104 objectFrameBigIntShiftEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 105 objectFrameBigIntShiftCatch
+fn 106 objectFrameBigIntShiftRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 42 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 107 objectFrameBigIntDivModSaved
+alloc 11 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 90 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 108 objectFrameBigIntDivModPaths
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 109 objectFrameBigIntDivModOpaque
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 110 objectFrameBigIntDivModMixed
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 49 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 111 objectFrameBigIntDivModDivEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 112 objectFrameBigIntDivModDivCatch
+fn 113 objectFrameBigIntDivModModEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 114 objectFrameBigIntDivModModCatch
+fn 115 objectFrameBigIntDivModRetained
+alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 116 objectFrameBigIntPowSaved
+alloc 8 obj 2 2 0 0 0 - escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 25 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 71 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 117 objectFrameBigIntPowPaths
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 33 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 118 objectFrameBigIntPowOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 26 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 119 objectFrameBigIntPowMixed
+alloc 6 obj 2 2 0 0 0 - escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:stored
+alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+fn 120 objectFrameBigIntPowNegativeEarly
+alloc 5 obj 3 3 0 0 0 - escapes:passed
+alloc 9 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:stored
+site 26 obj 2 0 2 0 0 thrown:2 unclaimed
+alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 121 objectFrameBigIntPowNegativeCatch
+fn 122 objectFrameBigIntPowCapEarly
+alloc 5 obj 3 3 0 0 0 - escapes:passed
+alloc 9 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:stored
+site 25 obj 2 0 2 0 0 thrown:2 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 123 objectFrameBigIntPowCapCatch
+fn 124 objectFrameBigIntPowRetained
+alloc 6 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 38 obj 2 0 2 0 0 temporaries:2 escapes:passed
+
+# Separate source literals from independent thrown Errors, including the
+# opaque actuals whose observed TypeError never proves their future category.
+fn 125 primitivePlusEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 24 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 32 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 126 primitivePlusRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 28 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 127 primitivePlusOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 17 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 25 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 128 primitivePlusCatch
+
+# Separate source literals from independent thrown Errors, including the
+# opaque actuals whose observed TypeError never proves their future category.
+fn 129 primitiveMixedSubEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 130 primitiveMixedSubRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 37 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 131 primitiveMixedSubOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 18 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 26 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 132 primitiveMixedSubCatch
+fn 133 primitiveMixedMulEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 134 primitiveMixedMulRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 37 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 135 primitiveMixedMulOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 18 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 26 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 136 primitiveMixedMulCatch
+fn 137 primitiveMixedDivEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 138 primitiveMixedDivRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 37 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 139 primitiveMixedDivOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 18 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 26 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 140 primitiveMixedDivCatch
+fn 141 primitiveMixedModEarly
+alloc 5 obj 2 2 0 0 0 - escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 25 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 142 primitiveMixedModRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 37 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 143 primitiveMixedModOpaque
+alloc 4 obj 2 2 0 0 0 - escapes:passed
+alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:stored
+site 18 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 26 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 144 primitiveMixedModCatch
+fn 145 returned
+alloc 0 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 146 returnedArray
+alloc 0 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 147 thrown
+alloc 0 obj 1 0 1 0 0 thrown:1 escapes:passed
+fn 148 catchAndKeep
+fn 149 storedIntoExternal
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 150 storedIntoArrayLiteral
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 7 arr 1 0 1 0 0 globals:1 escapes:passed
+fn 151 storedByIndex
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 152 storedGlobal
+alloc 0 obj 1 0 1 0 0 globals:1 escapes:passed
+
+# Runtime lifetime counts and fixture sources are unchanged by ND-3. A
+# property receiver's Passed witness now precedes many later escape reasons;
+# ordinary-object assignments no longer authorize contents refinement.
+fn 153 globalAliasJoin
+alloc 2 obj 2 1 1 0 0 globals:1 escapes:passed
+fn 154 globalAliasLoop
+alloc 3 obj 2 1 1 0 0 globals:1 escapes:passed
+fn 155 globalRetainedContainer
+alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 6 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 156 globalReplacedPublication
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 157 captured
+alloc 1 cell 1 0 1 0 0 temporaries:1 escapes:phase59
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 6 fn 1 0 1 0 0 temporaries:1 escapes:phase59
+fn 158 -
+fn 159 hold
+fn 160 passed
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 161 passedAsReceiver
+alloc 1 arr 1 0 1 0 0 globals:1 escapes:passed
+
+# Runtime confines both source and packing arrays, but the compiler marks
+# the source array Passed at Iterable. The spread receiver is also Passed.
+# Construction also allocates an instance and its lazily created prototype
+# at one unclaimed runtime site: one confined and one retained through the
+# constructor's global closure. Neither is an object-literal claim.
+fn 162 spreadRetainedCall
+alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 6 arr 1 1 0 0 0 - escapes:passed
+alloc 12 arr 1 1 0 0 0 - confined
+alloc 14 arr unobserved unclaimed
+fn 163 SpreadRetainer
+fn 164 spreadRetainedConstruct
+alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 6 arr 1 1 0 0 0 - escapes:passed
+alloc 11 arr 1 1 0 0 0 - confined
+alloc 13 arr unobserved unclaimed
+site 23 obj 2 1 1 0 0 globals:1 unclaimed
+fn 165 keepSpreadReceiver
+fn 166 spreadRetainedReceiver
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 7 arr 1 1 0 0 0 - confined
+alloc 8 arr 1 1 0 0 0 - escapes:passed
+alloc 9 arr unobserved unclaimed
+fn 167 ident
+fn 168 transit
+alloc 1 obj 1 1 0 0 0 - escapes:passed
+fn 169 converted
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 170 convertedCompare
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+fn 171 convertedKey
+alloc 2 obj 1 1 0 0 0 - escapes:passed
+alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 172 accessorDefined
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:accessor_defined
+alloc 2 fn 1 0 1 0 0 globals:1 escapes:phase59
+fn 173 -
+fn 174 protoMutated
+alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 8 obj 1 0 1 0 0 globals:1 escapes:accessor_defined
+alloc 9 fn 1 0 1 0 0 globals:1 escapes:phase59
+fn 175 -
+fn 176 usesArguments
+alloc 0 arr 1 1 0 0 0 - escapes:arguments
+alloc 2 obj 1 1 0 0 0 - escapes:passed
+fn 177 usesRest
+alloc 1 obj 1 1 0 0 0 - escapes:passed
+fn 178 ownKeys
+alloc 2 obj 1 1 0 0 0 - escapes:passed
+alloc 11 arr 1 1 0 0 0 - escapes:runtime_array
+fn 179 localClosure
+alloc 1 cell 1 1 0 0 0 - escapes:phase59
+alloc 3 obj 1 1 0 0 0 - escapes:passed
+alloc 7 fn 1 1 0 0 0 - escapes:phase59
+fn 180 -
+fn 181 cycleConfined
+alloc 2 obj 1 1 0 0 0 - escapes:passed
+alloc 6 obj 1 1 0 0 0 - escapes:passed
+fn 182 cycleLeaked
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:passed
+fn 183 twice
+alloc 1 obj 2 2 0 0 0 - escapes:passed
+fn 184 neverCalled
+alloc 1 obj unobserved escapes:passed
+fn 185 suspended
+alloc 2 obj 1 0 0 0 1 - unclaimed
+site 7 arr 1 0 0 0 1 - unclaimed
+site 7 obj 1 0 0 0 1 - unclaimed
+site 9 arr 1 0 1 0 0 temporaries:1 unclaimed
+site 9 obj 1 0 1 0 0 temporaries:1 unclaimed
+
+# Static UShr with two original BigInts throws an independent TypeError.
+# Literal retention and implicit Error sites have separate measured claims.
+fn 186 primitiveUShrEarly
+alloc 5 obj 2 2 0 0 0 - confined
+alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 24 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 187 primitiveUShrRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
+alloc 8 arr 2 2 0 0 0 - escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 188 primitiveUShrOpaque
+alloc 3 obj 2 2 0 0 0 - escapes:stored
+alloc 5 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 11 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 189 primitiveUShrCatch
+fn 190 primitiveMixedStaticEarly
+alloc 5 obj 2 2 0 0 0 - confined
+alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 24 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 191 primitiveMixedStaticRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
+alloc 8 arr 2 2 0 0 0 - escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 192 primitiveMixedStaticOpaque
+alloc 3 obj 2 2 0 0 0 - escapes:stored
+alloc 5 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 11 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 193 primitiveMixedAddEarly
+alloc 5 obj 2 2 0 0 0 - confined
+alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 24 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 194 primitiveMixedAddRetained
+alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
+alloc 8 arr 2 2 0 0 0 - escapes:passed
+site 29 obj 1 0 1 0 0 thrown:1 unclaimed
+fn 195 primitiveMixedAddOpaque
+alloc 3 obj 2 2 0 0 0 - escapes:stored
+alloc 5 arr 2 1 1 0 0 temporaries:1 escapes:passed
+site 11 obj 1 0 1 0 0 thrown:1 unclaimed
+
+# Exact original String spellings identify dense elements without changing
+# ownership: saved reads retain their child, and "00" remains a named key.
+fn 196 canonicalStringReleased
+alloc 2 obj 1 1 0 0 0 - confined
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 197 canonicalStringSaved
+alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 5 arr 1 1 0 0 0 - escapes:passed
+fn 198 canonicalStringLookalike
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 199 canonicalStringLoaded
+alloc 5 obj 1 1 0 0 0 - confined
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 27 arr 1 0 1 0 0 temporaries:1 escapes:returned
+
+# Original decimal BigInts reach the same dense slots after primitive key
+# conversion. The negative computed key cannot release the original child.
+fn 200 decimalBigIntReleased
+alloc 2 obj 1 1 0 0 0 - confined
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 201 decimalBigIntSaved
+alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 5 arr 1 1 0 0 0 - escapes:passed
+fn 202 decimalBigIntSecond
+alloc 2 obj 1 1 0 0 0 - confined
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 203 decimalBigIntLoaded
+alloc 5 obj 1 1 0 0 0 - confined
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 27 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 204 decimalBigIntNegative
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+
+# A length read returns an independent Number, never the child in slot zero.
+# Computed indices and writes to length retain their conservative claims.
+fn 205 denseLengthReleased
+alloc 3 obj 1 1 0 0 0 - confined
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 16 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 206 denseLengthSaved
+alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 6 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 21 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 207 denseLengthLoaded
+alloc 5 obj 1 1 0 0 0 - confined
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 31 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 208 denseLengthEmpty
+alloc 4 obj 1 1 0 0 0 - confined
+alloc 6 arr 1 1 0 0 0 - escapes:passed
+alloc 8 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 19 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 209 denseLengthIndexed
+alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 18 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 210 denseLengthChanged
+alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 15 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 211 -
