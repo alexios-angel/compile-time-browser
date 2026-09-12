@@ -1966,6 +1966,16 @@ public:
         if (flush_layout_) { flush_layout_(); }
     }
     std::function<void()> flush_layout_;
+    // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"
+    // runs when one becomes connected (the post-connection steps) or, once
+    // connected, when its children change; `mutated()` is where both are
+    // noticed. A parser-inserted <script> that was empty is in here too - it
+    // was never started, so text appended later runs it. See document/entry.cpp.
+    std::vector<node_id> unstarted_scripts_;
+    void run_inserted_scripts();
+
+public:
+    void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

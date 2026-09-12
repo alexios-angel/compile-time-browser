@@ -32,7 +32,11 @@ void dom_bindings::install_document(context & cx) {
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
-        if (!doc_->xml()) { return create_html_element(c, name); }
+        if (!doc_->xml()) {
+            const value made = create_html_element(c, name);
+            if (ascii_iequals(name, "script")) { note_unstarted_script(handle_of(made)); }
+            return made;
+        }
         // AN XML DOCUMENT, DOM 4.5 steps 3-5: the local name is kept AS
         // WRITTEN - only an HTML document lowercases - and the namespace is
         // HTML only when the content type is application/xhtml+xml, null
@@ -81,6 +85,9 @@ void dom_bindings::install_document(context & cx) {
         // here, and folding it would lose the case an XML document depends on.
         const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);
         if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        if (kind == node_ns::html && split_qualified(qualified).local == "script") {
+            note_unstarted_script(made);
+        }
         return wrap(c, made);
     });
     // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on

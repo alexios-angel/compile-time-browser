@@ -280,9 +280,100 @@ void dom_bindings::mutated() {
     // and it must not run inside a native that is halfway through a tree edit.
     frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
-    // LAST, because it runs script - a connectedCallback may mutate again and
-    // arrive back here - and everything above it is bookkeeping.
+    // THE TWO THAT RUN SCRIPT, last: an inserted <script>'s post-connection
+    // steps, then the custom element reactions - a connectedCallback may mutate
+    // again and arrive back here - and everything above it is bookkeeping.
+    run_inserted_scripts();
     react_custom_elements();
+}
+
+// HTML 4.12.1 "prepare the script element", for a script a page inserted:
+// connected, with a src or non-empty text, and not `already started` - which
+// is what leaving the list means. Run in list order, which is creation order;
+// a script that inserts another arrives back here from that insertion and
+// runs it nested, which is what puts the inner one's output first.
+// ponytail: creation order, not tree order - the corpus inserts in the order
+// it creates. Sort by tree position if a page ever depends on it.
+void dom_bindings::run_inserted_scripts() {
+    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_) { return; }
+    context & cx = *cx_;
+    const atom src_name = atoms_->intern("src");
+    const atom type_name = atoms_->intern("type");
+    for (std::size_t i = 0; i < unstarted_scripts_.size();) {
+        const node_id id = unstarted_scripts_[i];
+        std::string source;
+        std::string src;
+        std::string type;
+        bool ready = false;
+        {
+            const auto txn = doc_->read();
+            if (!txn.kind(id).has_value()) {
+                unstarted_scripts_.erase(unstarted_scripts_.begin() +
+                                         static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            src = std::string{txn.attribute_value(id, src_name)};
+            type = ascii_lower_copy(trim(txn.attribute_value(id, type_name), html_whitespace));
+            for (const node_id child : txn.children(id)) { source += txn.text(child); }
+            ready = (!src.empty() || !source.empty()) && root_of_tree(txn, id, true) == txn.root();
+        }
+        if (!ready) {
+            ++i;
+            continue;
+        }
+        // Started, whatever happens next: a script that fails to parse, or
+        // whose src is missing, does not run again when its children change.
+        unstarted_scripts_.erase(unstarted_scripts_.begin() + static_cast<std::ptrdiff_t>(i));
+        // A classic script only. A data block (`type="text/plain"`) runs
+        // nothing; a module's loader is the browser's and is not reached from
+        // a mutation.
+        if (!type.empty() && type != "text/javascript" && type != "application/javascript" &&
+            type != "module") {
+            continue;
+        }
+        if (type == "module") { continue; }
+        if (!src.empty()) {
+            const std::vector<std::byte> bytes =
+                assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+            announce_load(id, !bytes.empty());
+            if (bytes.empty()) { continue; }
+            source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        }
+        script::program compiled = script::compiler::compile(source);
+        if (!compiled.ok) {
+            (void)dispatch_error(compiled.error);
+            continue;
+        }
+        const script::program & kept = cx.own_program(std::move(compiled));
+        auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
+        entry->owner = &kept;
+        // `document.currentScript` is this element while it runs, and what it
+        // was - the outer script, when there is one - afterwards.
+        value outer = value::null();
+        if (auto * doc = document_object()) {
+            if (const value * had = doc->find("currentScript"); had != nullptr) { outer = *had; }
+        }
+        set_current_script(id);
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
+        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+        // AN UNCAUGHT THROW IS REPORTED AND THE INSERTING SCRIPT CARRIES ON,
+        // exactly as a listener's is - see fire_at for the two ways to fail.
+        if (threw || cx.failed()) {
+            const context::rooted keep_thrown{cx, thrown};
+            const std::string fault =
+                cx.failed()
+                    ? cx.take_error()
+                    : "uncaught " + (thrown.is_object()
+                                         ? cx.to_string(cx.lookup_property(thrown, "message"))
+                                         : cx.to_string(thrown));
+            const bool handled = dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) { callback_error_ = fault; }
+        }
+        // Start over: the script may have inserted more, and removed any.
+        i = 0;
+    }
 }
 
 void dom_bindings::install_navigation(context & cx) {

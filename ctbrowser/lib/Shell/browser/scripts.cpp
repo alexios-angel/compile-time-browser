@@ -234,6 +234,11 @@ void browser::run_scripts() {
                 *into += '\n';
                 if (is_module) {
                     modules.emplace_back(std::move(module_text), std::move(specifier));
+                } else if (src.empty() && classic_text.size() <= 1) {
+                    // EMPTY, SO NEVER STARTED: "prepare" returns before it sets
+                    // the flag when there is no src and no source text, and
+                    // text a script appends later runs it (HTML 4.12.1).
+                    bindings_->note_unstarted_script(at);
                 } else if (classic_text.find_first_not_of(" \t\r\n\f\v") != std::string::npos) {
                     // A CONTRIBUTION THAT IS ONLY THE NEWLINES THIS WALK ADDED
                     // IS NOT A SCRIPT, and it is dropped HERE rather than

@@ -199,6 +199,41 @@ void test_the_document_knows_its_running_script_and_its_ready_state() {
     }
 }
 
+void test_an_inserted_script_runs_when_it_connects() {
+    // dom/nodes/insertion-removing-steps/ and Document.currentScript.html: a
+    // script a page made runs synchronously when it becomes connected, is
+    // `currentScript` while it runs, and runs nested when another script
+    // inserts it - s1 fills s3 and s3's output comes first. An empty
+    // parser-inserted script was never started, so text appended later runs
+    // it; once run, more text does nothing. A throw is reported, not raised.
+    is("(function () { var s1 = document.createElement('script');"
+       " var s2 = document.createElement('script'); var s3 = document.createElement('script');"
+       " window.happened = []; window.s3 = s3;"
+       " s1.textContent = \"s3.appendChild(new Text('happened.push(\\'s3\\')'));"
+       " happened.push('s1:' + document.currentScript.id)\"; s1.id = 'one';"
+       " s2.textContent = 'happened.push(\"s2\")';"
+       " var div = document.createElement('div'); div.appendChild(s1); div.appendChild(s2);"
+       " div.appendChild(s3); var before = happened.length; document.body.appendChild(div);"
+       " return before + '|' + happened.join() + '|' + String(document.currentScript); })()",
+       "0|s3,s1:one,s2|null");
+    is("(function () { var s = document.createElement('script'); s.textContent = 'throw 1';"
+       " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
+       " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
+       "1");
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script id=empty></script><script>"
+                   "var e = document.getElementById('empty');"
+                   " e.appendChild(new Text('console.log(\"ran:\" + document.currentScript.id)'));"
+                   " e.appendChild(new Text('console.log(\"again\")'));"
+                   " console.log('after');</script></body></html>");
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{2});
+    if (logged.size() == 2) {
+        CHECK_EQ(logged[0], std::string{"ran:empty"});
+        CHECK_EQ(logged[1], std::string{"after"});
+    }
+}
+
 void test_aria_element_references_reflect_both_ways() {
     // aria-element-reflection.html: the content attribute's ID is looked up
     // in the element's tree, an explicitly set element wins and writes "",
@@ -324,6 +359,7 @@ int main() {
     test_an_anchor_reports_the_parts_of_its_url();
     test_a_located_document_resolves_its_url_attributes();
     test_the_document_knows_its_running_script_and_its_ready_state();
+    test_an_inserted_script_runs_when_it_connects();
     test_aria_element_references_reflect_both_ways();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
