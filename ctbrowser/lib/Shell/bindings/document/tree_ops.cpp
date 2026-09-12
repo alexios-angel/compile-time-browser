@@ -436,6 +436,9 @@ style::engine & dom_bindings::selector_engine() {
 // either spelling. `document.getElementsByTagName("linearGradient")` has to
 // find it and `("lineargradient")` must not, which is exactly the six "Element
 // in non-HTML namespace" subtests of `Document-getElementsByTagName.html`.
+// In an XML document EVERY element matches exactly - the fold is the HTML
+// document's, not the HTML namespace's, and `Document-getElementsByTagName-
+// xhtml.xhtml` puts an <I> in an XHTML page to say so.
 std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     const auto txn = doc_->read();
     // "*" is every ELEMENT, which is how a page asks for the whole document.
@@ -444,9 +447,9 @@ std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     std::vector<node_id> found;
     const auto walk = [&](auto && self, node_id at) -> void {
         if (const auto tagged = txn.tag(at); tagged.has_value()) {
+            const bool folds = txn.element_ns(at) == node_ns::html && !doc_->xml();
             const bool matched =
-                every || (txn.element_ns(at) == node_ns::html ? *tagged == folded
-                                                              : atoms_->text(*tagged) == tag);
+                every || (folds ? *tagged == folded : atoms_->text(*tagged) == tag);
             if (matched) { found.push_back(at); }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
