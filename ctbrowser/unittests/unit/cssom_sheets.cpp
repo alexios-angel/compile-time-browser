@@ -245,6 +245,35 @@ void test_an_injected_style_element_restyles() {
     CHECK_EQ(logged(undo, "gone="), std::string{"gone=rgb(1, 2, 3)|rgb(0, 0, 0)"});
 }
 
+// ONCE THE PAGE HAS EDITED THROUGH THE CSSOM, A DOM CHANGE DOES NOT UNDO IT.
+// The restyle used to re-collect the <style> elements' text, which never had
+// the inserted rule or the adopted sheet: css-style-reparse and the "adopted
+// after non-adopted" case of CSSStyleSheet-constructable.
+void test_a_cssom_edit_survives_a_dom_change() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>div { min-width: 0px }</style>
+    <style id=s></style></head><body><div id=t></div><script>
+        const s = document.getElementById('s'), t = document.getElementById('t');
+        const read = () => getComputedStyle(t).minWidth;
+        s.sheet.insertRule('#t { min-width: 42px }');
+        const a = read();
+        s.textContent = ' ';           // the <style> re-parses: the rule is gone
+        const b = read();
+        s.sheet.insertRule('#t { min-width: 42px }');
+        const c = read();
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#t { min-width: 7px }');
+        document.adoptedStyleSheets = [sheet];
+        const late = document.createElement('style');
+        late.textContent = '#t { min-width: 3px }';
+        document.head.appendChild(late);   // adopted sheets still come last
+        const d = read();
+        console.log('reparse=' + [a, b, c, d].join('|'));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "reparse="), std::string{"reparse=42px|0px|42px|7px"});
+}
+
 // A PSEUDO-ELEMENT ARGUMENT IS NOT AN ARGUMENT TO IGNORE. `getComputedStyle`
 // took a second argument and threw it away, so `getComputedStyle(el,
 // '::before')` reported the ORIGINATING ELEMENT's style as the
@@ -424,6 +453,7 @@ int main() {
     test_adopted_sheets_are_an_observable_array();
     test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
+    test_a_cssom_edit_survives_a_dom_change();
     test_a_pseudo_element_argument_is_not_the_element();
     test_the_automatic_minimum_size();
     test_the_computed_font_family_keeps_its_case();
