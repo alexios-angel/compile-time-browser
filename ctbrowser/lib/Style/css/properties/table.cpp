@@ -20,6 +20,10 @@ namespace {
 // refused correctly, and a shorthand this file got half right is the one way it
 // could break a page that works today.
 constexpr property_syntax table[] = {
+    // CSS Cascade 4 §3.1: every longhand but `direction` and `unicode-bidi`,
+    // and it takes the CSS-wide keywords only. The declaration block in
+    // shorthands.cpp expands it; here so `'all' in style` answers.
+    {"all", k::freeform, "", "", false, false, true},
     // --- the box ---------------------------------------------------------
     {"display", k::keyword_only,
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
@@ -32,8 +36,10 @@ constexpr property_syntax table[] = {
      false},
     {"visibility", k::keyword_only, "visible hidden collapse", "visible", true, false},
     {"overflow", k::freeform, "", "visible", false, false, true},
-    {"overflow-x", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
-    {"overflow-y", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
+    {"overflow-x", k::keyword_only, "visible hidden clip scroll auto overlay", "visible", false,
+     false},
+    {"overflow-y", k::keyword_only, "visible hidden clip scroll auto overlay", "visible", false,
+     false},
     {"box-sizing", k::keyword_only, "content-box border-box", "content-box", false, false},
 
     {"width", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
@@ -67,17 +73,39 @@ constexpr property_syntax table[] = {
     {"margin-right", k::length_percentage, "auto", "0px", false, false},
     {"margin-bottom", k::length_percentage, "auto", "0px", false, false},
     {"margin-left", k::length_percentage, "auto", "0px", false, false},
+    // The flow-relative sides, CSS Logical 1 §4. The cascade does not map them
+    // yet; they are here because the CSSOM's shorthand rules are about the
+    // logical property GROUP a declaration sits in, and `margin-inline: 10px`
+    // written between two halves of `margin` decides whether `margin` folds.
+    {"margin-inline", k::freeform, "", "0px", false, false, true},
+    {"margin-inline-start", k::length_percentage, "auto", "0px", false, false},
+    {"margin-inline-end", k::length_percentage, "auto", "0px", false, false},
+    {"margin-block", k::freeform, "", "0px", false, false, true},
+    {"margin-block-start", k::length_percentage, "auto", "0px", false, false},
+    {"margin-block-end", k::length_percentage, "auto", "0px", false, false},
     {"padding", k::freeform, "", "0px", false, false, true},
     {"padding-top", k::length_percentage, "", "0px", false, true},
     {"padding-right", k::length_percentage, "", "0px", false, true},
     {"padding-bottom", k::length_percentage, "", "0px", false, true},
     {"padding-left", k::length_percentage, "", "0px", false, true},
+    {"padding-inline", k::freeform, "", "0px", false, false, true},
+    {"padding-inline-start", k::length_percentage, "", "0px", false, true},
+    {"padding-inline-end", k::length_percentage, "", "0px", false, true},
+    {"padding-block", k::freeform, "", "0px", false, false, true},
+    {"padding-block-start", k::length_percentage, "", "0px", false, true},
+    {"padding-block-end", k::length_percentage, "", "0px", false, true},
 
     {"top", k::length_percentage, "auto", "auto", false, false},
     {"right", k::length_percentage, "auto", "auto", false, false},
     {"bottom", k::length_percentage, "auto", "auto", false, false},
     {"left", k::length_percentage, "auto", "auto", false, false},
     {"inset", k::freeform, "", "auto", false, false, true},
+    {"inset-inline", k::freeform, "", "auto", false, false, true},
+    {"inset-inline-start", k::length_percentage, "auto", "auto", false, false},
+    {"inset-inline-end", k::length_percentage, "auto", "auto", false, false},
+    {"inset-block", k::freeform, "", "auto", false, false, true},
+    {"inset-block-start", k::length_percentage, "auto", "auto", false, false},
+    {"inset-block-end", k::length_percentage, "auto", "auto", false, false},
 
     // --- borders ---------------------------------------------------------
     {"border", k::freeform, "", "medium none currentcolor", false, false, true},
@@ -100,6 +128,15 @@ constexpr property_syntax table[] = {
     {"border-right-color", k::freeform, "", "currentcolor", false, false},
     {"border-bottom-color", k::freeform, "", "currentcolor", false, false},
     {"border-left-color", k::freeform, "", "currentcolor", false, false},
+    // `border` RESETS border-image (CSS Backgrounds 3 §5.3), so the CSSOM
+    // cannot fold twelve side longhands back into `border` without knowing
+    // these five are at their initial values. Nothing paints them.
+    {"border-image", k::freeform, "", "none", false, false, true},
+    {"border-image-source", k::freeform, "", "none", false, false},
+    {"border-image-slice", k::freeform, "", "100%", false, false},
+    {"border-image-width", k::freeform, "", "1", false, false},
+    {"border-image-outset", k::freeform, "", "0", false, false},
+    {"border-image-repeat", k::freeform, "", "stretch", false, false},
     {"border-radius", k::freeform, "", "0px", false, false, true},
     // The four per-side shorthands. Named here rather than left out because
     // `css/cssom/getComputedStyle-getter-v-properties` asks for all four by

@@ -118,7 +118,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
 
     const auto yes = [important, &found](std::string serialized) {
-        return value_check{true, std::move(serialized), important, found.unknown_function};
+        return value_check{true, std::move(serialized), important, found.unknown_function,
+                           found.substituted};
     };
     // THE AUTHOR'S BYTES, for every value this file does not model. A
     // re-serialised token stream is not the same string - `random-item(auto

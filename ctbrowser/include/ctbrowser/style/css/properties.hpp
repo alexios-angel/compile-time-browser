@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES - what
 // `el.style` validates and re-serialises against, what `getComputedStyle` lists,
@@ -115,6 +116,10 @@ struct value_check {
     // of CSS Conditional 3 asks whether the declaration would be DROPPED, and
     // one calling a function nothing can evaluate would be.
     bool uses_unknown_function = false;
+    // Whether the value holds a `var()`/`env()`/`attr()`, so what it means is
+    // not known until substitution. A SHORTHAND carrying one cannot be split
+    // into its longhands here, and stays whole in the declaration block.
+    bool substituted = false;
 };
 
 // `allow_important` is false for the two paths CSSOM says must refuse one - the
@@ -169,5 +174,52 @@ struct value_check {
 // the IDL name is `webkitTransform`, capital W, with no leading dash.
 [[nodiscard]] std::string css_name_of(std::string_view idl);
 [[nodiscard]] std::string idl_name_of(std::string_view css);
+
+// --- THE CSSOM DECLARATION BLOCK -------------------------------------------
+//
+// CSSOM §6.6 over a list of declarations, in one place for the two blocks the
+// shell keeps - `el.style` and a rule's `.style` - so a shorthand is expanded,
+// read back and folded one way. A shorthand this table can split (`margin`,
+// `border`, `flex`, `overflow`, `all`, ...) is stored as its LONGHANDS and
+// reconstructed on the way out per "serialize a CSS declaration block"; one it
+// cannot (`background`, `font`, or any value holding `var()`) is stored whole,
+// exactly as every property was before this existed.
+struct declaration {
+    std::string name; // the CSS spelling; a custom property keeps its case
+    std::string value;
+    bool important = false;
+};
+using declaration_block = std::vector<declaration>;
+
+// The longhands `shorthand` expands to, in canonical order; empty for a
+// longhand and for a shorthand this table does not split.
+[[nodiscard]] std::span<const std::string_view> longhands_of(std::string_view shorthand);
+
+// `setProperty` / the IDL setter: "set a CSS declaration" for `name`, or for
+// each longhand of a shorthand. The value goes through `check_declaration`;
+// an invalid one is a no-op and an empty one removes. Returns whether the
+// serialisation of the block changed - which is when the style attribute is
+// rewritten and a mutation record queued.
+bool set_declaration(declaration_block & block, std::string_view name, std::string_view text,
+                     bool important);
+// A declaration LIST appended to the block, as a `style` attribute, `cssText`
+// or a rule body arrives: a later declaration of the same longhand replaces
+// the earlier one and takes its place at the END, unless the earlier one was
+// `!important` and it is not. `allow` filters the property names a block may
+// hold (an `@page` block takes its descriptors only); null allows everything.
+void parse_declaration_block(declaration_block & block, std::string_view text,
+                             bool (*allow)(std::string_view name, const void * ctx) = nullptr,
+                             const void * ctx = nullptr);
+// `removeProperty`: answers the value it removed (`getPropertyValue` first),
+// and `removed` says whether anything left the block.
+[[nodiscard]] std::string remove_declaration(declaration_block & block, std::string_view name,
+                                             bool & removed);
+// `getPropertyValue` and `getPropertyPriority`; a shorthand answers from its
+// longhands and "" unless every one is present with one priority.
+[[nodiscard]] std::string declaration_value(const declaration_block & block, std::string_view name);
+[[nodiscard]] std::string declaration_priority(const declaration_block & block,
+                                               std::string_view name);
+// `cssText`: §6.6 "serialize a CSS declaration block".
+[[nodiscard]] std::string serialize_declaration_block(const declaration_block & block);
 
 } // namespace ctbrowser::style::css
