@@ -1919,6 +1919,8 @@ private:
     // The bindings for a document this one made, linked and installed - the
     // half of make_html_document and make_xml_document they share.
     dom_bindings & adopt_second_document(context & cx, document & fresh);
+    // NamedNodeMap's members, on its prototype - see element/attributes.cpp.
+    void install_named_node_map(context & cx);
 };
 
 } // namespace ctbrowser::shell

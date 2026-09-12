@@ -290,7 +290,22 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
     for (std::size_t i = held.size(); map.find(std::to_string(i)) != nullptr; ++i) {
         (void)map.erase(std::to_string(i));
     }
-    map.set("length", value::number(static_cast<double>(held.size())));
+    // `length` is the prototype's - see install_named_node_map - and not an
+    // own property: Object.getOwnPropertyNames(el.attributes) is the indices
+    // and the names, which attributes.html reads verbatim.
+    (void)map.erase("length");
+    // The named-property rule, DOM 4.9.1 "supported property names": for an
+    // HTML element in an HTML document, a qualified name with an ASCII
+    // uppercase letter in it is not exposed.
+    bool lowercase_only = false;
+    {
+        const auto txn = doc_->read();
+        lowercase_only = txn.element_ns(id) == node_ns::html && !doc_->xml();
+    }
+    const auto exposed = [lowercase_only](std::string_view qualified) {
+        if (!lowercase_only) { return true; }
+        return std::ranges::none_of(qualified, [](char c) { return c >= 'A' && c <= 'Z'; });
+    };
     // THE NAMED PROPERTIES. `element.attributes.x` is the attribute called `x`
     // - a NamedNodeMap is a legacy platform object with a named property getter
     // and `attributes-namednodemap.html` is five subtests of exactly this. The
@@ -323,7 +338,7 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
         for (const std::string & key : stale) { (void)map.erase(key); }
         for (std::size_t i = 0; i < held.size(); ++i) {
             const std::string qualified{atoms_->text(held[i].name)};
-            if (qualified == "length" || is_index(qualified)) { continue; }
+            if (qualified == "length" || is_index(qualified) || !exposed(qualified)) { continue; }
             // THE SAME Attr OBJECT THE INDEX HOLDS, not a second one. Sharing
             // is both cheaper - a wrapper per attribute per read rather than
             // two - and RIGHT: `el.attributes[0] === el.attributes.x` is true
@@ -354,6 +369,180 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
             map.prototype = proto;
         }
     }
+}
+
+// THE NamedNodeMap INTERFACE, on its prototype and once per realm: `length`,
+// `item`, the two getters, the two setters and the two removers. Each finds
+// the element through the map's hidden owner slot - the element WRAPPER, so
+// `owner_of` names the bindings and `handle_of` the node - and runs against
+// that instance. Nothing is an own property of a map but its indices and
+// names, which is what WebIDL says of a legacy platform object.
+void dom_bindings::install_named_node_map(context & cx) {
+    auto * proto = prototype_object(interface_prototype("NamedNodeMap"));
+    if (proto == nullptr || proto->find("item") != nullptr) { return; }
+    // The (bindings, element) a map is over, or nothing.
+    struct owner {
+        dom_bindings * self = nullptr;
+        node_id id;
+    };
+    const auto owner_of_map = [this](context & c) {
+        owner found;
+        const value wrapper =
+            c.lookup_property(c.current_this(), std::string{named_node_map_owner_key});
+        found.self = owner_of(wrapper);
+        if (found.self == nullptr) { return found; }
+        found.id = found.self->handle_of(wrapper);
+        return found;
+    };
+    const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
+        auto * made = cx.allocate<script::native_object>(name, std::move(fn));
+        made->define("length", value::number(length), script::attr_configurable);
+        return value::object(made);
+    };
+    const auto method = [&](const char * name, unsigned length, script::native_fn fn) {
+        proto->define(name, native(name, length, std::move(fn)), script::attr_builtin);
+    };
+    proto->define_accessor("length",
+                           native("length", 0,
+                                  [owner_of_map](context & c, std::span<value>) {
+                                      const owner at = owner_of_map(c);
+                                      if (!at.id) { return value::number(0); }
+                                      return value::number(static_cast<double>(
+                                          at.self->doc_->read().attributes(at.id).size()));
+                                  }),
+                           value::undefined(), script::attr_configurable);
+    // ONE ATTRIBUTE, BY WHICHEVER OF THE TWO QUESTIONS WAS ASKED, copied out of
+    // the read before anything that could open another one runs.
+    const auto found_by_name = [](const owner & at, std::string_view qualified) {
+        const auto txn = at.self->doc_->read();
+        const attribute * held =
+            txn.find_attribute(at.id, at.self->attribute_key(txn, at.id, qualified));
+        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
+    };
+    const auto found_by_pair = [](const owner & at, std::string_view ns, std::string_view local) {
+        const auto txn = at.self->doc_->read();
+        const attribute * held = txn.find_attribute_ns(at.id, ns, local);
+        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
+    };
+    method("item", 1, [owner_of_map](context & c, std::span<value> a) {
+        const owner at = owner_of_map(c);
+        if (!at.id) { return value::null(); }
+        std::vector<attribute> held;
+        {
+            const auto txn = at.self->doc_->read();
+            const std::span<const attribute> current = txn.attributes(at.id);
+            held.assign(current.begin(), current.end());
+        }
+        const double index = arg_number(a, 0);
+        if (!(index >= 0) || index >= static_cast<double>(held.size())) { return value::null(); }
+        return at.self->attribute_object(c, at.id, held[static_cast<std::size_t>(index)]);
+    });
+    method("getNamedItem", 1, [owner_of_map, found_by_name](context & c, std::span<value> a) {
+        const owner at = owner_of_map(c);
+        if (!at.id) { return value::null(); }
+        const std::optional<attribute> held = found_by_name(at, arg_string(c, a, 0));
+        return held ? at.self->attribute_object(c, at.id, *held) : value::null();
+    });
+    method("getNamedItemNS", 2, [owner_of_map, found_by_pair](context & c, std::span<value> a) {
+        const owner at = owner_of_map(c);
+        if (!at.id) { return value::null(); }
+        const std::optional<attribute> held =
+            found_by_pair(at, namespace_argument(c, a, 0), arg_string(c, a, 1));
+        return held ? at.self->attribute_object(c, at.id, *held) : value::null();
+    });
+    // `setNamedItem` and `setNamedItemNS` ARE THE SAME OPERATION - DOM 4.9.2
+    // defines both as "set an attribute", keyed on the (namespace, local name)
+    // pair whichever spelling was used. What an Attr carries is read off the
+    // OBJECT: an Attr that is some OTHER element's is an InUseAttributeError,
+    // one that is already this element's is handed straight back, and the one
+    // it replaces is detached and returned.
+    const auto set_named = [owner_of_map, found_by_pair](context & c, std::span<value> a) {
+        const owner at = owner_of_map(c);
+        const value given = arg(a, 0);
+        if (!at.id) { return value::null(); }
+        if (!given.is_object()) {
+            c.throw_error("TypeError", "setNamedItem: the argument is not an Attr");
+            return value::null();
+        }
+        dom_bindings & self = *at.self;
+        const value owner_now = c.lookup_property(given, "ownerElement");
+        if (const node_id bound = self.handle_of(owner_now); bound && bound != at.id) {
+            self.throw_dom_exception(c, "InUseAttributeError",
+                                     "setNamedItem: the attribute belongs to another element");
+            return value::null();
+        }
+        const value ns_property = c.lookup_property(given, "namespaceURI");
+        const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
+        const std::string qualified = c.to_string(c.lookup_property(given, "name"));
+        const value text = c.lookup_property(given, "value");
+        const split_name split = split_attribute_name(qualified);
+        const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
+        const std::optional<attribute> replaced = found_by_pair(at, ns, local);
+        value old = value::null();
+        if (replaced) {
+            old = self.attribute_object(c, at.id, *replaced);
+            if (old.bits() == given.bits()) { return given; }
+            self.forget_attr_object(at.id, ns, local);
+            self.bind_attr_object(c, *static_cast<script::object_object *>(old.as_heap()),
+                                  node_id{}, *replaced);
+        }
+        const attribute written{self.atoms_->intern(qualified), self.atoms_->intern(ns),
+                                text.is_undefined() ? std::string{} : c.to_string(text)};
+        (void)self.doc_->set_attribute_ns(at.id, written.ns, written.name, written.value);
+        self.mutated();
+        auto * attached = static_cast<script::object_object *>(given.as_heap());
+        self.bind_attr_object(c, *attached, at.id, written);
+        self.attr_objects_[pack(at.id)].emplace_back(ns + '\0' + std::string{local}, attached);
+        return old;
+    };
+    method("setNamedItem", 1, set_named);
+    method("setNamedItemNS", 1, set_named);
+    // ...and removing one THROWS when there is nothing to remove: "if attr is
+    // null, throw a NotFoundError". The object the page may hold comes back,
+    // detached with the value it had.
+    const auto detach = [](context & c, dom_bindings & self, node_id id, const attribute & held) {
+        const value gone = self.attribute_object(c, id, held);
+        self.forget_attr_object(id, self.atoms_->text(held.ns),
+                                attribute_local_name(*self.atoms_, held));
+        self.bind_attr_object(c, *static_cast<script::object_object *>(gone.as_heap()), node_id{},
+                              held);
+        return gone;
+    };
+    method("removeNamedItem", 1,
+           [this, owner_of_map, found_by_name, detach](context & c, std::span<value> a) {
+               const owner at = owner_of_map(c);
+               const std::string qualified = arg_string(c, a, 0);
+               const std::optional<attribute> held =
+                   at.id ? found_by_name(at, qualified) : std::optional<attribute>{};
+               if (!held) {
+                   this->throw_dom_exception(c, "NotFoundError",
+                                             "removeNamedItem: no attribute called '" + qualified +
+                                                 "'");
+                   return value::null();
+               }
+               const value gone = detach(c, *at.self, at.id, *held);
+               (void)at.self->doc_->remove_attribute(at.id, held->name);
+               at.self->mutated();
+               return gone;
+           });
+    method("removeNamedItemNS", 2,
+           [this, owner_of_map, found_by_pair, detach](context & c, std::span<value> a) {
+               const owner at = owner_of_map(c);
+               const std::string ns = namespace_argument(c, a, 0);
+               const std::string local = arg_string(c, a, 1);
+               const std::optional<attribute> held =
+                   at.id ? found_by_pair(at, ns, local) : std::optional<attribute>{};
+               if (!held) {
+                   this->throw_dom_exception(c, "NotFoundError",
+                                             "removeNamedItemNS: no attribute called '" + local +
+                                                 "'");
+                   return value::null();
+               }
+               const value gone = detach(c, *at.self, at.id, *held);
+               (void)at.self->doc_->remove_attribute_ns(at.id, ns, local);
+               at.self->mutated();
+               return gone;
+           });
 }
 
 // "VALIDATE AND EXTRACT", DOM 4.9, shared by `setAttributeNS` and the two

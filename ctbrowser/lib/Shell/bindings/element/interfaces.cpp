@@ -1094,6 +1094,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // the loop above because a table of five signatures would be longer than
     // the five functions - see install_character_data.
     install_character_data(cx);
+    install_named_node_map(cx);
 
     // EVERY OTHER OPERATION - Node's, Element's, the ParentNode and ChildNode
     // mixins', the canvas three - on the prototype WebIDL names, through one

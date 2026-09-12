@@ -28,146 +28,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // every time. See refresh_attribute_map for why it is an array-like object
     // and not a proxy.
     auto * map = static_cast<script::object_object *>(cx.make_object().as_heap());
-    const auto map_method = [&](std::string name, script::native_fn fn) {
-        map->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    // ONE ATTRIBUTE, BY WHICHEVER OF THE TWO QUESTIONS WAS ASKED, copied out of
-    // the read before anything that could open another one runs.
-    const auto found_by_name = [this, id](std::string_view qualified) {
-        const auto txn = doc_->read();
-        const attribute * held = txn.find_attribute(id, attribute_key(txn, id, qualified));
-        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
-    };
-    const auto found_by_pair = [this, id](std::string_view ns, std::string_view local) {
-        const auto txn = doc_->read();
-        const attribute * held = txn.find_attribute_ns(id, ns, local);
-        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
-    };
-    map_method("item", [this, id](context & c, std::span<value> a) {
-        std::vector<attribute> held;
-        {
-            const auto txn = doc_->read();
-            const std::span<const attribute> current = txn.attributes(id);
-            held.assign(current.begin(), current.end());
-        }
-        const double at = arg_number(a, 0);
-        if (!(at >= 0) || at >= static_cast<double>(held.size())) { return value::null(); }
-        return attribute_object(c, id, held[static_cast<std::size_t>(at)]);
-    });
-    map_method("getNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
-        const std::optional<attribute> held = found_by_name(arg_string(c, a, 0));
-        return held ? attribute_object(c, id, *held) : value::null();
-    });
-    map_method("getNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
-        const std::optional<attribute> held =
-            found_by_pair(namespace_argument(c, a, 0), arg_string(c, a, 1));
-        return held ? attribute_object(c, id, *held) : value::null();
-    });
-    // `setNamedItem` and `setNamedItemNS` ARE THE SAME OPERATION - DOM 4.9.2
-    // defines both as "set an attribute", which is keyed on the (namespace,
-    // local name) pair whichever spelling was used. What an Attr carries is
-    // read off the OBJECT rather than off a C++ type, so an Attr from
-    // `document.createAttribute` - which bindings/document.cpp makes and which
-    // is not one of these - works here too.
-    const auto set_named = [this, id, found_by_pair](context & c, std::span<value> a) {
-        const value given = arg(a, 0);
-        if (!given.is_object()) {
-            c.throw_error("TypeError", "setNamedItem: the argument is not an Attr");
-            return value::null();
-        }
-        // "SET AN ATTRIBUTE", DOM 4.9.2. An Attr that is some OTHER element's
-        // is an InUseAttributeError; one that is already this element's is
-        // handed straight back.
-        const value owner_now = c.lookup_property(given, "ownerElement");
-        if (const node_id owner = handle_of(owner_now); owner && owner != id) {
-            throw_dom_exception(c, "InUseAttributeError",
-                                "setNamedItem: the attribute belongs to another element");
-            return value::null();
-        }
-        const value ns_property = c.lookup_property(given, "namespaceURI");
-        const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
-        const std::string qualified = c.to_string(c.lookup_property(given, "name"));
-        const value text = c.lookup_property(given, "value");
-        const split_name split = split_attribute_name(qualified);
-        const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
-        // THE ONE IT REPLACES IS THE RETURN VALUE, and it has to be read before
-        // the write: "return oldAttr" is how a page takes an attribute off one
-        // element and puts it on another. Read as the OBJECT it already is,
-        // then detached - and if that object is the argument, nothing moves.
-        const std::optional<attribute> replaced = found_by_pair(ns, local);
-        value old = value::null();
-        if (replaced) {
-            old = attribute_object(c, id, *replaced);
-            if (old.bits() == given.bits()) { return given; }
-            forget_attr_object(id, ns, local);
-            bind_attr_object(c, *static_cast<script::object_object *>(old.as_heap()), node_id{},
-                             *replaced);
-        }
-        const attribute written{atoms_->intern(qualified), atoms_->intern(ns),
-                                text.is_undefined() ? std::string{} : c.to_string(text)};
-        (void)doc_->set_attribute_ns(id, written.ns, written.name, written.value);
-        mutated();
-        // THE GIVEN Attr IS NOW THIS ELEMENT'S: its ownerElement and its value
-        // read through, which is what `attr.lookupNamespaceURI("xml")` after
-        // `setAttributeNode(attr)` depends on - and it is the object every
-        // later getAttributeNode answers with.
-        auto * attached = static_cast<script::object_object *>(given.as_heap());
-        bind_attr_object(c, *attached, id, written);
-        attr_objects_[pack(id)].emplace_back(ns + '\0' + std::string{local}, attached);
-        return old;
-    };
-    map_method("setNamedItem", set_named);
-    map_method("setNamedItemNS", set_named);
-    // ...and removing one THROWS when there is nothing to remove, which is the
-    // half that is easy to miss: "if attr is null, throw a NotFoundError".
-    map_method("removeNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
-        const std::string qualified = arg_string(c, a, 0);
-        const std::optional<attribute> held = found_by_name(qualified);
-        if (!held) {
-            throw_dom_exception(c, "NotFoundError",
-                                "removeNamedItem: no attribute called '" + qualified + "'");
-            return value::null();
-        }
-        // THE OBJECT THE PAGE MAY HOLD, detached: it keeps the value it had
-        // and loses its element.
-        const value gone = attribute_object(c, id, *held);
-        (void)doc_->remove_attribute(id, held->name);
-        mutated();
-        forget_attr_object(id, atoms_->text(held->ns), attribute_local_name(*atoms_, *held));
-        bind_attr_object(c, *static_cast<script::object_object *>(gone.as_heap()), node_id{},
-                         *held);
-        return gone;
-    });
-    map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
-        const std::string ns = namespace_argument(c, a, 0);
-        const std::string local = arg_string(c, a, 1);
-        const std::optional<attribute> held = found_by_pair(ns, local);
-        if (!held) {
-            throw_dom_exception(c, "NotFoundError",
-                                "removeNamedItemNS: no attribute called '" + local + "'");
-            return value::null();
-        }
-        const value gone = attribute_object(c, id, *held);
-        (void)doc_->remove_attribute_ns(id, ns, local);
-        mutated();
-        forget_attr_object(id, ns, local);
-        bind_attr_object(c, *static_cast<script::object_object *>(gone.as_heap()), node_id{},
-                         *held);
-        return gone;
-    });
+    // WHOSE MAP IT IS, for the methods on NamedNodeMap.prototype - see
+    // install_named_node_map. A symbol key, which getOwnPropertyNames does not
+    // report: attributes.html reads the map's own names and expects the
+    // indices and the exposed qualified names, nothing else.
+    map->define(named_node_map_owner_key, value::object(&obj), script::attr_none);
     {
         // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
         // invisible to a precise collector, so the raw pointer this closes over
         // would not keep the object alive - `retained` is the channel that
         // does, and the getter itself is reachable from the wrapper's accessor
         // table. See native_object::retained.
+        // HANDED OUT BEHIND A TRAP-LESS PROXY. `length`, `item` and the rest
+        // are on NamedNodeMap.prototype, and the engine's array-like
+        // iteration (`for (a of el.attributes)`, p5's XML module) reads
+        // `length` as an OWN property of a plain object but through the
+        // prototype chain of a proxy - so the proxy is what makes both the
+        // WebIDL property model and the iteration true at once.
         const value map_value = value::object(map);
+        const value handed =
+            value::object(cx.allocate<script::proxy_object>(map_value, cx.make_object()));
         auto * getter = cx.allocate<script::native_object>(
-            "attributes", [this, map, id](context & c, std::span<value>) {
+            "attributes", [this, map, id, handed](context & c, std::span<value>) {
                 refresh_attribute_map(c, *map, id);
-                return value::object(map);
+                return handed;
             });
         getter->retained.push_back(map_value);
+        getter->retained.push_back(handed);
         obj.define_accessor("attributes", value::object(getter), value::undefined());
     }
 
