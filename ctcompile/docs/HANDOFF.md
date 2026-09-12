@@ -10,36 +10,92 @@ committing. There is no CI. Do not build on the small local machine.
 
 Continued clean **bc639f5d** and the **04:11:42 UTC** synchronization journal.
 The interrupted payload work was already gated; `codex-wip-20260907` was
-already an ancestor. **26b68622** now proves fresh method-local child Maps
-retained by a captured outer Map. Each runtime origin has independent contents,
-presence, cardinality and saved aliases; structural branches join those states
-separately. The independent owner checks exact standard constructors, the full
-use census and root-to-child retention. Child-to-Map ownership and Map returns
-remain refused. No browser, runtime, carrier or emitter source changed.
+already an ancestor. Independent agents handled owner validation, source/lifetime
+regressions and the subsequent presence fix; root integrated and gated them.
 
-The corrected **313-step devbox rebuild** and **5/5 focused CTests in 188.58s**
-pass, including the new source/prepared child, branch, mutation, forged-report
-and budget controls. Stable clang-format **22.1.8** passes **795 files**; the
-bundled-23 check has the same **nine byte-identical baseline differences**.
+**26b68622** proves fresh method-local child Maps retained by a captured outer
+Map. Each runtime origin has independent contents, presence, cardinality and
+saved aliases; structural branches join those states separately. The owner
+independently checks standard empty constructors, all uses and root-to-child
+retention. Child-to-Map ownership and Map returns remain refused.
 
-**In flight:** the unchanged fresh-child sources exposed a separate native
-presence gap: a definite outer `get` did not preserve its stored child's alias.
-`NativeMap/Presence.cpp` and `TypeInference/MapPresence.cpp` contain the frozen
-follow-up, with exact stored origins, saved aliases, conservative joins/call
-invalidation and fresh-allocation disjointness. The new `--group nested-maps`
-workflow in `Ownership/global-maps.py` has four intended native sources and
-12 refusals. Local Node checks pass **20 typed observations / 11 distinguishing
-mutations**; native/VM/GCC/Clang/lifetime sanitizer checks and the full standard
-gate remain pending. Preserve all 16 new source bodies, all 55 historical
-object-key sources and exact Data **8359592c**. Continue the pending gate at
-`/tmp/ctcompile-nested-alias-focused.log`; root's frozen input manifest is
-`/tmp/ctcompile-nested-frozen.json` (1,241 files).
+**d2c9453a** fixes the independent native presence gap exposed by those original
+sources: a definite outer `get` now retains its exact stored child's alias.
+Replacement/delete/clear preserve an already saved child; uncertain writes,
+summary effects and unequal branch origins remove unproved entry facts.
+Distinct fresh allocations can share a C++ schema without sharing mutation
+state; formal/unknown aliases remain conservative. **13 source rows** run on
+reused/fresh modules with forged annotations and executable-source preservation.
+No browser, runtime, carrier or emitter source changed.
 
-After that alias fix, the next boundary is guarded readback of a child retained
-by an earlier invocation, including Data's `has(...) || set(..., new Map)`.
-Exact Data also needs mixed/field-bearing payloads, object returns and its
-recorder callback; component/DOM ownership follows. Full native Bootstrap is
-unfinished; no fresh bundle count is claimed by this checkpoint.
+**0f3ea6f9** adds `--group nested-maps` to the existing
+`ctcompile/test/CTNative/Ownership/global-maps.py` workflow and its full lit run.
+All four preserved witnesses (**81e86260**, **1279bc27**, **1507cc30**,
+**6d5cf26f**) admit **4/4 native functions** in both optimization modes, retain
+**8/9/15/15 calls**, respectively, and produce typed **trace=41**.
+The cohort passes **4 native programs / 12 refusals**, **20 typed Node/interpreter
+observations / 11 distinguishing mutations**. Both C++ layouts pass GCC/Clang,
+no-Script symbol checks and ASan/UBSan/leaks, including saved children after outer
+replacement/delete/clear, released host/table owners, **128 future calls**, entry
+reexecution and final destruction. Complete proof budgets are **1759 / 33
+cutoffs** for retained and **3007 / 31** for distinct saved children.
+All **55 historical object-key sources** and exact ordinary Data **8359592c**
+remain unchanged; fixture and compiled-input hashes differ by the import
+helper's appended newline.
+
+The corrected **313-step core rebuild**, **5/5 focused CTests in 188.58s**,
+**256-step presence rebuild**, native cohort in **7.67s** and focused type CTest
+in **0.19s** pass. Stable clang-format **22.1.8** passes **795 files**; bundled-23
+retains the same **nine byte-identical baseline differences**.
+The corrected full standard gate passes **530/530 CTests in 803.21s**,
+including **158 browser tests** and **168/168 lit cases in 547.96s**. All **1241
+frozen code inputs** match locally/remotely before and after the gate.
+Fresh full Bootstrap remains **19/574 native functions** in both modes; exact
+Data remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**.
+
+**5a4887d1** promotes the historical fresh-empty-Map result refusal identified
+by the first full gate. The unchanged source **85aa6fa6** / compiled input
+**cadaaa14** admits **6/6 native functions**, preserves **15 calls / trace=2**,
+and returns Undefined from a distinct empty Map while preserving captured-state
+writes. Both policies, exact repairs and fresh/stale forgeries pass; both C++
+layouts pass GCC/Clang, no-Script checks and ASan/UBSan/leaks through **128 future
+calls**, host/table release, entry reexecution and final destruction. The
+corrected focused historical-result group passes in **11.82s**, including the
+remaining refusals; all source catalogs are unchanged.
+Evidence: `/tmp/ctcompile-nested-{host-gate,alias-focused,full}.log`,
+`/tmp/ctcompile-nested-full-detail.log`,
+`/tmp/ctcompile-nested-final-{focused.log,full.log,full-detail.log,full-summary.json,frozen.json}`,
+`/tmp/ctcompile-nested-final-measured/{summary.json,foreign-summary.json}`,
+`/tmp/ctcompile-nested-map-tests-static.json` and
+`/tmp/ctcompile-nested-foreign-tests-static.json`.
+
+**Next boundary:** preserve `nested_map_conditional_initialize` (**74539aeb**
+fixture / **660da1c0** compiled input, four functions/eight calls) and prove its
+`t.has(1) || t.set(1, new Map)` followed by child readback. Establish a positive
+complete-family outer payload-kind proof before invocation results. Membership
+alone cannot prove a child Map, and a constructor site cannot identify a child
+retained by an earlier invocation. A proved returned child starts with unknown
+contents; its following `saved.set` can establish the local read fact. Preserve
+separate identity and may-alias invalidation. Its measured prepared IR has a
+resultless `scf.if` with an empty present arm and child creation in the absent
+arm; no Map-valued branch-result support is needed for this source.
+The stronger cross-invocation source (**369d7cea** / **bdf9931e**, five functions/
+nine calls) also needs an independently preserved inner-key/type invariant and
+validation of original frame exits in both return branches. Host currently
+rejects frame exits below the top level. Both remain measured refusals. Exact
+Data additionally needs mixed/field-bearing payloads, object returns and its
+recorder callback; component/DOM ownership follows. See
+`/tmp/ctcompile-nested-next.md`. Full native Bootstrap is unfinished.
+
+**Parallel follow-up (audit only):** dense-array retention across static `UShr`
+with two independently proved original BigInts is still refused in
+`EscapeAnalysis.cpp`, `EscapeAnalysisArrays/Primitives.cpp` and
+`BigIntProducers.cpp`. The runtime throws an independent TypeError; any proof
+must record the independent error result without marking it BigInt or claiming
+normal completion. Reuse the existing whole-frame exclusions and source/error
+oracle controls. No implementation or new measurement is claimed. Ordinary-object
+assignment still needs separate own-data/prototype authority. See
+`/tmp/ctcompile-nested-escape-next.md`.
 
 ## Caller-owned Map payloads, 2026-09-11
 
