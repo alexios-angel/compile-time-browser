@@ -24,8 +24,8 @@
 // flag, and the specification's rule that a quantified group's captures are
 // cleared on every repetition (`/(a)|(b)/` twice over "ab" leaves group 1
 // undefined). A pattern character above U+00FF is matched as its UTF-8 bytes,
-// which is what the subject is made of; a CLASS above U+00FF is still refused,
-// because a class here is a set of byte ranges.
+// which is what the subject is made of, and a CLASS is a set of CODE POINT
+// ranges matched against the code point decoded at the position.
 
 namespace ctbrowser::script::rx {
 
@@ -33,7 +33,7 @@ namespace ctbrowser::script::rx {
 
 struct rx_class {
 	bool neg = false;
-	std::vector<std::pair<unsigned char, unsigned char>> ranges;
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
 };
 struct rx_alt;
 struct rx_piece {
@@ -177,6 +177,38 @@ inline void rx_utf8_append(std::string & out, std::uint32_t cp) {
 	}
 }
 
+// One code point decoded forward from `at`, and its width in bytes. A byte
+// that does not start a well-formed sequence is one code point of width 1
+// (its own value), so a scan never stalls and a stray byte still compares.
+inline std::uint32_t rx_utf8_decode(std::string_view s, std::size_t at, std::size_t & width) {
+	const auto lead = static_cast<std::uint32_t>(static_cast<unsigned char>(s[at]));
+	const auto trail = [&](std::size_t i) {
+		return static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + i]) & 0x3Fu);
+	};
+	const auto continues = [&](std::size_t n) {
+		if (s.size() - at < n) { return false; }
+		for (std::size_t i = 1; i < n; ++i) {
+			if ((static_cast<unsigned char>(s[at + i]) & 0xC0u) != 0x80u) { return false; }
+		}
+		return true;
+	};
+	width = 1;
+	if (lead < 0x80u) { return lead; }
+	if ((lead & 0xE0u) == 0xC0u && continues(2)) {
+		width = 2;
+		return ((lead & 0x1Fu) << 6) | trail(1);
+	}
+	if ((lead & 0xF0u) == 0xE0u && continues(3)) {
+		width = 3;
+		return ((lead & 0x0Fu) << 12) | (trail(1) << 6) | trail(2);
+	}
+	if ((lead & 0xF8u) == 0xF0u && continues(4)) {
+		width = 4;
+		return ((lead & 0x07u) << 18) | (trail(1) << 12) | (trail(2) << 6) | trail(3);
+	}
+	return lead;
+}
+
 inline char rx_escape_char(char e) {
 	switch (e) {
 	case 'n': return '\n';
@@ -239,54 +271,33 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		}
 		// `[]` is the EMPTY class and `[^]` matches anything (22.2.2.9 - a
 		// ClassContents may be empty); the `]` is never literal in a class.
-		while (i < src.size() && src[i] != ']') {
-			unsigned char lo;
+		// One class atom: an escape (\xHH, \uHHHH, \u{...} or a letter), or
+		// the code point written in the pattern itself, which is UTF-8 here.
+		const auto class_atom = [&](std::uint32_t & cp) {
 			if (src[i] == '\\' && i + 1 < src.size()) {
 				const char e = src[i + 1];
 				i += 2;
-				if (e == 'd' || e == 'w' || e == 's') {
-					rx_class_escape(pc.cc, e);
-					continue;
-				}
-				std::uint32_t cp = 0;
-				if (rx_code_point_escape(src, i, e, cp)) {
-					// ABOVE A BYTE IT CANNOT BE REPRESENTED, and this class is a
-					// set of BYTE ranges - so the pattern is REFUSED rather than
-					// approximated. Refusing is what makes the caller correct:
-					// `exec` answers null for a failed program, `replace` then
-					// leaves the subject untouched, and testharness's surrogate
-					// sanitiser becomes the no-op it should always have been on
-					// text that has no surrogates in it.
-					if (cp > 0xFF) {
-						rx_fail(p, src);
-						return pc;
-					}
-					lo = static_cast<unsigned char>(cp);
-				} else {
-					lo = static_cast<unsigned char>(rx_escape_char(e));
-				}
-			} else {
-				lo = static_cast<unsigned char>(src[i++]);
+				if (rx_code_point_escape(src, i, e, cp)) { return; }
+				cp = static_cast<unsigned char>(rx_escape_char(e));
+				return;
 			}
-			unsigned char hi = lo;
+			std::size_t width = 1;
+			cp = rx_utf8_decode(src, i, width);
+			i += width;
+		};
+		while (i < src.size() && src[i] != ']') {
+			if (src[i] == '\\' && i + 1 < src.size() &&
+			    (src[i + 1] == 'd' || src[i + 1] == 'w' || src[i + 1] == 's')) {
+				rx_class_escape(pc.cc, src[i + 1]);
+				i += 2;
+				continue;
+			}
+			std::uint32_t lo = 0;
+			class_atom(lo);
+			std::uint32_t hi = lo;
 			if (i + 1 < src.size() && src[i] == '-' && src[i + 1] != ']') {
 				++i;
-				if (src[i] == '\\' && i + 1 < src.size()) {
-					const char e = src[i + 1];
-					i += 2;
-					std::uint32_t cp = 0;
-					if (rx_code_point_escape(src, i, e, cp)) {
-						if (cp > 0xFF) {
-							rx_fail(p, src);
-							return pc;
-						}
-						hi = static_cast<unsigned char>(cp);
-					} else {
-						hi = static_cast<unsigned char>(rx_escape_char(e));
-					}
-				} else {
-					hi = static_cast<unsigned char>(src[i++]);
-				}
+				class_atom(hi);
 			}
 			pc.cc.ranges.push_back({lo, hi});
 		}
@@ -534,21 +545,19 @@ inline constexpr bool rx_is_word(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
 	       c == '_';
 }
-inline constexpr bool rx_class_hit(const rx_class & cc, char ch, bool icase) {
-	const auto in = [&](char probe) {
+inline constexpr bool rx_class_hit(const rx_class & cc, std::uint32_t ch, bool icase) {
+	const auto in = [&](std::uint32_t probe) {
 		for (const auto & [lo, hi] : cc.ranges) {
-			if (static_cast<unsigned char>(probe) >= lo &&
-			    static_cast<unsigned char>(probe) <= hi) {
-				return true;
-			}
+			if (probe >= lo && probe <= hi) { return true; }
 		}
 		return false;
 	};
 	bool hit = in(ch);
 	if (!hit && icase) {
-		const char other = (ch >= 'a' && ch <= 'z') ? static_cast<char>(ch - ('a' - 'A'))
-		                   : (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch + ('a' - 'A'))
-		                                              : ch;
+		// ASCII folding only, as everywhere in this engine (core/algorithms).
+		const std::uint32_t other = (ch >= 'a' && ch <= 'z')   ? ch - ('a' - 'A')
+		                            : (ch >= 'A' && ch <= 'Z') ? ch + ('a' - 'A')
+		                                                       : ch;
 		hit = other != ch && in(other);
 	}
 	return cc.neg ? !hit : hit;
@@ -623,8 +632,14 @@ inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::siz
 		}
 		return k(pos);
 	}
-	case rx_piece::cls:
-		return pos < s.size() && rx_class_hit(pc.cc, s[pos], st.p->icase) && k(pos + 1);
+	case rx_piece::cls: {
+		// A class consumes ONE CODE POINT of the UTF-8 subject, however many
+		// bytes it takes: `[\u1680]` matches the three bytes of U+1680.
+		if (pos >= s.size()) { return false; }
+		std::size_t width = 1;
+		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
+		return rx_class_hit(pc.cc, cp, st.p->icase) && k(pos + width);
+	}
 	case rx_piece::bol:
 		return (pos == 0 || (st.p->multi && s[pos - 1] == '\n')) && k(pos);
 	case rx_piece::eol:
