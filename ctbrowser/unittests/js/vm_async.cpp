@@ -70,6 +70,68 @@ void test_pending_promises() {
 // author writing generators at all - TypeScript compiles every `async` function
 // into one driven by an `__awaiter` helper, so `yield` there is what `await`
 // became. That helper is the shape these pin.
+// `yield*` DELEGATES (14.4.14): every inner value is yielded by the outer
+// generator, the expression's value is what the inner one returned, `next(v)`
+// is forwarded, a sync `.next()` answers the inner RESULT OBJECT itself, and
+// `.throw()`/`.return()` while delegating reach the inner iterator's own
+// `throw`/`return` before anything else happens. The parser used to eat the
+// star and yield the operand.
+void test_yield_delegation() {
+    expect_result("function* inner() { yield 1; yield 2; return 'r'; }"
+                  "function* outer() { const got = yield* inner(); yield got; }"
+                  "return [...outer()].join(',');",
+                  "1,2,r");
+    expect_result("function* inner() { const a = yield 'first'; yield a + 1; }"
+                  "function* outer() { yield* inner(); }"
+                  "const it = outer(); it.next(); return it.next(41).value;",
+                  "42");
+    // The inner result object comes out as it is.
+    expect_result("const marker = { value: 5, done: false, extra: true };"
+                  "const inner = { [Symbol.iterator]() { return { next() { return marker; } }; } };"
+                  "function* outer() { yield* inner; }"
+                  "return outer().next() === marker;",
+                  "true");
+    // Anything iterable, including a string and an array.
+    expect_result("function* g() { yield* 'ab'; yield* [3]; } return [...g()].join('');", "ab3");
+    // `.throw(e)` goes to inner.throw; without one the inner is closed and a
+    // TypeError lands at the yield.
+    expect_result("var seen = ''; var closed = 0;"
+                  "const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  throw(e) { seen = e; return { value: 'handled', done: false }; } }; } };"
+                  "function* outer() { yield* inner; }"
+                  "const it = outer(); it.next(); const r = it.throw('boom');"
+                  "return seen + ',' + r.value + ',' + r.done;",
+                  "boom,handled,false");
+    expect_result(
+        "var closed = 0;"
+        "const inner = { [Symbol.iterator]() { return {"
+        "  next() { return { value: 1, done: false }; }, return() { closed++; return {}; } }; } };"
+        "function* outer() { yield* inner; }"
+        "const it = outer(); it.next();"
+        "try { it.throw('boom'); return 'no'; } catch (e) { return e.constructor.name + closed; }",
+        "TypeError1");
+    // `.return(v)` goes to inner.return; its done result finishes the outer.
+    expect_result("const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  return(v) { return { value: v + '!', done: true }; } }; } };"
+                  "function* outer() { yield* inner; yield 'after'; }"
+                  "const it = outer(); it.next(); const r = it.return('bye');"
+                  "return r.value + ',' + r.done + ',' + it.next().done;",
+                  "bye!,true,true");
+    // A delegate that finishes through `.throw()` lets the body carry on.
+    expect_result("const inner = { [Symbol.iterator]() { return {"
+                  "  next() { return { value: 1, done: false }; },"
+                  "  throw(e) { return { value: 'end', done: true }; } }; } };"
+                  "function* outer() { const v = yield* inner; yield 'got ' + v; }"
+                  "const it = outer(); it.next(); return it.throw('x').value;",
+                  "got end");
+    // Not iterable: TypeError from the yield* itself.
+    expect_result("function* g() { yield* 5; }"
+                  "try { g().next(); return 'no'; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+}
+
 void test_generators() {
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
@@ -414,6 +476,7 @@ void test_for_await() {
 int main() {
     test_pending_promises();
     test_generators();
+    test_yield_delegation();
     test_async_and_promises();
     test_promise_handlers_are_microtasks();
     test_async_rejection();

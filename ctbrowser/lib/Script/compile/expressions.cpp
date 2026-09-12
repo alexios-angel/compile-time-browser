@@ -128,6 +128,10 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
             proto().emit(instruction{op::load_undef, dst});
             break;
         }
+        if (n.d == 1) {
+            compile_yield_delegate(n, dst);
+            break;
+        }
         const std::uint16_t sent = alloc_reg();
         if (n.a >= 0) {
             compile_expr(n.a, sent);
@@ -222,13 +226,75 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
     proto().emit(instruction::with_bx(op::get_global, dst, name));
 }
 
+// `yield* expr` (14.4.14): every value the inner iterator produces is
+// yielded by this generator, and the expression's own value is what the
+// inner iterator finally returned. GetIterator, the `next()` calls and the
+// result checks are the three natives named at yield_delegate_open_name; the
+// loop is here. A sync generator hands the inner RESULT OBJECT out untouched
+// (step 7.a.vii) - generator_resume knows from the record the settle native
+// leaves on the coroutine - and an async one awaits the result, then awaits
+// and yields its value like any other async yield. `.throw()`/`.return()`
+// while suspended here are generator_resume's, forwarded to the inner
+// iterator without resuming the frame.
+void compiler_impl::compile_yield_delegate(const vp::node & n, std::uint16_t dst) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t source = alloc_reg();
+    compile_expr(n.a, source);
+    const std::uint16_t record = alloc_reg();
+    emit_iterator_native(yield_delegate_open_name, record, source, fn().is_async ? 1 : 0);
+    const std::uint16_t sent = alloc_reg();
+    proto().emit(instruction{op::load_undef, sent});
+    const std::uint16_t step = alloc_reg();
+    const std::uint16_t done = alloc_reg();
+    const std::size_t top = proto().code.size();
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{yield_delegate_call_name})));
+        const std::uint16_t arg0 = alloc_reg();
+        proto().emit(instruction{op::move, arg0, record});
+        const std::uint16_t arg1 = alloc_reg();
+        proto().emit(instruction{op::move, arg1, sent});
+        proto().emit(instruction{op::call, callee, 2});
+        proto().emit(instruction{op::move, step, callee});
+        release_to(inner);
+    }
+    if (fn().is_async) { proto().emit(instruction{op::await_value, step, step}); }
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{yield_delegate_settle_name})));
+        const std::uint16_t arg0 = alloc_reg();
+        proto().emit(instruction{op::move, arg0, record});
+        const std::uint16_t arg1 = alloc_reg();
+        proto().emit(instruction{op::move, arg1, step});
+        proto().emit(instruction{op::call, callee, 2});
+        proto().emit(instruction{op::move, step, callee});
+        release_to(inner);
+    }
+    proto().emit(instruction{op::get_prop, done, record, name_operand("done")});
+    const std::size_t exit = proto().emit(instruction{op::jump_if_true, done});
+    if (fn().is_async) {
+        proto().emit(instruction{op::get_prop, step, step, name_operand("value")});
+        proto().emit(instruction{op::await_value, step, step});
+    }
+    proto().emit(instruction{op::yield_value, sent, step});
+    patch_jump(proto().emit(instruction{op::jump}), top);
+    patch_here(exit);
+    proto().emit(instruction{op::get_prop, dst, record, name_operand("value")});
+    release_to(mark);
+}
+
 void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name) {
     if (idx >= 0 && !name.empty()) {
         const vp::node & n = at(idx);
         // A parenthesised function is still anonymous - the parser keeps no
         // paren node, so `(function () {})` arrives as the function itself.
         if ((n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow) && n.text.empty()) {
-            const std::uint32_t index = compile_function_body(idx, std::string{name});
+            const std::uint32_t index = compile_function_body(idx, "");
+            out_.functions[index].inferred_name = std::string{name};
             proto().emit(instruction::with_bx(op::closure, dst, index));
             return;
         }

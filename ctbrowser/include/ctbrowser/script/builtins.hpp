@@ -61,6 +61,17 @@ inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_itera
 inline constexpr std::string_view iterator_open_name = "__ctbrowser_iter_open";
 inline constexpr std::string_view iterator_next_name = "__ctbrowser_iter_next";
 inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close";
+// `yield*` (14.4.14), as three natives around the generator's own yield:
+// `open(v, async)` is GetIterator(v, kind) into the same record shape,
+// `call(rec, sent)` is Call(rec.next, rec.iterator, sent) - the raw result,
+// a promise for an async iterator, which the body awaits - and
+// `settle(rec, result)` checks the result is an object, records `done` and
+// the final value, and marks the coroutine as delegating so a sync `.next()`
+// hands the result object out untouched and `.throw()`/`.return()` reach
+// the inner iterator (context::generator_resume). The loop is bytecode.
+inline constexpr std::string_view yield_delegate_open_name = "__ctbrowser_delegate_open";
+inline constexpr std::string_view yield_delegate_call_name = "__ctbrowser_delegate_call";
+inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_delegate_settle";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";

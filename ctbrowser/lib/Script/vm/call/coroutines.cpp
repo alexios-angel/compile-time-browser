@@ -149,6 +149,10 @@ value context::make_generator(closure_object * closure, value receiver,
     return out;
 }
 
+context::coroutine_object * context::current_generator() const noexcept {
+    return frames_.empty() ? nullptr : frames_.back().generator;
+}
+
 value context::generator_resume(value generator, value sent, resume_mode how) {
     const auto record = [&](value v, bool done) {
         value out = make_object();
@@ -198,6 +202,78 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             if (!unwind_to_handler()) { raise("uncaught exception from a generator"); }
         }
         return record(how == resume_mode::returned ? sent : value::undefined(), true);
+    }
+    // A `yield*` IN PROGRESS (sync only): `.throw(e)` and `.return(v)` go to
+    // the inner iterator first (14.4.14 steps 7.b and 7.c), and only what
+    // comes back decides whether the frame resumes, stays suspended, or
+    // finishes. The record is the one yield_delegate_settle_name keeps on the
+    // coroutine; it is cleared as soon as the delegation is over.
+    if (!saved->async_gen && how != resume_mode::next && saved->delegate.is_object()) {
+        auto * rec = static_cast<object_object *>(saved->delegate.as_heap());
+        const auto slot = [&](const char * name) {
+            const value * found = rec->find(name);
+            return found != nullptr ? *found : value::undefined();
+        };
+        const value iterator = slot("iterator");
+        const value method =
+            lookup_property(iterator, how == resume_mode::thrown ? "throw" : "return");
+        value forwarded = value::undefined();
+        bool threw = false;
+        if (method.is_nullish()) {
+            if (how == resume_mode::returned) {
+                // No `return`: the outer generator returns v itself.
+                saved->delegate = value::undefined();
+                saved->done = true;
+                return record(sent, true);
+            }
+            // No `throw`: close the inner iterator, then a TypeError at the
+            // yield - the protocol was violated by the delegate.
+            if (const value close = lookup_property(iterator, "return"); close.is_callable()) {
+                value ignored = value::undefined();
+                bool close_threw = false;
+                (void)call_fenced(close, {}, iterator, close_threw, ignored);
+                if (close_threw) {
+                    threw = true;
+                    forwarded = ignored;
+                }
+            }
+            if (!threw) {
+                threw = true;
+                forwarded =
+                    make_error("TypeError", "The iterator does not provide a 'throw' method");
+            }
+        } else {
+            forwarded = call_fenced(method, {&sent, 1}, iterator, threw, forwarded);
+            if (!threw && !forwarded.is_object()) {
+                threw = true;
+                forwarded = make_error("TypeError", "Iterator result is not an object");
+            }
+        }
+        if (threw) {
+            // Thrown at the yield inside the loop - the frame resumes with it.
+            saved->delegate = value::undefined();
+            rec->set("done", value::boolean(true));
+            sent = forwarded;
+            how = resume_mode::thrown;
+        } else if (truthy(lookup_property(forwarded, "done"))) {
+            saved->delegate = value::undefined();
+            rec->set("done", value::boolean(true));
+            const value final = lookup_property(forwarded, "value");
+            if (how == resume_mode::returned) {
+                // The delegate returned: so does the outer generator.
+                saved->done = true;
+                return record(final, true);
+            }
+            // The delegate finished normally: the yield* expression takes its
+            // value and the body carries on from the loop's exit.
+            rec->set("value", final);
+            sent = value::undefined();
+            how = resume_mode::next;
+        } else {
+            // Still going: the inner result IS the answer, and the frame stays
+            // where it is.
+            return forwarded;
+        }
     }
     // `.return(v)` at a yield finishes the generator without running any more of
     // it. Running the rest would be wrong - `return` means stop - and the
@@ -267,8 +343,14 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
 
     if (yielded_) {
         yielded_ = false;
+        // A sync `yield*` yields the inner result object AS IT IS (14.4.14
+        // step 7.a.vii: GeneratorYield(innerResult)), not a fresh record.
+        if (!saved->async_gen && saved->delegate.is_object() && produced.is_object()) {
+            return produced;
+        }
         return record(produced, false);
     }
+    saved->delegate = value::undefined();
     // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
     // frame back into this same coroutine and flagged it; the request is
     // finished by resume() when the awaited promise settles. Nothing to

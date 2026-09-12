@@ -877,6 +877,8 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // `yield* expr` - see the definition.
+    void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
     // `get [key]() {}` / `set [key](v) {}` on `target` - see define_accessor_name.
     void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
                                 bool setter);

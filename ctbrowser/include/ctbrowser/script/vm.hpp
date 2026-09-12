@@ -1534,6 +1534,12 @@ public:
         bool async_gen = false;
         bool awaiting = false;
         value self;
+        // THE ITERATOR RECORD OF A `yield*` IN PROGRESS (see yield_delegate_open_name),
+        // undefined otherwise. While it is set, `.next()` on a sync generator
+        // hands the inner result object out as it is, and `.throw()` /
+        // `.return()` are forwarded to the inner iterator by generator_resume
+        // instead of resuming the frame (27.5.3.7 / 14.4.14).
+        value delegate;
         struct async_request {
             resume_mode how;
             value sent;
@@ -1543,6 +1549,9 @@ public:
         coroutine_object() : heap_object(heap_kind::coroutine) {}
     };
 
+    // The generator whose frame is running - a native called from a
+    // generator body sees that frame on top, since natives push none.
+    [[nodiscard]] coroutine_object * current_generator() const noexcept;
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);

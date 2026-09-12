@@ -364,6 +364,58 @@ void install_destructuring_iteration(context & cx) {
         c.define_accessor(a[0], c.to_string(a[1]), a[2], a[3]);
         return value::undefined();
     });
+    // See yield_delegate_open_name.
+    cx.define_native(std::string{yield_delegate_open_name}, [](context & c, std::span<value> a) {
+        const value source = a.empty() ? value::undefined() : a[0];
+        const bool async = a.size() > 1 && context::truthy(a[1]);
+        const value iterator =
+            async ? c.call(c.global(std::string{async_iterator_name}), {&source, 1})
+                  : c.get_iterator(source);
+        auto * record = detail::new_table(c);
+        record->set("iterator", iterator);
+        record->set("next", iterator.is_object() ? c.lookup_property(iterator, "next")
+                                                 : value::undefined());
+        record->set("done", value::boolean(!iterator.is_object()));
+        record->set("value", value::undefined());
+        return value::object(record);
+    });
+    cx.define_native(std::string{yield_delegate_call_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * record = static_cast<object_object *>(a[0].as_heap());
+        if (context::truthy(slot(record, "done"))) { return value::undefined(); }
+        const value next = slot(record, "next");
+        if (!next.is_callable()) {
+            record->set("done", value::boolean(true));
+            c.throw_error("TypeError", "iterator.next is not a function");
+            return value::undefined();
+        }
+        const value sent = a.size() > 1 ? a[1] : value::undefined();
+        return c.call(next, {&sent, 1}, slot(record, "iterator"));
+    });
+    cx.define_native(std::string{yield_delegate_settle_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * record = static_cast<object_object *>(a[0].as_heap());
+        context::coroutine_object * co = c.current_generator();
+        if (context::truthy(slot(record, "done"))) {
+            if (co != nullptr) { co->delegate = value::undefined(); }
+            return value::undefined();
+        }
+        const value result = a.size() > 1 ? a[1] : value::undefined();
+        if (!result.is_object()) {
+            record->set("done", value::boolean(true));
+            if (co != nullptr) { co->delegate = value::undefined(); }
+            c.throw_error("TypeError", "Iterator result is not an object");
+            return value::undefined();
+        }
+        if (context::truthy(c.lookup_property(result, "done"))) {
+            record->set("done", value::boolean(true));
+            record->set("value", c.lookup_property(result, "value"));
+            if (co != nullptr) { co->delegate = value::undefined(); }
+            return value::undefined();
+        }
+        if (co != nullptr) { co->delegate = a[0]; }
+        return result;
+    });
     cx.define_native(std::string{iterator_close_name}, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::undefined(); }
         auto * record = static_cast<object_object *>(a[0].as_heap());
