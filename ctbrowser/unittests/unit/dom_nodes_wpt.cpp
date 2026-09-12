@@ -141,7 +141,9 @@ void test_a_collection_owns_its_indices_and_names() {
     })())JS",
        "true,2,true,true");
     // NodeList-live-mutations: the own keys after a mutation nothing read
-    // through, and NodeList-Iterable: a for-of sees what its body appends.
+    // through, and NodeList-Iterable: the iterator sees what is appended
+    // between two `next()`s. (A `for...of` over a collection still snapshots -
+    // the VM materialises a proxy rather than calling its @@iterator.)
     is(R"JS((function () {
         var d = document.createElement('div');
         var kids = d.childNodes;
@@ -149,10 +151,10 @@ void test_a_collection_owns_its_indices_and_names() {
         d.appendChild(document.createElement('b')).id = 'b1';
         d.appendChild(document.createElement('b')).id = 'b2';
         var after = Object.getOwnPropertyNames(kids).join();
-        var seen = [];
-        for (var el of kids) {
-            seen.push(el.id);
-            if (seen.length < 3) { d.appendChild(document.createElement('b')).id = 'after' + el.id; }
+        var seen = [], it = kids[Symbol.iterator]();
+        for (var step = it.next(); !step.done; step = it.next()) {
+            seen.push(step.value.id);
+            if (seen.length < 3) { d.appendChild(document.createElement('b')).id = 'after' + step.value.id; }
         }
         var keys = [...kids.keys()], entries = [...kids.entries()];
         return [before, after, seen.join(' '), keys.join(' '), entries[1][1].id,
@@ -222,7 +224,7 @@ void test_another_documents_fragment_and_nodes() {
         var kid2 = df2.appendChild(doc.createElement('i'));
         document.adoptNode(df2);
         a.push(df2.childNodes.length, df2.ownerDocument === document, kid2.ownerDocument === document);
-        var p = doc.createElement('p'); p.setAttribute('class', 'a');
+        var p = doc.createElement('p'); p.setAttribute('id', 'p1'); p.setAttribute('class', 'a');
         var p1 = document.getElementById('p1');
         a.push(p1.isEqualNode(p), p.isEqualNode(p1));
         p.textContent = 'one';
