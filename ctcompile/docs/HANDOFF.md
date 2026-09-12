@@ -48,7 +48,8 @@ serially / 41.82 seconds with two workers** (**39.5% lower wall time**), with
 all **1251 generated text artifact hashes identical** after fresh runs in the
 same work directory. The full matrix now has **427 positives / 1708 baseline
 C++ compilations**; the focused group has **56 baseline plus 14 sanitizer
-builds**. Run the existing `--group object-keys` command with `--jobs 2`.
+builds**. Run the existing `--group object-keys` command without `--jobs`
+to use all available CPUs.
 
 The **320-step rebuild**, final no-op rebuild and **4/4 focused CTests in
 3.01 seconds** pass. Stable clang-format **22.1.8** passes **795 files**;
