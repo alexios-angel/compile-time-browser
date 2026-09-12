@@ -245,8 +245,9 @@ namespace {
     if (of.is_object()) {
         auto * obj = static_cast<object_object *>(of.as_heap());
         if (obj->prototype.is_object_like()) { return obj->prototype; }
-        // Object.prototype's own [[Prototype]] is null, and it is the only
-        // table for which that is true.
+        // An EXPLICIT null (object_object::prototype says how the two nulls
+        // are told apart); and Object.prototype's own [[Prototype]] is null.
+        if (obj->prototype.is_undefined()) { return value::null(); }
         if (obj == cx.prototype(context::proto_kind::object)) { return value::null(); }
         return table(context::proto_kind::object);
     }
@@ -309,7 +310,9 @@ namespace {
         walk = prototype_of(cx, walk);
     }
     if (of.is_object()) {
-        static_cast<object_object *>(of.as_heap())->prototype = proto;
+        // null is an EXPLICIT null here - see object_object::prototype.
+        static_cast<object_object *>(of.as_heap())->prototype =
+            proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::function)) {
         static_cast<closure_object *>(of.as_heap())->proto_link = proto;
     } else if (of.is_kind(heap_kind::native)) {

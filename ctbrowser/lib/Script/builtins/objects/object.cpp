@@ -595,8 +595,9 @@ void install_object(context & cx) {
         }
         object_object * out = new_table(c);
         // Any object - a function or an array too, which lookup_property now
-        // walks through (see its object arm).
-        if (proto.is_object_like()) { out->prototype = proto; }
+        // walks through (see its object arm). null is the EXPLICIT null, which
+        // object_object::prototype spells as undefined.
+        out->prototype = proto.is_object_like() ? proto : value::undefined();
         const value made = value::object(out);
         // A ROOT WHILE THE DESCRIPTORS RUN. Each one is read through [[Get]],
         // which can call a page's getter, which can collect - and `out` lives

@@ -669,11 +669,21 @@ int main() {
     // is null for anything that did not come from `class` or `Object.create`.
     // That contradicted the engine's own behaviour: lookup_property ends EVERY
     // chain walk at the Object.prototype table, which is why
-    // `({}).hasOwnProperty` resolves at all. THE COST, said out loud: an object
-    // from `Object.create(null)` also inherits Object.prototype here, and now
-    // reports it - which is the truthful answer about the object that was
-    // actually built.
+    // `({}).hasOwnProperty` resolves at all. An EXPLICIT null - Object.create
+    // (null), setPrototypeOf(o, null) - is told apart from the implicit one
+    // (object_object::prototype), so a dictionary object inherits nothing.
     js_expect("Object.getPrototypeOf({}) === Object.prototype", "true");
+    js_expect("Object.getPrototypeOf(Object.create(null))", "null");
+    js_expect("typeof Object.create(null).toString", "undefined");
+    js_expect("'toString' in Object.create(null)", "false");
+    js_expect("Object.create(null) instanceof Object", "false");
+    js_expect("(function(){var o=Object.setPrototypeOf({},null);return typeof o.hasOwnProperty"
+              "+','+Object.getPrototypeOf(o);})()",
+              "undefined,null");
+    js_expect("(function(){var o=Object.create(null);o.__proto__=1;return o.__proto__;})()",
+              "1"); // no B.2.2.1 setter on the chain: a plain own property
+    js_expect("String(Object.create(null))", "THREW"); // 7.1.1.1 step 4
+    js_expect("Object.keys(Object.create(null, {a: {value: 1, enumerable: true}})).join()", "a");
     js_expect("Object.getPrototypeOf(Object.prototype)", "null");
     js_expect("Object.getPrototypeOf([]) === Array.prototype", "true");
     js_expect("Object.getPrototypeOf(Array.prototype) === Object.prototype", "true");

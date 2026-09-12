@@ -175,6 +175,9 @@ value context::lookup_property(value target, const std::string & name) {
             if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
                 return lookup_property(obj->prototype, name);
             }
+            // An EXPLICIT null [[Prototype]] (object_object::prototype): the
+            // chain ends here, with no implicit Object.prototype.
+            if (obj->prototype.is_undefined()) { return value::undefined(); }
             obj = nullptr;
         }
         return from_object_prototype(target, name);

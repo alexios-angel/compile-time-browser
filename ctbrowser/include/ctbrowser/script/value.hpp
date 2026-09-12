@@ -692,6 +692,10 @@ struct accessor_table {
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
     string_flat_map<std::uint32_t> index;
+    // NULL MEANS THE IMPLICIT Object.prototype - every lookup falls through to
+    // it - and UNDEFINED means an EXPLICIT null [[Prototype]]: Object.create
+    // (null), setPrototypeOf(o, null), `__proto__ = null`. The chain walks in
+    // vm/objects/ stop at the second without the fallback.
     value prototype = value::null();
 
     accessor_table accessors;

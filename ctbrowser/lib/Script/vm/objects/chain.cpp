@@ -217,7 +217,7 @@ bool context::has_property(value target, value key) {
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
     value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                                    : value::undefined();
+                                    : value::null();
     // A depth cap because a page can make the chain cyclic, exactly as
     // lookup_property does.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
@@ -229,6 +229,9 @@ bool context::has_property(value target, value key) {
     if (link.is_heap() && !link.is_object() && !link.is_string()) {
         return has_property(link, key);
     }
+    // An explicit null [[Prototype]] (object_object::prototype) ends the chain
+    // without the implicit Object.prototype.
+    if (target.is_object() && link.is_undefined()) { return false; }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
@@ -283,7 +286,7 @@ bool context::instance_of(value target, value ctor) {
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
     value link = subject.is_object() ? static_cast<object_object *>(subject.as_heap())->prototype
-                                     : value::undefined();
+                                     : value::null();
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
@@ -294,6 +297,7 @@ bool context::instance_of(value target, value ctor) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         return instance_of(link, ctor);
     }
+    if (subject.is_object() && link.is_undefined()) { return false; } // an explicit null
     // Then the IMPLICIT one. An array, a function, a string and a plain object
     // have no prototype field to walk - their chain is the tables property
     // lookup falls back to - so instanceof answered false for every builtin
