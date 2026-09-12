@@ -57,9 +57,20 @@ publication refusals are not a measured nested-Map diagnostic. See
 `/tmp/ctcompile-object-resume-exact-data/exact_data_ordinary_publication.js`.
 Full native Bootstrap and direct browser integration remain unfinished.
 
-After the recovered payload commit, a separate agent is implementing the
-small dense-array mixed BigInt Pow retention increment from the prior audit.
-It does not grant generic ordinary-object own-data/prototype authority.
+**f9bbbb09** separately extends dense-array retention across primitive mixed
+BigInt Pow errors, using the same original-operand proof as Sub/Mul/Div/Mod.
+It grants no normal-completion, native type or ordinary-object prototype facts.
+The existing matrix now executes Pow: **57 rows, 43 live states and 3,450 budget
+cutoffs** pass. The focused gate passes **8/8 in 1.37 seconds** after correcting
+historical Pow expectations while retaining every source body. The live BigInt
+array-index mutation still refuses. The inherited-accessor oracle remains
+**760 observed sites, 24 unclaimed, zero violations, precision 8/139**.
+Evidence: `/tmp/ctcompile-payload-resume-pow-fixed.log` and
+`/tmp/ctcompile-dense-array-pow-{static,expectations-static}.json`.
+Both code increments are committed; the full standard **530-test gate is now
+running** in `/tmp/ctcompile-payload-resume-full.log` with 1,240 frozen inputs.
+Claude's async/class/GC changes described in the **03:07:09 UTC** journal remain
+on its separate branch; they are not part of this compiler gate.
 
 ## Global key alias chains, 2026-09-11
 
