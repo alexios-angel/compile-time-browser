@@ -265,9 +265,15 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
                                      value callee) {
     const std::string what =
         name.empty() ? std::string{"the value"} : "`" + std::string{name} + "`";
+    // A PRIMITIVE IS SPELLED OUT; an object is not - ToString of an object
+    // runs its own toString, which is page code, and page code must not run
+    // while a TypeError is being built: an object inheriting
+    // Function.prototype.toString (`new F()` where `F.prototype` is a
+    // function) had that native throw a SECOND TypeError under the first,
+    // which consumed the page's own catch and left the first uncaught.
+    const bool spell = !callee.is_undefined() && !callee.is_null() && !callee.is_object_like();
     return what + " is " + std::string{type_of(callee)} +
-           (callee.is_undefined() || callee.is_null() ? "" : " (" + to_string(callee) + ")") +
-           ", not a function - in " +
+           (spell ? " (" + to_string(callee) + ")" : "") + ", not a function - in " +
            (fn.display_name().empty() ? std::string{"<anonymous>"} : "`" + fn.display_name() + "`");
 }
 

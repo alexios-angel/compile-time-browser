@@ -370,6 +370,18 @@ void test_destructuring_in_a_block() {
 // zod's builder became the boolean `true` - and the failure surfaced 25,000
 // instructions later, in a different function, as "a captured variable is
 // boolean (true), not a function".
+// The TypeError for calling a non-function is built WITHOUT running page code:
+// an object inheriting Function.prototype.toString had that native throw a
+// second TypeError under the first, which took the page's own catch with it.
+void test_call_type_error_is_catchable() {
+    expect_result("function P() {} function F() {} F.prototype = P; const o = new F(); "
+                  "try { o(); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { new Function.prototype(); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { (5)(); } catch (e) { return e.message.includes('(5)'); }", "true");
+}
+
 void test_a_declaration_shadows() {
     // a block-scoped const over a hoisted function of the same name
     expect_result("function f() { function v() { return 'fn'; } "
@@ -895,6 +907,7 @@ int main() {
     test_function_prototype();
     test_function_prototype_link();
     test_destructuring_in_a_block();
+    test_call_type_error_is_catchable();
     test_a_declaration_shadows();
     test_function_to_string();
     test_functions();
