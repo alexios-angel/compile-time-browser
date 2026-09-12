@@ -134,9 +134,10 @@ void test_a_frame_with_no_source_is_still_a_document() {
        "text/html");
 }
 
-void test_a_source_that_resolves_to_nothing_reports_error() {
+void test_a_source_that_resolves_to_nothing_still_loads() {
     // A Document is still there - a browser shows its own error page in one -
-    // and it is `error` rather than `load` that the element hears.
+    // and it is `load` that the element hears, as for a 404: an iframe's
+    // navigation always ends in a document. An EMPTY file is the same case.
     is("<iframe id=f src=missing.html></iframe>",
        "document.getElementById('f').contentDocument.body.tagName", "BODY");
     // The listener is registered by a script in the markup, which runs while
@@ -145,10 +146,10 @@ void test_a_source_that_resolves_to_nothing_reports_error() {
     // is one moment too late for this.
     is("<iframe id=f src=missing.html></iframe><script>"
        "document.getElementById('f').addEventListener('error', function () {"
-       " window.__saw = (window.__saw || 0) + 1; });"
+       " window.__saw = 'error'; });"
        "document.getElementById('f').addEventListener('load', function () {"
        " window.__saw = 'load'; });</script>",
-       "String(window.__saw)", "1");
+       "String(window.__saw)", "load");
 }
 
 void test_the_load_event_arrives_at_the_frame() {
@@ -241,7 +242,7 @@ int main() {
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
     test_a_frame_with_no_source_is_still_a_document();
-    test_a_source_that_resolves_to_nothing_reports_error();
+    test_a_source_that_resolves_to_nothing_still_loads();
     test_the_load_event_arrives_at_the_frame();
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();

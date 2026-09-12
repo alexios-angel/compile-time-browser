@@ -243,7 +243,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         // `length` IS READ: dom/nodes' pre-insertion-validation-hierarchy.js
         // passes an explicit null reference child only when the method says it
         // takes two arguments, and the two that do have to say so.
-        if (name == "insertBefore" || name == "replaceChild") {
+        if (name == "insertBefore" || name == "replaceChild" || name == "moveBefore") {
             native->define("length", value::number(2), script::attr_configurable);
         }
         doc.set(name, value::object(native));
