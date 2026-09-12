@@ -260,6 +260,95 @@ var trace = host.slot.get('value');
     ):
         add('caller_payload_' + name, source, calls, functions=functions)
         rows['nested_map_caller_payload_' + name]['expected_trace'] = expected
+    # Keep mixed child contents separate from owning method results and fields.
+    mixed_child = '''var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const t = new Map;
+    return {
+        set(value) {
+            t.has(1) || t.set(1, new Map);
+            t.get(1).set('value', value);
+            return 0;
+        },
+        get() {
+            if (!t.has(1)) { return false; }
+            return t.get(1).get('value') === 64;
+        }
+    };
+});
+var key = {value: 64};
+var traceMissing = host.slot.get();
+host.slot.set(64); var traceNumber = host.slot.get();
+host.slot.set(key); var traceObject = host.slot.get();
+host.slot.set(0); var trace = host.slot.get();
+'''
+    for order in ('number_first', 'object_first'):
+        source = mixed_child
+        if order == 'object_first':
+            source = source.replace(
+                'host.slot.set(64); var traceNumber = host.slot.get();\n'
+                'host.slot.set(key); var traceObject = host.slot.get();',
+                'host.slot.set(key); var traceObject = host.slot.get();\n'
+                'host.slot.set(64); var traceNumber = host.slot.get();')
+        add('mixed_child_' + order, source, 16, functions=5, admitted=True)
+        rows['nested_map_mixed_child_' + order].update(mixed_child=True, expected_trace=False,
+            observations={'traceMissing': False, 'traceNumber': True, 'traceObject': False})
+    for name, mutation, calls in (
+        ('delete', "if (t.has(1)) { t.get(1).delete('value'); }", 23),
+        ('clear', 'if (t.has(1)) { t.get(1).clear(); }', 23),
+        ('replace', 't.set(1, new Map);', 21),
+    ):
+        source = mixed_child.replace('    return {\n',
+            '    return {\n        poison() { ' + mutation + ' return 0; },\n') + '''host.slot.set(64); var traceBefore = host.slot.get();
+host.slot.poison(); trace = host.slot.get();
+'''
+        add('mixed_child_' + name, source, calls, functions=6, admitted=True)
+        rows['nested_map_mixed_child_' + name].update(mixed_child=True, expected_trace=False,
+            child_mutation=mutation, replacement=name == 'replace',
+            observations={'traceMissing': False, 'traceNumber': True, 'traceObject': False,
+                          'traceBefore': True})
+    null_child = mixed_child.replace("=== 64;", "=== null;").replace(
+        'host.slot.set(0); var trace = host.slot.get();',
+        'host.slot.set(null); var trace = host.slot.get();')
+    add('mixed_child_null', null_child, 16, functions=5, admitted=True)
+    rows['nested_map_mixed_child_null'].update(mixed_child=True, mixed_child_kind='null', expected_trace=True,
+        observations={'traceMissing': False, 'traceNumber': False, 'traceObject': False})
+    missing = rows['nested_map_mixed_child_delete']['source'].replace('=== 64;', '=== void 0;')
+    add('mixed_child_missing', missing, 23, functions=6, admitted=True)
+    rows['nested_map_mixed_child_missing'].update(mixed_child=True, mixed_child_kind='undefined', expected_trace=True,
+        child_mutation="if (t.has(1)) { t.get(1).delete('value'); }", replacement=False,
+        observations={'traceMissing': False, 'traceNumber': False, 'traceObject': False,
+                      'traceBefore': False})
+    truthy = mixed_child.replace("return t.get(1).get('value') === 64;",
+        "return !!t.get(1).get('value');")
+    add('mixed_child_truthy', truthy, 16, functions=5, admitted=True)
+    rows['nested_map_mixed_child_truthy'].update(mixed_child=True, mixed_child_kind='truthy', expected_trace=False,
+        observations={'traceMissing': False, 'traceNumber': True, 'traceObject': True})
+    identity = mixed_child.replace('get() {', 'get(value) {').replace('=== 64;', '=== value;').replace(
+        'var traceMissing = host.slot.get();', 'var traceMissing = host.slot.get(key);').replace(
+        'var traceNumber = host.slot.get();', 'var traceNumber = host.slot.get(64);').replace(
+        'var traceObject = host.slot.get();', 'var traceObject = host.slot.get(key);').replace(
+        'var trace = host.slot.get();', 'var trace = host.slot.get(0);')
+    add('mixed_child_identity', identity, 16, functions=5, admitted=True)
+    rows['nested_map_mixed_child_identity'].update(mixed_child=True, mixed_child_kind='identity', expected_trace=True,
+        observations={'traceMissing': False, 'traceNumber': True, 'traceObject': True})
+    # These separate probes retain real returned values; admission is measured
+    # independently from the Boolean-result child-content programs above.
+    returned = mixed_child.replace('if (!t.has(1)) { return false; }\n'
+        "            return t.get(1).get('value') === 64;",
+        "return t.has(1) && t.get(1).get('value') || null;").replace(
+        'var traceMissing = host.slot.get();', 'var traceMissing = host.slot.get() === null;').replace(
+        'var traceNumber = host.slot.get();', 'var traceNumber = host.slot.get() === 64;').replace(
+        'var traceObject = host.slot.get();', 'var traceObject = host.slot.get() === key;').replace(
+        'var trace = host.slot.get();', 'var trace = host.slot.get() === null;')
+    add('mixed_child_returned_identity', returned, 16, functions=5)
+    rows['nested_map_mixed_child_returned_identity'].update(expected_trace=True,
+        observations={'traceMissing': True, 'traceNumber': True, 'traceObject': True})
+    add('mixed_child_returned_field', returned.replace(
+        'var traceObject = host.slot.get() === key;',
+        'var traceObject = host.slot.get().value;'), 16, functions=5)
+    rows['nested_map_mixed_child_returned_field'].update(expected_trace=True,
+        observations={'traceMissing': True, 'traceNumber': True, 'traceObject': 64})
     return rows
 
 
@@ -355,7 +444,188 @@ def caller_payload_lifetime_cpp(cpp, row):
     return changed
 
 
+def mixed_child_observer(source, row):
+    kind = row.get('mixed_child_kind', 'number')
+    expected = {'number': 'value === 64', 'null': 'value === null',
+                'undefined': 'value === undefined', 'truthy': '!!value', 'identity': 'true'}[kind]
+    observed = source + '''
+(function() {
+    const set = host.slot.set, get = host.slot.get;
+    const read = value => GET;
+    const expected = value => EXPECTED;
+    POISON_BINDING
+    host = {};
+    const original = Map.prototype.get;
+    let outer, child;
+    Map.prototype.get = function(key) {
+        const result = original.call(this, key);
+        if (result instanceof Map) { outer = this; child = result; }
+        return result;
+    };
+    let ok = set(64) === 0 && read(64) === expected(64);
+    Map.prototype.get = original;
+    const detached = child;
+    outer.clear();
+    detached.set('value', key);
+    ok = ok && read(64) === false && set(64) === 0 && outer.get(1) !== detached &&
+         detached.get('value') === key && read(64) === expected(64);
+    for (let i = 0; i < 128; ++i) {
+        const value = i % 2 === 0 ? -i : i + 0.5;
+        const item = {value}, alias = item, other = {value: value + 1};
+        ok = ok && set(item) === 0 && read(item) === expected(item);
+        child = outer.get(1);
+        const saved = child.get('value');
+        item.value = value + 2;
+        ok = ok && saved === alias && saved.value === value + 2;
+        ok = ok && set(other) === 0 && child.get('value') === other &&
+             read(other) === expected(other) DISTINCT;
+        ok = ok && saved === item && saved !== other && saved.value === value + 2;
+        ok = ok && set(value) === 0 && child.get('value') === value &&
+             read(value) === expected(value) && saved.value === value + 2;
+        POISON_CHECK
+    }
+    NULL_CHECK
+    child = outer.get(1);
+    child.clear();
+    ok = ok && read(64) === MISSING && child.size === 0;
+    outer.clear();
+    ok = ok && read(64) === false && set(64) === 0 && outer.get(1) !== child &&
+         read(64) === expected(64);
+    trace = ok ? 1 : 0;
+})();
+'''
+    return observed.replace('GET', 'get(value)' if kind == 'identity' else 'get()').replace(
+        'EXPECTED', expected).replace('POISON_BINDING',
+        'const poison = host.slot.poison;' if 'child_mutation' in row else '').replace(
+        'DISTINCT', '&& read(item) === false' if kind == 'identity' else '').replace(
+        'POISON_CHECK', '''const prior = outer.get(1);
+        ok = ok && set(64) === 0 && poison() === 0 && read(64) === MISSING &&
+             (outer.get(1) !== prior) === REPLACEMENT &&
+             prior.get('value') === PRIOR;'''.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
+                 'PRIOR', '64' if row['replacement'] else 'undefined') if 'child_mutation' in row else '').replace(
+        'NULL_CHECK', 'ok = ok && set(null) === 0 && read(null) === true;' if kind == 'null' else '').replace(
+        'MISSING', 'true' if kind == 'undefined' else 'false')
+
+
+def mixed_child_lifetime_cpp(cpp, row):
+    kind = row.get('mixed_child_kind', 'number')
+    changed = instrument_leaf_objects(cpp) + r'''
+int main() {
+    using Value = ctnative::object_value;
+    using Scalar = ctnative::nullable_scalar;
+    using Child = ctnative::map_storage<std::string, Value>;
+    using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != INITIAL_MAPS ||
+        ctn_test_objects.size() != 1) { return 330; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto set = table->m_set;
+    auto get = table->m_get;
+    POISON_BINDING
+    static_assert(std::is_same_v<decltype(set), std::function<js_num(Value)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<bool(GET_SIGNATURE)>>);
+    auto read = [&get](Value value) { (void)value; return GET; };
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); g_key.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired() || !ctn_test_objects[0].expired()) { return 331; }
+    auto outer = std::const_pointer_cast<Outer>(
+        std::static_pointer_cast<const Outer>(ctn_test_maps[0].lock()));
+    auto detached = outer->at(js_num{1});
+    std::weak_ptr detached_lifetime = detached;
+    outer->clear();
+    ctnative::map_set(detached, std::string{"value"}, Value{js_num{73}});
+    if (read(js_num{64}) || set(js_num{64}) != 0 || outer->at(js_num{1}) == detached ||
+        ctnative::map_get(detached, std::string{"value"}).scalar.value != 73 ||
+        read(js_num{64}) != NUMBER_64) { return 332; }
+    detached.reset();
+    if (!detached_lifetime.expired()) { return 333; }
+    for (int call = 0; call < 128; ++call) {
+        const js_num number = call % 2 == 0 ? -call : call + 0.5;
+        auto first = std::make_shared<ctnative::identity_object>();
+        first->field_76616c7565 = Scalar{number};
+        auto alias = first;
+        std::weak_ptr first_lifetime = first;
+        if (set(first) != 0 || read(first) != OBJECT_RESULT) { return 334; }
+        auto child = outer->at(js_num{1});
+        auto saved = ctnative::map_get(child, std::string{"value"});
+        first->field_76616c7565 = Scalar{number + 2};
+        if (saved.object != alias || saved.object->field_76616c7565.value != number + 2) { return 335; }
+        first.reset(); alias.reset();
+        auto other = std::make_shared<ctnative::identity_object>();
+        other->field_76616c7565 = Scalar{number + 1};
+        std::weak_ptr other_lifetime = other;
+        if (set(other) != 0 || child->at("value").object != other ||
+            read(other) != OBJECT_RESULT DISTINCT) { return 336; }
+        other.reset();
+        if (set(number) != 0 || !other_lifetime.expired() || first_lifetime.expired() ||
+            child->at("value").object || child->at("value").scalar.tag != Scalar::kind::number ||
+            child->at("value").scalar.value != number || read(number) != NUMBER_RESULT ||
+            saved.object->field_76616c7565.value != number + 2) { return 337; }
+        POISON_CHECK
+        saved = {};
+        if (!first_lifetime.expired()) { return 338; }
+    }
+    NULL_CHECK
+    auto child = outer->at(js_num{1});
+    child->clear();
+    if (read(js_num{64}) != MISSING || !child->empty()) { return 339; }
+    outer->clear();
+    if (read(js_num{64}) || set(js_num{64}) != 0 || outer->at(js_num{1}) == child ||
+        read(js_num{64}) != NUMBER_64) { return 340; }
+    child.reset();
+    auto last = std::make_shared<ctnative::identity_object>();
+    last->field_76616c7565 = Scalar{91.0};
+    std::weak_ptr last_lifetime = last;
+    if (set(last) != 0 || read(last) != OBJECT_RESULT) { return 341; }
+    auto saved = ctnative::map_get(outer->at(js_num{1}), std::string{"value"});
+    last.reset();
+    const auto next = ctn_test_maps.size();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != next + INITIAL_MAPS ||
+        ctn_test_objects.size() != 2 || ctn_test_maps[0].lock() == ctn_test_maps[next].lock() ||
+        last_lifetime.expired() || saved.object->field_76616c7565.value != 91) { return 342; }
+    outer.reset(); set = {}; POISON_DROP
+    if (ctn_test_maps[0].expired() || read(saved) != OBJECT_RESULT) { return 343; }
+    get = {};
+    if (!ctn_test_maps[0].expired() || last_lifetime.expired() ||
+        saved.object->field_76616c7565.value != 91) { return 344; }
+    saved = {};
+    if (!last_lifetime.expired()) { return 345; }
+    g_host.reset(); g_key.reset();
+    for (const auto & map : ctn_test_maps) {
+        if (!map.expired()) { return 346; }
+    }
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 347; }
+    }
+    return 0;
+}
+'''
+    return changed.replace('INITIAL_MAPS', '3' if row.get('replacement') else '2').replace(
+        'POISON_BINDING', 'auto poison = table->m_poison;' if 'child_mutation' in row else '').replace(
+        'POISON_DROP', 'poison = {};' if 'child_mutation' in row else '').replace(
+        'GET_SIGNATURE', 'Value' if kind == 'identity' else '').replace(
+        'GET', 'get(value)' if kind == 'identity' else 'get()').replace(
+        'NUMBER_64', 'true' if kind in {'number', 'truthy', 'identity'} else 'false').replace(
+        'OBJECT_RESULT', 'true' if kind in {'truthy', 'identity'} else 'false').replace(
+        'NUMBER_RESULT', 'true' if kind == 'identity' else '(number != 0)' if kind == 'truthy'
+            else '(number == 64)' if kind == 'number' else 'false').replace(
+        'DISTINCT', '|| read(saved)' if kind == 'identity' else '').replace(
+        'POISON_CHECK', '''if (set(js_num{64}) != 0 || poison() != 0 ||
+            read(js_num{64}) != MISSING || (outer->at(js_num{1}) != child) != REPLACEMENT) { return 348; }
+        const auto prior = ctnative::map_get(child, std::string{"value"});
+        if (PRIOR) { return 349; }'''.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
+            'PRIOR', 'prior.object || prior.scalar.tag != Scalar::kind::number || prior.scalar.value != 64'
+            if row['replacement'] else 'prior.object || prior.scalar.tag != Scalar::kind::undefined')
+            if 'child_mutation' in row else '').replace(
+        'NULL_CHECK', 'if (set(Scalar::null()) != 0 || !read(Scalar::null())) { return 350; }'
+            if kind == 'null' else '').replace('MISSING', 'true' if kind == 'undefined' else 'false')
+
+
 def nested_map_observer(source, row):
+    if row.get('mixed_child'):
+        return mixed_child_observer(source, row)
     observed = source + '''
 (function() {
     const get = host.slot.get;
@@ -463,6 +733,8 @@ def nested_map_lifetime_cpp(cpp, row):
     # Reuse the existing weak allocation observer; generated ownership is unchanged.
     if row.get('caller_payload'):
         return caller_payload_lifetime_cpp(cpp, row)
+    if row.get('mixed_child'):
+        return mixed_child_lifetime_cpp(cpp, row)
     if row.get('nullable'):
         return nested_map_mutation_lifetime_cpp(cpp, row)
     changed = instrument_leaf_objects(cpp, allocations=0) + r'''
@@ -828,6 +1100,12 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 ('{value: 64}', '{value: 0}')]
             if row['global_alias']:
                 replacements[-1] = ('alias.value = 65;', 'alias.value = 0;')
+        if row.get('mixed_child'):
+            replacements = [("t.get(1).get('value')", '64'),
+                ("t.get(1).set('value', value);", "t.get(1).set('value', 0);")]
+            if 'child_mutation' in row:
+                replacements.append(('poison() { ' + row['child_mutation'] + ' return 0; }',
+                                     'poison() { return 0; }'))
         for index, (old, replacement) in enumerate(replacements):
             assert row['source'].count(old) == 1, (name, old)
             blinded = args.work / f'{name}-blinded-{index}.js'
@@ -896,7 +1174,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
         for mode, native in (('explicit', default), ('deduced', deduced)):
             cpp = host.run([args.translate, '--mlir-to-cpp', str(native)]).stdout
             signature = ('std::function<js_num(js_num, std::string)>' if row['dynamic'] else
-                         'std::function<js_num(ctnative::object_value)>' if row.get('caller_payload') and row['mixed'] else
+                         'std::function<js_num(ctnative::object_value)>' if row.get('mixed_child') or row.get('caller_payload') and row['mixed'] else
                          'std::function<js_num(std::shared_ptr<ctnative::identity_object>)>' if row.get('caller_payload') else
                          'std::function<ctnative::nullable_scalar()>' if row.get('nullable') else
                          'std::function<ctnative::nullable_scalar(js_num)>' if row['previous'] or row.get('alias') else
@@ -928,7 +1206,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                     'nested_map_repeated_lookup', 'nested_map_cross_inverted_guard',
                     'nested_map_conditional_unknown_contents', 'nested_map_dynamic_nullable',
                     'nested_map_previous_observed', 'nested_map_dynamic_nullable_observed',
-                    'nested_map_caller_payload_fields_observed', 'nested_map_caller_payload_number_last_observed'}:
+                    'nested_map_caller_payload_fields_observed', 'nested_map_caller_payload_number_last_observed',
+                    'nested_map_mixed_child_identity', 'nested_map_mixed_child_replace'}:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
