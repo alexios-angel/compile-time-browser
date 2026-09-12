@@ -223,9 +223,29 @@ void test_link_disabled() {
     CHECK_EQ(logged(alternate, "alt="), std::string{"alt=fired"});
 }
 
+// THE `background` SHORTHAND REACHES THE CASCADE. It was recorded whole and
+// never expanded, so `background: green` - which every HTMLLinkElement-disabled
+// test asserts through the root's computed backgroundColor - painted nothing.
+void test_the_background_shorthand() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        #a { background: green }
+        #b { background: url(x.png) no-repeat center / cover rgb(1, 2, 3) }
+        #c { background-color: red; background: none }
+        #d { background: red, url(y.png) blue }
+    </style></head><body><p id=a></p><p id=b></p><p id=c></p><p id=d></p><script>
+        const c = id => getComputedStyle(document.getElementById(id)).backgroundColor;
+        console.log('bg=' + c('a') + '|' + c('b') + '|' + c('c') + '|' + c('d'));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "bg="),
+             std::string{"bg=rgb(0, 128, 0)|rgb(1, 2, 3)|rgba(0, 0, 0, 0)|rgb(0, 0, 255)"});
+}
+
 } // namespace
 
 int main() {
+    test_the_background_shorthand();
     test_leading_imports();
     test_an_import_reaches_the_cascade();
     test_the_import_rule_object();

@@ -504,11 +504,10 @@ void test_the_at_rules_that_are_all_prelude() {
     // A DEFAULT namespace has no prefix, and CSSOM reports that as the empty
     // string rather than as null.
     CHECK_EQ(logged(page, "default="), std::string{"default=|@namespace url(\"http://servo1\");"});
-    // `styleSheet` is null because nothing here fetches an `@import`, which a
-    // page must be able to find out rather than be handed an empty sheet that
-    // claims the import succeeded.
+    // `styleSheet` is a sheet of its own - fetched through the registry, and
+    // empty when the fetch found nothing; cssom_imports covers its contents.
     CHECK_EQ(logged(page, "import="),
-             std::string{"import=a.css|@import url(\"a.css\");|null|null"});
+             std::string{"import=a.css|@import url(\"a.css\");|null|[object CSSStyleSheet]"});
     CHECK_EQ(logged(page, "supports="),
              std::string{"supports=(display: flex) or (display: block)|screen|"
                          "@import url(\"b.css\") supports((display: flex) or (display: block)) "
