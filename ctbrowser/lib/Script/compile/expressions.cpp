@@ -839,14 +839,13 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
-    // AN INVALID LITERAL IS AN EARLY ERROR (13.2.7.2): the pattern and flags
-    // are checked here, with the same compiler the runtime uses, so a bad
-    // literal is a SyntaxError of the source text - "parse error:" - rather
-    // than a throw when the line is reached. test262 spells 181 files as
-    // exactly this distinction.
-    if (const rx::rx_prog probe =
-            rx::rx_compile(literal.substr(1, close - 1), literal.substr(close + 1));
-        !probe.ok) {
+    // INVALID FLAGS ARE AN EARLY ERROR (13.2.7.2): `/a/gg`, `/a/x`. The
+    // PATTERN is deliberately not checked here: rx_compile cannot tell a
+    // syntax error from a feature it lacks (lookbehind, `\u{...}`), and the
+    // runtime path hands it the escape-DECODED text - so a compile-time
+    // check refused p5.js whole over `/\u2028/`, which runs fine. A bad
+    // pattern stays a throw at the line, as it was.
+    if (const rx::rx_prog probe = rx::rx_compile("", literal.substr(close + 1)); !probe.ok) {
         fail("parse error: " + probe.error);
         proto().emit(instruction{op::load_undef, dst});
         return;
