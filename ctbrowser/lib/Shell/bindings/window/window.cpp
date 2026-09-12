@@ -2,6 +2,7 @@
 // and the proxy that makes it the global object.
 
 #include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 namespace ctbrowser::shell {
 
@@ -903,6 +904,17 @@ void dom_bindings::install_window(context & cx) {
     window->set("top", window_view);
     window->set("opener", value::null());
     window->set("frameElement", value::null());
+    // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
+    // origin serialised - "null" for a file: page, as location.origin says.
+    window->define_accessor("origin",
+                            value::object(cx.allocate<script::native_object>(
+                                "origin",
+                                [this](context & c, std::span<value>) {
+                                    const std::string origin =
+                                        location_parts(location_href_).origin;
+                                    return c.string(origin.empty() ? "null" : origin);
+                                })),
+                            value::undefined());
 }
 
 } // namespace ctbrowser::shell

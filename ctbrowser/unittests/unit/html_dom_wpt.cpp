@@ -141,11 +141,11 @@ void test_a_located_document_resolves_its_url_attributes() {
     page.load_html("<!DOCTYPE html><img id=i src=' cat.png '><a id=a href=' cat.png '>"
                    "<script>console.log([document.URL, document.baseURI, location.href,"
                    " location.hash, document.getElementById('i').src,"
-                   " document.getElementById('a').href].join('|'));</script>");
+                   " document.getElementById('a').href, self.origin].join('|'));</script>");
     CHECK_EQ(page.bindings().console_output().back(),
              "file:///srv/pages/index.html#top|file:///srv/pages/index.html#top|"
              "file:///srv/pages/index.html#top|#top|file:///srv/pages/cat.png|"
-             "file:///srv/pages/cat.png");
+             "file:///srv/pages/cat.png|null");
 }
 
 void test_the_document_knows_its_running_script_and_its_ready_state() {
