@@ -654,6 +654,11 @@ private:
             out.value = known;
             return out;
         }
+        // `calc-size()` IS A TOP-LEVEL FUNCTION ONLY, CSS Values 5 §calc-size:
+        // it may not sit inside another math function, and the only way one
+        // reaches this evaluator is nested - a top-level one is stepped over
+        // whole by every scan (calc-size-parsing).
+        if (named("calc-size(")) { return fail(); }
         // ANY OTHER FUNCTION IS UNRESOLVED, NOT INVALID, and the difference is
         // measured: `calc(inherit(--x) + 1px)` and `calc(attr(data-n px) * 2)`
         // are `test_valid_value` assertions and they are valid CSS this file

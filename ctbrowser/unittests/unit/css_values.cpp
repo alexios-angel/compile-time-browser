@@ -320,6 +320,10 @@ void test_the_rest_of_the_math_functions() {
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     // A UNIT WITH NO BASIS KEEPS ITS TERM, AND ITS TERM KEEPS ITS PLACE. CSS
     // Values 4 §10.11 does not resolve `1em` or `5%` here, so both survive to
     // the specified value; §10.13 says what order they survive in.
@@ -391,6 +395,10 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
     ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // ...but a calc-size() INSIDE another math function is a syntax error
+    // (CSS Values 5 §calc-size, calc-size-parsing).
+    bad("width", "calc(calc-size(auto, size))");
+    bad("width", "min(calc-size(auto, 0px), calc-size(auto, size))");
     ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
 }
 
