@@ -24,7 +24,6 @@
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
-include "ctcompile/CTNative/IR/CTNativeInterfaces.td"
 
 def CTNative_Dialect : Dialect {
   let name = "ctnative";
