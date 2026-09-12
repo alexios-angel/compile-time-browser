@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <functional>
@@ -502,10 +503,7 @@ struct side_lengths {
 [[nodiscard]] inline bool generates_no_box(std::string_view tag) {
     constexpr std::string_view hidden[] = {"head", "style", "script", "title",
                                            "meta", "link",  "base",   "template"};
-    for (const std::string_view t : hidden) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(hidden, tag) != std::ranges::end(hidden);
 }
 
 // The tag list HTML renders inline by default, when the sheet says nothing.
@@ -518,10 +516,7 @@ struct side_lengths {
         // Left to the unknown-element default this would be block-level, and a
         // graphic mid-paragraph would break the line before and after itself.
         "svg"};
-    for (const std::string_view t : inline_tags) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(inline_tags, tag) != std::ranges::end(inline_tags);
 }
 
 // Elements sized by what they ARE rather than by what they contain. A <canvas>
@@ -543,10 +538,7 @@ struct side_lengths {
     // stays replaced and keeps the widget painter's arm.
     constexpr std::string_view names[] = {"canvas", "img",    "input", "select", "textarea",
                                           "video",  "iframe", "embed", "object", "svg"};
-    for (const std::string_view t : names) {
-        if (t == tag) { return true; }
-    }
-    return false;
+    return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
 // What `display` a tag has before any sheet speaks.
