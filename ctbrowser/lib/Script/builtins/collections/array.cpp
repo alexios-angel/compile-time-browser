@@ -40,8 +40,20 @@ void install_array(context & cx) {
     const auto static_method = [&](const char * name, double arity, native_fn fn) {
         method(cx, array_ctor, name, arity, std::move(fn));
     };
-    static_method("isArray", 1, [](context &, std::span<value> a) {
-        return value::boolean(arg_at(a, 0).is_array());
+    // IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked
+    // one (both slots null) is a TypeError.
+    static_method("isArray", 1, [](context & c, std::span<value> a) {
+        value v = arg_at(a, 0);
+        for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
+            auto * p = static_cast<proxy_object *>(v.as_heap());
+            if (p->handler.is_null()) {
+                c.throw_error("TypeError",
+                              "Cannot perform 'IsArray' on a proxy that has been revoked");
+                return value::boolean(false);
+            }
+            v = p->target;
+        }
+        return value::boolean(v.is_array());
     });
     static_method("of", 0, [](context & c, std::span<value> a) {
         value out = c.make_array();

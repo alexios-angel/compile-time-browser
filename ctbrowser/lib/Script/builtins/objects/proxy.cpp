@@ -30,9 +30,59 @@ void install_proxy(context & cx) {
     using detail::method;
     using detail::new_table;
 
-    cx.define_native("Proxy", [](context & c, std::span<value> a) {
-        return value::object(c.allocate<proxy_object>(arg_at(a, 0), arg_at(a, 1)));
+    // ProxyCreate, 10.5.14: both halves must be objects. A revoked proxy has
+    // null in both slots (28.2.2.1.1), and every operation on one is a
+    // TypeError - context::proxy_trap answers no trap for a null handler and
+    // the fall-through then refuses the null target.
+    const auto proxy_create = [](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_object_like() || !arg_at(a, 1).is_object_like()) {
+            c.throw_error("TypeError",
+                          "Cannot create proxy with a non-object as target or handler");
+            return value::undefined();
+        }
+        return value::object(c.allocate<proxy_object>(a[0], a[1]));
+    };
+    auto * proxy_ctor =
+        cx.allocate<native_object>("Proxy", [proxy_create](context & c, std::span<value> a) {
+            // 28.2.1.1 step 1: `Proxy(...)` without `new` is a TypeError.
+            if (!detail::constructing_this(c.current_this())) {
+                c.throw_error("TypeError", "Constructor Proxy requires 'new'");
+                return value::undefined();
+            }
+            return proxy_create(c, a);
+        });
+    proxy_ctor->define("length", value::number(2), attr_configurable);
+    proxy_ctor->define("name", cx.string("Proxy"), attr_configurable);
+    // 28.2.2.1 Proxy.revocable: { proxy, revoke }, and `revoke` reaches its
+    // proxy through its OWN property table rather than a captured value,
+    // because a value captured by a native lambda is not a collector root
+    // (docs/script.md).
+    method(cx, proxy_ctor, "revocable", 2, [proxy_create](context & c, std::span<value> a) {
+        const value proxy = proxy_create(c, a);
+        if (!proxy.is_kind(heap_kind::proxy)) { return value::undefined(); }
+        const context::rooted keep{c, proxy};
+        native_object * revoke = detail::cx_native(c, "", native_fn{});
+        revoke->fn = [revoke](context &, std::span<value>) {
+            // `revoke` is alive for the duration of its own call; the pointer
+            // is to the object being called.
+            if (value * held = revoke->find(primitive_slot_key); held != nullptr) {
+                if (held->is_kind(heap_kind::proxy)) {
+                    auto * p = static_cast<proxy_object *>(held->as_heap());
+                    p->target = value::null();
+                    p->handler = value::null();
+                }
+                *held = value::null();
+            }
+            return value::undefined();
+        };
+        detail::install_arity(c, revoke, 0);
+        revoke->define(primitive_slot_key, proxy, attr_none);
+        object_object * out = detail::new_table(c);
+        out->set("proxy", proxy);
+        out->set("revoke", value::object(revoke));
+        return value::object(out);
     });
+    cx.define_global("Proxy", value::object(proxy_ctor));
 
     // Reflect is the un-trapped operation a handler calls to do the default
     // thing - `Reflect.get(t, k)` inside a `get` trap is how a proxy adds
