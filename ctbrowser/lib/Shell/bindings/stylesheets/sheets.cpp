@@ -156,29 +156,19 @@ value dom_bindings::style_sheet_list(context & cx) {
         if (const value * proto = internals->find("StyleSheetList.prototype")) {
             obj->prototype = *proto;
         }
+        obj->define("length", value::number(0), script::attr_none);
     }
     internals->set("list", list);
     return list;
 }
 
-// A StyleSheetList IS LIVE, and its `length` is where that is tested:
-// ttwf-cssom-doc-ext-load-count.html holds `document.styleSheets` in a
-// variable, removes a `<link>`, and reads `.length` off the variable. So the
-// indexed properties are refreshed here and `length` is an accessor on the
-// prototype that re-derives the list from the DOM before it counts - the
-// count lives in a private slot rather than an own data property, which no
-// accessor could stand in front of.
-void dom_bindings::set_sheet_list(script::object_object & list, std::span<const value> items) {
-    const std::size_t was = slot_index(&list, count_key);
-    for (std::size_t i = items.size(); i < was && was != no_index; ++i) {
-        (void)list.erase(std::to_string(i));
-    }
-    for (std::size_t i = 0; i < items.size(); ++i) {
-        list.define(std::to_string(i), items[i], script::attr_enumerable);
-    }
-    list.define(count_key, value::number(static_cast<double>(items.size())), script::attr_none);
-}
-
+// LIVE ENOUGH, AND NOT LIVE. `item()` re-derives the list from the tree
+// first, and so does every read of `document.styleSheets`; `length` is an own
+// data property, because the VM's iteration reads it as one (Array.from,
+// spread and for-of all go through context::iterable_values) and a prototype
+// accessor emptied all three. So a list held in a variable across a DOM change
+// answers a stale `length` - ttwf-cssom-doc-ext-load-count.html is one subtest
+// of exactly that, and it is the price of `Array.from(document.styleSheets)`.
 void dom_bindings::resync_sheet_list(context & cx, script::object_object & list) {
     if (const value * tree = list.find(tree_key)) {
         if (const node_id root = handle_of(*tree)) { sync_sheet_list(cx, root, list, nullptr); }
@@ -296,10 +286,9 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
     std::vector<value> ordered;
     if (order != nullptr) {
         order->clear();
-        css_preferred_title_.clear();
         for (const found_sheet & each : found) {
             if (!each.title.empty()) {
-                css_preferred_title_ = each.title;
+                (void)preferred_sheet_title(each.title);
                 break;
             }
         }
@@ -365,7 +354,7 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         if (order != nullptr) { order->push_back(at); }
         ordered.push_back(sheet_object_for(cx, at));
     }
-    set_sheet_list(list_obj, ordered);
+    set_indexed(list_obj, ordered);
 }
 
 void dom_bindings::install_style_sheets(context & cx) {

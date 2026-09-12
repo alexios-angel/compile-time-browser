@@ -106,14 +106,18 @@ std::string browser::collect_author_styles() {
     const atom href_attribute = atoms_.intern_lower("href");
     const atom disabled_attribute = atoms_.intern_lower("disabled");
     const atom title_attribute = atoms_.intern_lower("title");
-    // HTML 4.2.6: the first TITLED sheet in tree order names the preferred
-    // style sheet set, and a sheet with any other title is an alternative set
-    // that does not apply - unless its link was explicitly enabled.
+    // HTML 4.2.6: the first TITLED sheet names the preferred style sheet set,
+    // and a sheet with any other title is an alternative set that does not
+    // apply - unless its link was explicitly enabled. The set is the bindings'
+    // sticky answer once they exist (dom_bindings::preferred_sheet_title);
+    // before scripts run it is the first titled sheet of this walk, which is
+    // the same answer for a parsed document.
     std::string preferred;
     bool have_preferred = false;
     const auto applies = [&](node_id at, bool enabled) {
         const std::string_view title = txn.attribute_value(at, title_attribute);
         if (title.empty()) { return true; }
+        if (bindings_) { return enabled || title == bindings_->preferred_sheet_title(title); }
         if (!have_preferred) {
             preferred = std::string{title};
             have_preferred = true;

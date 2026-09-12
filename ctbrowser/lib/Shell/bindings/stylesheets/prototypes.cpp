@@ -166,14 +166,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // --- StyleSheetList
     script::object_object * list_proto = interface("StyleSheetList", nullptr, nullptr);
     iterable(list_proto);
-    // LIVE: both re-derive the list from the tree first - see set_sheet_list.
-    getter(list_proto, "length", [this](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        if (self == nullptr) { return value::number(0); }
-        resync_sheet_list(c, *self);
-        const std::size_t count = slot_index(self, count_key);
-        return value::number(count == no_index ? 0 : static_cast<double>(count));
-    });
+    // `item()` re-derives the list from the tree first - see resync_sheet_list.
     method(list_proto, "item", [this](context & c, std::span<value> a) {
         if (script::object_object * self = as_object(c.current_this())) {
             resync_sheet_list(c, *self);
@@ -199,8 +192,16 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         const css_sheet_record * sheet = receiver_sheet(c);
         // NULL ONCE THE OWNER NO LONGER CARRIES IT: a `<link>` that was
         // disabled or removed keeps this record for the page that holds it,
-        // and the record answers that it belongs to nothing.
-        if (sheet == nullptr || !sheet->owner || !sheet->attached) { return value::null(); }
+        // and the record answers that it belongs to nothing. The owner's tree
+        // is re-walked first, so the answer follows a `link.disabled = true`
+        // made a statement ago.
+        if (sheet == nullptr || !sheet->owner) { return value::null(); }
+        if (shadow_tree_of(sheet->tree) != nullptr) {
+            (void)shadow_sheet_list(c, sheet->tree);
+        } else {
+            sync_style_sheets(c);
+        }
+        if (!sheet->attached) { return value::null(); }
         return wrap(c, sheet->owner);
     });
     // An `@import`'s sheet knows its rule, and through it its parent - and
@@ -575,7 +576,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 style::css::parse_selector_text(text, *atoms_, bad, &namespaces);
             if (bad || parsed.selectors.empty()) { return value::undefined(); }
             rule->selector = representable(parsed.selectors)
-                                 ? serialize_selector_list(parsed.selectors, *atoms_)
+                                 ? serialize_selector_list(parsed.selectors, *atoms_, namespaces)
                                  : collapse_whitespace(text);
             style_sheets_changed();
             return value::undefined();

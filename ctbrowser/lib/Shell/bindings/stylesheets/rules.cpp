@@ -101,7 +101,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     if (rule.type == namespace_rule) {
         std::string out = "@namespace ";
-        if (!rule.selector.empty()) { out += rule.selector + " "; }
+        if (!rule.selector.empty()) { out += serialize_css_identifier(rule.selector) + " "; }
         return out + serialize_url(rule.prelude) + ";";
     }
     // AN AT-RULE WHOSE BLOCK IS DECLARATIONS - `@font-face`, `@page`,
@@ -382,7 +382,19 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             const std::string_view second = next_component(written, after);
             const std::string uri = url_value(second.empty() ? first : second);
             if (!uri.empty()) {
-                made.selector = second.empty() ? std::string{} : std::string{first};
+                // The prefix DECODED, as the selector parser decodes the one
+                // in `x\*|test` - so the two meet (selectorSerialize.html,
+                // "escaped character (*) in element prefix"). cssText
+                // re-escapes it through serialize_css_identifier.
+                std::string prefix;
+                if (!second.empty()) {
+                    const style::css::token_stream tokens = style::css::tokenize(first);
+                    prefix = !tokens.tokens.empty() &&
+                                     tokens.tokens.front().type == style::css::token_type::ident
+                                 ? std::string{tokens.value_of(tokens.tokens.front())}
+                                 : std::string{first};
+                }
+                made.selector = std::move(prefix);
                 made.prelude = uri;
                 made.verbatim.clear();
             }
@@ -455,7 +467,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // the author's bytes when it is not - see `representable`. Whitespace is
     // collapsed either way, so `span  div  ` is `span div` in both.
     made.selector = representable(selectors.selectors)
-                        ? serialize_selector_list(selectors.selectors, *atoms_)
+                        ? serialize_selector_list(selectors.selectors, *atoms_, namespaces)
                         : collapse_whitespace(prelude);
     collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;

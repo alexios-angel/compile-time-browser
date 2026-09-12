@@ -915,6 +915,17 @@ public:
     [[nodiscard]] static link_sheet link_sheet_state(std::string_view rel, bool disabled_attribute,
                                                      bool explicitly_enabled);
     [[nodiscard]] bool link_explicitly_enabled(node_id id) const;
+    // HTML 4.2.6, the preferred style sheet set - STICKY, as every engine has
+    // it: the first titled sheet to arrive names the set and a titled sheet
+    // inserted before it later does not take over
+    // (preferred-stylesheet-reversed-order.html). `candidate` is the first
+    // titled sheet the caller's walk met, taken when nothing has named the set.
+    // ponytail: never reset, so a page that removes its preferred sheet keeps
+    // the name; clear it on removal if a page ever needs that.
+    [[nodiscard]] std::string_view preferred_sheet_title(std::string_view candidate) {
+        if (css_preferred_title_.empty()) { css_preferred_title_ = std::string{candidate}; }
+        return css_preferred_title_;
+    }
     // An `@import`'s URL against the sheet it sits in. A `<style>`'s sheet has
     // no href, so its imports resolve as the document's own paths do; a
     // `<link href="a/b.css">` importing `c.css` names `a/c.css`.
@@ -971,8 +982,7 @@ private:
     [[nodiscard]] value adopted_sheets_array(context & cx, std::span<value> args);
     // `shadowRoot.styleSheets`: the tree's own list, held on the root's wrapper.
     [[nodiscard]] value shadow_sheet_list(context & cx, node_id root);
-    // A StyleSheetList's contents, and the re-derivation `length` does first.
-    void set_sheet_list(script::object_object & list, std::span<const value> items);
+    // The re-derivation `StyleSheetList.item()` does first.
     [[nodiscard]] std::vector<style::css::namespace_declaration> sheet_namespaces(
         std::size_t sheet) const;
     void resync_sheet_list(context & cx, script::object_object & list);
@@ -1016,10 +1026,7 @@ private:
     // The `<link>`s whose `disabled` attribute a script removed - HTML's
     // "explicitly enabled" flag, which is what lets an alternate sheet apply.
     std::vector<std::uint64_t> enabled_links_;
-    // HTML 4.2.6 "the preferred style sheet set": the title of the first
-    // titled `<style>` / `<link rel=stylesheet>` in tree order. A sheet with
-    // another title is an alternative set and does not apply.
-    std::string css_preferred_title_;
+    std::string css_preferred_title_; // see preferred_sheet_title
     // The StyleSheetList, the adopted array and the interface prototypes. Held
     // on the DOCUMENT under a non-configurable private key as well as here, so
     // the collector reaches them through `mark(document_)` and this member

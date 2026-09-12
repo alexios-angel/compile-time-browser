@@ -26,6 +26,7 @@ value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
                 obj->prototype = *proto;
             }
         }
+        obj->define("length", value::number(0), script::attr_none);
         obj->define(tree_key, value::object(wrapper), script::attr_none);
         wrapper->define(rules_key, list, script::attr_none);
     }
