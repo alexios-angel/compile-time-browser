@@ -107,6 +107,27 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style(--x: 3): var(--self); else: b)", "--self"), std::string{"<invalid>"});
 }
 
+// ident-function-substitution and attr-argument-grammar: ident() joins its
+// arguments at computed-value time and may name a var()'s property; a var()
+// in attr()'s head may not grow a comma; a cycle is not rescued by a fallback.
+void test_ident_and_argument_lists() {
+    scope s;
+    s.own["--part"] = "\"name\"";
+    s.own["--myname"] = "PASS";
+    s.own["--head"] = "data-foo type(<length>), 10";
+    CHECK_EQ(s.sub("ident(\"my\" \"name\")"), std::string{"myname"});
+    CHECK_EQ(s.sub("ident(\"my\" var(--part))"), std::string{"myname"});
+    CHECK_EQ(s.sub("ident(ident(\"my\") ident(\"name\"))"), std::string{"myname"});
+    CHECK_EQ(s.sub("ident(\"vtl-\" calc(3 * 2))"), std::string{"vtl-6"});
+    CHECK_EQ(s.sub("var(ident(\"--\" \"myname\"))"), std::string{"PASS"});
+    CHECK_EQ(s.sub("ident(var(--missing))"), std::string{"<invalid>"});
+    CHECK_EQ(s.sub("ident(5px)"), std::string{"<invalid>"});
+    CHECK_EQ(s.sub("ident(\"x\" var(--p))", "--p"), std::string{"<invalid>"});
+    CHECK_EQ(s.sub("var(--p, 3px)", "--p"), std::string{"<invalid>"});
+    CHECK_EQ(s.sub("attr(var(--head))"), std::string{"<invalid>"});
+    CHECK_EQ(s.sub("var(--x type(*))"), std::string{"<invalid>"});
+}
+
 void test_style_queries() {
     scope s;
     const auto holds = [&](std::string_view query) {
@@ -253,6 +274,7 @@ void test_a_page_reads_if_back() {
 
 int main() {
     test_branches_and_else();
+    test_ident_and_argument_lists();
     test_style_queries();
     test_media_and_supports();
     test_media_conditions();

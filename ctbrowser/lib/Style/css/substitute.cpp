@@ -1,6 +1,7 @@
 #include <ctbrowser/style/css/substitute.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -29,7 +30,11 @@ constexpr std::size_t max_bytes = 64 * 1024;
 struct call {
     bool is_attr = false;
     bool is_if = false;
-    std::size_t open = 0;     // the `var(`, `attr(` or `if(` token
+    bool is_ident = false;
+    // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
+    // which is read only once that function has been substituted.
+    bool name_is_call = false;
+    std::size_t open = 0;     // the `var(`, `attr(`, `if(` or `ident(` token
     std::size_t close = 0;    // the matching `)`, or the eof token if none
     std::size_t name_at = 0;  // the `--x` ident
     std::size_t comma_at = 0; // the first top-level comma, or `close` if none
@@ -51,18 +56,30 @@ struct call {
         const bool is_var = is_function_named(s, s.tokens[i], "var");
         const bool is_attr = !is_var && is_function_named(s, s.tokens[i], "attr");
         const bool is_if = !is_var && !is_attr && is_function_named(s, s.tokens[i], "if");
-        if (!is_var && !is_attr && !is_if) { continue; }
+        const bool is_ident =
+            !is_var && !is_attr && !is_if && is_function_named(s, s.tokens[i], "ident");
+        if (!is_var && !is_attr && !is_if && !is_ident) { continue; }
         out = call{};
         out.is_attr = is_attr;
         out.is_if = is_if;
+        out.is_ident = is_ident;
         out.open = i;
         int depth = 1;
         std::size_t j = i + 1;
         bool have_name = false;
         bool after_name = false;
+        bool name_call_closed = false;
         for (; j < s.tokens.size() && depth > 0; ++j) {
             const css_token & t = s.tokens[j];
             if (t.type == token_type::eof) { break; }
+            // `var(ident(...))`: a FUNCTION in the name position is a name
+            // that is not known until it has been substituted.
+            if (is_var && depth == 1 && !have_name && out.comma_at == 0 &&
+                t.type == token_type::function) {
+                out.name_at = j;
+                out.name_is_call = true;
+                have_name = true;
+            }
             if (t.type == token_type::function || t.type == token_type::open_paren ||
                 t.type == token_type::open_square || t.type == token_type::open_curly) {
                 ++depth;
@@ -74,7 +91,7 @@ struct call {
             }
             if (depth != 1) { continue; }
             if (out.comma_at == 0 && t.type == token_type::comma) { out.comma_at = j; }
-            if (is_attr || is_if || out.comma_at != 0) { continue; }
+            if (is_attr || is_if || is_ident || out.comma_at != 0) { continue; }
             // `var( <custom-property-name> , <declaration-value>? )`: the name is
             // the FIRST token and nothing but whitespace may follow it before
             // the comma. `var(--foo type(*))` names no property and is invalid,
@@ -83,13 +100,18 @@ struct call {
             if (!have_name && t.type == token_type::ident) {
                 out.name_at = j;
                 have_name = true;
+            } else if (out.name_is_call && !name_call_closed) {
+                // The name call's own tokens: its opener, and the `)` that
+                // brings the depth back to one.
+                if (t.type == token_type::close_paren) { name_call_closed = true; }
             } else {
                 after_name = true;
             }
         }
         out.close = j < s.tokens.size() ? j : s.tokens.size() - 1;
         if (out.comma_at == 0) { out.comma_at = out.close; }
-        if (is_attr || is_if) { return true; } // the argument list is read after substitution
+        // The argument list is read after substitution.
+        if (is_attr || is_if || is_ident) { return true; }
         if (!have_name || after_name) { return false; } // `var()` with no name is invalid
         return true;
     }
@@ -455,6 +477,7 @@ public:
         self_ = property;
         resolving_.push_back(property.id);
     }
+    [[nodiscard]] bool reached_self() const noexcept { return root_cycle_; }
 
     [[nodiscard]] bool run(std::string_view value, std::string & out, int depth) {
         if (depth > max_depth || value.size() > max_bytes) { return false; }
@@ -488,6 +511,8 @@ public:
             if (!attribute(s, found, depth, expansion)) { return false; }
         } else if (found.is_if) {
             if (!conditional(s, found, depth, expansion)) { return false; }
+        } else if (found.is_ident) {
+            if (!identifier(s, found, depth, expansion)) { return false; }
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
@@ -516,7 +541,19 @@ private:
 
     [[nodiscard]] bool variable(const token_stream & s, const call & found, int depth,
                                 std::string & expansion) {
-        const std::string_view name_text = s.text_of(s.tokens[found.name_at]);
+        std::string_view name_text = s.text_of(s.tokens[found.name_at]);
+        std::string built;
+        if (found.name_is_call) {
+            // `var(ident("--" attr(data-name)))`: the name is what the call
+            // makes, and it has to be exactly one identifier.
+            if (!run(text_between(s, found.name_at, found.comma_at), built, depth + 1)) {
+                return false;
+            }
+            const std::vector<std::pair<token_type, std::string>> tokens = significant(built);
+            if (tokens.size() != 1 || tokens.front().first != token_type::ident) { return false; }
+            built = tokens.front().second;
+            name_text = built;
+        }
         // A custom property's name must start with `--`; anything else in that
         // position is not a custom property and the call is invalid.
         if (!name_text.starts_with("--")) { return false; }
@@ -543,9 +580,33 @@ private:
     // read after, and what the attribute holds is then judged by the type.
     [[nodiscard]] bool attribute(const token_stream & outer, const call & found, int depth,
                                  std::string & expansion) {
+        // THE HEAD IS SUBSTITUTED ON ITS OWN, and may not grow a comma: a
+        // `var()` in the name or type position that expands to `data-foo
+        // type(<number>), 10` has not supplied a fallback, it has broken the
+        // argument list (attr-argument-grammar). The fallback keeps its own
+        // text and is substituted only if it is taken.
         std::string inner;
-        if (!run(text_between(outer, found.open + 1, found.close), inner, depth + 1)) {
+        if (!run(text_between(outer, found.open + 1, found.comma_at), inner, depth + 1)) {
             return false;
+        }
+        {
+            const token_stream head_tokens = tokenize(inner);
+            int depth_here = 0;
+            for (const css_token & t : head_tokens.tokens) {
+                if (t.type == token_type::function || t.type == token_type::open_paren ||
+                    t.type == token_type::open_square || t.type == token_type::open_curly) {
+                    ++depth_here;
+                } else if (t.type == token_type::close_paren ||
+                           t.type == token_type::close_square ||
+                           t.type == token_type::close_curly) {
+                    --depth_here;
+                } else if (depth_here == 0 && t.type == token_type::comma) {
+                    return false;
+                }
+            }
+        }
+        if (found.comma_at < found.close) {
+            inner += text_between(outer, found.comma_at, found.close);
         }
         const token_stream s = tokenize(inner);
         // The head - everything before the first top-level comma - as significant
@@ -657,6 +718,61 @@ private:
             return true;
         }
         return fallback(s, args, depth, expansion);
+    }
+
+    // --- ident(), CSS Values 5 §ident ---------------------------------------
+    //
+    //   ident( <ident-arg>+ )
+    //   <ident-arg> = <string> | <integer> | <ident>
+    //
+    // The arguments joined into one identifier, at computed-value time: they may
+    // hold other substitution functions, and an `<integer>` may be a math
+    // function - `ident("vtl-" sibling-index())` names the third child `vtl-3`.
+    // Anything else among them makes the whole invalid, and so does a result
+    // that is not an identifier at all.
+    [[nodiscard]] bool identifier(const token_stream & outer, const call & found, int depth,
+                                  std::string & expansion) {
+        std::string inner;
+        if (!run(text_between(outer, found.open + 1, found.close), inner, depth + 1)) {
+            return false;
+        }
+        const token_stream s = tokenize(inner);
+        std::string made;
+        bool any = false;
+        for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
+            const css_token & t = s.tokens[i];
+            if (t.type == token_type::whitespace) { continue; }
+            any = true;
+            if (t.type == token_type::string || t.type == token_type::ident) {
+                made += s.value_of(t);
+                continue;
+            }
+            if (t.type == token_type::number && (t.flags & flag_integer) != 0) {
+                made += number_of(t.number);
+                continue;
+            }
+            if (t.type == token_type::function) {
+                const std::size_t close = end_of_block(s, i);
+                const std::string text = text_between(s, i, close);
+                if (!may_have_math(text)) { return false; }
+                const math_answer answer = evaluate_math(
+                    text, conditions_ != nullptr ? conditions_->lengths : length_context{});
+                if (answer.outcome != math_outcome::resolved || !answer.value.is_number ||
+                    answer.value.px != std::floor(answer.value.px)) {
+                    return false;
+                }
+                made += number_of(answer.value.px);
+                i = close - 1;
+                continue;
+            }
+            return false;
+        }
+        if (!any || made.empty()) { return false; }
+        // The result has to be an identifier: it may not begin like a number.
+        const std::vector<std::pair<token_type, std::string>> check = significant(made);
+        if (check.size() != 1 || check.front().first != token_type::ident) { return false; }
+        expansion = std::move(made);
+        return true;
     }
 
     // --- if(), CSS Values 5 §if-notation ------------------------------------
@@ -1085,8 +1201,11 @@ bool may_have_var(std::string_view value) noexcept {
     for (std::size_t i = 0; i + 3 <= value.size(); ++i) {
         if (i + 4 <= value.size() && ascii_iequals(value.substr(i, 4), "var(")) { return true; }
         if (i + 5 <= value.size() && ascii_iequals(value.substr(i, 5), "attr(")) { return true; }
-        // `if(` at an identifier boundary: `notif(` and `--diff(` are not it.
-        if (ascii_iequals(value.substr(i, 3), "if(") && (i == 0 || !name_char(value[i - 1]))) {
+        // `if(` and `ident(` at an identifier boundary: `notif(` and `--diff(`
+        // are not it.
+        const bool boundary = i == 0 || !name_char(value[i - 1]);
+        if (boundary && ascii_iequals(value.substr(i, 3), "if(")) { return true; }
+        if (boundary && i + 6 <= value.size() && ascii_iequals(value.substr(i, 6), "ident(")) {
             return true;
         }
     }
@@ -1129,6 +1248,11 @@ std::optional<std::string> substitute_var(std::string_view value, const custom_l
     }
     std::string out;
     if (!engine.run(value, out, 0)) { return std::nullopt; }
+    // A CYCLE IS NOT RESCUED BY A FALLBACK. CSS Variables 1 §3.1: every
+    // property in a dependency cycle is invalid at computed-value time,
+    // `var(--self, 3px)` included - the fallback is for a property that is
+    // absent, not for one that cannot be computed (attr-argument-grammar).
+    if (engine.reached_self()) { return std::nullopt; }
     if (introduced_structure(out)) { return std::nullopt; }
     return out;
 }
