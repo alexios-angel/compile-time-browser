@@ -55,9 +55,51 @@ void install_array(context & cx) {
         }
         return value::boolean(v.is_array());
     });
-    static_method("of", 0, [](context & c, std::span<value> a) {
-        value out = c.make_array();
-        static_cast<array_object *>(out.as_heap())->items.assign(a.begin(), a.end());
+    // --- Array.of AND Array.from, 23.1.2.3 AND 23.1.2.1 ---------------------
+    //
+    // BOTH HONOUR A CONSTRUCTOR `this`: `Array.of.call(C, ...)` builds through
+    // C and lands every element with CreateDataPropertyOrThrow, then sets
+    // `length` with Throw=true - which is what makes a subclass's `of` and
+    // `from` answer instances of the subclass. `this` being Array itself, or
+    // nothing callable, takes the straight line into a fresh Array.
+    const auto through_constructor = [array_ctor](context & c, value ctor, double len,
+                                                  bool pass_len) -> value {
+        if (!ctor.is_callable() || ctor.as_heap() == array_ctor) { return value::undefined(); }
+        const value args[1] = {value::number(len)};
+        return c.construct(ctor,
+                           pass_len ? std::span<const value>{args} : std::span<const value>{});
+    };
+    // CreateDataPropertyOrThrow(A, k, v), 7.3.5 - and the refusal is a TypeError.
+    const auto create_element = [](context & c, value target, double k, value v) {
+        if (target.is_array() && detail::dense_array_this(target) != nullptr) {
+            detail::put_element(c, target, k, v);
+            return !c.throw_pending();
+        }
+        context::property_descriptor wanted;
+        wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable =
+            true;
+        wanted.held = v;
+        wanted.writable = wanted.enumerable = wanted.configurable = true;
+        if (c.define_own_property(target, number_to_string(k), wanted)) { return true; }
+        c.throw_error("TypeError", "Cannot define element " + number_to_string(k));
+        return false;
+    };
+    static_method("of", 0, [through_constructor, create_element](context & c, std::span<value> a) {
+        const auto len = static_cast<double>(a.size());
+        value out = through_constructor(c, c.current_this(), len, true);
+        if (c.throw_pending()) { return value::undefined(); }
+        if (out.is_undefined()) {
+            out = c.make_array();
+            static_cast<array_object *>(out.as_heap())->items.assign(a.begin(), a.end());
+            return out;
+        }
+        const context::rooted keep(c, out);
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (!create_element(c, out, static_cast<double>(i), a[i])) {
+                return value::undefined();
+            }
+        }
+        detail::put_length(c, out, len);
         return out;
     });
     // 23.1.2.2 Array.fromAsync - WRITTEN IN JAVASCRIPT, compiled on first
@@ -122,35 +164,112 @@ void install_array(context & cx) {
         }
         return c.call(helper, a, c.current_this()); // `this` may be a constructor
     });
-    static_method("from", 1, [](context & c, std::span<value> a) {
-        value out = c.make_array();
-        // A mapping function that is PRESENT AND NOT CALLABLE is a TypeError
-        // (23.1.2.1 step 2), checked before the source is touched. It was
-        // silently ignored, so `Array.from(xs, 'nope')` copied xs and said
-        // nothing.
-        const value mapper = arg_at(a, 1);
-        if (!mapper.is_undefined() && !mapper.is_callable()) {
-            c.throw_error("TypeError", "the map function is not a function");
-            return out;
-        }
-        const context::rooted keep(c, out);
-        auto * made = static_cast<array_object *>(out.as_heap());
-        // Through the one conversion for..of and spread use, so all three agree
-        // about what "iterable" means - a Map, a Set, a string, an array or
-        // anything array-LIKE (a NodeList, `arguments`, a typed-array shim).
-        const value from = c.iterable_values(arg_at(a, 0));
-        if (from.is_array()) { made->items = static_cast<array_object *>(from.as_heap())->items; }
-        if (mapper.is_callable()) {
-            // `thisArg` is argument 3 and was dropped, exactly as it was on
-            // every Array.prototype method.
-            const value this_arg = arg_at(a, 2);
-            for (std::size_t i = 0; i < made->items.size(); ++i) {
-                const value args[2] = {made->items[i], value::number(static_cast<double>(i))};
-                made->items[i] = c.call(mapper, args, this_arg);
-            }
-        }
-        return out;
-    });
+    static_method("from", 1,
+                  [through_constructor, create_element](context & c, std::span<value> a) {
+                      // A mapping function that is PRESENT AND NOT CALLABLE is a TypeError
+                      // (23.1.2.1 step 2), checked before the source is touched. It was
+                      // silently ignored, so `Array.from(xs, 'nope')` copied xs and said
+                      // nothing.
+                      const value mapper = arg_at(a, 1);
+                      const bool mapping = !mapper.is_undefined();
+                      if (mapping && !mapper.is_callable()) {
+                          c.throw_error("TypeError", "the map function is not a function");
+                          return value::undefined();
+                      }
+                      const value this_arg = arg_at(a, 2);
+                      const value items = arg_at(a, 0);
+                      if (!detail::coercible_this(c, items, "from")) { return value::undefined(); }
+                      // Step 4, GetMethod(items, @@iterator): a throwing getter propagates
+                      // and a non-callable, non-nullish method is a TypeError.
+                      const value using_iterator = c.lookup_property(items, "@@iterator");
+                      if (c.throw_pending()) { return value::undefined(); }
+                      if (!using_iterator.is_nullish() && !using_iterator.is_callable()) {
+                          c.throw_error("TypeError", "Symbol.iterator is not a function");
+                          return value::undefined();
+                      }
+                      // The mapper's call is FENCED so an abrupt completion can close the
+                      // iterator (IteratorClose, step 5.e.vi.2) before it is rethrown.
+                      const auto map = [&](value item, double k, value & out, value iterator) {
+                          if (!mapping) {
+                              out = item;
+                              return true;
+                          }
+                          const value args[2] = {item, value::number(k)};
+                          bool threw = false;
+                          value thrown = value::undefined();
+                          out = c.call_fenced(mapper, args, this_arg, threw, thrown);
+                          if (!threw) { return true; }
+                          if (iterator.is_object()) {
+                              const value ret = c.lookup_property(iterator, "return");
+                              if (ret.is_callable()) {
+                                  (void)c.call(ret, std::span<const value>{}, iterator);
+                              }
+                          }
+                          c.throw_value(thrown);
+                          return false;
+                      };
+                      if (using_iterator.is_callable()) {
+                          value out = through_constructor(c, c.current_this(), 0, false);
+                          if (c.throw_pending()) { return value::undefined(); }
+                          if (out.is_undefined()) { out = c.make_array(); }
+                          const context::rooted keep(c, out);
+                          const value iterator = c.get_iterator(items);
+                          if (c.throw_pending() || !iterator.is_object()) {
+                              return value::undefined();
+                          }
+                          const context::rooted keep_iterator(c, iterator);
+                          const value next = c.lookup_property(iterator, "next");
+                          if (c.throw_pending()) { return value::undefined(); }
+                          double k = 0;
+                          for (;;) {
+                              bool done = false;
+                              const value item = c.iterator_step(iterator, next, done);
+                              if (c.throw_pending()) { return value::undefined(); }
+                              if (done) { break; }
+                              const context::rooted keep_item(c, item);
+                              value mapped = value::undefined();
+                              if (!map(item, k, mapped, iterator)) { return value::undefined(); }
+                              const context::rooted keep_mapped(c, mapped);
+                              if (!create_element(c, out, k, mapped)) {
+                                  const value ret = c.lookup_property(iterator, "return");
+                                  if (ret.is_callable()) {
+                                      (void)c.call(ret, std::span<const value>{}, iterator);
+                                  }
+                                  return value::undefined();
+                              }
+                              k += 1.0;
+                          }
+                          detail::put_length(c, out, k);
+                          return out;
+                      }
+                      // Steps 7-12, the array-like path: ToObject, LengthOfArrayLike, then
+                      // every index through [[Get]].
+                      const value array_like = detail::box_primitive(c, items);
+                      const double len = detail::array_like_length(c, array_like);
+                      if (c.throw_pending()) { return value::undefined(); }
+                      value out = through_constructor(c, c.current_this(), len, true);
+                      if (c.throw_pending()) { return value::undefined(); }
+                      if (out.is_undefined()) {
+                          out = c.make_array();
+                          if (detail::new_array_of_length(c, out, len) == nullptr) {
+                              return value::undefined();
+                          }
+                      }
+                      const context::rooted keep(c, out);
+                      for (double k = 0; k < len; k += 1.0) {
+                          const value item = detail::element_at(c, array_like, k);
+                          if (c.throw_pending()) { return value::undefined(); }
+                          const context::rooted keep_item(c, item);
+                          value mapped = value::undefined();
+                          if (!map(item, k, mapped, value::undefined())) {
+                              return value::undefined();
+                          }
+                          const context::rooted keep_mapped(c, mapped);
+                          if (!create_element(c, out, k, mapped)) { return value::undefined(); }
+                      }
+                      detail::put_length(c, out, len);
+                      return out;
+                  });
     cx.define_global("Array", value::object(array_ctor));
 
     object_object * array_proto = new_table(cx);

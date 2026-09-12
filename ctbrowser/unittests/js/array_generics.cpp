@@ -535,5 +535,57 @@ int main() {
         "(function(){function f(){} f.a=1;var s=[];for(var k in f){s.push(k);}return s.join();})()",
         "a");
 
+    // ================================================================
+    // 12. Array.from AND Array.of, 23.1.2.1 / 23.1.2.3 (since 2026-09-12)
+    // ================================================================
+    // The iterator protocol, with the mapper's index and thisArg.
+    js_expect("Array.from((function*(){yield 1;yield 2;})()).join()", "1,2");
+    js_expect("Array.from(new Set([3,4]), function(v,i){return v+':'+i+':'+this.t;},{t:'T'})"
+              ".join()",
+              "3:0:T,4:1:T");
+    js_expect("Array.from({length:2,0:'a',1:'b'}).join()", "a,b");
+    js_expect("Array.from({length:2,0:'a',1:'b'}, function(v,i){return v+i;}).join()", "a0,b1");
+    js_expect("Array.from(5).length", "0");
+    js_expect("Array.from(null)", "THREW");
+    js_expect("Array.from([1], 'nope')", "THREW");
+    js_expect("Array.from({[Symbol.iterator]: 1})", "THREW");
+    js_expect("Array.from({get [Symbol.iterator]() { throw new Error('x'); }})", "THREW");
+    // A CONSTRUCTOR `this`: built through it, elements landed with
+    // CreateDataPropertyOrThrow, `length` set last.
+    js_expect("(function(){function C(n){this.n=n;}var r=Array.of.call(C,7,8);"
+              "return (r instanceof C)+','+r.n+','+r[1]+','+r.length;})()",
+              "true,2,8,2");
+    js_expect("(function(){function C(){}var r=Array.from.call(C,[1,2]);"
+              "return (r instanceof C)+','+r.length+','+r[1];})()",
+              "true,2,2");
+    js_expect("(function(){function C(n){this.n=n;}var r=Array.from.call(C,{length:1,0:'x'});"
+              "return r.n+','+r[0];})()",
+              "1,x");
+    js_expect("Array.from.call(Object, [1]).constructor === Object", "true");
+    js_expect("(function(){function C(){Object.defineProperty(this,'0',{value:1,"
+              "writable:false,configurable:true});}return Array.of.call(C,2)[0];})()",
+              "2");
+    js_expect("(function(){function C(){Object.defineProperty(this,'0',{value:1,"
+              "configurable:false});}Array.of.call(C,2);})()",
+              "THREW");
+    js_expect("(function(){function C(){}Object.defineProperty(C.prototype,'length',"
+              "{set:function(){throw new Error('len');}});Array.of.call(C);})()",
+              "THREW");
+    // An abrupt mapper CLOSES the iterator before the throw reaches the page.
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){return {value:1,done:false};},return(){closed=true;return {};}};}};"
+              "try{Array.from(it,function(){throw new Error('m');});}catch(e){}"
+              "return closed;})()",
+              "true");
+    // String.prototype[Symbol.iterator] is a real String Iterator.
+    js_expect("typeof ''[Symbol.iterator]", "function");
+    js_expect("''[Symbol.iterator].length", "0");
+    js_expect("''[Symbol.iterator].name", "[Symbol.iterator]");
+    js_expect("(function(){var it='ab'[Symbol.iterator]();var a=it.next();var b=it.next();"
+              "var c=it.next();return a.value+b.value+','+c.done;})()",
+              "ab,true");
+    js_expect("Object.prototype.toString.call('a'[Symbol.iterator]())", "[object String Iterator]");
+    js_expect("String.prototype[Symbol.iterator].call(null)", "THREW");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

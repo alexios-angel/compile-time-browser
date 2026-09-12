@@ -8,11 +8,8 @@
 
 namespace ctbrowser::script::detail {
 
-// A REAL ITERATOR over a list that already exists - what `keys()`, `values()`
-// and `entries()` answer on an Array, a Map and a Set. Was in collections.cpp's
-// anonymous namespace; defined in array_iteration.cpp, which says why it
-// answers both protocols.
-[[nodiscard]] value list_iterator(context & cx, value items, const char * tag);
+// list_iterator, which the four files here share, moved to ../internal.hpp on
+// 2026-09-12 when String.prototype[@@iterator] needed it too.
 
 } // namespace ctbrowser::script::detail
 

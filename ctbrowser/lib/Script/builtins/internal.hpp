@@ -220,6 +220,12 @@ namespace detail {
     return obj->props.empty() && !obj->accessors.any;
 }
 
+// A REAL ITERATOR over a list that already exists - what `keys()`, `values()`
+// and `entries()` answer on an Array, a Map and a Set, and what
+// String.prototype[@@iterator] answers over the characters. Defined in
+// collections/array_iteration.cpp, which says why it answers both protocols.
+[[nodiscard]] value list_iterator(context & cx, value items, const char * tag);
+
 // --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
 //
 // Every one of them is specified GENERIC: `this` is ToObject'd and then read

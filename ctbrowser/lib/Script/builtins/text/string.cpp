@@ -317,6 +317,22 @@ void install_string(context & cx) {
     method(cx, string_proto, "toString", 0, [](context & c, std::span<value>) {
         return this_string_value(c, "String.prototype.toString");
     });
+    // 22.1.3.36 String.prototype[@@iterator]: a String Iterator over the
+    // receiver's characters - BY BYTE, which is what `for (c of s)` and
+    // `[...s]` do here (context::iterable_values) and what string_basics pins;
+    // a code-point walk in one place and not the other would be a third
+    // answer. `length` is 0 and the name is "[Symbol.iterator]" (20.2.4.1).
+    {
+        auto * iterator_fn = cx.allocate<native_object>(
+            "[Symbol.iterator]",
+            on_text("String.prototype[Symbol.iterator]",
+                    [](context & c, const std::string & s, std::span<value>) -> value {
+                        const value list = c.iterable_values(c.string(s));
+                        return detail::list_iterator(c, list, "String Iterator");
+                    }));
+        detail::install_arity(cx, iterator_fn, 0);
+        string_proto->define("@@iterator", value::object(iterator_fn), attr_builtin);
+    }
     method(cx, string_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return this_string_value(c, "String.prototype.valueOf");
     });
