@@ -45,6 +45,7 @@ from .driver_globals import (
     check_leaf_absence_census,
     check_scalar_global_preparation,
 )
+from .driver_fields import string_field_method_graph
 
 PRIMITIVE_ABSENCE_CARRIERS = {
     "seeded_cleared", "seeded_deleted", "seeded_deleted_earlier", "result_seeded_false_deleted",
@@ -327,6 +328,36 @@ def check_leaf_object_forgeries(args, saved, names=None):
                     raise RuntimeError(f"{forged_name}: forged leaf facts changed native owners or fields")
 
 
+def check_leaf_object_mixed_key_preparation(text, original, name):
+    if len(source_calls(original)) != 8 or len(source_calls(text)) != 8:
+        raise RuntimeError(f"{name}: changed the eight-call mixed-key source")
+    for operation in ("ctjs.create_object", "ctjs.construct"):
+        if text.count(operation) != original.count(operation):
+            raise RuntimeError(f"{name}: changed the mixed-key allocation census")
+    for function in ("fn$3", "fn$4"):
+        if string_field_method_graph(original, function, False) != string_field_method_graph(text, function, True):
+            raise RuntimeError(f"{name}: changed the source field/Map method body")
+    calls = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) '
+                       r'\{ctnative\.stored_call = 1 : i32\}', text, re.M)
+    actuals = [arguments.split(", ") for _, _, arguments in calls]
+    entry = text.split("\n  }", 1)[0]
+    if ([target for _, target, _ in calls] != ["fn$4"] * 4 + ["fn$3"]
+            or list(map(len, actuals)) != [5] * 4 + [4]
+            or re.findall(r'ctjs\.store_global "trace", (%[-\w.$]+)', entry) != [calls[-1][0]]):
+        raise RuntimeError(f"{name}: changed the mixed-key call order or final size result")
+    receivers = dict(re.findall(r'(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', entry))
+    captures = dict(re.findall(r'(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', entry))
+    for arguments in actuals:
+        if receivers.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
+            raise RuntimeError(f"{name}: lost the current receiver/callee/Map capture")
+    for arguments, key in zip(actuals, ("x", "x", "y")):
+        if f'{arguments[-1]} = ctjs.constant #ctjs.string<"{key}">' not in entry:
+            raise RuntimeError(f"{name}: changed an earlier String key actual")
+    objects = re.findall(r'(%[-\w.$]+) = ctjs\.create_object', entry)
+    if len(objects) != 2 or actuals[3][-1] != objects[1]:
+        raise RuntimeError(f"{name}: lost the later fresh object key actual")
+
+
 def check_leaf_object_refusals(args, positives, node, reference, controls=None):
     if controls is None:
         controls = {name: row for name, row in leaf_object_refusals().items()
@@ -354,8 +385,26 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
         restored_config = contract(args, restored, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             mode_name = name + "-" + mode
-            failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
-            preserved(rejected.read_text(), failed.read_text(), mode_name)
+
+            def reject(input_ir, label, current_config):
+                if name != "leaf_object_later_actual":
+                    failed = methods.refused(args, input_ir, label, current_config, options=options, admitted=0)
+                    preserved(input_ir.read_text(), failed.read_text(), label)
+                    return failed
+                # The complete caller owner still has no mixed String/object
+                # key carrier. Keep all earlier calls and the later allocation.
+                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
+                text = methods.census(failed, count, label, admitted=0)
+                carrier = "!ctnative.map<!ctnative.boxed, !ctnative.object_identity>"
+                reason = ("native Map needs supported keys and numeric, boolean, closed mixed, "
+                          "owning-string, object-identity union or acyclic Map values; inferred " + carrier)
+                if ("ctnative.host_owner_proved = true" not in text
+                        or reason not in boundary.REFUSAL.findall(text)):
+                    raise RuntimeError(f"{label}: lost the complete owner or mixed-key carrier refusal")
+                check_leaf_object_mixed_key_preparation(text, input_ir.read_text(), label)
+                return failed
+
+            failed = reject(rejected, mode_name, config)
             postdelete = (name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
                           or name in numeric_entry_refusals() or name in scalar_global_refusals())
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
@@ -372,15 +421,14 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                     options=options, reason="fingerprint mismatch", admitted=0)
                 preserved(forged.read_text(), stale.read_text(), forged_name + "-stale")
                 fresh = contract(args, forged, forged_name)
-                failed = methods.refused(args, forged, forged_name, fresh, options=options, admitted=0)
+                failed = reject(forged, forged_name, fresh)
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent leaf/use reanalysis")
-                preserved(forged.read_text(), failed.read_text(), forged_name)
                 if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                     raise RuntimeError(f"{forged_name}: forged absence manufactured a host owner")
                 rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
                                         options=options, admitted=0)
-                preserved(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+                preserved(failed.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
 def check_leaf_readback_carriers(args, positives, node, reference, controls, compilers, nm):
