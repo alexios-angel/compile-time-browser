@@ -60,13 +60,33 @@ mismatches. Stable clang-format **22.1.8 passes 800 files**; bundled23 retains
 the same nine baseline files/28 diagnostics, with only browser line shifts.
 No browser, runtime, native emitter or carrier implementation changed.
 
-**Full gate pending:** the standard `tools/remote-build.sh` run is active at
-`/tmp/ctcompile-conditional-full.log` with **534 CTests**. Focused successes above
-are measured; a complete standard pass and fresh full Bootstrap counts are not
-yet claimed. **1278 selected code/test input hashes** are frozen in
-`/tmp/ctcompile-conditional-frozen.json`. The shared ctjs checkout was **4c1d5f3**
-against the recorded gitlink **8eb3375**; Codex did not edit or commit that peer
-change. Read the latest Claude journal before interpreting new oracle differences.
+**fcc11c60** updates the preserved exception/generator controls for the
+integrated runtime. The obsolete null-property divergence is removed: runtime
+**8257ebf7** correctly throws, and the original source catches **42**. The async
+generator retains its real `await_value` suspension refusal. The importer repair
+also promotes unchanged `computed_throw` to **2/2 native functions**, both
+optimization modes, retaining runtime string addition and typed throw/catch.
+The existing workflow passes **42 Node/interpreter programs**, **21 native /
+21 refusals**, both C++ layouts with GCC/Clang/no-VM checks and owning-string
+ASan/UBSan. All historical exception fixtures retain hash **777b9173**. The
+corrected focused run passes **2/2 lit cases in 36.67s**.
+
+**The corrected standard gate passes 534/534 CTests in 817.28s**, including
+**162 browser tests** and **168/168 lit cases in 552.76s** (CTest wrapper
+**552.83s**). It ran on **fcc11c60** with no rebuild needed; all **1367 selected
+code/test/parser input hashes** match locally and remotely after the gate.
+Fresh full Bootstrap remains **19/574 native functions** in both modes; exact
+Data remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**. The escape fixture still
+measures **773 observed sites / 27 unclaimed**, zero violations, partial or
+pending cases, and precision **9/142**. The final nested cohort independently
+confirms **5 native programs / 15 refusals**, including the unchanged conditional
+source at **4/4** and cross-invocation source at **0/5**, both modes.
+
+The initial browser failures were stale submodule bookkeeping: the runtime merge
+recorded parser **8eb3375**, while the clean checkout remained pre-merge
+**4c1d5f3**. Standard submodule update under the Git lock synchronized the recorded
+revision; no parser source or gitlink was edited. Both browser cases then passed.
+Read Claude's latest journal before interpreting later runtime changes.
 
 **Next boundary:** preserve cross-invocation **369d7cea/bdf9931e** (five functions,
 nine calls) and establish a complete-family inner-key/type invariant separately
@@ -83,8 +103,11 @@ and DOM ownership follow. Full native Bootstrap is unfinished.
 Evidence: `/tmp/ctcompile-conditional-{recovery-final.log,main-focused.log,
 corrected-focused.log,lit-fetch.log,measured/summary.json}`,
 `/tmp/ctcompile-conditional-recovery-observed/ushr-joined.json`,
-`/tmp/ctcompile-conditional-source-tests-static.json` and
-`/tmp/ctcompile-conditional-{full.log,frozen.json}`.
+`/tmp/ctcompile-conditional-source-tests-static.json`,
+`/tmp/ctcompile-conditional-exceptions-{focused.log,measured/native.json}`,
+`/tmp/ctcompile-conditional-verified-{full.log,full-detail.log,full-summary.json,
+frozen.json,revision.json}` and
+`/tmp/ctcompile-conditional-verified-measured/summary.json`.
 
 ## Fresh child Maps, 2026-09-12
 
@@ -167,15 +190,10 @@ Data additionally needs mixed/field-bearing payloads, object returns and its
 recorder callback; component/DOM ownership follows. See
 `/tmp/ctcompile-nested-next.md`. Full native Bootstrap is unfinished.
 
-**Parallel follow-up (audit only):** dense-array retention across static `UShr`
-with two independently proved original BigInts is still refused in
-`EscapeAnalysis.cpp`, `EscapeAnalysisArrays/Primitives.cpp` and
-`BigIntProducers.cpp`. The runtime throws an independent TypeError; any proof
-must record the independent error result without marking it BigInt or claiming
-normal completion. Reuse the existing whole-frame exclusions and source/error
-oracle controls. No implementation or new measurement is claimed. Ordinary-object
-assignment still needs separate own-data/prototype authority. See
-`/tmp/ctcompile-nested-escape-next.md`.
+**Former parallel follow-up, completed by b150141e above:** the static
+original-two-BigInt `UShr` retention proof and source/error controls are now
+landed. The older audit is `/tmp/ctcompile-nested-escape-next.md`.
+Ordinary-object assignment still needs separate own-data/prototype authority.
 
 ## Caller-owned Map payloads, 2026-09-11
 
