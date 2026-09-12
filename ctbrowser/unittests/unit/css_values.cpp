@@ -624,7 +624,8 @@ void test_the_property_table_itself() {
     // `undefined` to a page, which is the failure this table exists to end.
     for (const auto & one : known_properties()) {
         CHECK(!one.name.empty());
-        if (one.name != "font") { CHECK(!one.initial.empty()); }
+        // `font` and `all` are the two shorthands with no one initial value.
+        if (one.name != "font" && one.name != "all") { CHECK(!one.initial.empty()); }
     }
 }
 
