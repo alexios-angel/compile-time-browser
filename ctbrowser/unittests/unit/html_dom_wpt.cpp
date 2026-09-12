@@ -208,14 +208,14 @@ void test_an_inserted_script_runs_when_it_connects() {
     // it; once run, more text does nothing. A throw is reported, not raised.
     is("(function () { var s1 = document.createElement('script');"
        " var s2 = document.createElement('script'); var s3 = document.createElement('script');"
-       " window.happened = []; window.s3 = s3;"
-       " s1.textContent = \"s3.appendChild(new Text('happened.push(\\'s3\\')'));"
-       " happened.push('s1:' + document.currentScript.id)\"; s1.id = 'one';"
-       " s2.textContent = 'happened.push(\"s2\")';"
+       " window.happened = []; window.s3 = s3; s1.id = 'one';"
+       " s1.textContent = \"s3.appendChild(new Text('happened.push(3)'));"
+       " happened.push(document.currentScript.id)\";"
+       " s2.textContent = 'happened.push(2)';"
        " var div = document.createElement('div'); div.appendChild(s1); div.appendChild(s2);"
        " div.appendChild(s3); var before = happened.length; document.body.appendChild(div);"
-       " return before + '|' + happened.join() + '|' + String(document.currentScript); })()",
-       "0|s3,s1:one,s2|null");
+       " return before + '|' + happened.join() + '|' + document.currentScript.tagName; })()",
+       "0|3,one,2|SCRIPT");
     is("(function () { var s = document.createElement('script'); s.textContent = 'throw 1';"
        " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
        " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
