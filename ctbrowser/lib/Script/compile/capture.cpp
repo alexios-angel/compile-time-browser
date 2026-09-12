@@ -31,6 +31,8 @@ std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
     // a = the target, b = the iterable, c = the body; d carries `const` and
     // whether there is anything to declare
     case vp::nk::forof_stmt: return {n.a, n.b, n.c, -1};
+    // a = the operand; d = 1 says `yield*`
+    case vp::nk::yield_expr: return {n.a, -1, -1, -1};
     // a = the test, the statements are the list; d marks `default:`
     case vp::nk::case_clause: return {n.a, -1, -1, -1};
     // ES MODULES. `c` IS A FLAG ON ALL OF THESE - which binding form an

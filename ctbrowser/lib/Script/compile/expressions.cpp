@@ -506,19 +506,6 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
     case reference::kind::upvalue: proto().emit(instruction{op::set_upvalue, ref.reg, src}); break;
     case reference::kind::global:
-        // STRICT CODE MAY NOT CREATE A GLOBAL BY ASSIGNMENT (13.15.2 PutValue
-        // step 4.a / 9.1.1.4.5 SetMutableBinding step 3): the read of the same
-        // name throws the ReferenceError when it is unresolvable, and costs
-        // nothing new - set_global stays the one write. NOT IN A MODULE, a
-        // deliberate leniency: a module's top-level `OUT = ...` is how
-        // ctcompile's module fixtures talk to their host (test/Runtime/Modules),
-        // and the [[Set]] TypeErrors above still apply there.
-        if (fn().is_strict && !module_scope_) {
-            const std::uint32_t mark = reg_mark();
-            const std::uint16_t probe = alloc_reg();
-            proto().emit(instruction::with_bx(op::get_global, probe, ref.name));
-            release_to(mark);
-        }
         proto().emit(instruction::with_bx(op::set_global, src, ref.name));
         break;
     case reference::kind::member:
@@ -573,6 +560,33 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     const reference ref = prepare_reference(target);
 
     if (n.text == "=") {
+        // STRICT CODE MAY NOT CREATE A GLOBAL BY ASSIGNMENT (13.15.2 PutValue
+        // step 4.a / 9.1.1.4.5 SetMutableBinding step 3): a read of the same
+        // name throws the ReferenceError when it is unresolvable, and costs
+        // nothing new - set_global stays the one write. BEFORE the right side
+        // rather than after it, so `closure; set_global` stays adjacent for
+        // ctcompile's closure lift (the order is observable only when the
+        // right side has side effects AND the name is unresolvable). The
+        // compound and logical forms below read first anyway. NOT IN A
+        // MODULE, a deliberate leniency: a module's top-level `OUT = ...` is
+        // how ctcompile's module fixtures talk to their host
+        // (test/Runtime/Modules); the [[Set]] TypeErrors still apply there.
+        // A name the script DECLARES with var/let/const is resolvable from
+        // the start (hoisted, 16.1.7 GlobalDeclarationInstantiation) even
+        // when the assignment runs before the declaration's line, so it gets
+        // no probe - the top level has no hoisting pass to put it in the
+        // table early.
+        const auto declared_by_script = [&](std::string_view name) {
+            const std::vector<std::string> & names = frames_.front().declared;
+            return std::find(names.begin(), names.end(), name) != names.end();
+        };
+        if (ref.what == reference::kind::global && fn().is_strict && !module_scope_ &&
+            !declared_by_script(target.text)) {
+            const std::uint32_t probe_mark = reg_mark();
+            const std::uint16_t probe = alloc_reg();
+            proto().emit(instruction::with_bx(op::get_global, probe, ref.name));
+            release_to(probe_mark);
+        }
         if (target.kind == vp::nk::ident) {
             compile_named_expr(n.b, dst, target.text);
         } else {

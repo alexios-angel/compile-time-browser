@@ -120,8 +120,15 @@ int main() {
     // a nested function inherits it. An assignment to an unresolvable name is
     // a ReferenceError there too - in a script, not in a module (a deliberate
     // leniency, see emit_store).
+    // The directive has to open the FUNCTION body, so it goes before the try.
     const auto kind = [](const char * body) {
-        return std::string{"(function(){ try { "} + body +
+        std::string source{body};
+        std::string prologue;
+        if (source.starts_with("'use strict'; ")) {
+            prologue = "'use strict'; ";
+            source.erase(0, prologue.size());
+        }
+        return "(function(){ " + prologue + "try { " + source +
                "; return 'no'; } catch (e) { return e.constructor.name; } })()";
     };
     js_expect(kind("'use strict'; var o = {a: 1}; Object.freeze(o); o.a = 2"), "TypeError");

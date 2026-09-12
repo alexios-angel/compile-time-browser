@@ -57,6 +57,7 @@ namespace {
     case nk::update: return {n.a, -1, -1, -1};
     case nk::new_expr: return {n.a, -1, -1, -1};
     case nk::forof_stmt: return {n.a, n.b, n.c, -1};
+    case nk::yield_expr: return {n.a, -1, -1, -1}; // d = 1 says `yield*`
     case nk::case_clause: return {n.a, -1, -1, -1};
     case nk::import_decl:
     case nk::import_meta: return {-1, -1, -1, -1};

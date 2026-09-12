@@ -27,6 +27,30 @@ void compiler_impl::compile_program() {
     // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
     // exactly as a function body's are. A classic script's are globals and
     // need none of this, which is why it was never called here before.
+    // A CLASSIC SCRIPT HOISTS ITS `var`s (16.1.7 GlobalDeclarationInstantiation
+    // step 12: CreateGlobalVarBinding for each, undefined unless it already
+    // exists): `use(x); var x = 1;` reads undefined, and since 2026-09-12 an
+    // unbound name is a ReferenceError, so without this the hoisting gap
+    // became a throw. One hidden native call with the names, at entry, before
+    // the function declarations - which then overwrite their own names.
+    if (!module_scope_ && !fn().declared.empty()) {
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{declare_vars_name})));
+        std::vector<std::string> names = fn().declared;
+        std::sort(names.begin(), names.end());
+        names.erase(std::unique(names.begin(), names.end()), names.end());
+        std::uint16_t argc = 0;
+        for (const std::string & name : names) {
+            if (argc == 200) { break; } // the register window is the limit; see limits.cpp
+            const std::uint16_t arg = alloc_reg();
+            emit_string(arg, name);
+            ++argc;
+        }
+        proto().emit(instruction{op::call, callee, argc});
+        release_to(mark);
+    }
     if (module_scope_) {
         predeclare_locals(ast_.root);
         // THEN THE IMPORTS, still at entry: a function declared anywhere in

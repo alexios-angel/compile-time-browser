@@ -369,7 +369,9 @@ public:
             const value named = undeclared_name_(name);
             if (!named.is_undefined()) { return named; }
         }
-        if (global_this_.is_object() && has_property(global_this_, string(std::string{name}))) {
+        // The global object is a PROXY in both embeddings, and a proxy is not
+        // is_object() - it is a heap value of its own kind.
+        if (global_this_.is_heap() && has_property(global_this_, string(std::string{name}))) {
             return lookup_property(global_this_, std::string{name});
         }
         if (!silent) { throw_error("ReferenceError", std::string{name} + " is not defined"); }
@@ -2180,6 +2182,10 @@ private:
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;
+    // The values iterable_values is materialising through their own
+    // @@iterator right now - see the re-entrancy note there. Held by the
+    // caller's register too, so not a root of its own.
+    std::vector<value> materialising_;
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;

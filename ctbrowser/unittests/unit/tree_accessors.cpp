@@ -216,7 +216,8 @@ void test_a_bare_identifier_finds_an_element() {
     // A name that is neither a global nor an element is an unresolvable
     // reference: `typeof` says undefined, a read throws ReferenceError.
     is("typeof nosuchnameanywhere", "undefined");
-    is("try { nosuchnameanywhere } catch (e) { e.constructor.name }", "ReferenceError");
+    is("(function () { try { nosuchnameanywhere; } catch (e) { return e.constructor.name; } })()",
+       "ReferenceError");
     // The window is the global object, so a bare `toString` is
     // Object.prototype's - as in every browser.
     is("typeof toString", "function");

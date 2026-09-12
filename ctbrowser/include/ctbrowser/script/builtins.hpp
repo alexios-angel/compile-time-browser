@@ -81,6 +81,11 @@ inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_dele
 // escaping marker back into {value: v, done: true}.
 inline constexpr std::string_view return_marker_key = "@#return";
 inline constexpr std::string_view catch_filter_name = "__ctbrowser_catch_filter";
+// CreateGlobalVarBinding for a classic script's hoisted `var` names
+// (16.1.7 step 12): each argument is a name; one that is not yet a global
+// becomes one holding undefined, one that is stays exactly as it is.
+// Emitted once at the top of a script that declares any.
+inline constexpr std::string_view declare_vars_name = "__ctbrowser_declare_vars";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";

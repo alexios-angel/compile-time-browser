@@ -97,6 +97,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // it and the code after the expression cannot see it.
     const bool own_scope = !as_declaration && !n.text.empty();
     if (own_scope) { push_scope(); }
+    ++class_body_depth_; // everything in here is strict code (15.7.1)
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
     const std::span<const std::int32_t> members = kids(n);
     const std::uint32_t mark = reg_mark();

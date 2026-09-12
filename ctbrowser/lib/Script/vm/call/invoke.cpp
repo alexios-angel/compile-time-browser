@@ -8,6 +8,7 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -384,18 +385,30 @@ value context::iterable_values(value v) {
     // Everything above is the standard library's fast path for values whose
     // iterator is known; this is everything else, and it is eager like the
     // rest of this function: an infinite iterator here is the bound below.
-    if (const value method = lookup_property(v, "@@iterator"); method.is_callable()) {
+    // NOT WHILE THIS VERY VALUE IS BEING MATERIALISED THROUGH ITS OWN
+    // @@iterator: the shell's collections answer `[Symbol.iterator]()` with
+    // an iterator built from iterable_values(this), which would come straight
+    // back here and recurse until the stack went. Those fall through to the
+    // array-like walk below, as they always did.
+    const bool materialising =
+        std::find_if(materialising_.begin(), materialising_.end(),
+                     [&](value held) { return held.bits() == v.bits(); }) != materialising_.end();
+    if (const value method = lookup_property(v, "@@iterator");
+        method.is_callable() && !materialising) {
+        materialising_.push_back(v);
         const value iterator = get_iterator(v);
         value out = make_array();
-        if (!iterator.is_object()) { return out; }
-        auto * items = static_cast<array_object *>(out.as_heap());
-        const value next = lookup_property(iterator, "next");
-        for (std::size_t guard = 0; guard < 1u << 24 && !throw_pending(); ++guard) {
-            bool done = false;
-            const value item = iterator_step(iterator, next, done);
-            if (done || throw_pending()) { break; }
-            items->items.push_back(item);
+        if (iterator.is_object()) {
+            auto * items = static_cast<array_object *>(out.as_heap());
+            const value next = lookup_property(iterator, "next");
+            for (std::size_t guard = 0; guard < 1u << 24 && !throw_pending(); ++guard) {
+                bool done = false;
+                const value item = iterator_step(iterator, next, done);
+                if (done || throw_pending()) { break; }
+                items->items.push_back(item);
+            }
         }
+        materialising_.pop_back();
         return out;
     }
     // An ARRAY-LIKE: anything with a numeric length and indexed properties, which
