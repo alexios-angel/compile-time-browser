@@ -1840,29 +1840,12 @@ private:
         return false;
     }
 
-    // The same question of one run of UTF-8. Decoding is by lead byte: only the
-    // code point's VALUE matters, and the right-to-left scripts sit in blocks that
-    // a range test answers exactly.
+    // The same question of one run of UTF-8: only the code point's VALUE
+    // matters, and the right-to-left scripts sit in blocks that a range test
+    // answers exactly.
     [[nodiscard]] static bool first_strong_in(std::string_view text, bool & rtl) {
         for (std::size_t i = 0; i < text.size();) {
-            const auto lead = static_cast<unsigned char>(text[i]);
-            std::size_t width = 1;
-            std::uint32_t cp = lead;
-            if (lead >= 0xF0) {
-                width = 4;
-                cp = lead & 0x07u;
-            } else if (lead >= 0xE0) {
-                width = 3;
-                cp = lead & 0x0Fu;
-            } else if (lead >= 0xC0) {
-                width = 2;
-                cp = lead & 0x1Fu;
-            }
-            if (i + width > text.size()) { return false; } // truncated: nothing strong left
-            for (std::size_t k = 1; k < width; ++k) {
-                cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3Fu);
-            }
-            i += width;
+            const char32_t cp = decode_utf8(text, i);
             // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan and Mandaic; then the
             // Arabic Extended, presentation and supplement blocks; then the RTL
             // planes - Cypriot through Adlam - in the SMP.

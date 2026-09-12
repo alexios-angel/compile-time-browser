@@ -1,5 +1,6 @@
 #include <ctbrowser/raster/draw.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/raster/text/font8x8.hpp>
 
 #include <algorithm>
@@ -211,20 +212,7 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     const int overhang = (bold ? 1 : 0) + (italic ? 2 : 0);
     int cell = 0;
     for (std::size_t i = 0; i < c.text.size();) {
-        const auto byte = static_cast<unsigned char>(c.text[i]);
-        char32_t cp = byte;
-        std::size_t advance = 1;
-        if (byte >= 0xF0u) {
-            advance = 4;
-            cp = 0xFFFDu;
-        } else if (byte >= 0xE0u) {
-            advance = 3;
-            cp = 0xFFFDu;
-        } else if (byte >= 0xC0u) {
-            advance = 2;
-            cp = 0xFFFDu;
-        }
-        i += advance;
+        const char32_t cp = decode_utf8(c.text, i);
         const int left = origin_x + cell * 8 * scale;
         ++cell;
         if (cp > 0x7F) { continue; } // outside font8x8; the cell is still advanced

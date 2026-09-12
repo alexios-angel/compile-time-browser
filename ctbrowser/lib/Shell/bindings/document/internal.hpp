@@ -151,47 +151,6 @@ inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
            name.find('\0') == std::string_view::npos;
 }
 
-// One code point out of UTF-8, and the byte count it took. A truncated or
-// malformed sequence yields the lead byte itself, which is not a code point
-// any name production admits - so bad input is REJECTED rather than
-// approximated, which is the answer a name check wants.
-[[nodiscard]] inline char32_t next_code_point(std::string_view text, std::size_t & at) {
-    const auto lead = static_cast<unsigned char>(text[at]);
-    std::size_t extra = 0;
-    char32_t built = 0;
-    if (lead < 0x80u) {
-        ++at;
-        return static_cast<char32_t>(lead);
-    }
-    if ((lead & 0xE0u) == 0xC0u) {
-        extra = 1;
-        built = static_cast<char32_t>(lead & 0x1Fu);
-    } else if ((lead & 0xF0u) == 0xE0u) {
-        extra = 2;
-        built = static_cast<char32_t>(lead & 0x0Fu);
-    } else if ((lead & 0xF8u) == 0xF0u) {
-        extra = 3;
-        built = static_cast<char32_t>(lead & 0x07u);
-    } else {
-        ++at;
-        return static_cast<char32_t>(lead);
-    }
-    if (at + extra >= text.size()) {
-        ++at;
-        return static_cast<char32_t>(lead);
-    }
-    for (std::size_t i = 1; i <= extra; ++i) {
-        const auto byte = static_cast<unsigned char>(text[at + i]);
-        if ((byte & 0xC0u) != 0x80u) {
-            ++at;
-            return static_cast<char32_t>(lead);
-        }
-        built = static_cast<char32_t>((built << 6) | (byte & 0x3Fu));
-    }
-    at += extra + 1;
-    return built;
-}
-
 // THE XML `Name` PRODUCTION, in full, and the one place the engine needs it.
 //
 // `createProcessingInstruction` is the outlier: unlike createElement it really
@@ -218,9 +177,9 @@ inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 [[nodiscard]] inline bool is_xml_name(std::string_view text) {
     if (text.empty()) { return false; }
     std::size_t at = 0;
-    if (!is_xml_name_start(next_code_point(text, at))) { return false; }
+    if (!is_xml_name_start(decode_utf8(text, at))) { return false; }
     while (at < text.size()) {
-        if (!is_xml_name_char(next_code_point(text, at))) { return false; }
+        if (!is_xml_name_char(decode_utf8(text, at))) { return false; }
     }
     return true;
 }

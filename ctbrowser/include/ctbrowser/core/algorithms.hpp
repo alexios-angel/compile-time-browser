@@ -113,6 +113,50 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
     }
 }
 
+// One code point out of UTF-8, advancing `at` past it. A truncated or
+// malformed sequence yields the lead byte itself and advances by one, so bad
+// input is REJECTED rather than approximated: a name check sees a value no
+// production admits, a glyph walk still keeps the byte count honest. Only
+// the continuation FORM is checked, never the range - WTF-8 lone surrogates
+// (ED A0 80) must round-trip through CharacterData, so this is deliberately
+// not a validator.
+[[nodiscard]] constexpr char32_t decode_utf8(std::string_view text, std::size_t & at) {
+    const auto lead = static_cast<unsigned char>(text[at]);
+    std::size_t extra = 0;
+    char32_t built = 0;
+    if (lead < 0x80u) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if ((lead & 0xE0u) == 0xC0u) {
+        extra = 1;
+        built = static_cast<char32_t>(lead & 0x1Fu);
+    } else if ((lead & 0xF0u) == 0xE0u) {
+        extra = 2;
+        built = static_cast<char32_t>(lead & 0x0Fu);
+    } else if ((lead & 0xF8u) == 0xF0u) {
+        extra = 3;
+        built = static_cast<char32_t>(lead & 0x07u);
+    } else {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if (at + extra >= text.size()) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    for (std::size_t i = 1; i <= extra; ++i) {
+        const auto byte = static_cast<unsigned char>(text[at + i]);
+        if ((byte & 0xC0u) != 0x80u) {
+            ++at;
+            return static_cast<char32_t>(lead);
+        }
+        built = static_cast<char32_t>((built << 6) | (byte & 0x3Fu));
+    }
+    at += extra + 1;
+    return built;
+}
+
 // --- base64 ---------------------------------------------------------------
 
 // Bytes, not text: the result is a "binary string" of 0-255, which is what
