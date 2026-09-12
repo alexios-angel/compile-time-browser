@@ -534,7 +534,9 @@ public:
     // (random-in-if).
     [[nodiscard]] math_answer math_of(std::string_view text) {
         length_context ctx = conditions_ != nullptr ? conditions_->lengths : length_context{};
-        if (ctx.property.empty() && conditions_ != nullptr) { ctx.property = conditions_->property; }
+        if (ctx.property.empty() && conditions_ != nullptr) {
+            ctx.property = conditions_->property;
+        }
         ctx.random_index += randoms_seen_;
         const math_answer answer = evaluate_math(text, ctx);
         randoms_seen_ += answer.randoms;
