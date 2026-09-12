@@ -65,6 +65,9 @@ SPARSE_PATHS=(
   # engine.
   /dom/constants.js    # the interface constant tables dom/events/ imports
   /dom/common.js       # and the node-list fixtures dom/nodes/ imports
+  # The same shape under html/: `name-content-attribute-and-property.html`
+  # loads the element tables from here and was HARNESS_ERROR without them.
+  /html/resources/common.js
 )
 
 verify_only=0
