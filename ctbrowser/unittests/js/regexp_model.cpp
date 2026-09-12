@@ -58,6 +58,13 @@ void test_constructor() {
                   "catch (e) { return e.name; }",
                   "TypeError");
     expect_result("return RegExp[Symbol.species] === RegExp;", "true");
+    // RegExp.escape (ES2025): a leading alphanumeric is hex-escaped, syntax
+    // characters backslashed, other punctuators and spaces \xHH
+    expect_result("return RegExp.escape('1a.b') + ' ' + RegExp.escape('x-y z');",
+                  "\\x31a\\.b \\x78\\x2dy\\x20z");
+    expect_result("return RegExp.escape('\t\n');", "\\t\\n");
+    expect_result("try { RegExp.escape(1); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
 }
 
 void test_exec() {

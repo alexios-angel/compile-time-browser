@@ -589,6 +589,94 @@ void install_regexp(context & cx) {
                                      attr_configurable);
     }
 
+    // 22.2.5.1 RegExp.escape(S), ES2025: a string that matches S literally.
+    // The first character is hex-escaped when it is alphanumeric (so the
+    // result never continues a preceding `\1` or `\u`), a syntax character
+    // and `/` are backslashed, the five control letters use their letter, and
+    // the other punctuators, white space, line terminators and lone surrogates
+    // become \xHH or \uHHHH. Everything else - including every non-ASCII code
+    // point - passes through as itself; the subject is UTF-8 here so a code
+    // point is its byte run.
+    method(cx, regexp_ctor, "escape", 1, [](context & c, std::span<value> a) -> value {
+        const value arg = arg_at(a, 0);
+        if (!arg.is_string()) {
+            c.throw_error("TypeError", "RegExp.escape requires a string");
+            return value::undefined();
+        }
+        const std::string & s = static_cast<string_object *>(arg.as_heap())->text;
+        std::string out;
+        const auto hex = [](std::uint32_t n, int width) {
+            static constexpr char digits[] = "0123456789abcdef";
+            std::string h;
+            for (int i = width - 1; i >= 0; --i) { h += digits[(n >> (4 * i)) & 0xFu]; }
+            return h;
+        };
+        const auto escape_unit = [&](std::uint32_t cu) {
+            return cu <= 0xFFu ? "\\x" + hex(cu, 2) : "\\u" + hex(cu, 4);
+        };
+        for (std::size_t i = 0; i < s.size();) {
+            // One code point, decoded forward; a stray byte is left alone.
+            const auto lead = static_cast<unsigned char>(s[i]);
+            std::size_t width = lead < 0x80u              ? 1
+                                : (lead & 0xE0u) == 0xC0u ? 2
+                                : (lead & 0xF0u) == 0xE0u ? 3
+                                : (lead & 0xF8u) == 0xF0u ? 4
+                                                          : 1;
+            if (i + width > s.size()) { width = 1; }
+            std::uint32_t cp = lead;
+            if (width == 2) {
+                cp = ((lead & 0x1Fu) << 6) | (static_cast<unsigned char>(s[i + 1]) & 0x3Fu);
+            }
+            if (width == 3) {
+                cp = ((lead & 0x0Fu) << 12) |
+                     ((static_cast<unsigned char>(s[i + 1]) & 0x3Fu) << 6) |
+                     (static_cast<unsigned char>(s[i + 2]) & 0x3Fu);
+            }
+            if (width == 4) {
+                cp = ((lead & 0x07u) << 18) |
+                     ((static_cast<unsigned char>(s[i + 1]) & 0x3Fu) << 12) |
+                     ((static_cast<unsigned char>(s[i + 2]) & 0x3Fu) << 6) |
+                     (static_cast<unsigned char>(s[i + 3]) & 0x3Fu);
+            }
+            const std::string_view raw{s.data() + i, width};
+            i += width;
+            const bool alnum =
+                (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
+            if (out.empty() && i == width && alnum) {
+                out += escape_unit(cp);
+                continue;
+            }
+            if (std::string_view{"^$\\.*+?()[]{}|/"}.find(static_cast<char>(cp)) !=
+                    std::string_view::npos &&
+                cp < 0x80u) {
+                out += '\\';
+                out += static_cast<char>(cp);
+                continue;
+            }
+            switch (cp) {
+            case '\t': out += "\\t"; continue;
+            case '\n': out += "\\n"; continue;
+            case '\v': out += "\\v"; continue;
+            case '\f': out += "\\f"; continue;
+            case '\r': out += "\\r"; continue;
+            default: break;
+            }
+            const bool other_punctuator =
+                cp < 0x80u && std::string_view{",-=<>#&!%:;@~'`\""}.find(static_cast<char>(cp)) !=
+                                  std::string_view::npos;
+            const bool space = cp == ' ' || cp == 0xA0u || cp == 0x1680u ||
+                               (cp >= 0x2000u && cp <= 0x200Au) || cp == 0x2028u || cp == 0x2029u ||
+                               cp == 0x202Fu || cp == 0x205Fu || cp == 0x3000u || cp == 0xFEFFu;
+            const bool surrogate = cp >= 0xD800u && cp <= 0xDFFFu;
+            if (other_punctuator || space || surrogate) {
+                out += escape_unit(cp);
+                continue;
+            }
+            out += raw;
+        }
+        return c.string(out);
+    });
+
     // --- the accessors, 22.2.6.3-6.19 ---------------------------------------
     //
     // Each of the flag getters reads its slot; a receiver without the slots is
