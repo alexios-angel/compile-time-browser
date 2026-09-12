@@ -1038,7 +1038,10 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
             (void)object->erase(explicit_source_slot(idl));
         } else {
             answered = true;
+            // A node of ANOTHER document is never in scope, and its id means
+            // nothing in this tree - so the owner is asked first.
             const auto keep = [&](value candidate) {
+                if (owner_of(candidate) != this) { return; }
                 const node_id node = handle_of(candidate);
                 if (node && element_reference_in_scope(txn, id, node)) { found.push_back(node); }
             };
@@ -1098,9 +1101,14 @@ void dom_bindings::element_reference_set(context & cx, std::string_view idl,
         mutated();
         return;
     }
+    // An element of any document in the realm: one from another document is
+    // accepted and simply out of scope until it is adopted.
     const auto is_element = [&](value v) {
-        const node_id node = handle_of(v);
-        return node && doc_->read().kind(node).value_or(node_kind::text) == node_kind::element;
+        dom_bindings * owner = owner_of(v);
+        if (owner == nullptr) { return false; }
+        const node_id node = owner->handle_of(v);
+        return node &&
+               owner->doc_->read().kind(node).value_or(node_kind::text) == node_kind::element;
     };
     value kept = given;
     if (list) {
