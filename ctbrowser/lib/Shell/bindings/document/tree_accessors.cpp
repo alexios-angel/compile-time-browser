@@ -220,12 +220,25 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // `links` and `anchors` are the two that are NOT simply a tag: a link is an
     // `<a>` or an `<area>` THAT HAS AN href, and an anchor is an `<a>` that has
     // a `name`. `document.links.html` builds both kinds and counts.
+    // [SameObject]: `document.embeds === document.embeds`, which
+    // document.embeds-document.plugins-01.html reads as "constant". Kept in
+    // named_collections_ under a key no element name can spell.
     const auto collection = [&](std::string name, std::function<std::vector<node_id>()> members) {
         doc.define_accessor(name,
                             value::object(cx.allocate<script::native_object>(
                                 name,
-                                [this, members](context & c, std::span<value>) {
-                                    return make_live_collection(c, members);
+                                [this, name, members](context & c, std::span<value>) {
+                                    // `plugins` "must return the same object as
+                                    // embeds", HTML 3.1.5.
+                                    const std::string key =
+                                        '\0' + (name == "plugins" ? std::string{"embeds"} : name);
+                                    if (const auto held = named_collections_.find(key);
+                                        held != named_collections_.end()) {
+                                        return held->second;
+                                    }
+                                    const value made = make_live_collection(c, members);
+                                    named_collections_.emplace(key, made);
+                                    return made;
                                 })),
                             value::undefined());
     };
