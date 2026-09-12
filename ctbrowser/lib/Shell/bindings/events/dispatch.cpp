@@ -79,7 +79,7 @@ void initialise_event(context & cx, script::object_object & event, std::string_v
     event.set("cancelable", value::boolean(cancelable));
     event.set("composed", value::boolean(false));
     event.set("defaultPrevented", value::boolean(false));
-    event.set("timeStamp", value::number(timestamp));
+    event.define(std::string{timestamp_property}, value::number(timestamp), script::attr_none);
     event.set(std::string{cancel_bubble_property}, value::boolean(false));
     event.set(std::string{stop_immediate_property}, value::boolean(false));
     event.set(std::string{dispatch_property}, value::boolean(false));

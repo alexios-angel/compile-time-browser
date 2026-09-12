@@ -251,6 +251,17 @@ void dom_bindings::install_event_interfaces(context & cx) {
             }
             return value::undefined();
         });
+    // `timeStamp`, on the prototype, reading the slot initialise_event fills.
+    accessor_on(
+        event_proto, "timeStamp",
+        [](context & c, std::span<value>) {
+            const value self = c.current_this();
+            if (!self.is_object()) { return value::number(0); }
+            const value * held = static_cast<script::object_object *>(self.as_heap())
+                                     ->find(std::string{timestamp_property});
+            return held == nullptr ? value::number(0) : *held;
+        },
+        nullptr);
     // THE ONE `isTrusted` GETTER. It is installed here so that every instance
     // can take a copy of it as an OWN accessor - see initialise_event - and so
     // that there is exactly one per page.

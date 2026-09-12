@@ -213,9 +213,11 @@ void test_time_a_script_observes_moves_forward() {
     // script makes advances it by the 5 us a browser coarsens to.
     is("(function () { var a = new Event('x'), b = new Event('x');"
        " var t0 = performance.now(), t1 = performance.now();"
+       " var d = Object.getOwnPropertyDescriptor(Event.prototype, 'timeStamp');"
        " return (b.timeStamp > a.timeStamp) + ',' + (t1 > t0) + ',' +"
-       " Math.round((b.timeStamp - a.timeStamp) * 1000); })()",
-       "true,true,5");
+       " Math.round((b.timeStamp - a.timeStamp) * 1000) + ',' + (d.get.call(a) === a.timeStamp); "
+       "})()",
+       "true,true,5,true");
 }
 
 // --- a detached tree ---------------------------------------------------------
