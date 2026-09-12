@@ -162,6 +162,13 @@ bool context::own_property(value target, const std::string & name, property_desc
             out.configurable = (entry->attrs & attr_configurable) != 0;
             return true;
         }
+        // A STRING WRAPPER'S OWN `length` AND INDICES (10.4.3.1), the same two
+        // answers the String primitive arm below gives.
+        if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
+            if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
+                return own_property(*slot, name, out);
+            }
+        }
         return false;
     }
 
@@ -355,7 +362,12 @@ bool context::delete_own_property(value target, const std::string & name) {
             if ((entry->attrs & attr_configurable) == 0) { return false; }
             return obj->erase_accessor(name);
         }
-        if (obj->find(name) == nullptr) { return true; } // absent: delete succeeds
+        if (obj->find(name) == nullptr) {
+            // absent: delete succeeds - unless it is a String wrapper's own
+            // `length` or index, which are non-configurable (10.4.3.1).
+            property_descriptor slot_owned;
+            return !own_property(target, name, slot_owned);
+        }
         if ((obj->attrs_of(name) & attr_configurable) == 0) { return false; }
         return obj->erase(name);
     }

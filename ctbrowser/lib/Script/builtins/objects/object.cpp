@@ -235,10 +235,6 @@ void install_object(context & cx) {
         if (!object_coercible(c, self, "Object.prototype.hasOwnProperty")) {
             return value::boolean(false);
         }
-        if (self.is_object()) {
-            auto * obj = static_cast<object_object *>(self.as_heap());
-            return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
-        }
         // A PROXY ANSWERS FOR ITSELF, the way `in` already lets it: the trap is
         // the only thing that knows what the proxy is standing in for. `window`
         // is one, and `window.hasOwnProperty('HTMLVideoElement')` reaching past
@@ -254,23 +250,12 @@ void install_object(context & cx) {
             }
             return value::boolean(!c.lookup_property(p->target, key).is_undefined());
         }
-        if (self.is_array()) {
-            auto * arr = static_cast<array_object *>(self.as_heap());
-            if (key == "length") { return value::boolean(true); }
-            // AN INDEX, so the whole key must be one - `"1x" in a` is false.
-            // from_chars reports where it stopped, which is the same check
-            // without strtod's locale sensitivity.
-            double at = 0.0;
-            const auto [stopped, failed] = std::from_chars(key.data(), key.data() + key.size(), at);
-            return value::boolean(failed == std::errc{} && stopped == key.data() + key.size() &&
-                                  at >= 0 && at < static_cast<double>(arr->items.size()));
-        }
-        // A FUNCTION, A NATIVE AND A STRING each have own properties too -
-        // `f.name`, `f.length`, `Array.prototype` and `"abc".length` among
-        // them - and answering false about all of them is what made
-        // test262's verifyProperty report "should be an own property" for
-        // every built-in it looked at. context::has_own_property is the one
-        // answer all four tables share.
+        // AN ARRAY, A FUNCTION, A NATIVE AND A STRING each have own properties
+        // too - `a.length`, a sparse element, a NAMED property on an array
+        // (which an arm here used to answer false about, so `verifyProperty`
+        // reported every `arguments` object's property as not own), `f.name`,
+        // `Array.prototype` and `"abc".length` among them. context::
+        // has_own_property is the one answer all four tables share.
         return value::boolean(c.has_own_property(self, key));
     });
     // `[object Type]`, for whatever the receiver actually is.
@@ -302,6 +287,13 @@ void install_object(context & cx) {
             tag = "Boolean";
         } else if (self.is_kind(heap_kind::symbol)) {
             tag = "Symbol";
+        } else if (value * slot = primitive_slot(self); slot != nullptr) {
+            // A WRAPPER answers for what it wraps (20.1.3.6 steps 6-11); a
+            // Symbol or BigInt wrapper reaches its @@toStringTag below.
+            tag = slot->is_number()    ? "Number"
+                  : slot->is_string()  ? "String"
+                  : slot->is_boolean() ? "Boolean"
+                                       : "Object";
             // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not
             // have: an error and a regular expression are both ordinary objects
             // here, distinguishable only by the prototype they were built on.
@@ -477,8 +469,13 @@ void install_object(context & cx) {
         // no wrapper types. Nothing but identity is observable either way for
         // the uses that matter, and `Object(x) === x` for an object is the
         // property helpers actually depend on.
+        // 20.1.1.1: an object passes through, null and undefined make a fresh
+        // object, and a primitive is BOXED (ToObject) - see
+        // detail::wrap_primitive.
         const value v = arg_at(a, 0);
-        return v.is_object_like() ? v : c.make_object();
+        if (v.is_object_like()) { return v; }
+        if (v.is_nullish()) { return c.make_object(); }
+        return detail::box_primitive(c, v);
     });
     // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.
     //

@@ -167,6 +167,15 @@ void context::store_property(value target, const std::string & name, value v) {
             store_rejected_ = true;
             return;
         }
+        // A STRING WRAPPER'S `length` AND INDICES are own, non-writable
+        // (10.4.3.1): the write is refused, not shadowed.
+        if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
+            property_descriptor slot_owned;
+            if (primitive_slot(target) != nullptr && own_property(target, name, slot_owned)) {
+                store_rejected_ = true;
+                return;
+            }
+        }
         obj->set(name, v);
         return;
     }

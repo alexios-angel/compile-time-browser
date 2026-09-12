@@ -45,6 +45,15 @@ namespace {
         return own_property_names(cx, static_cast<proxy_object *>(of.as_heap())->target, which);
     }
     if (of.is_object()) {
+        // A String wrapper's indices and `length` come first (10.4.3.3), as
+        // they do for the primitive below.
+        if (value * slot = primitive_slot(of); slot != nullptr && slot->is_string()) {
+            if (which != key_filter::symbols) {
+                const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+                for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
+                out.emplace_back("length");
+            }
+        }
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });

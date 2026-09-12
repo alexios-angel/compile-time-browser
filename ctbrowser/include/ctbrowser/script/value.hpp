@@ -835,4 +835,22 @@ inline object_object & array_object::named_table() {
 inline array_object::array_object() : heap_object(heap_kind::array) {}
 inline array_object::~array_object() = default;
 
+// --- PRIMITIVE WRAPPER OBJECTS ---------------------------------------------
+//
+// `new Number(5)`, `new Boolean(false)`, `Object("ab")`: an ordinary object
+// whose [[NumberData]] / [[BooleanData]] / [[StringData]] slot is one
+// PRIVATE-KEYED own property. A private key (`@#...`) is what no source text
+// can spell and what OwnPropertyKeys, for-in, JSON and hasOwnProperty already
+// skip, so the slot is exactly as invisible as an internal slot and the object
+// is otherwise the object_object every other path already handles. A String
+// wrapper's `length` and indices are answered by lookup_property, own_property
+// and own_property_names off this slot (10.4.3, the String exotic object).
+inline constexpr std::string_view primitive_slot_key = "@#PrimitiveValue";
+// The wrapped primitive, or null when `v` is not a wrapper.
+[[nodiscard]] inline value * primitive_slot(value v) noexcept {
+    if (!v.is_object()) { return nullptr; }
+    auto * obj = static_cast<object_object *>(v.as_heap());
+    return obj->props.empty() ? nullptr : obj->find(primitive_slot_key);
+}
+
 } // namespace ctbrowser::script

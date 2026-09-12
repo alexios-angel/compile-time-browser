@@ -39,8 +39,28 @@ namespace ctbrowser::script {
 [[nodiscard]] inline double num_at(std::span<value> args, std::size_t i) {
     return i < args.size() ? context::to_number(args[i]) : 0.0;
 }
+// ToNumber (7.1.4) and ToString (7.1.17) both REFUSE A SYMBOL with a TypeError,
+// and context::to_number_value / to_string cannot say so: to_string is also
+// ToPropertyKey, which a symbol must pass through. So the refusal sits on the
+// argument helpers every built-in reads through, and no method has to
+// remember it. FALSE means the TypeError is in flight; the callers below
+// answer a harmless default and the method returns into the unwound frame.
+[[nodiscard]] inline bool numeric_arg(context & cx, value v) {
+    if (!v.is_kind(heap_kind::symbol)) { return true; }
+    cx.throw_error("TypeError", "Cannot convert a Symbol value to a number");
+    return false;
+}
+[[nodiscard]] inline bool stringable_arg(context & cx, value v) {
+    if (!v.is_kind(heap_kind::symbol)) { return true; }
+    cx.throw_error("TypeError", "Cannot convert a Symbol value to a string");
+    return false;
+}
+// ToString of an argument: a symbol refuses, everything else converts.
+[[nodiscard]] inline std::string string_arg(context & cx, value v) {
+    return stringable_arg(cx, v) ? cx.to_string(v) : std::string{};
+}
 [[nodiscard]] inline std::string str_at(context & cx, std::span<value> args, std::size_t i) {
-    return i < args.size() ? cx.to_string(args[i]) : std::string{};
+    return i < args.size() ? string_arg(cx, args[i]) : std::string{};
 }
 
 // ToIntegerOrInfinity (7.1.5) over an argument that MAY BE AN OBJECT, and the
@@ -63,6 +83,7 @@ namespace ctbrowser::script {
 // long" from "as long as you like" because the specification makes one of them
 // a RangeError.
 [[nodiscard]] inline double integer_arg(context & cx, std::span<value> args, std::size_t i) {
+    if (i < args.size() && !numeric_arg(cx, args[i])) { return 0.0; }
     const double n = i < args.size() ? cx.to_number_value(args[i]) : 0.0;
     return std::isnan(n) ? 0.0 : std::trunc(n);
 }
@@ -124,8 +145,8 @@ namespace detail {
 }
 [[nodiscard]] inline std::string this_string(context & cx) {
     const value self = cx.current_this();
-    return self.is_string() ? static_cast<string_object *>(self.as_heap())->text
-                            : cx.to_string(self);
+    if (self.is_string()) { return static_cast<string_object *>(self.as_heap())->text; }
+    return string_arg(cx, self);
 }
 
 // thisNumberValue (21.1.3), WHICH THIS FILE DID NOT HAVE - and the cycle that
@@ -149,11 +170,54 @@ namespace detail {
 [[nodiscard]] inline double this_number_value(context & cx, const char * method) {
     const value self = cx.current_this();
     if (self.is_number()) { return self.as_number(); }
+    // A WRAPPER (`new Number(5)`) carries its [[NumberData]] in the slot - see
+    // primitive_slot in value.hpp and box_primitive below.
+    if (value * slot = primitive_slot(self); slot != nullptr && slot->is_number()) {
+        return slot->as_number();
+    }
     if (self.is_object() && self.as_heap() == cx.prototype(context::proto_kind::number)) {
         return 0.0;
     }
     cx.throw_error("TypeError", std::string{method} + " requires that 'this' be a Number");
     return std::nan("");
+}
+
+// --- PRIMITIVE WRAPPERS, 7.1.18 ToObject --------------------------------------
+//
+// The wrapper is an ordinary object on the prototype its kind names, with the
+// primitive in the private-keyed slot `primitive_slot_key` (value.hpp says why
+// a private key IS an internal slot here). `typeof` says "object", `==` and
+// arithmetic reach the primitive through valueOf, and Number.prototype's,
+// Boolean.prototype's and String.prototype's own methods read the slot.
+[[nodiscard]] inline value wrap_primitive(context & cx, value self, value primitive) {
+    auto * obj = static_cast<object_object *>(self.as_heap());
+    if (!obj->prototype.is_object()) {
+        const context::proto_kind kind = primitive.is_number()    ? context::proto_kind::number
+                                         : primitive.is_boolean() ? context::proto_kind::boolean
+                                         : primitive.is_string()  ? context::proto_kind::string
+                                         : primitive.is_kind(heap_kind::symbol)
+                                             ? context::proto_kind::symbol
+                                             : context::proto_kind::bigint;
+        if (object_object * table = cx.prototype(kind)) { obj->prototype = value::object(table); }
+    }
+    obj->define(primitive_slot_key, primitive, attr_none);
+    return self;
+}
+// ToObject of a primitive. An object passes through; null and undefined are
+// the caller's refusal.
+[[nodiscard]] inline value box_primitive(context & cx, value v) {
+    if (v.is_object_like() || v.is_nullish()) { return v; }
+    const value made = cx.make_object();
+    return wrap_primitive(cx, made, v);
+}
+// IS A CONSTRUCTOR BEING RUN UNDER `new`? A native has no new.target: what it
+// has is `this`, which context::construct makes as a fresh, EMPTY instance
+// before the call, and which a plain call never supplies. `Number.call({}, 5)`
+// is the one spelling this cannot tell apart, and no page writes it.
+[[nodiscard]] inline bool constructing_this(value self) {
+    if (!self.is_object()) { return false; }
+    auto * obj = static_cast<object_object *>(self.as_heap());
+    return obj->props.empty() && !obj->accessors.any;
 }
 
 // --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
@@ -187,15 +251,23 @@ namespace detail {
     if (self.is_array()) {
         return static_cast<double>(static_cast<array_object *>(self.as_heap())->length());
     }
-    return to_length(cx.to_number_value(cx.lookup_property(self, "length")));
+    const value raw = cx.lookup_property(self, "length");
+    if (!numeric_arg(cx, raw)) { return 0.0; }
+    return to_length(cx.to_number_value(raw));
 }
 
 [[nodiscard]] inline value element_at(context & cx, value self, double i) {
     return cx.lookup_index(self, value::number(i));
 }
 
+// Set(O, P, V, true) - 23.1.3's writes all carry Throw=true, so a write that
+// does not land (a frozen array, a non-writable `length`, a String receiver's
+// index) is a TypeError even in sloppy code. context::store_index records the
+// refusal in store_rejected_ and strict_store_check turns it into the throw.
 inline void put_element(context & cx, value self, double i, value v) {
+    cx.clear_store_rejected();
     cx.store_index(self, value::number(i), v);
+    cx.strict_store_check(number_to_string(i));
 }
 
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
@@ -220,10 +292,13 @@ inline void put_element(context & cx, value self, double i, value v) {
 // pop, shift, unshift, splice and reverse read like their clauses in 23.1.3
 // rather than like calls on the context.
 inline void delete_element(context & cx, value self, double i) {
-    cx.delete_index(self, value::number(i));
+    if (cx.delete_own_property(self, number_to_string(i))) { return; }
+    cx.throw_error("TypeError", "Cannot delete property '" + number_to_string(i) + "'");
 }
 inline void put_length(context & cx, value self, double len) {
+    cx.clear_store_rejected();
     cx.store_property(self, "length", value::number(len));
+    cx.strict_store_check("length");
 }
 
 // THE FAST PATH'S RECEIVER: a real, ORDINARY Array, whose elements are its own

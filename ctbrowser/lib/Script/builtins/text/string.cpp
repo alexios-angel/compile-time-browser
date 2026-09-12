@@ -48,15 +48,15 @@ using text_body = std::function<value(context &, const std::string &, std::span<
 // "1", and it has to be: `''.concat({toString: String.prototype.toString})`
 // would otherwise recurse.
 //
-// There are no String WRAPPER objects in this engine - `new String(x)` is a
-// conversion, see the `__conversion` flag on the constructor - so the only
-// object carrying a [[StringData]] slot is String.prototype itself, whose slot
-// is the empty String by 22.1.3. That is exactly the reasoning
+// A String WRAPPER (`Object("ab")`, see detail::wrap_primitive) carries its
+// [[StringData]] in the primitive slot; String.prototype itself has the empty
+// String for one by 22.1.3. That is exactly the reasoning
 // `detail::this_number_value` uses to make `Number.prototype.toString()`
-// answer "0", and the two now agree.
+// answer "0", and the two agree.
 [[nodiscard]] value this_string_value(context & cx, const char * method) {
     const value self = cx.current_this();
     if (self.is_string()) { return self; }
+    if (value * slot = primitive_slot(self); slot != nullptr && slot->is_string()) { return *slot; }
     if (self.is_object() && self.as_heap() == cx.prototype(context::proto_kind::string)) {
         return cx.string(std::string{});
     }
@@ -313,6 +313,7 @@ void install_string(context & cx) {
     // Unicode tables - it is what tells a page that asked for "NFKC1" it made a
     // typo, rather than handing the string back and letting the typo live.
     text("normalize", 0, [](context & c, const std::string & s, std::span<value> a) -> value {
+        if (has_index(a, 0) && !stringable_arg(c, a[0])) { return value::undefined(); }
         const std::string form = has_index(a, 0) ? c.to_string(a[0]) : std::string{"NFC"};
         if (form != "NFC" && form != "NFD" && form != "NFKC" && form != "NFKD") {
             c.throw_error("RangeError",
@@ -327,7 +328,7 @@ void install_string(context & cx) {
              // ToString'd through `arg_at` and not `str_at`: a MISSING one is
              // `undefined`, and ToString(undefined) is "undefined" - so
              // `"undefined".localeCompare()` is 0, not 1 against the empty string.
-             const std::string other = c.to_string(arg_at(a, 0));
+             const std::string other = string_arg(c, arg_at(a, 0));
              return value::number(self < other ? -1 : (self == other ? 0 : 1));
          });
     text("charCodeAt", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
@@ -354,14 +355,14 @@ void install_string(context & cx) {
     // which cannot run one at all, so `"abc".indexOf("c", {valueOf: () => 1})`
     // read NaN, became 0, and could not be told from `indexOf("c")`.
     text("indexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
-        const std::string needle = c.to_string(arg_at(a, 0));
+        const std::string needle = string_arg(c, arg_at(a, 0));
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         const std::size_t found = s.find(needle, from);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("lastIndexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
-        const std::string needle = c.to_string(arg_at(a, 0));
+        const std::string needle = string_arg(c, arg_at(a, 0));
         // The position is the LAST index the match may START at, and it
         // defaults to the end. NaN means the end too - and an absent argument
         // IS NaN, because ToNumber(undefined) is NaN, so the two cases are one
@@ -381,7 +382,7 @@ void install_string(context & cx) {
                           "expression");
             return value::boolean(false);
         }
-        const std::string needle = c.to_string(arg_at(a, 0));
+        const std::string needle = string_arg(c, arg_at(a, 0));
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(s.find(needle, from) != std::string::npos);
@@ -393,7 +394,7 @@ void install_string(context & cx) {
                           "expression");
             return value::boolean(false);
         }
-        const std::string needle = c.to_string(arg_at(a, 0));
+        const std::string needle = string_arg(c, arg_at(a, 0));
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(std::string_view{s}.substr(from).starts_with(needle));
@@ -405,7 +406,7 @@ void install_string(context & cx) {
                           "expression");
             return value::boolean(false);
         }
-        const std::string needle = c.to_string(arg_at(a, 0));
+        const std::string needle = string_arg(c, arg_at(a, 0));
         // endsWith takes an END position, not a start: `"abc".endsWith("b", 2)`
         // asks whether the first two characters end in "b".
         const double end = has_index(a, 1) ? integer_arg(c, a, 1) : static_cast<double>(s.size());
@@ -870,7 +871,7 @@ void install_string(context & cx) {
             c.throw_error("RangeError", "Invalid string length");
             return c.string("");
         }
-        const std::string filler = has_index(a, 1) ? c.to_string(a[1]) : " ";
+        const std::string filler = has_index(a, 1) ? string_arg(c, a[1]) : " ";
         if (filler.empty()) { return c.string(self); }
         const auto fill_length = static_cast<std::size_t>(want) - self.size();
         std::string filled;
@@ -917,7 +918,7 @@ void install_string(context & cx) {
     });
     text("concat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
         std::string out = s;
-        for (std::size_t i = 0; i < a.size(); ++i) { out += c.to_string(a[i]); }
+        for (std::size_t i = 0; i < a.size(); ++i) { out += string_arg(c, a[i]); }
         return c.string(out);
     });
     cx.set_prototype(context::proto_kind::string, string_proto);
