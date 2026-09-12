@@ -409,33 +409,10 @@ void install_array(context & cx) {
         return out;
     });
     method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
-        const value self = detail::array_this(c);
-        if (!detail::coercible_this(c, self, "findLast")) { return value::undefined(); }
-        const double len = detail::array_like_length(c, self); // before the callback (steps 2-4)
-        if (c.throw_pending()) { return value::undefined(); }
-        const value callback = arg_at(a, 0);
-        if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
-        const value this_arg = arg_at(a, 1);
-        for (double k = len - 1; k >= 0; k -= 1.0) {
-            const value item = detail::element_at(c, self, k);
-            const value args[3] = {item, value::number(k), self};
-            if (context::truthy(c.call(callback, args, this_arg))) { return item; }
-        }
-        return value::undefined();
+        return array_find(c, a, "findLast", true, false);
     });
     method(cx, array_proto, "findLastIndex", 1, [](context & c, std::span<value> a) {
-        const value self = detail::array_this(c);
-        if (!detail::coercible_this(c, self, "findLastIndex")) { return value::number(-1); }
-        const double len = detail::array_like_length(c, self); // before the callback (steps 2-4)
-        if (c.throw_pending()) { return value::number(-1); }
-        const value callback = arg_at(a, 0);
-        if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
-        const value this_arg = arg_at(a, 1);
-        for (double k = len - 1; k >= 0; k -= 1.0) {
-            const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            if (context::truthy(c.call(callback, args, this_arg))) { return value::number(k); }
-        }
-        return value::number(-1);
+        return array_find(c, a, "findLastIndex", true, true);
     });
     // --- THE FOUR THAT MUTATE AT AN END ------------------------------------
     //

@@ -1530,6 +1530,10 @@ void install_array(context & cx);
 // objects passed here, and install_array calls this at exactly the point the
 // code used to continue, so every property lands in the order it always did.
 void install_array_iteration(context & cx, native_object * array_ctor, object_object * array_proto);
+// find / findIndex / findLast / findLastIndex: one [[Get]]-every-index walk,
+// answering the item or its index, undefined or -1 on a miss.
+[[nodiscard]] value array_find(context & cx, std::span<value> a, const char * name, bool backwards,
+                               bool want_index);
 void install_string(context & cx);
 void install_base64(context & cx);
 void install_uri(context & cx);
