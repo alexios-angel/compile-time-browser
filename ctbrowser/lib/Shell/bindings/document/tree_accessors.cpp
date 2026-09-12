@@ -65,6 +65,13 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
         "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
         [this](context & c, std::span<value> a) {
             const node_id fresh = handle_of(arg(a, 0));
+            // WebIDL first: anything that is not an element at all - a string
+            // - fails the HTMLElement? conversion with a TypeError; null and
+            // an element that is not a body pass it and fail HTML's check.
+            if (!fresh && !arg(a, 0).is_null()) {
+                c.throw_error("TypeError", "document.body must be an HTMLElement or null");
+                return value::undefined();
+            }
             std::string local;
             if (fresh) {
                 const auto txn = doc_->read();
@@ -83,8 +90,22 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             }
             const node_id existing = body_element();
             if (existing == fresh) { return value::undefined(); }
-            const node_id root = first_html_element("html");
-            if (!root) { return value::undefined(); }
+            // "If there is no document element, throw a HierarchyRequestError";
+            // otherwise the new body goes on the document element WHATEVER it
+            // is called - Document.body.html appends one to a <test> root.
+            node_id root;
+            {
+                const auto txn = doc_->read();
+                root = txn.root();
+                if (txn.kind(root).value_or(node_kind::document) != node_kind::element) {
+                    root = node_id{};
+                }
+            }
+            if (!root) {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "document.body: there is no document element");
+                return value::undefined();
+            }
             // Insert before the old body and then remove it, rather than the
             // other way round: removing first leaves the document with no body
             // for the length of one statement, and `mutated()` is not the only

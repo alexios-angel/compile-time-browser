@@ -250,9 +250,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // about:blank IS A DOCUMENT WITH A BODY, and it has to be: `frame
     // .contentDocument.body` is how a page writes into a scratch frame, and
     // parsing the empty string leaves a tree with no body at all to write to.
-    if (src.empty() || bytes.empty()) {
+    if (src.empty() || (bytes.empty() && !is_xml)) {
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     } else if (is_xml) {
+        // An EMPTY .xml is still an XML document - createElement in it makes
+        // a null-namespace element, which Document-createElement-namespace
+        // .html's empty.xml row reads.
         // The XML front end, which is why `.xhtml` is worth having at all: the
         // HTML tree builder lowercases `viewBox` and hands `<![CDATA[` to the
         // JavaScript engine. A frame whose XML is not well-formed keeps the
