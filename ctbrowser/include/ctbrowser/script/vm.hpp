@@ -615,6 +615,17 @@ public:
     // loop on the existing register stack, so a listener may itself call back
     // into script.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
+    // `call`, WITH THE THROW VISIBLE TO THE CALLER. A throw the callee does
+    // not catch unwinds to the innermost `try` on the WHOLE stack - which,
+    // from C++, is whatever page code happened to be running above the
+    // native, or nothing (an engine fault). This puts a fence on the handler
+    // stack first: the throw stops here, `threw` says so and `thrown` is the
+    // value, and the caller decides - a promise reaction rejects its
+    // promise, a callback-taking native rethrows. The listener trampoline in
+    // events/dispatch.cpp did this with compiled JavaScript; this is the
+    // same fence in the VM.
+    value call_fenced(value callable, std::span<const value> args, value this_value, bool & threw,
+                      value & thrown);
     // Queue a job for the end of the turn. FIFO, and a job queued BY a job runs
     // in the same drain - that is what makes a promise chain complete before
     // the turn ends rather than one link per turn.
@@ -1389,6 +1400,9 @@ public:
         std::size_t address = 0; // the catch block
         std::size_t reg_top = 0; // registers_ size on entry
         std::uint16_t slot = 0;  // where to put the thrown value
+        // A C++ caller's catch (call_fenced): `frame` is the depth to unwind
+        // to, and the throw lands in fence_thrown_ rather than a register.
+        bool fence = false;
     };
 
     // A SUSPENDED FRAME, saved whole.
@@ -1748,6 +1762,20 @@ private:
         while (!handlers_.empty()) {
             const handler h = handlers_.back();
             handlers_.pop_back();
+            if (h.fence) {
+                // A C++ caller catches here - see call_fenced. Every frame the
+                // callee pushed goes; the caller's registers stay (a native
+                // still on the C++ stack may write its result into a popped
+                // frame's slot, as it already could through a page's `try`).
+                if (recorder_ != nullptr && h.frame < frames_.size()) [[unlikely]] {
+                    record_frames_unwound(h.frame);
+                }
+                if (frames_.size() > h.frame) { frames_.resize(h.frame); }
+                fence_thrown_ = thrown_;
+                fence_hit_ = true;
+                thrown_ = value::undefined();
+                return true;
+            }
             if (h.frame >= frames_.size()) { continue; } // its frame already returned
             // THE ESCAPE ORACLE SEES THE FRAMES BEFORE THEY GO - FrameEnds.def
             // row `unwind`. Here `thrown_` is still
@@ -1848,6 +1876,7 @@ private:
         }
         // A thrown value in flight is reachable from nothing else.
         visit(root_label::thrown, thrown_);
+        visit(root_label::thrown, fence_thrown_); // caught by a C++ fence, not yet consumed
         // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates
         // the instance and then runs field initialisers and the constructor
         // body with it in a local; without this the object being constructed
@@ -2065,6 +2094,9 @@ private:
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;
+    // What the innermost call_fenced caught, consumed by it on return.
+    bool fence_hit_ = false;
+    value fence_thrown_;
     std::size_t collections_ = 0;
     bool gc_stress_ = false;
     // TOTAL allocations, never reset: the cap is about a loop that does not

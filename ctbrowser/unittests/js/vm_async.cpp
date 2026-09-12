@@ -256,7 +256,7 @@ void test_async_rejection() {
         "  throw new TypeError('later'); }"
         "f().then(() => { result = 'fulfilled'; }, e => { result = e.name + ' ' + e.message; });",
         "TypeError later");
-    expect_after_turn("var result = ''; const f = async () => { null.x; };"
+    expect_after_turn("var result = ''; const f = async () => { throw new TypeError('t'); };"
                       "f().catch(e => { result = e instanceof TypeError; });",
                       "true");
     // A throw INSIDE a try the body catches is not the fence's business.

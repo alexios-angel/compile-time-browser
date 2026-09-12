@@ -474,9 +474,23 @@ inline void deliver(context & cx, value handler_record, value settled, bool reje
     // its callback the moment it was registered and hand back the SAME promise,
     // so it ran before the rejection it was supposed to follow and a chain
     // after it saw the wrong link.
+    // A HANDLER THAT THROWS REJECTS THE NEXT PROMISE (27.2.5.4.1 step 9.a):
+    // the call is fenced so the throw stops here instead of unwinding to
+    // whatever page `try` happens to be below the microtask - or to nothing,
+    // which was an engine fault. `finally`'s callback throwing overrides the
+    // outcome the same way.
+    bool threw = false;
+    value thrown = value::undefined();
     if (value * on_finally = record->find("fin"); on_finally != nullptr) {
-        if (on_finally->is_callable()) { (void)cx.call(*on_finally, std::span<const value>{}); }
-        settle(cx, *next, settled, rejected);
+        if (on_finally->is_callable()) {
+            (void)cx.call_fenced(*on_finally, std::span<const value>{}, value::undefined(), threw,
+                                 thrown);
+        }
+        if (threw) {
+            settle(cx, *next, thrown, true);
+        } else {
+            settle(cx, *next, settled, rejected);
+        }
         return;
     }
     if (!handler.is_callable()) {
@@ -486,7 +500,11 @@ inline void deliver(context & cx, value handler_record, value settled, bool reje
         return;
     }
     const value args[1] = {settled};
-    const value produced = cx.call(handler, args);
+    const value produced = cx.call_fenced(handler, args, value::undefined(), threw, thrown);
+    if (threw) {
+        settle(cx, *next, thrown, true);
+        return;
+    }
     // A handler returning a promise ADOPTS it, which is what makes a chain of
     // `then`s that each do async work run in order rather than all at once.
     if (produced.is_object()) {

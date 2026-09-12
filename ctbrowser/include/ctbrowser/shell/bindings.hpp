@@ -1295,11 +1295,15 @@ private:
             buffer->set("__bytes", byte_array(c, body));
             return c.make_promise(value::object(buffer), false);
         });
-        method("blob", [body, content_type, byte_array](context & c, std::span<value>) {
+        method("blob", [this, body, content_type, byte_array](context & c, std::span<value>) {
             // A minimal Blob: its size, its type and its bytes. Enough for a
             // page that hands one to URL.createObjectURL, which is the only
             // thing anything here does with one.
             auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
+            // probe only ever read as passing because the throw in its
+            // `.then` was lost rather than delivered as a rejection.
+            if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
             blob->set("size", value::number(static_cast<double>(body.size())));
             blob->set("type", c.string(content_type));
             blob->set("__bytes", byte_array(c, body));

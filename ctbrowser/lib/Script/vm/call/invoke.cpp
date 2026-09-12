@@ -47,6 +47,31 @@ value context::call(value callable, std::span<const value> args, value this_valu
     return invoke(callable, args, this_value, /*constructing*/ false);
 }
 
+value context::call_fenced(value callable, std::span<const value> args, value this_value,
+                           bool & threw, value & thrown) {
+    threw = false;
+    thrown = value::undefined();
+    handler fence;
+    fence.frame = frames_.size();
+    fence.reg_top = registers_.size();
+    fence.fence = true;
+    handlers_.push_back(fence);
+    const std::size_t mark = handlers_.size();
+    const value out = invoke(callable, args, this_value, /*constructing*/ false);
+    if (fence_hit_) {
+        // unwind_to_handler popped the fence and everything above it.
+        fence_hit_ = false;
+        threw = true;
+        thrown = fence_thrown_;
+        fence_thrown_ = value::undefined();
+        return value::undefined();
+    }
+    // A normal return: the callee's own handlers died with its frame, so
+    // ours is on top again.
+    if (handlers_.size() >= mark) { handlers_.resize(mark - 1); }
+    return out;
+}
+
 // EVERY C++ ENTRY INTO JAVASCRIPT ENDS UP HERE - a DOM event, a timer, a
 // promise job, an animation frame, `Function.prototype.apply`, a getter, a
 // class field initialiser, `super()` - and until Phase 3 it could not reach a
