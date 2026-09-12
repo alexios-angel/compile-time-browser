@@ -69,6 +69,19 @@ context::context() {
         return value::boolean(cx.has_property(args[0], args[1]) ||
                               cx.has_global(cx.to_string(args[1])));
     });
+    // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
+    // (this, "Array")` is how test262 verifies every global's attributes, and a
+    // binding in the table is what clause 17 describes - { writable: true,
+    // enumerable: false, configurable: true }. The target's own properties
+    // answer first, as `get` has them.
+    trap("getOwnPropertyDescriptor", [](context & cx, std::span<value> args) {
+        const std::string name = cx.to_string(args[1]);
+        property_descriptor found;
+        if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
+        if (!cx.has_global(name)) { return value::undefined(); }
+        return cx.from_property_descriptor(
+            property_descriptor::data(cx.global(name), attr_writable | attr_configurable));
+    });
     set_global_this(value::object(allocate<proxy_object>(target, value::object(handler))));
 }
 
