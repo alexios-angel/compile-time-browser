@@ -664,7 +664,7 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     // learn about holes: `[, ref] = pair` skips the first element.
     if (n.text == "=" && (target.kind == vp::nk::array || target.kind == vp::nk::object)) {
         compile_expr(n.b, dst);
-        compile_literal_as_pattern(n.a, dst);
+        compile_pattern(n.a, dst);
         release_to(mark);
         return;
     }

@@ -683,15 +683,6 @@ public:
     // already exists by the time this runs - see compile_pattern_binding.
     void compile_pattern(std::int32_t pat, std::uint16_t src);
 
-    // Bind an array or object LITERAL, read in expression position, as if it
-    // had been parsed as a pattern. Assigning, never declaring - every name in
-    // it already exists.
-    void compile_literal_as_pattern(std::int32_t literal, std::uint16_t src);
-
-    // One target inside a literal-as-pattern: a name, a member, or a nested
-    // literal that is itself a pattern.
-    void compile_literal_target(std::int32_t target, std::uint16_t src);
-
     // `[a, ...rest] = xs` - rest is everything from `from` onward.
 
     // `{a, ...rest} = o` - every own property except the ones already named.

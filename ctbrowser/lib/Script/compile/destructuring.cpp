@@ -64,6 +64,16 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
+    // AN ARRAY OR OBJECT LITERAL IS A PATTERN TOO. The parser met the left
+    // side of `[a, b] = pair` in expression position and read a LITERAL,
+    // which is the only thing it could have been at the time; re-reading it
+    // here is what the grammar itself does. The literal kinds spell the same
+    // shapes with different node kinds - `spread` for `rest_element`,
+    // `assign` for `assign_pattern`, a `prop` whose computed-key bit is
+    // `d & 1` rather than `d & 2` and whose shorthand `{a}` has no target node
+    // (c == 2) - and the early-error pass has already refused every target
+    // that is not one.
+    case vp::nk::assign:
     case vp::nk::assign_pattern: {
         // The default applies when the value is UNDEFINED, so it is written
         // into the source register before the target ever sees it.
@@ -76,19 +86,24 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
+    case vp::nk::array:
     case vp::nk::array_pattern:
         compile_array_pattern(
-            kids(n), src, vp::nk::rest_element,
+            kids(n), src, n.kind == vp::nk::array ? vp::nk::spread : vp::nk::rest_element,
             [this](std::int32_t element, std::uint16_t item) { compile_pattern(element, item); });
         return;
 
+    case vp::nk::object:
     case vp::nk::object_pattern: {
+        const bool literal = n.kind == vp::nk::object;
+        const auto rest_kind = literal ? vp::nk::spread : vp::nk::rest_element;
+        const std::int32_t computed_bit = literal ? 1 : 2;
         // RequireObjectCoercible (8.6.2 / 13.15.5.2): `{} = null` is a
         // TypeError even though nothing is read. A pattern with a named
         // property throws from its own get_prop; an empty or rest-first one
         // has to ask.
         const std::span<const std::int32_t> entries = kids(n);
-        if (entries.empty() || at(entries.front()).kind == vp::nk::rest_element) {
+        if (entries.empty() || at(entries.front()).kind == rest_kind) {
             const std::uint32_t mark = reg_mark();
             const std::uint16_t scratch = alloc_reg();
             emit_iterator_native(require_object_name, scratch, src);
@@ -100,10 +115,10 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
             const vp::node & e = at(entry);
             const std::uint32_t mark = reg_mark();
             const std::uint16_t item = alloc_reg();
-            if (e.kind == vp::nk::rest_element) {
+            if (e.kind == rest_kind) {
                 emit_rest_object(item, src, taken);
                 compile_pattern(e.a, item);
-            } else if ((e.d & 2) != 0 && e.a >= 0) { // a computed key
+            } else if ((e.d & computed_bit) != 0 && e.a >= 0) { // a computed key
                 const std::uint16_t key = alloc_reg();
                 compile_expr(e.a, key);
                 proto().emit(instruction{op::get_index, item, src, key});
@@ -112,7 +127,11 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
                 proto().emit(
                     instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
                 taken.emplace_back(e.text);
-                compile_pattern(e.b, item);
+                if (literal && e.c == 2) {
+                    emit_write(e.text, item); // shorthand `{a}` binds its own name
+                } else {
+                    compile_pattern(e.b, item);
+                }
             }
             release_to(mark);
         }
@@ -185,70 +204,6 @@ void compiler_impl::compile_array_pattern(
     }
     emit_iterator_native(iterator_close_name, record, record, 0);
     release_to(mark);
-}
-
-void compiler_impl::compile_literal_as_pattern(std::int32_t literal, std::uint16_t src) {
-    const vp::node & n = at(literal);
-    if (n.kind == vp::nk::array) {
-        compile_array_pattern(kids(n), src, vp::nk::spread,
-                              [this](std::int32_t element, std::uint16_t item) {
-                                  compile_literal_target(element, item);
-                              });
-        return;
-    }
-    const std::span<const std::int32_t> entries = kids(n);
-    if (entries.empty() || at(entries.front()).kind == vp::nk::spread) {
-        const std::uint32_t mark = reg_mark();
-        const std::uint16_t scratch = alloc_reg();
-        emit_iterator_native(require_object_name, scratch, src);
-        release_to(mark);
-    }
-    std::vector<std::string> taken;
-    for (const std::int32_t entry : entries) {
-        const vp::node & e = at(entry);
-        const std::uint32_t mark = reg_mark();
-        const std::uint16_t item = alloc_reg();
-        if (e.kind == vp::nk::spread) {
-            emit_rest_object(item, src, taken);
-            compile_literal_target(e.a, item);
-        } else {
-            // `{a}` is shorthand (c == 2) and binds its own name; `{a: b}`
-            // binds `b`.
-            const std::int32_t value_node = e.c == 2 ? -1 : e.b;
-            proto().emit(instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
-            taken.emplace_back(e.text);
-            if (value_node < 0) {
-                emit_write(e.text, item);
-            } else {
-                compile_literal_target(value_node, item);
-            }
-        }
-        release_to(mark);
-    }
-}
-
-void compiler_impl::compile_literal_target(std::int32_t target, std::uint16_t src) {
-    if (target < 0) { return; }
-    const vp::node & t = at(target);
-    if (t.kind == vp::nk::array || t.kind == vp::nk::object) {
-        compile_literal_as_pattern(target, src);
-        return;
-    }
-    if (t.kind == vp::nk::assign) { // `[a = 1] = xs`
-        const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
-        const std::uint32_t mark = reg_mark();
-        compile_named_expr(t.b, src, at(t.a).kind == vp::nk::ident ? at(t.a).text : "");
-        release_to(mark);
-        patch_here(skip);
-        compile_literal_target(t.a, src);
-        return;
-    }
-    if (t.kind == vp::nk::ident) {
-        emit_write(t.text, src);
-        return;
-    }
-    const reference ref = prepare_reference(t);
-    emit_store(ref, src);
 }
 
 void compiler_impl::emit_rest_object(std::uint16_t dst, std::uint16_t source,
