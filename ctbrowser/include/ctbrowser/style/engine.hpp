@@ -29,9 +29,9 @@
 // Style resolution. An element is resolved ONCE, producing its whole computed style,
 // and layout then reads properties out of a small vector.
 //
-// Matching is a pure function of (document snapshot, element) - it writes
-// nothing shared except the intern table - which is what lets it run across
-// the scheduler with no synchronisation on the hot path.
+// Matching is a function of (document snapshot, element): it takes a read
+// transaction, so it observes a stable view of the tree, and it runs on the
+// frame thread - the engine keeps per-element match state between calls.
 
 namespace ctbrowser::style {
 
