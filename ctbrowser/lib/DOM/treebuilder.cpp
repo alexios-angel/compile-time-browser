@@ -81,19 +81,40 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
     // up later is a parse error and ignored, which is what the emptiness test
     // on `<html>` says.
     case token_kind::doctype:
-        if (doc_->read().children(root_).empty() && !in_body_) {
+        if (before_html()) {
             doc_->set_quirks(t.force_quirks);
             const node_id doctype =
                 builder_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
             builder_->insert_before(doc_->document_node(), doctype, root_);
         }
         return;
-    case token_kind::comment: return; // dropped: nothing reads comments yet
+    // A COMMENT IS A NODE. Ahead of `<html>` it is a child of the Document -
+    // the "initial" and "before html" modes both say so, and `<!-- x -->
+    // <!DOCTYPE html>` puts the doctype at `document.childNodes[1]`, which
+    // Document-doctype.html reads. Anywhere else it goes where the current
+    // node is, never foster-parented: a comment inside a <table> stays in the
+    // table. Nothing lays one out; the box tree skips every non-element,
+    // non-text kind. Where this still differs from the spec: a comment after
+    // `</html>` lands under the last open element rather than the Document,
+    // because this builder ignores `</body>` and `</html>` outright.
+    case token_kind::comment: {
+        const node_id comment = builder_->create_comment(t.data);
+        if (before_html()) {
+            builder_->insert_before(doc_->document_node(), comment, root_);
+        } else {
+            builder_->append(current(), comment);
+        }
+        return;
+    }
     case token_kind::character: return insert_text(t.data);
     case token_kind::start_tag: return start(t, lexer);
     case token_kind::end_tag: return end(t, lexer);
     case token_kind::end_of_file: return;
     }
+}
+
+bool tree_builder::before_html() const {
+    return !html_attributes_seen_ && !in_body_ && doc_->read().children(root_).empty();
 }
 
 std::string_view tree_builder::current_tag() const {
