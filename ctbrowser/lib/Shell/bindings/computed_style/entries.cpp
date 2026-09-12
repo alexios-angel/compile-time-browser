@@ -379,6 +379,25 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 conditions.lengths.root_font_size = at.root_font_size;
                 conditions.lengths.viewport_width = static_cast<float>(viewport_width_);
                 conditions.lengths.viewport_height = static_cast<float>(viewport_height_);
+                conditions.lengths.element_key = style::engine::key_of(id);
+                conditions.lengths.property = property;
+                // ...AND WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, for the
+                //    tree-counting functions a custom property may hold -
+                //    `ident("vtl-" sibling-index())` (ident-function-substitution).
+                if (at.chain.size() >= 2) {
+                    const auto txn = doc_->read();
+                    std::uint32_t index = 0;
+                    std::uint32_t count = 0;
+                    for (const node_id sibling : txn.children(at.chain[1])) {
+                        if (txn.kind(sibling).value_or(node_kind::text) != node_kind::element) {
+                            continue;
+                        }
+                        ++count;
+                        if (sibling == id) { index = count; }
+                    }
+                    conditions.lengths.sibling_index = index;
+                    conditions.lengths.sibling_count = count;
+                }
                 conditions.inherited = [&](std::string_view name) -> std::optional<std::string> {
                     if (at.chain.size() < 2) { return std::nullopt; }
                     const node_id parent = at.chain[1];
