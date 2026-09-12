@@ -28,6 +28,7 @@
 #include "../early_errors.hpp"
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -116,6 +117,12 @@ struct frame {
     bool is_generator = false;
 };
 
+// 13.2.7.1: the first thing wrong with a regular expression literal - the
+// lexeme as the lexer kept it, `/body/flags` - or nothing. Defined in
+// regexp.cpp; see the note at the top of that file for what is and is not
+// judged.
+[[nodiscard]] std::optional<std::string> regexp_literal_error(std::string_view lexeme);
+
 class checker {
 public:
     checker(const vp::ast & tree, std::string_view source, bool strict_root)
@@ -186,6 +193,20 @@ private:
 
     static std::string quoted(std::string_view name) { return "`" + std::string{name} + "`"; }
 
+    // WAS THIS NAME SPELLED WITH AN ESCAPE? The lexer decodes `\u0062reak`
+    // into a buffer of its own (vp::decoded_names), so a lexeme that does not
+    // point into the source is one it decoded. 12.7.1: such a name may not
+    // be a reserved word - and only such a name can be judged by its text
+    // alone, because the parser is lenient with a keyword in expression
+    // position (`return\nconst x` reads `const` as the returned name), and a
+    // lenient parse of a valid program must not become a refusal.
+    [[nodiscard]] bool escaped(std::int32_t idx) const {
+        const vp::node & n = at(idx);
+        if (n.text.empty() || source_.empty()) { return false; }
+        const char * first = n.text.data();
+        return first < source_.data() || first >= source_.data() + source_.size();
+    }
+
     // --- defined in scopes.cpp ------------------------------------------------------------
     void bound_names(std::int32_t idx, binding_kind how, std::vector<binding> & out) const;
     // --- strict mode -------------------------------------------------------
@@ -196,7 +217,19 @@ private:
     // 13.1.1: in strict code neither a binding nor an assignment target may
     // be `eval` or `arguments`, and `yield`, `let`, `static`, `implements`,
     // `interface`, `package`, `private`, `protected`, `public` are reserved.
-    void check_strict_binding(std::string_view name, std::int32_t node);
+    // `trusted` says the spelling may be judged against the reserved words
+    // too - a binding always is; a reference only when `escaped` (see there).
+    void check_strict_binding(std::string_view name, std::int32_t node, bool trusted = true);
+    // 12.7.2: the ReservedWords that are never an identifier, in any mode.
+    // The contextual ones (`let`, `static`, `async`, `of`, `get`, `set`,
+    // `yield`, `await`) are not here: they are identifiers in sloppy code,
+    // and the strict and async/generator rules below take the rest.
+    [[nodiscard]] static bool reserved_word(std::string_view name);
+    // An IdentifierReference: a reserved word is refused where the spelling
+    // can be trusted (see `escaped`, and a shorthand property, which no
+    // leniency reaches), then the strict and contextual rules -
+    // `eval`/`arguments` may be READ in strict code.
+    void check_identifier_reference(std::string_view name, std::int32_t node, bool trusted);
     // The two rules above, for a binding or a reference named `await`/`yield`.
     void check_contextual_name(std::string_view name, std::int32_t node);
     void check_strict_bindings(const std::vector<binding> & names);
@@ -225,12 +258,20 @@ private:
     [[nodiscard]] bool simple_parameters(std::span<const std::int32_t> params) const;
     void check_function(std::int32_t idx, frame_kind what, bool super_call_ok = false);
     void check_class(std::int32_t idx);
+    [[nodiscard]] bool heritage_parenthesised(std::int32_t klass) const;
+    void check_accessor_arity(std::int32_t fn, bool setter);
+    // 15.7.1 AllPrivateIdentifiersValid: a `#name` is only ever a reference to
+    // a name some ENCLOSING class body declares - `private_names_` is that
+    // stack, one entry per open body, pushed after the heritage is walked
+    // (the heritage sees the outer environment, not the class's own).
+    void check_private_reference(std::string_view name, std::int32_t node);
 
     // --- defined in expressions.cpp -------------------------------------------------------
     [[nodiscard]] bool simple_target(std::int32_t idx) const;
     [[nodiscard]] static bool destructuring(nk kind);
     void check_assignment(std::int32_t idx);
     void check_update(std::int32_t idx);
+    void check_yield_operand(std::int32_t op_node, std::int32_t operand);
     [[nodiscard]] bool names_proto(const vp::node & prop) const;
     [[nodiscard]] bool bracketed(std::int32_t key) const;
     void check_proto_duplicates(std::int32_t idx);
@@ -243,6 +284,7 @@ private:
 
     // --- defined in patterns.cpp ----------------------------------------------------------
     void check_pattern_target(std::int32_t idx);
+    [[nodiscard]] bool comma_follows(std::int32_t target) const;
     void walk_pattern(std::int32_t idx);
 
     // HOW DEEP THIS WALK MAY GO, and why there is a limit at all.
@@ -293,6 +335,11 @@ private:
     std::vector<frame> frames_;
     bool strict_root_ = false;    // a module: strict code from the first line
     std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
+    std::vector<std::vector<std::string_view>> private_names_; // see check_private_reference
+    // WALKING A FORMAL PARAMETER LIST of the innermost frame: `yield` and
+    // `await` expressions are not allowed there (15.5.1, 15.8.1 -
+    // FormalParameters[~Yield] and [~Await] for the function's own kind).
+    bool in_parameters_ = false;
     std::optional<early_error> found_;
 };
 

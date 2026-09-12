@@ -671,7 +671,7 @@ CT_OPCODE(/* name */ own_keys, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
 CT_OPCODE(/* name */ iterable, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call/invoke.cpp:context::iterable_values")
+          /* impl */ "vm/call/invoke.cpp:context::spread_values (iterable_values, plus the TypeError for a nullish or non-string primitive source)")
 
 /* writes_a is FALSE even though a is written in the JS sense - it MUTATES
  * the object in register a rather than storing into the register. No cycle

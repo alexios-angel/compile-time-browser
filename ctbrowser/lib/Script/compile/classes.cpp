@@ -81,6 +81,11 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             const std::uint16_t key = alloc_reg();
             compile_expr(m.a, key);
             proto().emit(instruction{op::set_index, self, key, v});
+        } else if (m.text.starts_with('#')) {
+            // A PRIVATE FIELD IS DEFINED, NOT SET (7.3.33 PrivateFieldAdd): a
+            // set_prop would be the brand check store_property makes, on an
+            // instance that does not carry the element yet.
+            emit_define_own(self, member_key(m.text), v, false);
         } else {
             proto().emit(instruction{op::set_prop, self, member_operand(m.text), v});
         }
@@ -155,7 +160,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // Named after the CLASS. A constructor is a function expression, so
         // it had no name of its own and every stack trace through one said
         // `<anonymous>` - which in a 4.5 MB bundle is no answer at all.
+        derived_ctor_pending_ = n.a >= 0; // see frame::derived_flag
         const std::uint32_t index = compile_function_body(constructor_body, std::string{n.text});
+        derived_ctor_pending_ = false;
         proto().emit(instruction::with_bx(op::closure, dst, index));
     } else if (n.a >= 0) {
         // A DERIVED class with no constructor gets `constructor(...args) {
@@ -297,6 +304,11 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             // A static `name`/`length` shadows the constructor's own
             // read-only one: DEFINED, not set (see define_own_name).
             emit_define_own(target, m.text, slot, false);
+        } else if (m.text.starts_with('#')) {
+            // A private method is DEFINED too: a set_prop is a PrivateSet, and
+            // store_property's brand check would refuse it on a prototype
+            // that does not carry the element yet.
+            emit_define_own(target, member_key(m.text), slot, false);
         } else {
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{op::set_prop, target, name, slot});
@@ -325,8 +337,16 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
         }
-        if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
+        if ((m.d & 2) != 0 && m.a >= 0) { // `static [key] = init`
+            const std::uint32_t inner = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(m.a, key);
+            proto().emit(instruction{op::set_index, dst, key, slot});
+            release_to(inner);
+        } else if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
             emit_define_own(dst, m.text, slot, true); // as above, enumerable: a field
+        } else if (m.text.starts_with('#')) {
+            emit_define_own(dst, member_key(m.text), slot, false); // see the instance path
         } else {
             proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
         }

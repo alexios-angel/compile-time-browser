@@ -114,6 +114,12 @@ public:
         bool is_async = false;     // `return v` hands back a settled promise of v
         bool is_generator = false; // `function*` - calling it does not run it
         bool is_strict = false;    // see function_proto::is_strict
+        // THE CONSTRUCTOR OF A DERIVED CLASS: the hidden boxed local that says
+        // whether `super()` has run - `this` before it, a second `super()`,
+        // and a return without it are the ReferenceErrors of 10.2.1.3 /
+        // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
+        // the constructor asks its nearest non-arrow frame (derived_flag()).
+        std::string derived_flag;
         // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
         // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
         // names a function mentions. The index lives HERE rather than on the
@@ -526,6 +532,71 @@ public:
     //      every default permanently widens the frame.
     void compile_parameter_prologue(std::span<const std::int32_t> params,
                                     const std::function<bool(std::uint16_t)> & is_boxed);
+    // THE PARAMETERS STILL UNINITIALISED WHILE A DEFAULT RUNS (10.2.11 step
+    // 21-28: each parameter's binding is initialised in order, and a default
+    // reading a later one - or its own - is the ReferenceError of an
+    // uninitialised binding). Set around one default's compilation, for the
+    // frame it belongs to: `function f(x = y, y)` reads y in this frame and
+    // throws; `function f(x = () => y, y)` reads it from another frame, later,
+    // and does not. compile_ident asks.
+    std::vector<std::string> tdz_names_;
+    std::size_t tdz_frame_ = static_cast<std::size_t>(-1);
+    // `throw new <kind>(message)`, through the global constructor.
+    void emit_throw(std::string_view kind, std::string message);
+
+    // --- derived constructors --------------------------------------------------
+    // Set by compile_class for the constructor it is about to compile; the
+    // body consumes it (see frame::derived_flag).
+    bool derived_ctor_pending_ = false;
+    // The flag of the derived constructor `this` resolves to from here, or
+    // nothing: this frame's, or through any number of arrows, the nearest
+    // non-arrow frame's.
+    [[nodiscard]] const std::string * derived_flag();
+    // `this` / a return / a `super()` with the flag still false is the
+    // ReferenceError; `super()` with it true is one too (`again`).
+    void emit_super_check(const std::string & flag, bool again);
+    // `super()` returned: the flag goes true.
+    void emit_super_done(const std::string & flag);
+    // The tail of a `return v` in a derived constructor: an object is
+    // returned, undefined returns `this` (once super() ran), anything else is
+    // the TypeError (10.2.2 [[Construct]] steps 10-13).
+    void emit_derived_return(std::uint16_t value);
+
+    // --- `with` ---------------------------------------------------------------
+    //
+    // `with (o) body` puts an OBJECT in front of the scope chain: every name
+    // the body mentions is looked up on `o` first (HasProperty, then a
+    // @@unscopables veto, 9.1.1.2.1), and only a name the body itself
+    // declares - a `let` in the block, a nested function's parameter - is
+    // exempt. The object lives in a hidden, boxed local named `@with:N`, so a
+    // closure made inside the body captures it like any other local; each
+    // open `with` is one of these, innermost last, and emit_with_object emits
+    // the lookup chain for a name. Hoisted function DECLARATIONS are compiled
+    // at the enclosing function's entry, before any `with` is open, and read
+    // their names without the object - the one shape this does not cover.
+    struct with_scope {
+        std::string name;        // the hidden local holding the object
+        std::size_t frame = 0;   // frames_ index the statement is in
+        std::size_t locals_mark; // position of that local in its frame: names
+                                 // declared at or past it are inside the body
+    };
+    std::vector<with_scope> with_scopes_;
+    void compile_with(const vp::node & n);
+    // The name's resolution as the compiler sees it: the frame declaring it
+    // and its position there, or `frames_.size()` when it is a global.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> declaring_frame(std::string_view name);
+    // Leaves in `obj` the innermost with-object that binds `name` - or
+    // undefined when none does at run time - and answers whether any `with`
+    // applies to the name at all (nothing is emitted when none does).
+    [[nodiscard]] bool emit_with_object(std::string_view name, std::uint16_t obj);
+    [[nodiscard]] std::vector<const with_scope *> applicable_with_scopes(std::string_view name);
+    // Does this call need a receiver register: a member callee, or a plain
+    // name inside a `with` (the object that binds it is the `this`, 13.3.6.2
+    // step 6 via WithBaseObject).
+    [[nodiscard]] bool call_needs_receiver(const vp::node & callee);
+    // compile_ident without the with lookup: a local, an upvalue or a global.
+    void emit_plain_read(std::string_view name, std::uint16_t dst);
+    void emit_plain_write(std::string_view name, std::uint16_t src);
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
@@ -574,7 +645,12 @@ public:
     // private_key_prefix and private_scopes_) - `@#x` alone when none does,
     // which is an early error the checker owns - anything else is itself.
     [[nodiscard]] std::uint16_t member_operand(std::string_view text) {
-        if (!text.starts_with('#')) { return name_operand(std::string{text}); }
+        return name_operand(member_key(text));
+    }
+    // The same resolution, as the KEY STRING - for a definition that goes
+    // through a native rather than an operand.
+    [[nodiscard]] std::string member_key(std::string_view text) {
+        if (!text.starts_with('#')) { return std::string{text}; }
         std::string key = std::string{private_key_prefix} + std::string{text};
         for (std::size_t i = private_scopes_.size(); i-- > 0;) {
             const private_scope & scope = private_scopes_[i];
@@ -583,7 +659,7 @@ public:
                 break;
             }
         }
-        return name_operand(std::move(key));
+        return key;
     }
 
     // Called where a frame's size is finally written, because that is the only
@@ -809,6 +885,12 @@ public:
         std::uint16_t reg = 0;  // local/boxed: its register. member/index: the object.
         std::uint16_t key = 0;  // index: the key register
         std::uint16_t name = 0; // global/member: the name index
+        // A NAME INSIDE A `with`: `with_reg` holds the object that bound it
+        // when the reference was prepared, or undefined, and the fields above
+        // are the fallback. See emit_with_object.
+        bool with = false;
+        std::uint16_t with_reg = 0;
+        std::uint16_t with_name = 0; // the name, as a property-name operand
     };
 
     [[nodiscard]] reference prepare_reference(const vp::node & target);

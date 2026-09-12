@@ -56,9 +56,10 @@ std::uint64_t aot_bridge::new_array(aot::ct_aot_frame * f, std::uint32_t reserve
 }
 
 // ct_aot_iterable_values. VM_CASE(iterable) is one line -
-// `reg(in.a) = iterable_values(reg(in.b))` - and iterable_values is
-// ALREADY a named member, so there is nothing to extract and no way for
-// the two tiers to drift.
+// `reg(in.a) = spread_values(reg(in.b))` - and spread_values is ALREADY a
+// named member (iterable_values plus the spread's own TypeError for a
+// nullish or non-string primitive source), so there is nothing to extract
+// and no way for the two tiers to drift.
 //
 // DELEGATED WHOLESALE, INCLUDING THE ROW'S CORRECTION (1). That correction
 // describes a real defect - the array-like arm calls lookup_property up to
@@ -71,7 +72,7 @@ std::uint64_t aot_bridge::new_array(aot::ct_aot_frame * f, std::uint32_t reserve
 std::int32_t aot_bridge::iterable_values(aot::ct_aot_frame * f, std::uint64_t source,
                                          std::uint64_t * out) {
     context & cx = *frame_of(f).ctx;
-    const value produced = cx.iterable_values(value::from_bits(source));
+    const value produced = cx.spread_values(value::from_bits(source));
     const std::int32_t status = check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;

@@ -524,7 +524,7 @@ void test_new_and_classes() {
     // `super.m()` calls the parent's version, and `this` inside it is still the
     // instance.
     expect_result("class A { label() { return 'A' + this.n; } }"
-                  "class B extends A { constructor() { this.n = 1; }"
+                  "class B extends A { constructor() { super(); this.n = 1; }"
                   "  label() { return super.label() + 'B'; } } return new B().label();",
                   "A1B");
     // Three deep. This is what resolving super against `this` gets wrong: C's

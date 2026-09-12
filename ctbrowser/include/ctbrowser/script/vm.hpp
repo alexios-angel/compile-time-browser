@@ -787,6 +787,12 @@ public:
     // for-of, spread and Array.from share. See the definition for what it
     // covers.
     [[nodiscard]] value iterable_values(value v);
+    // op::iterable - a SPREAD's source (`[...x]`, `f(...x)`), which is
+    // iterable_values with the one thing a spread adds: null, undefined and a
+    // primitive that is not a string are the TypeError of 13.2.5.1's
+    // GetIterator, where a library constructor given null (`new Map(null)`)
+    // is content with nothing. Both tiers call this one.
+    [[nodiscard]] value spread_values(value v);
     // GetIterator(v, sync) (7.4.3): `v[Symbol.iterator]()`, checked to be an
     // object. A TypeError (thrown, catchable) and undefined when it is not
     // iterable or the method answers a non-object.

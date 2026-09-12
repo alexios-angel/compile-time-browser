@@ -10,7 +10,61 @@
 
 namespace ctbrowser::script::detail {
 
+const std::string * compiler_impl::derived_flag() {
+    for (std::size_t level = frames_.size(); level-- > 0;) {
+        const frame & f = frames_[level];
+        if (!f.derived_flag.empty()) { return &f.derived_flag; }
+        if (!out_.functions[f.proto].is_arrow) { return nullptr; }
+    }
+    return nullptr;
+}
+
+void compiler_impl::emit_super_check(const std::string & flag, bool again) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t ran = alloc_reg();
+    emit_plain_read(flag, ran);
+    const std::size_t fine =
+        proto().emit(instruction{again ? op::jump_if_false : op::jump_if_true, ran});
+    emit_throw("ReferenceError", again ? "Super constructor may only be called once"
+                                       : "Must call super constructor in derived class before "
+                                         "accessing 'this' or returning from derived constructor");
+    patch_here(fine);
+    release_to(mark);
+}
+
+void compiler_impl::emit_super_done(const std::string & flag) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t yes = alloc_reg();
+    proto().emit(instruction{op::load_true, yes});
+    emit_plain_write(flag, yes);
+    release_to(mark);
+}
+
+void compiler_impl::emit_derived_return(std::uint16_t value) {
+    const std::uint32_t mark = reg_mark();
+    const std::size_t defined = proto().emit(instruction{op::jump_if_defined, value});
+    emit_super_check(fn().derived_flag, false);
+    proto().emit(instruction{op::ret_undef}); // [[Construct]] hands back `this`
+    patch_here(defined);
+    const std::uint16_t kind = alloc_reg();
+    proto().emit(instruction{op::type_of, kind, value});
+    const std::uint16_t want = alloc_reg();
+    const std::uint16_t same = alloc_reg();
+    emit_string(want, "object");
+    proto().emit(instruction{op::equal, same, kind, want});
+    const std::size_t is_object = proto().emit(instruction{op::jump_if_true, same});
+    emit_string(want, "function");
+    proto().emit(instruction{op::equal, same, kind, want});
+    const std::size_t is_function = proto().emit(instruction{op::jump_if_true, same});
+    emit_throw("TypeError", "Derived constructors may only return object or undefined");
+    patch_here(is_object);
+    patch_here(is_function);
+    proto().emit(instruction{op::ret, value});
+    release_to(mark);
+}
+
 void compiler_impl::emit_implicit_return() {
+    if (!fn().derived_flag.empty()) { emit_super_check(fn().derived_flag, false); }
     if (!fn().is_async || fn().is_generator) {
         proto().emit(instruction{op::ret_undef});
         return;
@@ -178,6 +232,19 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     // the prologue meant that read went through cell_get on a raw value and
     // answered undefined. The prologue writes a boxed parameter's default
     // through cell_set for the same reason.
+    // See the fence below: an async (non-generator) function's fence covers
+    // its parameter defaults too, so it is pushed here, before them.
+    const bool is_async_fn = n.c > 0 && (n.c & 1) != 0;
+    const bool is_generator_fn = n.c > 0 && (n.c & 2) != 0;
+    const bool fenced = is_async_fn;
+    constexpr std::size_t no_fence = static_cast<std::size_t>(-1);
+    std::uint16_t fence_reg = 0;
+    std::size_t fence_guard = no_fence;
+    if (fenced && !is_generator_fn) {
+        fence_reg = alloc_reg();
+        fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
+        ++handler_depth_;
+    }
     compile_parameter_prologue(params, [&](std::uint16_t reg) {
         for (std::size_t i = 0; i < declared_parameters && i < fn().locals.size(); ++i) {
             const local & l = fn().locals[i];
@@ -207,6 +274,17 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         const std::uint16_t self = declare_local(out_.functions[index].name);
         proto().emit(instruction{op::load_callee, self});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, self}); }
+    }
+    // A DERIVED CONSTRUCTOR'S `super()` FLAG - see frame::derived_flag. Boxed
+    // whatever the capture index says, because an arrow in the body reads
+    // and writes it as an upvalue.
+    if (derived_ctor_pending_) {
+        derived_ctor_pending_ = false;
+        fn().derived_flag = "@super:" + std::to_string(index);
+        const std::uint16_t flag = declare_local(fn().derived_flag);
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::load_false, flag});
+        proto().emit(instruction{op::new_cell, flag});
     }
     collect_declared_names(n.a);
     // Declarations are hoisted to the top of the body BEFORE any nested
@@ -254,10 +332,12 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     // the same way; settle_async_generator reads the rejection back out of
     // the record. `handler_depth_` counts it so a loop exit inside the body
     // pops only what it opened.
-    std::uint16_t fence_reg = 0;
-    std::size_t fence_guard = 0;
-    const bool fenced = fn().is_async;
-    if (fenced) {
+    // THE FENCE OPENS BEFORE THE PARAMETER PROLOGUE for an async function
+    // that is not a generator: a default that throws REJECTS the promise
+    // (27.7.5.1 EvaluateAsyncFunctionBody step 2-3), where an async
+    // generator's throws at the call (27.6.3.1 uses `?`). So the push may
+    // already have happened above; this block only opens it for the rest.
+    if (fenced && fence_guard == no_fence) {
         fence_reg = alloc_reg();
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;

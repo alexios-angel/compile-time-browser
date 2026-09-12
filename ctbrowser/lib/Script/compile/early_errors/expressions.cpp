@@ -36,6 +36,7 @@ namespace {
     case nk::labeled:
     case nk::try_stmt:
     case nk::switch_stmt:
+    case nk::with_stmt:
     case nk::func_decl: return true;
     default: return false;
     }
@@ -347,6 +348,24 @@ void checker::check_delete(std::int32_t operand) {
     return enclosing_non_arrow_frame().what;
 }
 
+// A YieldExpression IS AN AssignmentExpression, NOT AN OPERAND (15.5): `void
+// yield`, `a + yield b` and `yield 3 + yield 4` are not in the grammar, and
+// only parentheses make them one. The parser drops parentheses, so the
+// source after the operator's lexeme says whether they were there.
+void checker::check_yield_operand(std::int32_t op_node, std::int32_t operand) {
+    if (at(operand).kind != nk::yield_expr) { return; }
+    const vp::node & op = at(op_node);
+    const std::size_t where = offset_of(op_node);
+    if (where == early_error::nowhere || op.text.empty()) { return; }
+    for (std::size_t i = where + op.text.size(); i < source_.size(); ++i) {
+        const char c = source_[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
+        if (c == '(') { return; }
+        break;
+    }
+    report("`yield` is not an operand of `" + std::string{op.text} + "`; parenthesise it", operand);
+}
+
 void checker::walk_expression(std::int32_t idx) {
     if (idx < 0 || depth_ >= max_depth) { return; }
     const deeper nesting{depth_};
@@ -369,6 +388,17 @@ void checker::walk_expression(std::int32_t idx) {
 
     case nk::unary:
         if (n.text == "delete") { check_delete(n.a); }
+        check_yield_operand(idx, n.a);
+        if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
+            report("`await` is not allowed in the parameters of an async function", idx);
+        }
+        walk_expression(n.a);
+        return;
+
+    case nk::yield_expr:
+        if (in_parameters_ && frames_.back().is_generator) {
+            report("`yield` is not allowed in the parameters of a generator", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -402,16 +432,49 @@ void checker::walk_expression(std::int32_t idx) {
         for (const std::int32_t p : kids(n)) { walk_property(p); }
         return;
 
+    // `o.#x` / `o?.#x`: 15.7.1 AllPrivateIdentifiersValid, and the grammar -
+    // SuperProperty is `super . IdentifierName`, never a private name.
+    case nk::member:
+    case nk::opt_member:
+        if (n.text.starts_with('#')) {
+            if (at(n.a).kind == nk::super_lit) {
+                report("`super` has no private members", idx);
+            } else {
+                check_private_reference(n.text, idx);
+            }
+        }
+        walk_expression(n.a);
+        return;
+
+    // `#x in o` (13.10.1): the one place a private name stands alone, and
+    // it is a reference like any other.
+    case nk::binary:
+        if (n.text == "in" && at(n.a).kind == nk::ident && at(n.a).text.starts_with('#')) {
+            check_private_reference(at(n.a).text, n.a);
+            walk_expression(n.b);
+            return;
+        }
+        check_yield_operand(idx, n.b);
+        break;
+    case nk::logical: check_yield_operand(idx, n.b); break;
+
     case nk::num: check_number(idx); return;
+
+    case nk::regex:
+        if (auto wrong = regexp_literal_error(n.text)) {
+            report("invalid regular expression " + std::string{n.text} + ": " + *wrong, idx);
+        }
+        return;
 
     // 13.1.1: in strict code `yield` and the future reserved words are not
     // identifiers even as a reference (`eval`/`arguments` may be READ).
     case nk::ident:
-        if (strict() && n.text != "eval" && n.text != "arguments") {
-            check_strict_binding(n.text, idx);
-        } else {
-            check_contextual_name(n.text, idx);
+        // A bare `#x` anywhere but the left of `in` is not an expression.
+        if (n.text.starts_with('#')) {
+            report("the private name " + quoted(n.text) + " is not an expression", idx);
+            return;
         }
+        check_identifier_reference(n.text, idx, escaped(idx));
         // 15.7.1: a field initialiser may not ContainsArguments - through
         // an arrow, which has no `arguments` of its own, but not through a
         // function, which does.
@@ -480,7 +543,15 @@ void checker::walk_property(std::int32_t idx) {
         return;
     }
     if ((n.d & 1) != 0) { walk_expression(n.a); } // a computed key
+    // `{ #x: 1 }`: a PropertyName is never a private name (13.2.5).
+    if ((n.d & 1) == 0 && n.text.starts_with('#')) {
+        report("the private name " + quoted(n.text) + " is not a property name", idx);
+    }
+    // `{ default }`: a shorthand is an IdentifierReference (13.2.5.1), where
+    // a keyword may not stand - unlike `{ default: 1 }`, whose key is a name.
+    if (n.c == 2 && (n.d & 1) == 0) { check_identifier_reference(n.text, idx, true); }
     if (n.c == 1 || n.c == 3) {
+        if (n.c == 3) { check_accessor_arity(n.b, (n.d & 4) != 0); }
         check_function(n.b, frame_kind::method);
         return;
     }

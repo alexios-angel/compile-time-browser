@@ -10,6 +10,9 @@
 
 #include "checker.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 namespace ctbrowser::script::detail::early {
 
 // --- functions --------------------------------------------------------------
@@ -55,12 +58,26 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
             }
         }
     }
-    // 15.1.1: a rest parameter must be last.
-    for (std::size_t i = 0; i + 1 < params.size(); ++i) {
-        if (at(params[i]).d == 1) {
+    // 15.1.1: a rest parameter must be last - and nothing follows it, a
+    // comma included (`(...a,)` is not in the grammar; the parser keeps no
+    // trace of the comma, so the source is asked, as for a rest element).
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        if (at(params[i]).d != 1) { continue; }
+        if (i + 1 < params.size()) {
             report("a rest parameter must be the last one", params[i]);
-            break;
+        } else if (comma_follows(params[i])) {
+            report("a rest parameter may not be followed by a comma", params[i]);
         }
+        break;
+    }
+    // 15.2.1 (and every function form): a "use strict" directive needs a
+    // simple parameter list - a default, a rest or a pattern makes it an
+    // error, because the directive would have to apply to code that already
+    // ran under the other rules.
+    if (at(n.a).kind == nk::block && has_use_strict_directive(n.a) && !simple_parameters(params)) {
+        report("a function with a default, rest or destructured parameter may not have a "
+               "\"use strict\" directive",
+               idx);
     }
 
     const std::int32_t bits = n.c > 0 ? n.c : 0; // see check_class: -1 is neither
@@ -68,11 +85,16 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         frame{what, {}, {}, 0, 0, super_call_ok, strict_body, (bits & 1) != 0, (bits & 2) != 0});
     check_strict_bindings(names);
     if (strict_body && n.kind == nk::func_expr) { check_strict_binding(n.text, idx); }
+    // 15.5.1 / 15.8.1: `yield` in a generator's parameters and `await` in an
+    // async function's are errors - see in_parameters_.
+    const bool outer_parameters = in_parameters_;
+    in_parameters_ = true;
     for (const std::int32_t p : params) {
         const vp::node & param = at(p);
         if (param.b >= 0) { walk_pattern(param.b); }
         walk_expression(param.a);
     }
+    in_parameters_ = false;
     const vp::node & body = at(n.a);
     if (body.kind == nk::block) {
         (void)check_list(kids(body), list_kind::function_body, &names, "parameter");
@@ -80,16 +102,65 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         // A concise arrow body: one expression, no declarations to check.
         walk_expression(n.a);
     }
+    in_parameters_ = outer_parameters;
     frames_.pop_back();
 }
 
+// 15.4.1: a getter takes no parameter, a setter exactly one - a
+// FormalParameter, so a default or a pattern but never a rest.
+void checker::check_accessor_arity(std::int32_t fn, bool setter) {
+    const std::span<const std::int32_t> params = kids(at(fn));
+    if (!setter && !params.empty()) {
+        report("a getter takes no parameter", params.front());
+    } else if (setter && (params.size() != 1 || at(params.front()).d == 1)) {
+        report("a setter takes exactly one parameter, and not a rest parameter",
+               params.empty() ? fn : params.front());
+    }
+}
+
 // --- classes -----------------------------------------------------------------
+
+// IS THE HERITAGE PARENTHESISED? The parser keeps no parentheses, so
+// `class C extends (a, b) {}` and `class C extends a, b {}` are one tree -
+// and only the second is the error. The source is asked: the first thing
+// after the `extends` keyword.
+[[nodiscard]] bool checker::heritage_parenthesised(std::int32_t klass) const {
+    const vp::node & n = at(klass);
+    if (source_.empty() || n.end <= n.begin || n.end > source_.size()) { return true; }
+    const std::string_view text = source_.substr(n.begin, n.end - n.begin);
+    std::size_t at_word = 0;
+    for (;;) {
+        at_word = text.find("extends", at_word);
+        if (at_word == std::string_view::npos) { return true; } // not found: do not judge
+        const bool starts =
+            at_word == 0 || !(std::isalnum(static_cast<unsigned char>(text[at_word - 1])) ||
+                              text[at_word - 1] == '_' || text[at_word - 1] == '$');
+        const std::size_t after = at_word + 7;
+        const bool ends =
+            after >= text.size() || !(std::isalnum(static_cast<unsigned char>(text[after])) ||
+                                      text[after] == '_' || text[after] == '$');
+        if (starts && ends) { break; }
+        at_word = after;
+    }
+    for (std::size_t i = at_word + 7; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
+        // A `(` that IS the heritage's own first token - an arrow's parameter
+        // list, `extends () => {}` - is not a parenthesis around it. A function
+        // or arrow node carries its span; nothing else that reaches here does.
+        const vp::node & heritage = at(n.a);
+        if (c == '(' && heritage.begin != 0 && heritage.begin == n.begin + i) { return false; }
+        return c == '(';
+    }
+    return true;
+}
 
 void checker::check_class(std::int32_t idx) {
     const vp::node & n = at(idx);
     // ClassHeritage is `extends LeftHandSideExpression` (15.7): an arrow, an
     // assignment, a conditional or an operator there is not in the grammar,
-    // whatever the parser let through.
+    // whatever the parser let through - unless it was parenthesised, which
+    // the tree cannot show and the source can.
     switch (at(n.a).kind) {
     case nk::arrow:
     case nk::assign:
@@ -99,17 +170,36 @@ void checker::check_class(std::int32_t idx) {
     case nk::unary:
     case nk::update:
     case nk::seq:
-    case nk::yield_expr: report("`extends` takes a left-hand-side expression", n.a); break;
+    case nk::yield_expr:
+        if (!heritage_parenthesised(idx)) {
+            report("`extends` takes a left-hand-side expression", n.a);
+        }
+        break;
     default: break;
     }
     walk_expression(n.a); // `extends <expr>`
     const bool derived = n.a >= 0;
     // 15.7.1: all parts of a class are strict mode code.
     ++class_depth_;
+    // The body's private names, in scope for every member from here on and
+    // for nothing before - the heritage above was walked against the OUTER
+    // environment (ClassDefinitionEvaluation evaluates it before the class's
+    // PrivateEnvironment is entered).
+    private_names_.emplace_back();
+    for (const std::int32_t m : kids(n)) {
+        const vp::node & member = at(m);
+        if ((member.d & 2) == 0 && member.text.starts_with('#')) {
+            private_names_.back().push_back(member.text);
+        }
+    }
     const struct leave {
         std::size_t & depth;
-        ~leave() { --depth; }
-    } leaving{class_depth_};
+        std::vector<std::vector<std::string_view>> & names;
+        ~leave() {
+            --depth;
+            names.pop_back();
+        }
+    } leaving{class_depth_, private_names_};
 
     std::vector<private_name> privates;
     std::size_t constructors = 0;
@@ -196,6 +286,7 @@ void checker::check_class(std::int32_t idx) {
             // class that has a heritage.
             const bool is_constructor =
                 is_method && !is_static && !computed && literal == "constructor";
+            if (is_accessor) { check_accessor_arity(member.b, (member.d & 4) != 0); }
             check_function(member.b, frame_kind::method, derived && is_constructor);
         } else {
             frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0, false, true});
@@ -203,6 +294,13 @@ void checker::check_class(std::int32_t idx) {
             frames_.pop_back();
         }
     }
+}
+
+void checker::check_private_reference(std::string_view name, std::int32_t node) {
+    for (const std::vector<std::string_view> & body : private_names_) {
+        if (std::find(body.begin(), body.end(), name) != body.end()) { return; }
+    }
+    report("the private name " + quoted(name) + " is not declared by an enclosing class", node);
 }
 
 } // namespace ctbrowser::script::detail::early
