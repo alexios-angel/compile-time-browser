@@ -28,6 +28,7 @@
 #include "../early_errors.hpp"
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -115,6 +116,12 @@ struct frame {
     bool is_async = false;
     bool is_generator = false;
 };
+
+// 13.2.7.1: the first thing wrong with a regular expression literal - the
+// lexeme as the lexer kept it, `/body/flags` - or nothing. Defined in
+// regexp.cpp; see the note at the top of that file for what is and is not
+// judged.
+[[nodiscard]] std::optional<std::string> regexp_literal_error(std::string_view lexeme);
 
 class checker {
 public:
@@ -225,6 +232,11 @@ private:
     [[nodiscard]] bool simple_parameters(std::span<const std::int32_t> params) const;
     void check_function(std::int32_t idx, frame_kind what, bool super_call_ok = false);
     void check_class(std::int32_t idx);
+    // 15.7.1 AllPrivateIdentifiersValid: a `#name` is only ever a reference to
+    // a name some ENCLOSING class body declares - `private_names_` is that
+    // stack, one entry per open body, pushed after the heritage is walked
+    // (the heritage sees the outer environment, not the class's own).
+    void check_private_reference(std::string_view name, std::int32_t node);
 
     // --- defined in expressions.cpp -------------------------------------------------------
     [[nodiscard]] bool simple_target(std::int32_t idx) const;
@@ -243,6 +255,7 @@ private:
 
     // --- defined in patterns.cpp ----------------------------------------------------------
     void check_pattern_target(std::int32_t idx);
+    [[nodiscard]] bool comma_follows(std::int32_t target) const;
     void walk_pattern(std::int32_t idx);
 
     // HOW DEEP THIS WALK MAY GO, and why there is a limit at all.
@@ -293,6 +306,7 @@ private:
     std::vector<frame> frames_;
     bool strict_root_ = false;    // a module: strict code from the first line
     std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
+    std::vector<std::vector<std::string_view>> private_names_; // see check_private_reference
     std::optional<early_error> found_;
 };
 

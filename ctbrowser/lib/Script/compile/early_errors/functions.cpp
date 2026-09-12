@@ -10,6 +10,8 @@
 
 #include "checker.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script::detail::early {
 
 // --- functions --------------------------------------------------------------
@@ -106,10 +108,25 @@ void checker::check_class(std::int32_t idx) {
     const bool derived = n.a >= 0;
     // 15.7.1: all parts of a class are strict mode code.
     ++class_depth_;
+    // The body's private names, in scope for every member from here on and
+    // for nothing before - the heritage above was walked against the OUTER
+    // environment (ClassDefinitionEvaluation evaluates it before the class's
+    // PrivateEnvironment is entered).
+    private_names_.emplace_back();
+    for (const std::int32_t m : kids(n)) {
+        const vp::node & member = at(m);
+        if ((member.d & 2) == 0 && member.text.starts_with('#')) {
+            private_names_.back().push_back(member.text);
+        }
+    }
     const struct leave {
         std::size_t & depth;
-        ~leave() { --depth; }
-    } leaving{class_depth_};
+        std::vector<std::vector<std::string_view>> & names;
+        ~leave() {
+            --depth;
+            names.pop_back();
+        }
+    } leaving{class_depth_, private_names_};
 
     std::vector<private_name> privates;
     std::size_t constructors = 0;
@@ -203,6 +220,13 @@ void checker::check_class(std::int32_t idx) {
             frames_.pop_back();
         }
     }
+}
+
+void checker::check_private_reference(std::string_view name, std::int32_t node) {
+    for (const std::vector<std::string_view> & body : private_names_) {
+        if (std::find(body.begin(), body.end(), name) != body.end()) { return; }
+    }
+    report("the private name " + quoted(name) + " is not declared by an enclosing class", node);
 }
 
 } // namespace ctbrowser::script::detail::early

@@ -402,11 +402,46 @@ void checker::walk_expression(std::int32_t idx) {
         for (const std::int32_t p : kids(n)) { walk_property(p); }
         return;
 
+    // `o.#x` / `o?.#x`: 15.7.1 AllPrivateIdentifiersValid, and the grammar -
+    // SuperProperty is `super . IdentifierName`, never a private name.
+    case nk::member:
+    case nk::opt_member:
+        if (n.text.starts_with('#')) {
+            if (at(n.a).kind == nk::super_lit) {
+                report("`super` has no private members", idx);
+            } else {
+                check_private_reference(n.text, idx);
+            }
+        }
+        walk_expression(n.a);
+        return;
+
+    // `#x in o` (13.10.1): the one place a private name stands alone, and
+    // it is a reference like any other.
+    case nk::binary:
+        if (n.text == "in" && at(n.a).kind == nk::ident && at(n.a).text.starts_with('#')) {
+            check_private_reference(at(n.a).text, n.a);
+            walk_expression(n.b);
+            return;
+        }
+        break;
+
     case nk::num: check_number(idx); return;
+
+    case nk::regex:
+        if (auto wrong = regexp_literal_error(n.text)) {
+            report("invalid regular expression " + std::string{n.text} + ": " + *wrong, idx);
+        }
+        return;
 
     // 13.1.1: in strict code `yield` and the future reserved words are not
     // identifiers even as a reference (`eval`/`arguments` may be READ).
     case nk::ident:
+        // A bare `#x` anywhere but the left of `in` is not an expression.
+        if (n.text.starts_with('#')) {
+            report("the private name " + quoted(n.text) + " is not an expression", idx);
+            return;
+        }
         if (strict() && n.text != "eval" && n.text != "arguments") {
             check_strict_binding(n.text, idx);
         } else {
@@ -480,6 +515,10 @@ void checker::walk_property(std::int32_t idx) {
         return;
     }
     if ((n.d & 1) != 0) { walk_expression(n.a); } // a computed key
+    // `{ #x: 1 }`: a PropertyName is never a private name (13.2.5).
+    if ((n.d & 1) == 0 && n.text.starts_with('#')) {
+        report("the private name " + quoted(n.text) + " is not a property name", idx);
+    }
     if (n.c == 1 || n.c == 3) {
         check_function(n.b, frame_kind::method);
         return;

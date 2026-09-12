@@ -321,6 +321,15 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
             bound_names(clause.b, binding_kind::let_, parameter);
             check_strict_bindings(parameter);
             walk_pattern(clause.b);
+            // 14.15.1: BoundNames of the CatchParameter has no duplicate.
+            for (std::size_t i = 1; i < parameter.size(); ++i) {
+                for (std::size_t j = 0; j < i; ++j) {
+                    if (parameter[i].name != parameter[j].name) { continue; }
+                    report(quoted(parameter[i].name) + " is bound twice by the catch parameter",
+                           parameter[i].node);
+                    break;
+                }
+            }
         }
         // 14.15.1: the catch parameter may not be redeclared lexically in
         // the block. A `var` of the same name IS allowed in sloppy mode
