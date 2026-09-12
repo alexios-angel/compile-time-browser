@@ -1,5 +1,6 @@
 #include "OwnedGlobalRoots.h"
 
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -97,6 +98,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->upvalues != capture->upvalues ||
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls ||
+                         edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
                          edge.capturedMap->leafWrites != capture->leafWrites ||
                          edge.capturedMap->leafReads != capture->leafReads)) ||
@@ -152,6 +154,106 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
     }
 
+    llvm::DenseSet<mlir::Operation *> childMaps;
+    if (capture && !capture->childMaps.empty()) {
+        mlir::DominanceInfo dominance(module);
+        llvm::DenseSet<mlir::Value> outers, children, receivers;
+        for (ctjs::LoadUpvalueOp load : capture->upvalues) {
+            if (!spend()) { return; }
+            outers.insert(load.getResult());
+        }
+        for (const HostMethodParameters & method : capture->parameters) {
+            if (!spend()) { return; }
+            auto function = method.function;
+            auto & body = function.getBody().front();
+            if (body.getNumArguments() - method.alternatives.size() == 4) {
+                outers.insert(body.getArgument(3));
+            }
+        }
+        for (ctjs::GetPropertyOp read : capture->reads) {
+            if (!spend()) { return; }
+            receivers.insert(read.getObject());
+        }
+        for (ctjs::ConstructOp made : capture->childMaps) {
+            if (!spend()) { return; }
+            auto intrinsic = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            auto function = made->getParentOfType<ctjs::FuncOp>();
+            if (!childMaps.insert(made).second || made == capture->allocation ||
+                !methodFunctions.contains(function) || !intrinsic || intrinsic.getName() != "Map" ||
+                intrinsic->getParentOfType<ctjs::FuncOp>() != function ||
+                made.getNewTarget() != intrinsic.getResult() || !made.getArgs().empty() ||
+                !dominance.dominates(intrinsic.getResult(), made)) {
+                reject("owned child Map requires its exact empty method-local constructor");
+                return;
+            }
+            children.insert(made.getResult());
+        }
+        for (ctjs::ConstructOp made : capture->childMaps) {
+            for (mlir::OpOperand & use : made.getCallee().getUses()) {
+                if (!spend()) { return; }
+                if (!dominance.dominates(made.getCallee(), use.getOwner())) {
+                    reject("owned child Map constructor use is outside its source scope");
+                    return;
+                }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                if (use.getOperandNumber() > 1 || !childMaps.contains(use.getOwner())) {
+                    reject("owned child Map constructor has another use");
+                    return;
+                }
+            }
+        }
+        // These sets distinguish owning roles, not runtime identities. The
+        // complete host body proved each get's exact origin; NativeMap still
+        // independently derives schemas and presence before choosing a carrier.
+        for (ctjs::CallOp call : capture->calls) {
+            if (!spend()) { return; }
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!read || read.getObject() != call.getReceiver() ||
+                (!outers.contains(call.getReceiver()) && !children.contains(call.getReceiver()))) {
+                reject("owned child Map call lacks a checked owning receiver");
+                return;
+            }
+            const auto action = keyOf(read.getKey());
+            if (action == "set") {
+                if (call.getArgs().size() != 2 || outers.contains(call.getArgs()[1]) ||
+                    (children.contains(call.getArgs()[1]) &&
+                     !outers.contains(call.getReceiver()))) {
+                    reject("owned child Map payload would add an unchecked ownership edge");
+                    return;
+                }
+                (outers.contains(call.getReceiver()) ? outers : children).insert(call.getResult());
+            } else if (action == "get" && receivers.contains(call.getResult())) {
+                if (!outers.contains(call.getReceiver())) {
+                    reject("owned child Map cannot contain another Map");
+                    return;
+                }
+                children.insert(call.getResult());
+            }
+        }
+        for (mlir::Value child : children) {
+            for (mlir::OpOperand & use : child.getUses()) {
+                if (!spend()) { return; }
+                auto * user = use.getOwner();
+                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                const bool property =
+                    read && use.getOperandNumber() == 0 && llvm::is_contained(capture->reads, read);
+                auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                   : ctjs::GetPropertyOp{};
+                const bool invocation =
+                    call && llvm::is_contained(capture->calls, call) &&
+                    (use.getOperandNumber() == 1 ||
+                     (use.getOperandNumber() == 3 && outers.contains(call.getReceiver()) &&
+                      method && keyOf(method.getKey()) == "set"));
+                if (!dominance.dominates(child, user) ||
+                    (!llvm::isa<ctjs::RootOp>(user) && !property && !invocation)) {
+                    reject("owned child Map has another alias, key or publication use");
+                    return;
+                }
+            }
+        }
+    }
+
     llvm::SmallVector<mlir::Operation *> operations;
     unsigned functions = 0;
     module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
@@ -193,6 +295,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     ctjs::ReturnOp wrapperReturn;
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation);
+            made && (!capture || (made != capture->allocation && !childMaps.contains(made)))) {
+            reject("owned global method table has another constructor");
+        }
         if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             if (made != owner && made != table && !argumentObjects.contains(made) &&
                 (!capture || !llvm::is_contained(capture->leafObjects, made))) {
@@ -400,13 +506,12 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (store.getValue() != made.getResult()) {
             auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
             const auto * predecessor = source ? host.objectRead(source) : nullptr;
-            auto original = predecessor ? predecessor->initialization : ctjs::StoreGlobalOp{};
-            // The predecessor is revalidated by this same complete census.
-            // Requiring its direct allocation also bounds aliases to one hop.
-            if (!predecessor || predecessor->object != made ||
-                original.getValue() != made.getResult() || source->getParentOp() != entry ||
+            // This complete census revalidates every predecessor too. Each
+            // step precedes its store in the entry block, so no cycle can
+            // survive and the chain must end at the checked allocation.
+            if (!predecessor || predecessor->object != made || source->getParentOp() != entry ||
                 !source->isBeforeInBlock(store)) {
-                reject("object key alias lacks its direct source global initialization");
+                reject("object key alias lacks its earlier source global initialization");
                 return;
             }
         }

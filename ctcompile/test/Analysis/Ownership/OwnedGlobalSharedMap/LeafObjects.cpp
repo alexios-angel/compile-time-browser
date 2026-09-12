@@ -1,8 +1,204 @@
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
+namespace {
+
+void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    auto nested = replaced(source, "    %value = ctjs.create_object", R"MLIR(
+    %childConstructor = ctjs.load_global "Map"
+    %value = ctjs.construct %childConstructor(%childConstructor)
+)MLIR");
+    nested = replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)", R"MLIR(
+    %written = ctjs.call %setter(%state, %entryKey, %value)
+    %readKey = ctjs.constant #ctjs.string<"get">
+    %reader = ctjs.get_property %state[%readKey]
+    %saved = ctjs.call %reader(%state, %entryKey)
+    %childSetter = ctjs.get_property %saved[%setKey]
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+    %childWritten = ctjs.call %childSetter(%saved, %entryKey, %payload)
+    %childReader = ctjs.get_property %childWritten[%readKey]
+    %loaded = ctjs.call %childReader(%childWritten, %entryKey)
+)MLIR");
+    nested = replaced(nested,
+                      "    %size = ctjs.get_property %state[%sizeKey]\n"
+                      "    ctjs.return %size",
+                      "    %size = ctjs.get_property %saved[%sizeKey]\n"
+                      "    ctjs.return %loaded");
+    const auto retained = replaced(nested, "    %childSetter = ctjs.get_property", R"MLIR(
+    %clearKey = ctjs.constant #ctjs.string<"clear">
+    %clearer = ctjs.get_property %state[%clearKey]
+    %cleared = ctjs.call %clearer(%state)
+    %childSetter = ctjs.get_property)MLIR");
+    for (const auto & [program, cleared] : {std::pair{nested, false}, std::pair{retained, true}}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared nested child owner fixture parses");
+        if (!module) { continue; }
+        auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        check(query.proved() && query.roots().size() == 1,
+              "a captured outer Map retains a distinct fresh child and its saved readback");
+        if (!query.proved() || query.roots().empty()) {
+            std::fprintf(stderr, "child Map owner %s %s: %s\n", lifted ? "prepared" : "source",
+                         cleared ? "cleared" : "seeded", query.reason().str().c_str());
+            continue;
+        }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        ctjs::ConstructOp child;
+        setter.walk([&](ctjs::ConstructOp made) { child = made; });
+        check(child && capture.childMaps == std::vector{child} && capture.allocation != child &&
+                  capture.leafObjects.empty() && capture.calls.size() == (cleared ? 5u : 4u),
+              "the owner records one exact child construction separately from the captured Map");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap && edge.capturedMap->childMaps == capture.childMaps &&
+                      edge.capturedMap->reads == capture.reads &&
+                      edge.capturedMap->calls == capture.calls,
+                  "all published calls retain the same complete child construction and effects");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "nested ownership preserves each source allocation, receiver and call argument");
+        const unsigned completion = query.steps();
+        check(completion < 15000, "nested child owner proof stays within the fixture work bound");
+        if (!cleared && completion < 15000) {
+            for (unsigned budget = 0; budget < completion; ++budget) {
+                OwnedGlobalRoots limited(*module, contract, budget);
+                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                          empty(*module, limited),
+                      "every incomplete child owner budget withholds the complete owning family");
+            }
+            OwnedGlobalRoots exact(*module, contract, completion);
+            check(exact.proved() && exact.steps() == completion,
+                  "the exact child owner budget reproduces the source ownership graph");
+        }
+        mlir::Builder attributes(&context);
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.map_group", attributes.getI64IntegerAttr(0));
+        });
+        contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "nested ownership is independently rederived despite forged native reports");
+        ctjs::CallOp outerSet, childSet, childRead;
+        for (ctjs::CallOp call : capture.calls) {
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (call.getArgs().size() == 2) {
+                if (call.getArgs()[1] == child.getResult()) {
+                    outerSet = call;
+                } else {
+                    childSet = call;
+                }
+            } else if (read && childSet && call.getReceiver() == childSet.getResult()) {
+                childRead = call;
+            }
+        }
+        check(outerSet && childSet && childRead,
+              "nested fixture retains the original outer and child mutation/read positions");
+        if (!outerSet || !childSet || !childRead) { continue; }
+        const auto mutate = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
+            const auto saved = operation->getOperand(operand);
+            operation->setOperand(operand, value);
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "a changed child source invalidates the original owner fingerprint");
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+                  "fresh fingerprints and forged Map facts cannot authorize an unsafe child edge");
+            operation->setOperand(operand, saved);
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring the original child source restores the independent owner proof");
+        };
+        mutate(child, 1, setter.getBody().front().getArgument(0));
+        mutate(outerSet, 2, child.getResult());
+        mutate(outerSet, 3, outerSet.getReceiver());
+        mutate(childSet, 3, childSet.getReceiver());
+        mutate(childSet, 3, outerSet.getReceiver());
+        mutate(llvm::cast<ctjs::ReturnOp>(setter.getBody().front().getTerminator()), 0,
+               childSet.getReceiver());
+        std::printf("child Map owner %s %s: %u steps%s\n", lifted ? "prepared" : "source",
+                    cleared ? "cleared" : "seeded", completion,
+                    cleared ? "" : ", all incomplete budgets checked");
+    }
+    auto branched = replaced(nested, "    %childReader = ctjs.get_property", R"MLIR(
+    %second = ctjs.construct %childConstructor(%childConstructor)
+    %condition = ctjs.truthy %entryKey
+    scf.if %condition {
+      %secondSetter = ctjs.get_property %second[%setKey]
+      %different = ctjs.constant #ctjs.boolean<true>
+      %secondWritten = ctjs.call %secondSetter(%second, %entryKey, %different)
+      %clearKey = ctjs.constant #ctjs.string<"clear">
+      %clearer = ctjs.get_property %state[%clearKey]
+      %cleared = ctjs.call %clearer(%state)
+      scf.yield
+    } else {
+      scf.yield
+    }
+    %childReader = ctjs.get_property)MLIR");
+    branched = replaced(branched, "    ctjs.store_global \"trace\", %answer",
+                        "    ctjs.store_global \"trace\", %putResult\n"
+                        "    %observed = ctjs.load_global \"trace\"");
+    auto branchModule = mlir::parseSourceString<mlir::ModuleOp>(branched, &context);
+    check(static_cast<bool>(branchModule),
+          "source/prepared independent child branch fixture parses");
+    if (branchModule) {
+        const auto contract = requested(*branchModule);
+        OwnedGlobalRoots query(*branchModule, contract);
+        check(
+            query.proved() && query.roots().size() == 1 && query.scalarReads().size() == 1 &&
+                query.scalarReads().front().alternatives.tag() ==
+                    mlir::TypeID::get<ctjs::NumberAttr>(),
+            "other child and outer mutations on one arm preserve the first child's Number payload");
+        if (query.proved() && !query.roots().empty()) {
+            const auto & capture = *query.roots().front().methodTable->capturedMap;
+            check(capture.childMaps.size() == 2 && capture.calls.size() == 6 &&
+                      capture.childMaps[0] != capture.childMaps[1],
+                  "both child origins and inactive-arm calls remain in the complete owner census");
+            OwnedGlobalRoots limited(*branchModule, contract, query.steps() - 1);
+            check(!limited.proved() && limited.exhausted() && empty(*branchModule, limited),
+                  "an incomplete multiple-origin branch proof withholds every owning edge");
+        }
+    }
+    const auto refuse = [&](const std::string & program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared child owner refusal parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        check(!query.proved() && !query.exhausted() && empty(*module, query), message);
+    };
+    refuse(replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)", R"MLIR(
+    %second = ctjs.construct %childConstructor(%childConstructor)
+    %condition = ctjs.truthy %entryKey
+    scf.if %condition {
+      %written = ctjs.call %setter(%state, %entryKey, %value)
+      scf.yield
+    } else {
+      %otherWritten = ctjs.call %setter(%state, %entryKey, %second)
+      scf.yield
+    }
+)MLIR"),
+           "different child origins at a branch join cannot authorize either exact readback");
+    refuse(replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)\n", ""),
+           "an unseeded prior-invocation child has no exact current allocation origin");
+    refuse(replaced(nested, "%saved = ctjs.call %reader(%state, %entryKey)",
+                    "%different = ctjs.constant #ctjs.number<0>\n"
+                    "    %saved = ctjs.call %reader(%state, %different)"),
+           "an outer read of another key cannot inherit the stored child's identity");
+    refuse(replaced(nested, "%value = ctjs.construct %childConstructor(%childConstructor)",
+                    "%value = ctjs.construct %childConstructor(%childConstructor, %entryKey)"),
+           "a child constructor iterable is outside the empty Map ownership proof");
+}
+
+} // namespace
 
 void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
+    checkChildMapOwner(context, source, lifted);
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     const auto requested = [](mlir::ModuleOp module) {
         auto contract = contractFor(module);

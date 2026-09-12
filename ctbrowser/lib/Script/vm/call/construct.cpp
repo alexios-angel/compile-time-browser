@@ -108,6 +108,9 @@ value context::construct(value callee, std::span<const value> args) {
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
+        // Rooted for the same reason invoke() roots a native's arguments: from
+        // C++ they live in the caller's span alone.
+        const rooted_values keep_args{*this, copy};
         const value saved = current_this_;
         current_this_ = self;
         const value produced = [&] {
@@ -115,6 +118,7 @@ value context::construct(value callee, std::span<const value> args) {
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        if (rethrow_pending()) { return value::undefined(); } // see context::call
         // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
         // evaluate to the fresh empty instance, because a native returning a
         // primitive looks exactly like a constructor that returned nothing - so

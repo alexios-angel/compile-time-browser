@@ -1269,16 +1269,22 @@ globalThis.__probes = [
   // what colour, because lighting and material probes each produce a different
   // one and pinning them here would be a golden in the wrong place.
   ...(function () {
+    // THE BACKGROUND IS A COLOUR NO MATERIAL PRODUCES. It was pure blue, and
+    // p5's normal material paints a face with its normal AS the colour - a
+    // box seen head-on is one face with normal (0, 0, 1), which is (0, 0, 255):
+    // exactly the background, so `normalMaterial` read as "nothing drawn" the
+    // moment the engine computed normals correctly (it had passed on garbage
+    // normals). (10, 20, 30) is not a unit vector and not a fill any probe uses.
     const drew = function (s, body) {
       s.createCanvas(24, 24, s.WEBGL);
-      s.background(0, 0, 255);
+      s.background(10, 20, 30);
       body(s);
       const gl = s._renderer.drawingContext;
       const buf = new Uint8Array(24 * 24 * 4);
       gl.readPixels(0, 0, 24, 24, gl.RGBA, gl.UNSIGNED_BYTE, buf);
       let other = 0;
       for (let i = 0; i < buf.length; i += 4) {
-        if (buf[i] !== 0 || buf[i + 1] !== 0 || buf[i + 2] !== 255) { other++; }
+        if (buf[i] !== 10 || buf[i + 1] !== 20 || buf[i + 2] !== 30) { other++; }
       }
       if (other === 0) {
         throw 'nothing was drawn - the canvas is all background'

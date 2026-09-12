@@ -5,38 +5,41 @@
 
 namespace ctcompile::ctnative::host_detail {
 
-std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read,
-                                                               bool allowAlias) {
-    if (!step() || read->getParentOp() != entry || !llvm::hasSingleElement(entry.getBody())) {
-        return std::nullopt;
-    }
-    // The initial census includes every store in the module, including
-    // inactive arms, later writes and stores outside the script entry.
-    const auto & stores = globals[read.getName()];
-    if (stores.size() != 1) { return std::nullopt; }
-    auto store = stores.front();
-    if (store->getParentOp() != entry ||
-        !dominance.properlyDominates(store.getOperation(), read.getOperation())) {
-        return std::nullopt;
-    }
-    auto made = store.getValue().getDefiningOp<ctjs::CreateObjectOp>();
-    if (!made) {
-        auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
-        if (!allowAlias || !source ||
-            !dominance.properlyDominates(source.getOperation(), store.getOperation())) {
+std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read) {
+    // ponytail: repeated chain walks are quadratic; cache origins if the shared budget limits them.
+    ctjs::StoreGlobalOp initialization;
+    llvm::DenseSet<mlir::Operation *> seen;
+    auto current = read;
+    while (true) {
+        if (!step() || current->getParentOp() != entry ||
+            !llvm::hasSingleElement(entry.getBody())) {
             return std::nullopt;
         }
-        const auto predecessor = objectGlobalRead(source, false);
-        if (!predecessor) { return std::nullopt; }
-        made = predecessor->object;
+        // The initial census includes every store in the module, including
+        // inactive arms, later writes and stores outside the script entry.
+        const auto & stores = globals[current.getName()];
+        if (stores.size() != 1) { return std::nullopt; }
+        auto store = stores.front();
+        if (!seen.insert(store).second || store->getParentOp() != entry ||
+            !dominance.properlyDominates(store.getOperation(), current.getOperation())) {
+            return std::nullopt;
+        }
+        if (!initialization) { initialization = store; }
+        if (auto made = store.getValue().getDefiningOp<ctjs::CreateObjectOp>()) {
+            if (made->getParentOp() != entry ||
+                !dominance.properlyDominates(made.getOperation(), store.getOperation())) {
+                return std::nullopt;
+            }
+            // Structural evidence only: the complete family-use and environment
+            // proofs must succeed before any public HostObjectGlobalRead exists.
+            return HostObjectGlobalRead{initialization, read, made};
+        }
+        auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!source || !dominance.properlyDominates(source.getOperation(), store.getOperation())) {
+            return std::nullopt;
+        }
+        current = source;
     }
-    if (made->getParentOp() != entry ||
-        !dominance.properlyDominates(made.getOperation(), store.getOperation())) {
-        return std::nullopt;
-    }
-    // This is structural evidence only. The family-use and environment
-    // proofs must complete before any public HostObjectGlobalRead exists.
-    return HostObjectGlobalRead{store, read, made};
 }
 
 std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
@@ -53,26 +56,35 @@ std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     if (!initialization) { return std::nullopt; }
     llvm::StringMap<ctjs::StoreGlobalOp> bindings;
     bindings.try_emplace(initialization.getName(), initialization);
-    // Discover one-hop alias bindings before validating their reads. A bad
-    // early or unused read cannot disappear from the census just because its
-    // individual structural proof fails. Alias chains are never followed.
+    // Census all successor stores before following the reachable bindings.
+    // Even an early/nonentry edge to an intermediate alias must be checked,
+    // regardless of where it appears in the module traversal.
+    llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> successors;
     const auto stores = module.walk([&](ctjs::StoreGlobalOp store) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
-        auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
-        if (!source || source.getName() != initialization.getName()) {
-            return mlir::WalkResult::advance();
-        }
-        const auto predecessor = objectGlobalRead(source, false);
-        const auto & writes = globals[store.getName()];
-        if (!predecessor || predecessor->object != made || store->getParentOp() != entry ||
-            writes.size() != 1 || writes.front() != store ||
-            !dominance.properlyDominates(source.getOperation(), store.getOperation()) ||
-            !bindings.try_emplace(store.getName(), store).second) {
-            return mlir::WalkResult::interrupt();
+        if (auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>()) {
+            successors[source.getName()].push_back(store);
         }
         return mlir::WalkResult::advance();
     });
     if (stores.wasInterrupted()) { return std::nullopt; }
+    llvm::SmallVector<ctjs::StoreGlobalOp> pending{initialization};
+    for (size_t index = 0; index < pending.size(); ++index) {
+        if (!step()) { return std::nullopt; }
+        for (ctjs::StoreGlobalOp store : successors[pending[index].getName()]) {
+            if (!step()) { return std::nullopt; }
+            auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
+            const auto predecessor = objectGlobalRead(source);
+            const auto & writes = globals[store.getName()];
+            if (!predecessor || predecessor->object != made || store->getParentOp() != entry ||
+                writes.size() != 1 || writes.front() != store ||
+                !dominance.properlyDominates(source.getOperation(), store.getOperation()) ||
+                !bindings.try_emplace(store.getName(), store).second) {
+                return std::nullopt;
+            }
+            pending.push_back(store);
+        }
+    }
     std::vector<HostObjectGlobalRead> reads;
     llvm::DenseSet<mlir::Operation *> readInitializations;
     const auto census = module.walk([&](ctjs::LoadGlobalOp read) {
@@ -137,8 +149,8 @@ bool analyzer::capturedMapParameters(
                 }
                 // Every use must be an explicit argument in this Map's exact
                 // invocation census. Every sibling body independently permits
-                // object formals only as keys, so a Map can retain a key but
-                // the key cannot retain the Map or acquire an outgoing edge.
+                // object formals only as keys or payloads, so the Map can retain
+                // them but they cannot retain the Map or acquire outgoing edges.
                 for (mlir::Value alias : aliases) {
                     for (mlir::OpOperand & use : alias.getUses()) {
                         if (!step() || !dominance.dominates(alias, use.getOwner())) {
@@ -247,6 +259,10 @@ std::string analyzer::environmentProblem() {
             }
             for (ctjs::GetPropertyOp read : capture.leafReads) {
                 if (step()) { capturedOperations.insert(read); }
+            }
+            for (ctjs::ConstructOp child : capture.childMaps) {
+                if (step()) { capturedOperations.insert(child); }
+                if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }
             }
         });
     }

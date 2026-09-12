@@ -51,7 +51,9 @@ var a = 1 < 2;
     for (const node_id id : all) {
         if (tag_of(atoms, r, id) == "script") {
             for (const node_id kid : r.children(id)) {
-                if (r.kind(kid).value_or(node_kind::element) == node_kind::text) {
+                // A CDATASection is a Text node - `is_text_kind` - and that is
+                // exactly what lets a script written the XML way run.
+                if (is_text_kind(r.kind(kid).value_or(node_kind::element))) {
                     script_text += std::string{r.text(kid)};
                 }
             }

@@ -532,18 +532,41 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         result.parameters.push_back({member, {}});
     }
-    // Once any sibling can allocate a leaf object, unknown Map reads cannot
-    // inherit the primitive-only contents guarantee. Inspect the complete
-    // current family before proving even one invocation result. The body
-    // proof below still independently checks every allocation and its uses.
+    // Once any sibling can store a local or caller-owned object, unknown Map
+    // reads cannot inherit the primitive-only contents guarantee. Inspect the
+    // complete family before proving even one invocation result. This only
+    // removes authority; the parameter/body proofs still check every use.
     bool primitiveContents = true;
-    for (auto & parameters : result.parameters) {
-        const auto census = parameters.function.getBody().walk([&](mlir::Operation * operation) {
+    for (unsigned index = 0; index < result.parameters.size(); ++index) {
+        auto member = result.parameters[index].function;
+        const auto census = member.getBody().walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<ctjs::CreateObjectOp>(operation)) { primitiveContents = false; }
+            if (llvm::isa<ctjs::CreateObjectOp, ctjs::ConstructOp>(operation)) {
+                primitiveContents = false;
+            }
+            auto store = llvm::dyn_cast<ctjs::CallOp>(operation);
+            auto read = store ? store.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                              : ctjs::GetPropertyOp{};
+            if (!read || keyOf(read.getKey()) != "set" || store.getArgs().size() != 2) {
+                return mlir::WalkResult::advance();
+            }
+            auto payload = llvm::dyn_cast<mlir::BlockArgument>(store.getArgs()[1]);
+            if (!payload || payload.getOwner() != &member.getBody().front() ||
+                payload.getArgNumber() < (prepared ? 4u : 3u)) {
+                return mlir::WalkResult::advance();
+            }
+            for (mlir::Operation * invocation : familyCalls[index]) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                const auto actual = explicitArgument(invocation, payload.getArgNumber());
+                if (actual.getDefiningOp<ctjs::CreateObjectOp>()) { primitiveContents = false; }
+                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>();
+                    load && objectGlobalRead(load)) {
+                    primitiveContents = false;
+                }
+            }
             return mlir::WalkResult::advance();
         });
-        if (census.wasInterrupted()) { return {}; }
+        if (census.wasInterrupted() || exhausted) { return {}; }
     }
     // Establish invocation results before joining the complete method census.
     // Two calls to one method may have an acyclic result dependency even when

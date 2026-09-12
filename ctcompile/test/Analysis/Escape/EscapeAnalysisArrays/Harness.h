@@ -43,7 +43,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context);
 void checkArithmeticUnaryProducers(mlir::MLIRContext & context);
 void checkBigIntPlusErrors(mlir::MLIRContext & context);
 void checkBigIntMixedSubErrors(mlir::MLIRContext & context);
-void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation);
+void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation);
 void checkBigIntUnaryProducers(mlir::MLIRContext & context);
 void checkBigIntBinaryProducers(mlir::MLIRContext & context);
 void checkStringBigIntConcatenation(mlir::MLIRContext & context);

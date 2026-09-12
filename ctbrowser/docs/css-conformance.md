@@ -43,7 +43,47 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. Where the two suites stand — 2026-09-10, late
+## 2. Where the two suites stand — 2026-09-12
+
+Engine at `b570bd29`, same instrument: `css/cssom` **115** PASS / 67 FAIL / 0
+TIMEOUT / 10 HARNESS_ERROR, subtests **1,443 PASS** / 260 FAIL;
+`css/css-values` **111** PASS / 132 FAIL / 10 TIMEOUT / 18 HARNESS_ERROR,
+subtests **4,633 PASS** / 2,615 FAIL. From the 09-10 late row: `css/cssom` +29
+files and +83 subtests — `@import` expanded into the cascade with a real
+`CSSImportRule` (`href`, `media`, `styleSheet`, `ownerRule`), `<style>`/`<link>`
+inside a shadow root with `sheet`/`styleSheets`/`adoptedStyleSheets`,
+`HTMLLinkElement.disabled` and `HTMLStyleElement.disabled` as the sheet's own
+flag (all seven `HTMLLinkElement-disabled-*` files), preferred style-sheet
+sets by `title`, `@namespace` passed to the selector parser and `selectorText`
+serialised against it, constructable sheets' `baseURL` and `replace()`, and
+the `background` shorthand finally expanded at cascade time (`6c68232b`); plus
+`serialize-values` whole (`font-family` unquoting, `counter(x, decimal)` ->
+`counter(x)`, `-0` kept inside math functions, `dd255c38`). `css/css-values`
++20 files and +390 subtests — `progress()` refusing non-simple types (the
+regression named on 09-10, gone), a percentage BASIS in `length_context` so
+`getComputedStyle` folds used-value math for margins and padding, the
+`lh`/`rlh`/`ic`/`ric`/`rex`/`rch` units and the `vi`/`vb`/`sv*`/`lv*`/`dv*`
+viewport variants with a line-height pre-pass in the cascade, computed
+`transform` as `matrix()`, the `border-radius` shorthand as `h h h h / v v v v`
+(`dd255c38`). One file went PASS -> FAIL, `animations/line-height-lh-transition`,
+because `20lh` resolves now and there are no transitions to animate it; and
+six new TIMEOUTs, the `cap`/`rcap`/`rch`/`rex`/`ric`/`rlh` `*-invalidation`
+files — a font-relative unit changing on the root does not settle, which is
+the next thing in `lib/Style`.
+
+What is left in `css/css-values`, by the agent's own count: `typed_arithmetic_cycle`
+needs `@property` registration (the parser discards the block) and the
+font-relative-unit cycle check; `minmax-length-percent-serialize`,
+`calc-nesting-002` and `calc-serialization-002` need the §10.13 tree
+serialisation (fold the resolvable terms around an unresolvable `min()`/`max()`,
+number-first products); `progress-computed` needs percentage ratios through
+`hypot()`/`abs()`; `calc-in-color-001` is `paint::parse_color`'s space/slash
+syntax. In `css/cssom`: shorthand reconstruction in `el.style`/`cssText` (the
+declaration store keeps a shorthand as one entry); `adoptedstylesheets-
+observablearray` (an in-place `push` is read but nothing schedules the
+restyle); `getComputedStyle` inside shadow trees, which are not rendered.
+
+## 2-late. Where the two suites stood — 2026-09-10, late
 
 Engine at `62945aeb`, same instrument: `css/cssom` **86** PASS / 90 FAIL / 3
 TIMEOUT / 13 HARNESS_ERROR, subtests **1,360 PASS** / 301 FAIL;

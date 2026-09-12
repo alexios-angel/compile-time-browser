@@ -60,6 +60,12 @@ namespace {
             out.push_back(std::to_string(at));
         }
         out.emplace_back("length");
+        // Then the named own properties - see array_object::named.
+        if (arr->named) {
+            arr->named->each_own_key([&](const std::string & k) {
+                if (wanted_key(which, k)) { out.push_back(k); }
+            });
+        }
         return out;
     }
     if (of.is_string()) {

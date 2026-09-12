@@ -33,12 +33,13 @@ using namespace detail;
 //     second time would leave two of each and break every cross-document
 //     `instanceof` - `adopt_interfaces_of` takes the primary's instead.
 //
-// WHAT IS NOT DONE, said plainly rather than left to be discovered. `importNode`
-// and `adoptNode` still do not cross between two documents. A node of one
-// handed to the other is REFUSED - `handle_of` checks that the wrapper it was
-// given is in THIS instance's table - so the failure is a method that does
-// nothing rather than `getElementById` on one document silently returning the
-// other's element, which is the outcome the old note was avoiding.
+// A NODE OF ONE DOCUMENT HANDED TO THE OTHER: `handle_of` answers only for this
+// instance's own wrappers, so nothing can mistake one document's element for
+// the other's - and `node_from` ADOPTS across the boundary, by cloning into
+// this slab and rebinding the page's wrapper to the copy. Every insertion
+// that resolves its argument through `node_from` therefore adopts; the ones
+// that still go through `handle_of` alone (element/node_methods.cpp's
+// appendChild, insertBefore and replaceChild) refuse with a TypeError.
 void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
     interface_prototypes_ = primary.interface_prototypes_;
     event_target_prototype_ = primary.event_target_prototype_;
@@ -91,10 +92,8 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 // `createDocument(null, "")` really does produce a Document with no children,
 // which `Document-contentType` and `append-on-Document.html` both use.
 //
-// THE DOCTYPE ARGUMENT IS ACCEPTED AND DROPPED. This tree has no DocumentType
-// node - `document.doctype` is null and `compatMode` is read off a flag - so
-// storing one would mean inventing a node kind for it. What that costs is one
-// subtest per file rather than the file.
+// THE DOCTYPE ARGUMENT is handled by the caller in install.cpp: the
+// DocumentType is adopted into the new document and put ahead of the element.
 //
 // ALSO `new Document()`, DOM 4.5: a document with no browsing context, no
 // children, content type application/xml and URL about:blank - which is

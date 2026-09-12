@@ -48,6 +48,68 @@ void install_array(context & cx) {
         static_cast<array_object *>(out.as_heap())->items.assign(a.begin(), a.end());
         return out;
     });
+    // 23.1.2.2 Array.fromAsync - WRITTEN IN JAVASCRIPT, compiled on first
+    // use. It is `for await` over the items (an async iterable, a sync
+    // iterable, or an array-like), awaiting the mapper's result per element,
+    // and the language now has every piece; a C++ version would re-implement
+    // the async iteration protocol the compiler already lowers. Compiled
+    // lazily because `call` refuses a closure before the first program runs.
+    // A hidden global keeps the compiled helper between calls.
+    static_method("fromAsync", 1, [](context & c, std::span<value> a) {
+        value helper = c.global("__ctbrowser_from_async");
+        if (!helper.is_callable()) {
+            program compiled = compiler::compile(
+                "return (async function (items, mapfn, thisArg) {"
+                "  if (items == null) { throw new TypeError('Array.fromAsync: items is not "
+                "iterable'); }"
+                "  const mapping = mapfn !== undefined;"
+                "  if (mapping && typeof mapfn !== 'function') {"
+                "    throw new TypeError('Array.fromAsync: mapfn is not callable');"
+                "  }"
+                // `this` may be a constructor (steps 3.a / 5.c): its instance takes the
+                // elements through CreateDataPropertyOrThrow, so a non-writable slot is
+                // a TypeError rather than an endless push into nowhere.
+                "  const C = this;"
+                "  const custom = typeof C === 'function' && C !== Array;"
+                "  const out = custom ? new C() : [];"
+                "  let i = 0;"
+                "  const put = function (v) {"
+                "    if (custom) {"
+                "      try { Object.defineProperty(out, i, {value: v, writable: true, "
+                "enumerable: true, configurable: true}); }"
+                "      catch (e) { throw new TypeError('Array.fromAsync: cannot define element ' "
+                "+ i); }"
+                "    } else { out.push(v); }"
+                "    i++;"
+                "  };"
+                "  const iterable = typeof items[Symbol.asyncIterator] === 'function' ||"
+                "                   typeof items[Symbol.iterator] === 'function';"
+                "  if (iterable) {"
+                "    for await (const v of items) { put(mapping ? await mapfn.call(thisArg, v, i) "
+                ": v); }"
+                "    if (custom) { out.length = i; }"
+                "    return out;"
+                "  }"
+                "  const len = Math.min(Math.max(Math.trunc(Number(items.length)) || 0, 0), 2 ** "
+                "53 - 1);"
+                "  if (!custom && len > 4294967295) { throw new RangeError('Invalid array "
+                "length'); }"
+                "  for (; i < len; i++) {"
+                "    const v = await items[i];"
+                "    put(mapping ? await mapfn.call(thisArg, v, i) : v);"
+                "  }"
+                "  if (custom) { out.length = i; }"
+                "  return out;"
+                "});");
+            if (!compiled.ok) {
+                c.throw_error("SyntaxError", compiled.error);
+                return value::undefined();
+            }
+            helper = c.run_nested(c.own_program(std::move(compiled)));
+            c.define_global("__ctbrowser_from_async", helper);
+        }
+        return c.call(helper, a, value::undefined());
+    });
     static_method("from", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         // A mapping function that is PRESENT AND NOT CALLABLE is a TypeError

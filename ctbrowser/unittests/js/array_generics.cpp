@@ -519,6 +519,21 @@ int main() {
         "2");
     js_expect("(function(){var a=[1];a.k=2;var b={...a};return b[0]+'/'+b.k;})()", "1/2");
     js_expect("(function(){var a=[];Object.freeze(a);a.k=1;return a.k;})()", "undefined");
+    js_expect("(function(){var a=[9];a.k=1;var s=[];for(var i in a){s.push(i);}return s.join()+'|'"
+              "+Object.getOwnPropertyNames(a).join();})()",
+              "0,k|0,length,k");
+    // A canonical index spelled as a string is the element, both ways - which
+    // is every `for (i in a) a[i]`, since for-in keys are strings.
+    js_expect("(function(){var a=[7,8];a['1']=9;var s='';for(var i in a){s+=a[i];}return "
+              "s+'/'+a[1]+'/'+a.length;})()",
+              "79/9/2");
+    // (`Object.keys` here lists the padded holes too - a known array_object
+    // deviation, not this change's.)
+    js_expect("(function(){var a=[];a['2']=1;return a.length+'/'+a[2];})()", "3/1");
+    // for-in over a function sees its enumerable own properties.
+    js_expect(
+        "(function(){function f(){} f.a=1;var s=[];for(var k in f){s.push(k);}return s.join();})()",
+        "a");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

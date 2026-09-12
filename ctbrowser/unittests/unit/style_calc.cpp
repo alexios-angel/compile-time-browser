@@ -427,6 +427,87 @@ void test_calc_in_the_cascade() {
     }
 }
 
+// THE LINE-HEIGHT UNITS, CSS Values 4 §6.1.1. `lh` is the element's own line
+// height everywhere but in `line-height` and `font-size`, where it is the
+// parent's - the same asymmetry as `em` - and `rlh` is the root's, which on
+// the root itself resolves against the initial values. `normal` is 1.25 times
+// the font size, layout's factor. lh-unit-001, rlh-on-root-lengths,
+// rlh-invalidation and lh-rlh-on-root-001 are the corpus files.
+void test_the_line_height_units() {
+    {
+        fixture f;
+        f.load("<div id=o><aside id=a></aside></div>",
+               "div { font-size: 50px; line-height: 1 } aside { font-size: 42px; line-height: 2lh;"
+               " width: 1lh; padding-left: 1rlh }");
+        expect_value(f, f.find_id("a"), "line-height", "100px",
+                     "lh in line-height is the parent's");
+        expect_value(f, f.find_id("a"), "width", "100px", "lh elsewhere is the element's own");
+        expect_value(f, f.find_id("a"), "padding-left", "20px", "rlh is the root's normal");
+    }
+    {
+        fixture f;
+        f.load("<div id=a></div>", ":root { line-height: 73px; padding-left: 2rlh }"
+                                   "div { width: 10rlh; height: 10ric; margin-left: 1ic }");
+        expect_value(f, f.find("html"), "padding-left", "146px", "rlh on the root");
+        expect_value(f, f.find_id("a"), "width", "730px", "rlh below the root");
+        expect_value(f, f.find_id("a"), "height", "160px", "ric falls back to 1rem");
+        expect_value(f, f.find_id("a"), "margin-left", "16px", "ic falls back to 1em");
+    }
+    {
+        // A unitless line-height inherits as a FACTOR, so the child's lh is
+        // against its own font size; and lh in font-size is the parent's.
+        fixture f;
+        f.load("<div id=o><p id=a></p></div>",
+               "div { font-size: 20px; line-height: 2 } p { font-size: 1lh; width: 1lh }");
+        expect_value(f, f.find_id("a"), "font-size", "40px", "lh in font-size is the parent's");
+        expect_value(f, f.find_id("a"), "width", "80px", "the factor against the new size");
+    }
+    {
+        // The root's own font-size and line-height resolve lh and rlh against
+        // the INITIAL values, whatever the root declares.
+        fixture f;
+        f.load("<p id=a></p>", "html { font-size: 1lh; line-height: 1rlh } p { width: 1rlh }");
+        expect_value(f, f.find("html"), "font-size", "20px", "lh on the root's font-size");
+        expect_value(f, f.find("html"), "line-height", "20px", "rlh on the root's line-height");
+        expect_value(f, f.find_id("a"), "width", "20px", "and rlh below it");
+    }
+    {
+        // A PERCENTAGE IN line-height IS OF THE FONT SIZE, and a font-size's is
+        // of the parent's - so typed arithmetic over one has an answer here:
+        // `calc(10% / 1px)` is the number 1 (typed_arithmetic).
+        fixture f;
+        f.load("<div id=o><p id=a></p><p id=b></p></div>",
+               "div { font-size: 10px; line-height: 20px } p { font-size: calc(50% + 5px) }"
+               "#a { line-height: calc(10% / 1px) } #b { line-height: calc(1lh / 1px) }");
+        expect_value(f, f.find_id("a"), "font-size", "10px", "percent of the parent's size");
+        expect_value(f, f.find_id("a"), "line-height", "1", "a ratio of the font size");
+        expect_value(f, f.find_id("b"), "line-height", "20", "the parent's lh in pixels");
+    }
+    {
+        // AN `em` IN ANY OTHER font-* PROPERTY IS THE PARENT'S SIZE TOO.
+        fixture f;
+        f.load("<div id=o><p id=a></p></div>",
+               "div { font-size: 10px } p { font-size: 100px; font-weight: calc(1em / 1px);"
+               " font-style: oblique calc(1em / 1px * 1deg); letter-spacing: 1em }");
+        expect_value(f, f.find_id("a"), "font-weight", "10", "em in font-weight is the parent's");
+        expect_value(f, f.find_id("a"), "font-style", "oblique 10deg", "and in font-style");
+        expect_value(f, f.find_id("a"), "letter-spacing", "100px", "but not elsewhere");
+    }
+    {
+        // The viewport's other spellings: no dynamic toolbar and a horizontal
+        // writing mode make all six of each axis one number.
+        fixture f;
+        ctbrowser::style::css::media_environment env;
+        env.viewport_width = 200;
+        env.viewport_height = 100;
+        (void)f.styles.set_environment(env);
+        f.load("<p id=a></p>", "p { width: calc(1dvw + 1svb); height: 100lvi; top: 1vmax }");
+        expect_value(f, f.find_id("a"), "width", "3px", "dvw and svb");
+        expect_value(f, f.find_id("a"), "height", "200px", "lvi is the width");
+        expect_value(f, f.find_id("a"), "top", "2px", "vmax");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -434,5 +515,6 @@ int main() {
     test_math_answers_with_a_number();
     test_comparison_functions();
     test_calc_in_the_cascade();
+    test_the_line_height_units();
     REPORT("style_calc");
 }

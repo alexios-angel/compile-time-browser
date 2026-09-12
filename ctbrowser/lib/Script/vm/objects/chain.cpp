@@ -63,6 +63,26 @@ value context::own_keys(value source) {
             arr->named->each_own_enumerable_key(
                 [&](const std::string & name) { keys->items.push_back(string(name)); });
         }
+    } else if (source.is_kind(heap_kind::function)) {
+        // `for (k in fn)`: a class's enumerable statics (a plain function's
+        // `length`/`name`/`prototype` are not enumerable and have no entry).
+        auto * closure = static_cast<closure_object *>(source.as_heap());
+        for (std::size_t i = 0; i < closure->props.size(); ++i) {
+            const std::string & name = closure->props[i].first;
+            if ((closure->attrs_of(name) & attr_enumerable) != 0 &&
+                !name.starts_with(symbol_key_prefix)) {
+                keys->items.push_back(string(name));
+            }
+        }
+    } else if (source.is_kind(heap_kind::native)) {
+        auto * fn = static_cast<native_object *>(source.as_heap());
+        for (std::size_t i = 0; i < fn->props.size(); ++i) {
+            const std::string & name = fn->props[i].first;
+            if ((fn->attrs_of(name) & attr_enumerable) != 0 &&
+                !name.starts_with(symbol_key_prefix)) {
+                keys->items.push_back(string(name));
+            }
+        }
     }
     return out;
 }

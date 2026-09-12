@@ -15,6 +15,7 @@ def standalone(args, output, name, value, compilers, nm):
     for mode, ir in (("explicit", output), ("deduced", deduced)):
         cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         object_argument = name in object_argument_cases()
+        object_payload = object_argument and object_argument_cases()[name].get('object_payload')
         size_signature = ("std::function<js_num(ctnative::nullable_string)>"
                           if name in nullable_host_result_sources()
                           else "std::function<bool()>" if name == "boolean_result"
@@ -113,19 +114,28 @@ def standalone(args, output, name, value, compilers, nm):
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
         if name in {'object_argument_exact', 'object_argument_global', 'object_argument_global_alias',
+                    'object_argument_global_alias_chain', 'object_argument_siblings_global_chain',
                     'object_argument_siblings', 'object_argument_siblings_named',
                     'object_argument_siblings_global', 'parameter_object'}:
             source = args.work / f"{name}.{mode}.identity.cpp"
             observer = (retained_key_lifetime_cpp if name in {
                             'object_argument_siblings', 'object_argument_siblings_named',
-                            'object_argument_siblings_global'}
+                            'object_argument_siblings_global', 'object_argument_siblings_global_chain'}
                         else parameter_object_lifetime_cpp if name == 'parameter_object'
                         else object_argument_lifetime_cpp)
             source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
                               else observer(cpp, global_alias=True) if name == 'object_argument_global_alias'
+                              else observer(cpp, global_alias=True, global_chain=('copy',))
+                                  if name == 'object_argument_global_alias_chain'
                               else observer(cpp, 2, 0, global_alias=True) if name == 'object_argument_siblings_global'
+                              else observer(cpp, 2, 0, global_alias=True,
+                                            global_chain=('copy', 'tail', 'branch'))
+                                  if name == 'object_argument_siblings_global_chain'
                               else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
                               else observer(cpp))
+        if object_payload:
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(object_payload_lifetime_cpp(cpp, name))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -174,12 +184,13 @@ def standalone(args, output, name, value, compilers, nm):
             host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
             if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
-            traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
+            traces = 2 if object_payload or name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES,
                                   "field_string_lifetime", "zero_size_saved_lifetime",
                                   "size_one_saved_lifetime", "size_deleted_saved_lifetime",
                                   "joined_size_saved_lifetime", "joined_mutation_saved_lifetime",
                                   "object_argument_exact", "object_argument_global", "object_argument_global_alias",
+                                  "object_argument_global_alias_chain", "object_argument_siblings_global_chain",
                                   "object_argument_siblings", "object_argument_siblings_named",
                                   "object_argument_siblings_global", "parameter_object"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
@@ -221,7 +232,8 @@ def standalone(args, output, name, value, compilers, nm):
             delete_size_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {'object_argument_exact', 'object_argument_global', 'object_argument_global_alias',
+        if object_payload or name in {'object_argument_exact', 'object_argument_global', 'object_argument_global_alias',
+                    'object_argument_global_alias_chain', 'object_argument_siblings_global_chain',
                     'object_argument_siblings', 'object_argument_siblings_named',
                     'object_argument_siblings_global', 'parameter_object'}:
             object_argument_lifetime(args, cpp, name, mode, compilers[1])

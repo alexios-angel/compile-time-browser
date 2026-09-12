@@ -51,8 +51,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     variant(replaced(source, observation,
                      "    ctjs.store_global \"escapedKey\", %actual\n" + observation),
             false, "a named object still requires a separate global owner");
-    variant(replaced(source, "%state, %entryKey, %value)", "%state, %entryKey, %entryKey)"), false,
-            "key ownership cannot authorize retaining the same object as a payload");
+    variant(replaced(source, "%state, %entryKey, %value)", "%state, %entryKey, %entryKey)"), true,
+            "the complete family may retain the checked empty object as both key and payload");
     variant(replaced(source, "    ctjs.return %u\n  }\n}\n",
                      "    ctjs.set_property %entryKey[%setKey], %state\n"
                      "    ctjs.return %u\n  }\n}\n"),

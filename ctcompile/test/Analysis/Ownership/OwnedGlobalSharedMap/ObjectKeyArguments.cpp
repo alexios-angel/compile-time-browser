@@ -136,7 +136,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                            "    %stored = ctjs.call %method(%state, " +
                                std::string(key ? "%entryKey, %zero" : "%zero, %entryKey") +
                                ")\n    %found = ctjs.constant #ctjs.boolean<false>\n");
-        variant(storing, key, "only the captured Map may retain the empty object as a key");
+        variant(storing, true, "checked empty objects may be retained as Map keys or payloads");
     }
     const std::string retain = "    %setKey = ctjs.constant #ctjs.string<\"set\">\n"
                                "    %setter = ctjs.get_property %state[%setKey]\n"

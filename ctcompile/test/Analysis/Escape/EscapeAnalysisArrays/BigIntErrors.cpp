@@ -529,7 +529,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                                 ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
             inspect(kind == ctjs::BinaryKind::Mul || kind == ctjs::BinaryKind::Div ||
-                            kind == ctjs::BinaryKind::Mod
+                            kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
@@ -561,7 +561,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                 rowCount, liveStates, budgets);
 }
 
-void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation) {
+void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %big = ctjs.constant #ctjs.bigint<\"9007199254740993\"> "
@@ -631,7 +631,7 @@ void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKi
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             std::string{kPrologue} + expected.contents.body + "}\n", &context);
         // Preserve every historical Mul fixture; run the same independent
-        // operand/retention matrix for Div/Mod by changing only those operations.
+        // operand/retention matrix for Div/Mod/Pow by changing only those operations.
         if (module && operation != ctjs::BinaryKind::Mul) {
             module->walk([&](ctjs::BinaryOp binary) {
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
@@ -860,7 +860,8 @@ void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKi
              {ctjs::BinaryKind::Add, ctjs::BinaryKind::Div, ctjs::BinaryKind::Mod,
               ctjs::BinaryKind::Pow, ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
-            inspect(kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod
+            inspect(kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
+                            kind == ctjs::BinaryKind::Pow
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));
@@ -895,7 +896,8 @@ void checkBigIntMixedMulDivModErrors(mlir::MLIRContext & context, ctjs::BinaryKi
                 "%zu retention budget cutoffs\n",
                 operation == ctjs::BinaryKind::Mul   ? "Mul"
                 : operation == ctjs::BinaryKind::Div ? "Div"
-                                                     : "Mod",
+                : operation == ctjs::BinaryKind::Mod ? "Mod"
+                                                     : "Pow",
                 rowCount, liveStates, budgets);
 }
 

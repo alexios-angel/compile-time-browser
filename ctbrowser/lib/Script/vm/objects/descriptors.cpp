@@ -479,7 +479,7 @@ bool context::define_own_property(value target, const std::string & name,
                 ->define_accessor(name, getter, setter, accessor_attrs);
             return true;
         }
-        // AN ARRAY HAS NOWHERE TO PUT ONE, and answers true.
+        // AN ARRAY'S ELEMENTS HAVE NOWHERE TO PUT ONE, and answer true.
         //
         // An array's elements are a std::vector. Answering FALSE here would
         // turn what has always been a
@@ -488,7 +488,15 @@ bool context::define_own_property(value target, const std::string & name,
         // keeps the previous behaviour and names it. Measured: answering false
         // cost 6 tests that had passed (built-ins/Array/prototype/indexOf,
         // reduce, flatMap and Function/prototype/bind), which is how the gap
-        // was found rather than argued about.
+        // was found rather than argued about. A NAMED accessor goes into the
+        // array's own table (array_object::named).
+        if (target.is_array()) {
+            auto * arr = static_cast<array_object *>(target.as_heap());
+            std::uint32_t at = 0;
+            if (name != "length" && !index_key(name, at)) {
+                arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
+            }
+        }
         return true;
     }
 

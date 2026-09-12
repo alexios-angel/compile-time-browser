@@ -70,6 +70,14 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
         throw_dom_exception(cx, "HierarchyRequestError", "a Document cannot be inserted");
         return false;
     }
+    // 5. "...or node is a doctype and parent is not a document, throw a
+    //    HierarchyRequestError." The parent here is never the Document - a
+    //    Document's own insertions run document/as_node.cpp's checks.
+    if (txn.kind(child).value_or(node_kind::element) == node_kind::document_type) {
+        throw_dom_exception(cx, "HierarchyRequestError",
+                            "a DocumentType can only be inserted into a Document");
+        return false;
+    }
     return true;
 }
 
@@ -125,10 +133,23 @@ void dom_bindings::install_node_methods(context & cx) {
     const std::initializer_list<const char *> element = {"Element"};
     const std::initializer_list<const char *> parent_node = {"Element", "Document",
                                                              "DocumentFragment"};
-    const std::initializer_list<const char *> child_node = {"Element", "CharacterData"};
+    const std::initializer_list<const char *> child_node = {"Element", "CharacterData",
+                                                            "DocumentType"};
     const auto method = [&](std::initializer_list<const char *> on, const char * name,
                             unsigned length, script::native_fn fn) {
         define_operation(cx, on, name, length, std::move(fn));
+    };
+    // THE NODE AN INSERTION WAS HANDED: ours by handle, or ANOTHER DOCUMENT'S
+    // adopted first (DOM 4.2.3 step 1 of insert is adopt) - dom/common.js
+    // appends an XML document's CDATA section into the page, and three
+    // whole files reported nothing until it could. Anything else stays
+    // empty and pre_insert_valid names the TypeError.
+    const auto insertable = [this](context & c, value v) {
+        if (const node_id held = handle_of(v)) { return held; }
+        if (is_a_document(v)) { return node_id{}; }
+        dom_bindings * owner = owner_of(v);
+        if (owner == nullptr || owner == this) { return node_id{}; }
+        return node_from(c, v);
     };
 
     // "INSERT ADJACENT", DOM 4.9 - ONE ALGORITHM FOR THREE METHODS, which is
@@ -237,6 +258,15 @@ void dom_bindings::install_node_methods(context & cx) {
                    adjacent_place(c, self, arg_string(c, args, 0));
                if (!place) { return value::null(); }
                const node_id child = handle_of(arg(args, 1));
+               // AN ELEMENT, by the IDL: a doctype or a text node is a TypeError
+               // before any hierarchy question is asked - insert-adjacent.html
+               // hands it a DocumentType by name.
+               if (child &&
+                   doc_->read().kind(child).value_or(node_kind::element) != node_kind::element) {
+                   c.throw_error("TypeError",
+                                 "insertAdjacentElement: the argument is not an Element");
+                   return value::null();
+               }
                if (!pre_insert_valid(c, place->first, child, arg(args, 1), value::null())) {
                    return value::null();
                }
@@ -270,7 +300,7 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         return value::undefined();
     });
-    method(node, "insertBefore", 2, [this](context & c, std::span<value> args) {
+    method(node, "insertBefore", 2, [this, insertable](context & c, std::span<value> args) {
         // TWO REQUIRED ARGUMENTS: `insertBefore(node)` is a TypeError, and
         // `Node-insertBefore.html` asks for it by name. A null SECOND argument is
         // a different thing - it means "at the end", which is what makes
@@ -281,7 +311,7 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::undefined();
         }
         const node_id parent = receiver(c);
-        const node_id child = handle_of(arg(args, 0));
+        const node_id child = insertable(c, arg(args, 0));
         const node_id before = handle_of(arg(args, 1));
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
@@ -616,11 +646,11 @@ void dom_bindings::install_node_methods(context & cx) {
     // checks with `child` as the reference - so a `child` that is not this
     // node's is a NotFoundError - and then the swap. Replacing a node WITH
     // ITSELF leaves it where it is, which `Node-replaceChild.html` asserts.
-    method(node, "replaceChild", 2, [this](context & c, std::span<value> args) {
+    method(node, "replaceChild", 2, [this, insertable](context & c, std::span<value> args) {
         const node_id parent = receiver(c);
         const value node_arg = arg(args, 0);
         const value child_arg = arg(args, 1);
-        const node_id fresh = handle_of(node_arg);
+        const node_id fresh = insertable(c, node_arg);
         const node_id stale = handle_of(child_arg);
         // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
         if ((!fresh && !is_a_document(node_arg)) || (!stale && !is_a_document(child_arg))) {
@@ -657,7 +687,9 @@ void dom_bindings::install_node_methods(context & cx) {
         switch (txn.kind(self).value_or(node_kind::element)) {
         case node_kind::element: return self;
         case node_kind::text:
-        case node_kind::comment: {
+        case node_kind::comment:
+        case node_kind::cdata_section:
+        case node_kind::processing_instruction: {
             const node_id parent = txn.parent(self);
             return parent && txn.kind(parent).value_or(node_kind::text) == node_kind::element
                        ? parent
@@ -670,7 +702,8 @@ void dom_bindings::install_node_methods(context & cx) {
                 }
             }
             return node_id{};
-        case node_kind::document_fragment: return node_id{};
+        case node_kind::document_fragment:
+        case node_kind::document_type: return node_id{};
         }
         return node_id{};
     };
@@ -767,11 +800,11 @@ void dom_bindings::install_node_methods(context & cx) {
         set("bottom", box.y + box.height);
         return value::object(out);
     });
-    method(node, "appendChild", 1, [this](context & c, std::span<value> args) {
+    method(node, "appendChild", 1, [this, insertable](context & c, std::span<value> args) {
         // THROUGH insert_node, which is where a DocumentFragment is flattened:
         // appending one must move its children and leave the fragment behind.
         const node_id parent = receiver(c);
-        const node_id child = handle_of(arg(args, 0));
+        const node_id child = insertable(c, arg(args, 0));
         if (!pre_insert_valid(c, parent, child, arg(args, 0), value::null())) {
             return value::undefined();
         }
@@ -869,9 +902,11 @@ void dom_bindings::install_node_methods(context & cx) {
                }
                if (!self || parsed.selectors.empty()) { return value::null(); }
                const auto txn = doc_->read();
-               // INCLUSIVE, and upward: the element itself is the first candidate.
+               // INCLUSIVE, and upward: the element itself is the first candidate,
+               // and it stays `:scope` for every ancestor tried (Element-closest:
+               // `div > :scope` is about the element, not the ancestor).
                for (node_id at = self; at; at = txn.parent(at)) {
-                   if (selector_engine().element_matches(txn, at, parsed.selectors)) {
+                   if (selector_engine().element_matches(txn, at, parsed.selectors, self)) {
                        return wrap(c, at);
                    }
                }

@@ -189,6 +189,10 @@ private:
     // All three elements are created implicitly, so the tag that names them
     // arrives after they exist; the first one to arrive supplies them.
     bool html_attributes_seen_ = false;
+    // Still in the "initial" / "before html" insertion modes: no `<html>` tag
+    // seen and nothing under the root yet. A doctype token is inserted only
+    // here, and a comment here belongs to the Document rather than to `<html>`.
+    [[nodiscard]] bool before_html() const;
     bool head_attributes_seen_ = false;
     bool body_attributes_seen_ = false;
 

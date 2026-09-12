@@ -511,9 +511,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(construct_apply) do {
             // a IS BOTH THE CALLEE AND THE DESTINATION, b is the argument
             // array and c is the receiver.
-            reg(in.a) = in.code == op::construct_apply
-                            ? construct_spread(reg(in.a), reg(in.b))
-                            : call_spread(reg(in.a), reg(in.b), reg(in.c));
+            const value produced = in.code == op::construct_apply
+                                       ? construct_spread(reg(in.a), reg(in.b))
+                                       : call_spread(reg(in.a), reg(in.b), reg(in.c));
+            // call_spread goes through context::call, whose fence parks a
+            // throw; it is thrown here, at the spread call's own site.
+            if (rethrow_pending()) { break; }
+            reg(in.a) = produced;
             break;
         }
         while (0);
@@ -636,6 +640,9 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                         return nat->fn(*this, args);
                     }();
                     current_this_ = saved_this;
+                    // A throw the native's `call` parked is thrown HERE, at
+                    // its call site - see context::call.
+                    if (rethrow_pending()) { break; }
                     reg(in.a) = produced;
                     break;
                 }

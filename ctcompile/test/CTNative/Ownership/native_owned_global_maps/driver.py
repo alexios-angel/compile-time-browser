@@ -10,6 +10,7 @@ from .driver_observations import *
 from .driver_fields import *
 from .driver_map_sizes import *
 from .driver_object_keys import *
+from .driver_nested_maps import check_nested_maps
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -17,7 +18,7 @@ def main():
     parser.add_argument("--opt", required=True)
     parser.add_argument("--node")
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--group", choices=("all", "object-keys"), default="all")
+    parser.add_argument("--group", choices=("all", "object-keys", "nested-maps"), default="all")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel positive programs (default: available CPUs)")
     args = parser.parse_args()
@@ -32,6 +33,10 @@ def main():
     if not all(compilers) or not nm or not owned.VM.search(
             host.run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("need both host compilers and a working VM-symbol control")
+    if args.group in {"all", "nested-maps"}:
+        check_nested_maps(args, node, reference, compilers, nm)
+        if args.group == "nested-maps":
+            return
     mutated = SOURCE.replace("return state.size;", "state.set('x', 1); return state.size;")
     growing = SOURCE.replace("return state.size;", "state.set(state.size, 1); return state.size;")
     positives = {
@@ -530,7 +535,7 @@ def main():
                                         options=options, admitted=0)
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
     check_shortcircuit_nullable_refusal(args, node, reference)
-    check_nullable_host_result_refusals(args, positives, node, reference)
+    check_nullable_host_result_refusals(args, positives, node, reference, compilers, nm)
     check_leaf_object_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_readback_refusals().items()
@@ -820,7 +825,9 @@ def main():
           "host-result refusals and exact repairs pass both modes and fresh/stale proof controls; "
           f"{len(nullable_nested_result_sources())} same-method result programs retain the exact "
           "15-call nested chain, later nullable/String actuals and saved owning nested results; "
-          f"{len(nullable_nested_result_refusals()) - 1} unknown/foreign/unseeded/later-actual "
+          "the unchanged historical foreign-empty-Map source now preserves Undefined results "
+          "through nested/future calls and owning lifetimes; "
+          f"{len(nullable_nested_result_refusals()) - 2} unknown/unseeded/later-actual "
           "host refusals and exact repairs pass both modes and fresh/stale proof controls; "
           "the historical leaf-writing sibling retains complete ownership and a separate "
           "Object/String carrier refusal with nested prepared operands intact; "

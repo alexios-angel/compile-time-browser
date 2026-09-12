@@ -44,7 +44,24 @@ namespace ctbrowser::script {
 // caller's registers are untouched, so a listener that triggers another
 // listener works rather than corrupting the frame that dispatched it.
 value context::call(value callable, std::span<const value> args, value this_value) {
-    return invoke(callable, args, this_value, /*constructing*/ false);
+    // NOT CALLED DIRECTLY BY A NATIVE - a getter reached from op::get_prop,
+    // an event handler from the browser's tick, a setter hit by interpreted
+    // code running under `apply`: the throw unwinds to the JavaScript handler
+    // below at once, as it always did; there is no native to return through
+    // before that handler.
+    if (native_depth_ == 0 || frames_.size() != native_frames_) {
+        return invoke(callable, args, this_value, /*constructing*/ false);
+    }
+    if (has_pending_throw_) { return value::undefined(); } // see the declaration
+    bool threw = false;
+    value thrown = value::undefined();
+    const value out = call_fenced(callable, args, this_value, threw, thrown);
+    if (threw) {
+        has_pending_throw_ = true;
+        pending_throw_ = thrown;
+        return value::undefined();
+    }
+    return out;
 }
 
 value context::call_fenced(value callable, std::span<const value> args, value this_value,
@@ -89,6 +106,16 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         if (guard.overflowed()) { return value::undefined(); }
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
+        // THE ARGUMENTS ARE ROOTED FOR THE CALL. From C++ they live in the
+        // caller's span and nowhere else - drain_microtasks pops a job's
+        // arguments before invoking it - and a native that calls back into
+        // script collects: `deliver` held its handler record only here, the
+        // collection inside the handler freed it, and the settle through the
+        // dangling pointer corrupted the heap. An interpreted callee has its
+        // arguments in registers; a native has them in this vector.
+        const rooted_values keep_args{*this, copy};
+        const rooted keep_callee{*this, callable};
+        const rooted keep_this{*this, this_value};
         const value saved = current_this_;
         current_this_ = this_value;
         note_transition_into_cxx(*this);
@@ -98,6 +125,9 @@ value context::invoke(value callable, std::span<const value> args, value this_va
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        // A throw the native's own `call` parked leaves here, from the
+        // native's call site: the enclosing fence or handler, or a fault.
+        if (rethrow_pending()) { return value::undefined(); }
         return out;
     }
     if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {

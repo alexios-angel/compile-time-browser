@@ -220,6 +220,23 @@ void install_dynamic_function(context & cx) {
         const program & kept = c.own_program(std::move(compiled));
         return c.run_nested(kept);
     });
+    // `eval(x)`, 19.2.1 - AS AN INDIRECT EVAL, always: the source runs at the
+    // global scope, through the same run_nested `new Function` uses, and its
+    // completion value (a trailing expression) comes back. A DIRECT eval that
+    // sees the caller's locals needs the compiler to keep a frame's scope
+    // alive by name, which this engine's register frames do not; test262's
+    // eval-code/direct tests measure that gap by name. A non-string comes
+    // back unchanged (step 1).
+    cx.define_native("eval", [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_string()) { return a.empty() ? value::undefined() : a[0]; }
+        program compiled = compiler::compile_for_eval(c.to_string(a[0]));
+        if (!compiled.ok) {
+            c.throw_error("SyntaxError", compiled.error);
+            return value::undefined();
+        }
+        const program & kept = c.own_program(std::move(compiled));
+        return c.run_nested(kept);
+    });
     // `Function.prototype`, reachable from script rather than only consulted by
     // lookup. `Function.prototype.call.bind(...)` and
     // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the

@@ -65,5 +65,35 @@ int main() {
         CHECK_EQ(stress.to_string(got.returned), std::string{"3"});
         CHECK(stress.collections() > 0);
     }
+
+    // A MICROTASK'S ARGUMENTS SURVIVE THE HANDLER THEY ARE DELIVERED TO. The
+    // promise reaction job holds its record only in the popped job's argument
+    // vector; a collection inside the handler freed it and the settle that
+    // followed wrote into freed memory. 200 rounds of an async loop awaiting
+    // settled, later-resolved and rejected promises crossed the threshold and
+    // crashed in allocate().
+    {
+        context cx2;
+        install_builtins(cx2);
+        const program chain = compiler::compile(R"(
+            var out = ''; var probes = [];
+            for (var i = 0; i < 400; i++) { (function (i) { probes.push(function () {
+                if (i % 4 === 0) { return 'sync'; }
+                if (i % 4 === 1) { return Promise.resolve('res'); }
+                if (i % 4 === 2) { return new Promise(function (r) { Promise.resolve().then(function () { r('late'); }); }); }
+                return new Promise(function (r, j) { j('bad'); });
+            }); })(i); }
+            async function run() {
+                var passed = 0, failed = 0;
+                for (const p of probes) { try { await p(); passed++; } catch (e) { failed++; } }
+                return passed + '/' + failed;
+            }
+            run().then(function (r) { out = r; }, function (e) { out = 'REJECTED ' + e; });
+        )");
+        const run_result r2 = cx2.run(chain);
+        CHECK(r2.ok);
+        CHECK_EQ(cx2.to_string(cx2.global("out")), std::string{"300/100"});
+        CHECK(cx2.collections() > 0);
+    }
     REPORT("gc_pressure");
 }

@@ -175,6 +175,7 @@ webgl/push/pop keeps the matrix
 webgl/rotateX/Y/Z
 webgl/specularMaterial + shininess
 webgl/sphere
+webgl/stroke in 3D
 webgl/texture
 webgl/torus
 webgl/translate/scale in 3D

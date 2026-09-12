@@ -6,6 +6,247 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fresh child Maps, 2026-09-12
+
+Continued clean **bc639f5d** and the **04:11:42 UTC** synchronization journal.
+The interrupted payload work was already gated; `codex-wip-20260907` was
+already an ancestor. Independent agents handled owner validation, source/lifetime
+regressions and the subsequent presence fix; root integrated and gated them.
+
+**26b68622** proves fresh method-local child Maps retained by a captured outer
+Map. Each runtime origin has independent contents, presence, cardinality and
+saved aliases; structural branches join those states separately. The owner
+independently checks standard empty constructors, all uses and root-to-child
+retention. Child-to-Map ownership and Map returns remain refused.
+
+**d2c9453a** fixes the independent native presence gap exposed by those original
+sources: a definite outer `get` now retains its exact stored child's alias.
+Replacement/delete/clear preserve an already saved child; uncertain writes,
+summary effects and unequal branch origins remove unproved entry facts.
+Distinct fresh allocations can share a C++ schema without sharing mutation
+state; formal/unknown aliases remain conservative. **13 source rows** run on
+reused/fresh modules with forged annotations and executable-source preservation.
+No browser, runtime, carrier or emitter source changed.
+
+**0f3ea6f9** adds `--group nested-maps` to the existing
+`ctcompile/test/CTNative/Ownership/global-maps.py` workflow and its full lit run.
+All four preserved witnesses (**81e86260**, **1279bc27**, **1507cc30**,
+**6d5cf26f**) admit **4/4 native functions** in both optimization modes, retain
+**8/9/15/15 calls**, respectively, and produce typed **trace=41**.
+The cohort passes **4 native programs / 12 refusals**, **20 typed Node/interpreter
+observations / 11 distinguishing mutations**. Both C++ layouts pass GCC/Clang,
+no-Script symbol checks and ASan/UBSan/leaks, including saved children after outer
+replacement/delete/clear, released host/table owners, **128 future calls**, entry
+reexecution and final destruction. Complete proof budgets are **1759 / 33
+cutoffs** for retained and **3007 / 31** for distinct saved children.
+All **55 historical object-key sources** and exact ordinary Data **8359592c**
+remain unchanged; fixture and compiled-input hashes differ by the import
+helper's appended newline.
+
+The corrected **313-step core rebuild**, **5/5 focused CTests in 188.58s**,
+**256-step presence rebuild**, native cohort in **7.67s** and focused type CTest
+in **0.19s** pass. Stable clang-format **22.1.8** passes **795 files**; bundled-23
+retains the same **nine byte-identical baseline differences**.
+The corrected full standard gate passes **530/530 CTests in 803.21s**,
+including **158 browser tests** and **168/168 lit cases in 547.96s**. All **1241
+frozen code inputs** match locally/remotely before and after the gate.
+Fresh full Bootstrap remains **19/574 native functions** in both modes; exact
+Data remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**.
+
+**5a4887d1** promotes the historical fresh-empty-Map result refusal identified
+by the first full gate. The unchanged source **85aa6fa6** / compiled input
+**cadaaa14** admits **6/6 native functions**, preserves **15 calls / trace=2**,
+and returns Undefined from a distinct empty Map while preserving captured-state
+writes. Both policies, exact repairs and fresh/stale forgeries pass; both C++
+layouts pass GCC/Clang, no-Script checks and ASan/UBSan/leaks through **128 future
+calls**, host/table release, entry reexecution and final destruction. The
+corrected focused historical-result group passes in **11.82s**, including the
+remaining refusals; all source catalogs are unchanged.
+Evidence: `/tmp/ctcompile-nested-{host-gate,alias-focused,full}.log`,
+`/tmp/ctcompile-nested-full-detail.log`,
+`/tmp/ctcompile-nested-final-{focused.log,full.log,full-detail.log,full-summary.json,frozen.json}`,
+`/tmp/ctcompile-nested-final-measured/{summary.json,foreign-summary.json}`,
+`/tmp/ctcompile-nested-map-tests-static.json` and
+`/tmp/ctcompile-nested-foreign-tests-static.json`.
+
+**Next boundary:** preserve `nested_map_conditional_initialize` (**74539aeb**
+fixture / **660da1c0** compiled input, four functions/eight calls) and prove its
+`t.has(1) || t.set(1, new Map)` followed by child readback. Establish a positive
+complete-family outer payload-kind proof before invocation results. Membership
+alone cannot prove a child Map, and a constructor site cannot identify a child
+retained by an earlier invocation. A proved returned child starts with unknown
+contents; its following `saved.set` can establish the local read fact. Preserve
+separate identity and may-alias invalidation. Its measured prepared IR has a
+resultless `scf.if` with an empty present arm and child creation in the absent
+arm; no Map-valued branch-result support is needed for this source.
+The stronger cross-invocation source (**369d7cea** / **bdf9931e**, five functions/
+nine calls) also needs an independently preserved inner-key/type invariant and
+validation of original frame exits in both return branches. Host currently
+rejects frame exits below the top level. Both remain measured refusals. Exact
+Data additionally needs mixed/field-bearing payloads, object returns and its
+recorder callback; component/DOM ownership follows. See
+`/tmp/ctcompile-nested-next.md`. Full native Bootstrap is unfinished.
+
+**Parallel follow-up (audit only):** dense-array retention across static `UShr`
+with two independently proved original BigInts is still refused in
+`EscapeAnalysis.cpp`, `EscapeAnalysisArrays/Primitives.cpp` and
+`BigIntProducers.cpp`. The runtime throws an independent TypeError; any proof
+must record the independent error result without marking it BigInt or claiming
+normal completion. Reuse the existing whole-frame exclusions and source/error
+oracle controls. No implementation or new measurement is claimed. Ordinary-object
+assignment still needs separate own-data/prototype authority. See
+`/tmp/ctcompile-nested-escape-next.md`.
+
+## Caller-owned Map payloads, 2026-09-11
+
+Resumed the seven dirty files left by the **03:04:07 UTC failed loop**,
+found in the synchronization journal and diff at **3255556d**. Two agents then
+hit rate limits; root recovered their partial tests, completed the wiring and
+reviewed all independent consumers. **added9fd** commits the recovered work.
+
+Checked empty caller objects can now be retained at the exact `Map.set`
+payload position. The complete family accounts for those writes before any
+invocation return facts, preventing an unseeded sibling getter from inheriting
+primitive-only contents. Source allocations, global stores/loads and actual
+arguments remain intact. Existing identity ownership, `object_value` storage
+and C++ emission suffice; no runtime helper or Script dependency was added.
+Caller fields, outgoing edges, object returns, mixed actuals and unknown uses
+remain refused. Tests cover both family orderings and source/prepared forms;
+scalar reseeds and object-key-only primitive families retain their proofs.
+
+Unchanged compiled inputs **ca0f13c2** and **a056b669** now admit **4/4 native
+functions**, preserve **five calls** and produce **trace=1** in both modes.
+Their fixture hashes remain **7f6601d7** and **9e803ae5**; the import helper
+appends one newline. A scalar-key payload-only source admits **6/6**, ten calls,
+trace=1, so key ownership cannot conceal a missing payload owner.
+All **47 historical source bodies/hashes/call counts/traces** are unchanged.
+The expanded cohort passes **19 native programs / 36 refusals**, **55 source
+rows / 65 typed Node/interpreter observations / 36 distinguishing mutations**.
+Both C++ layouts pass GCC/Clang and ASan/UBSan/leak checks, including caller and
+global release, replacement/delete/clear, saved callables, **128 future rounds**,
+entry reexecution and final owner destruction. Complete budgets are
+**1763 / 32 cutoffs**, **1622 / 31** and **14072 / 31** for the three payload cases.
+
+The **320-step devbox rebuild**, **8/8 focused CTests in 1.35 seconds** and
+all-CPU object-key workflow in **39.85 seconds** pass. All **1240 frozen inputs**
+match the devbox. Stable clang-format **22.1.8** passes **795 files**; the actual
+bundled-23 check retains the same **nine byte-identical baseline differences**.
+The corrected full standard gate passes **530/530 CTests in 783.53 seconds**,
+including **158 browser tests** and **168/168 lit cases in 534.83 seconds**.
+All **1240 frozen inputs** still match locally/remotely after the gate. Fresh
+full Bootstrap remains **19/574 native functions** in both modes; exact Data
+remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**. No bundle increase is claimed.
+Evidence: `/tmp/ctcompile-payload-resume-{focused.log,frozen.json}`,
+`/tmp/ctcompile-payload-resume-final-full{.log,-detail.log,-summary.json}`,
+`/tmp/ctcompile-payload-resume-static/summary.json` and
+`/tmp/ctcompile-payload-resume-measured/summary.json`.
+
+**Next Bootstrap boundary:** preserve the existing exact Data ordinary
+publication source **8359592c** (2,522 bytes, seven functions, 40 calls,
+19 observations). Prove a fresh child Map retained by the captured outer Map
+and its guarded readback, keeping each Map identity and mutation state separate.
+Start in `HostContract/CapturedMapBody.cpp`: its current `maps` set means
+aliases of one captured allocation, so adding a child to that set is unsound.
+Extend the captured-family and independent `OwnedGlobalMethods` proofs with
+separate child identity, contents and presence facts. Reuse `NativeMap` nested
+schemas/presence and existing EmitC storage; local `Maps/object-key.js` and
+`Maps/nested-map.js` already provide smaller ownership fixtures. Exact Data also
+needs field-bearing/mixed payloads, object returns and its recorder callback;
+BaseComponent then needs component and DOM ownership. Earlier measured Data
+publication refusals are not a measured nested-Map diagnostic. See
+`/tmp/ctcompile-payload-resume-next.md` and
+`/tmp/ctcompile-object-resume-exact-data/exact_data_ordinary_publication.js`.
+Full native Bootstrap and direct browser integration remain unfinished.
+
+**f9bbbb09** separately extends dense-array retention across primitive mixed
+BigInt Pow errors, using the same original-operand proof as Sub/Mul/Div/Mod.
+It grants no normal-completion, native type or ordinary-object prototype facts.
+The existing matrix now executes Pow: **57 rows, 43 live states and 3,450 budget
+cutoffs** pass. The focused gate passes **8/8 in 1.37 seconds** after correcting
+historical Pow expectations while retaining every source body. The live BigInt
+array-index mutation still refuses. The inherited-accessor oracle remains
+**760 observed sites, 24 unclaimed, zero violations, precision 8/139**.
+Evidence: `/tmp/ctcompile-payload-resume-pow-fixed.log` and
+`/tmp/ctcompile-dense-array-pow-{static,expectations-static}.json`.
+**bf5605c0** corrects two historical key-only rejection expectations after the
+first full run exposed them. Their unchanged source/prepared programs only
+store the checked caller leaf and return Boolean/Undefined; the existing
+positive identity/family/owner assertions now execute. Object-valued readback
+and return refusals remain. The corrected ownership test passes in **248.62
+seconds**, and the final full gate above is green. All code changes are committed.
+
+Claude's **04:03:51 UTC** journal reports further DOM/JS/VM changes on
+`ctbrowser-wpt`, including new DOM node kinds with a compatibility hunk in
+`ctcompile/lib/HTML/DocumentComparator.cpp`, nullish property-access errors,
+named array properties, indirect eval and native-call rooting. These changes
+are outside this gate's frozen inputs. Re-read that journal when they integrate
+before using the changed interpreter as the native differential oracle.
+
+## Global key alias chains, 2026-09-11
+
+Continued exact **511cca31** from **0e5cfbef** and the **2026-09-12
+02:05:52 UTC** journal. The checkout was clean and preceding work fully gated;
+old codex-wip work was already merged. Separate agents handled HostContract,
+source/lifetime regressions and the next Bootstrap payload audit; root checked
+all consumers and serialized the devbox gates. No browser/runtime source changed.
+
+**2359a6dd** proves complete acyclic global alias chains for empty object Map
+keys. A budgeted iterative predecessor walk checks every initialization;
+a complete successor census finds intermediate and branched bindings before
+checking all reads and uses. Independent owner validation rechecks every edge
+in strict entry order before publishing anything. Original allocations, stores,
+loads and call actuals remain intact. Existing native identity storage and C++
+emission handle the chains without a new carrier or runtime helper.
+Unread descendants, early/nonentry reads or stores, duplicate/later stores,
+cycles, foreign consumers and object-valued scalar observations remain refusals.
+
+Unchanged **511cca31** now admits **4/4 functions**, preserves **four calls**
+and produces typed **trace=0**. New branched **629982b5** admits **7/7 functions**,
+preserves **15 calls** and produces **trace=11**, covering three alias hops,
+an intermediate used only by another initializer, a branch and two identities.
+All **42 prior source bodies/hashes/function/call/trace values** are unchanged.
+The focused cohort passes **16 native programs / 31 refusals**, **47 source rows /
+54 typed Node/interpreter observations** and **24 distinguishing mutations**.
+Both C++ layouts pass GCC/Clang execution; alias-only retention, saved callables,
+**128 future rounds**, entry reexecution and final owner release pass lifetime
+ASan/UBSan/leak checks. Proof budgets complete at **1931 / 32 cutoffs** for the
+exact chain and **50830 / 30 cutoffs** for the branched family.
+
+The **320-step devbox build**, final no-op rebuild and **4/4 focused CTests in
+1.35 seconds** pass. The existing all-CPU `--group object-keys` workflow passes
+in **32.43 seconds**. Stable clang-format **22.1.8** passes **795 files**;
+the actual bundled-23 check retains the same **nine byte-identical baseline
+differences**. All **1240 frozen input hashes** match the devbox.
+The full standard gate passes **530/530 CTests in 769.26 seconds**, including
+all **158 browser tests** and **168/168 lit cases in 527.53 seconds**. All
+**1240 frozen inputs** still match locally/remotely after the gate. Fresh full
+Bootstrap remains **19/574 native functions** in both modes; exact Data stays
+**0/7 CommonJS, 0/7 browser and 0/8 AMD**. No bundle-count increase is claimed.
+Evidence: `/tmp/ctcompile-chain-{build,focused,full}.log`,
+`/tmp/ctcompile-chain-full-{detail.log,summary.json}`,
+`/tmp/ctcompile-chain-frozen.json`, `/tmp/ctcompile-key-chain-tests-static.json`,
+and `/tmp/ctcompile-chain-measured/summary.json`. The latter separates fixture
+and compiled-input hashes: the existing import helper appends one newline.
+
+**Next: caller-owned Map payloads**, unchanged **ca0f13c2**
+(`object_argument_global_object_payload`, four functions/five calls/trace=1)
+and anonymous companion **a056b669**, still refused in this focused run.
+Permit a proved empty caller leaf at the exact `Map.set` payload position while
+keeping property uses and object returns refused. The complete family must also
+account for those payload writes **before** computing invocation return facts:
+`HostContract/Values.cpp` currently detects nonprimitive contents only through
+method-local object creation. Otherwise a sibling unseeded getter can retain an
+incorrect primitive proof. Reuse the existing object-value carrier and add a
+payload-only lifetime case: storing the same object as key and payload can hide
+a missing payload owner. The actionable audit is
+`/tmp/ctcompile-chain-next-payload.md`.
+
+Actual Bootstrap Data additionally needs nested Maps and component/element
+ownership, plus full host/publication proofs; these small isolates do not prove
+full Data admission. Generic ordinary-object escape refinement still needs
+independent own-data/prototype authority. Full native Bootstrap and direct
+browser API integration remain unfinished.
+
 ## Global key aliases, 2026-09-11
 
 Resumed exact **abbf4b9c**, then **600b8fb6**, from **4d0db5a6** and the
