@@ -130,8 +130,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return out; }
+        if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
@@ -154,7 +155,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         for (double k = 0; k < len; k += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            if (!detail::put_element(c, out, k, c.call(callback, call_args, this_arg))) {
+            if (!detail::create_element(c, out, k, c.call(callback, call_args, this_arg))) {
                 return out;
             }
         }
@@ -166,8 +167,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "filter")) { return out; }
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return out; }
+        if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
@@ -180,7 +182,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             const value item = detail::element_at(c, self, k);
             const value call_args[3] = {item, value::number(k), self};
             if (!context::truthy(c.call(callback, call_args, this_arg))) { continue; }
-            if (!detail::put_element(c, out, to, item)) { return out; }
+            if (!detail::create_element(c, out, to, item)) { return out; }
             to += 1.0;
         }
         return out;

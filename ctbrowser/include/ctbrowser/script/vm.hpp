@@ -763,6 +763,11 @@ public:
     // parked for rethrow at its call site, or the run has failed outright.
     // Every further `call` would answer undefined without running anything.
     [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
+    // HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
+    // through throw_error is not parked - it has already landed on a handler
+    // by the time the native's next line runs, and throw_pending cannot see
+    // it - so a native that keeps going compares this before and after.
+    [[nodiscard]] std::size_t unwinds() const noexcept { return unwinds_; }
     // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
     // constructor rather than print it (`tools/ct262` on a `negative:` test).
     // Undefined when a run failed WITHOUT a throw (the allocation ceiling, the

@@ -674,6 +674,26 @@ int main() {
               "a.constructor[Symbol.species] = parseInt; return a.map(x => x); })()",
               "THREW");
     js_expect("(function(){ var a = [1]; a.constructor = 1; return a.map(x => x); })()", "THREW");
+    // CreateDataPropertyOrThrow DEFINES over a non-writable slot on the species
+    // object; a revoked proxy receiver throws ONCE (the length read) and the
+    // method stops; a typed array is not an Array for species or isArray.
+    js_expect("(function(){ var a = [1, 2]; a.constructor = {}; a.constructor[Symbol.species] = "
+              "function () { Object.defineProperty(this, '0', {value: 'x', writable: false, "
+              "configurable: true}); }; var r = a.map(x => x * 10); return r[0] + ',' + r[1]; })()",
+              "10,20");
+    js_expect("(function(){ var o = Proxy.revocable([], {}); o.revoke(); try { "
+              "Array.prototype.map.call(o.proxy, x => x); return 'no'; } catch (e) { return "
+              "e.constructor.name; } })()",
+              "TypeError");
+    js_expect("(function(){ var ta = new Int32Array([1, 2]); Object.defineProperty(ta, "
+              "'constructor', {get() { throw 'no'; }}); var r = [].flatMap.call(ta, x => x); "
+              "return Array.isArray(r) + ',' + r.join() + ',' + Array.isArray(ta) + ',' + "
+              "[].concat(ta).length; })()",
+              "true,1,2,false,1");
+    js_expect("(function(){ var o = {0: 0, 1: 1, 2: 2, 3: 3, length: 4}; var r = "
+              "Array.prototype.splice.call(o, 0, 3); return r.length + ':' + r.join() + ':' + "
+              "o.length; })()",
+              "3:0,1,2:1");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

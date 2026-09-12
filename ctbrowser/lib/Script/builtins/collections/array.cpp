@@ -76,20 +76,8 @@ void install_array(context & cx) {
         return c.construct(ctor,
                            pass_len ? std::span<const value>{args} : std::span<const value>{});
     };
-    // CreateDataPropertyOrThrow(A, k, v), 7.3.5 - and the refusal is a TypeError.
-    const auto create_element = [](context & c, value target, double k, value v) {
-        if (target.is_array() && detail::dense_array_this(target) != nullptr) {
-            return detail::put_element(c, target, k, v);
-        }
-        context::property_descriptor wanted;
-        wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable =
-            true;
-        wanted.held = v;
-        wanted.writable = wanted.enumerable = wanted.configurable = true;
-        if (c.define_own_property(target, number_to_string(k), wanted)) { return true; }
-        c.throw_error("TypeError", "Cannot define element " + number_to_string(k));
-        return false;
-    };
+    // CreateDataPropertyOrThrow(A, k, v), 7.3.5 - detail::create_element.
+    const auto create_element = detail::create_element;
     static_method("of", 0, [through_constructor, create_element](context & c, std::span<value> a) {
         const auto len = static_cast<double>(a.size());
         value out = through_constructor(c, c.current_this(), len, true);
@@ -385,8 +373,9 @@ void install_array(context & cx) {
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return out; }
+        if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
@@ -400,7 +389,7 @@ void install_array(context & cx) {
             const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
             value mapped = c.call(callback, args, this_arg);
             if (!mapped.is_array()) {
-                if (!detail::put_element(c, out, n, mapped)) { return out; }
+                if (!detail::create_element(c, out, n, mapped)) { return out; }
                 n += 1.0;
                 continue;
             }
@@ -412,7 +401,7 @@ void install_array(context & cx) {
             if (!detail::generic_walk_ok(c, inner)) { return out; }
             for (double j = 0; j < inner; j += 1.0) {
                 if (!detail::has_element(c, mapped, j)) { continue; }
-                if (!detail::put_element(c, out, n, detail::element_at(c, mapped, j))) {
+                if (!detail::create_element(c, out, n, detail::element_at(c, mapped, j))) {
                     return out;
                 }
                 n += 1.0;
@@ -619,11 +608,13 @@ void install_array(context & cx) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "slice")) { return out; }
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
         const double raw_from = integer_arg(c, a, 0);
         double k = raw_from < 0 ? std::max(len + raw_from, 0.0) : std::min(raw_from, len);
         const double raw_to = has_index(a, 1) ? integer_arg(c, a, 1) : len;
         const double to = raw_to < 0 ? std::max(len + raw_to, 0.0) : std::min(raw_to, len);
+        if (watch.threw()) { return out; }
         // ArraySpeciesCreate(O, count), step 9.
         const double count = std::max(to - k, 0.0);
         out = detail::array_species_create(c, self, count);
@@ -639,7 +630,7 @@ void install_array(context & cx) {
         }
         for (double n = 0; k < to; k += 1.0, n += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
-            if (!detail::put_element(c, out, n, detail::element_at(c, self, k))) { return out; }
+            if (!detail::create_element(c, out, n, detail::element_at(c, self, k))) { return out; }
         }
         (void)detail::put_length(c, out, count);
         return out;
@@ -658,6 +649,7 @@ void install_array(context & cx) {
         const value self = detail::array_this(c);
         value removed = c.make_array();
         if (!detail::coercible_this(c, self, "splice")) { return removed; }
+        const detail::unwind_watch watch{c};
         array_object * dense = detail::dense_array_this(self);
         const double len = dense != nullptr ? static_cast<double>(dense->items.size())
                                             : detail::array_like_length(c, self);
@@ -677,6 +669,7 @@ void install_array(context & cx) {
             skipped = std::min(std::max(integer_arg(c, a, 1), 0.0), len - start);
         }
         const double inserted = a.size() > 2 ? static_cast<double>(a.size() - 2) : 0.0;
+        if (watch.threw()) { return removed; }
         if (len + inserted - skipped > max_safe_integer) {
             c.throw_error("TypeError", "Invalid array length");
             return removed;
@@ -692,7 +685,8 @@ void install_array(context & cx) {
             // receiver is then spliced generically below.
             for (double k = 0; k < skipped; k += 1.0) {
                 if (!detail::has_element(c, self, start + k)) { continue; }
-                if (!detail::put_element(c, removed, k, detail::element_at(c, self, start + k))) {
+                if (!detail::create_element(c, removed, k,
+                                            detail::element_at(c, self, start + k))) {
                     return removed;
                 }
             }
@@ -719,6 +713,7 @@ void install_array(context & cx) {
         if (!detail::generic_walk_ok(c, skipped) || !detail::generic_walk_ok(c, len - start)) {
             return removed;
         }
+        if (out != nullptr) { out->items.clear(); } // ArrayCreate sized it; the copy fills it
         for (double k = 0; out != nullptr && k < skipped; k += 1.0) {
             // A HOLE STAYS A HOLE IN LENGTH ONLY. CreateDataProperty is skipped
             // for an absent index and `A.length` is set to the count anyway
@@ -903,7 +898,7 @@ void install_array(context & cx) {
                     c.throw_error("TypeError", "Array.prototype.concat: length exceeds 2^53-1");
                     return false;
                 }
-                if (!detail::put_element(c, out, n, item)) { return false; }
+                if (!detail::create_element(c, out, n, item)) { return false; }
                 n += 1.0;
                 return true;
             }
@@ -939,7 +934,7 @@ void install_array(context & cx) {
                 const value element = detail::element_at(c, item, k);
                 if (c.throw_pending()) { return false; }
                 const context::rooted keep_element(c, element);
-                if (!detail::put_element(c, out, n, element)) { return false; }
+                if (!detail::create_element(c, out, n, element)) { return false; }
             }
             return true;
         };

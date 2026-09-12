@@ -289,6 +289,15 @@ namespace detail {
 [[nodiscard]] inline bool threw_since(context & cx, const std::string & before) {
     return cx.throw_pending() || cx.current_stack() != before;
 }
+// The same question off context::unwinds(), which costs nothing: a native
+// that has read `length` off a revoked proxy has already thrown and landed,
+// and must not throw a second time over the handler it consumed.
+struct unwind_watch {
+    context & cx;
+    std::size_t before;
+    explicit unwind_watch(context & c) : cx(c), before(c.unwinds()) {}
+    [[nodiscard]] bool threw() const { return cx.throw_pending() || cx.unwinds() != before; }
+};
 [[nodiscard]] inline array_object * dense_array_this(value self); // below
 [[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
     if (self.is_array()) {
@@ -310,6 +319,24 @@ namespace detail {
     if (cx.throw_pending()) { return false; }
     cx.strict_store_check(number_to_string(i));
     return !threw_since(cx, before);
+}
+// CreateDataPropertyOrThrow(A, k, v), 7.3.5 - a DEFINE, not a [[Set]], so a
+// non-writable but configurable slot on a species-made result is overwritten
+// rather than refused; the refusal is a TypeError. A dense array takes
+// put_element's fast path, which is the same operation there.
+[[nodiscard]] inline bool create_element(context & cx, value target, double k, value v) {
+    if (target.is_array() && dense_array_this(target) != nullptr) {
+        return put_element(cx, target, k, v);
+    }
+    context::property_descriptor wanted;
+    wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
+    wanted.held = v;
+    wanted.writable = wanted.enumerable = wanted.configurable = true;
+    if (cx.define_own_property(target, number_to_string(k), wanted)) { return true; }
+    if (!cx.throw_pending()) {
+        cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
+    }
+    return false;
 }
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
@@ -455,7 +482,12 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
         }
         v = p->target;
     }
-    out = v.is_array();
+    // A TYPED ARRAY IS NOT AN Array exotic object (7.2.2 step 2 asks for the
+    // exotic kind), though it is an array_object here: Array.isArray, concat's
+    // spreading and ArraySpeciesCreate all say no to one.
+    out = v.is_array() &&
+          static_cast<const array_object *>(v.as_heap())->elements == element_kind::none &&
+          !static_cast<const array_object *>(v.as_heap())->is_view();
     return true;
 }
 
@@ -486,15 +518,16 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
 // cross-realm Array test of step 4 has nowhere to apply: one context, one
 // realm.)
 [[nodiscard]] inline value array_species_create(context & cx, value original, double len) {
+    const unwind_watch watch{cx};
     bool is_array = false;
-    if (!is_array_value(cx, original, is_array)) { return value::undefined(); }
+    if (!is_array_value(cx, original, is_array) || watch.threw()) { return value::undefined(); }
     value ctor = value::undefined();
     if (is_array) {
         ctor = cx.lookup_property(original, "constructor");
-        if (cx.throw_pending()) { return value::undefined(); }
+        if (watch.threw()) { return value::undefined(); }
         if (ctor.is_object_like()) {
             ctor = cx.lookup_property(ctor, "@@species");
-            if (cx.throw_pending()) { return value::undefined(); }
+            if (watch.threw()) { return value::undefined(); }
             if (ctor.is_null()) { ctor = value::undefined(); }
         }
     }
@@ -508,7 +541,7 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     }
     const value args[1] = {value::number(len)};
     const value out = cx.construct(ctor, args);
-    return cx.throw_pending() || !out.is_object_like() ? value::undefined() : out;
+    return watch.threw() || !out.is_object_like() ? value::undefined() : out;
 }
 
 [[nodiscard]] inline object_object * new_table(context & cx) {
