@@ -1,5 +1,7 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .driver_common import *
 from .driver_object_maps import *
 from .driver_globals import *
@@ -15,7 +17,10 @@ def main():
     parser.add_argument("--node")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--group", choices=("all", "object-keys"), default="all")
+    parser.add_argument("--jobs", type=int, default=1, help="parallel positive programs (default: 1)")
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be a positive integer")
     args.work.mkdir(parents=True, exist_ok=True)
     node = boundary.node_executable(args)
     reference = boundary.reference_tool(args.opt)
@@ -99,7 +104,9 @@ def main():
         check_object_argument_observations(args, node, reference)
     else:
         check_source_observations(args, node, reference, positives)
-    for name, (source, binding, value) in positives.items():
+
+    def check_positive(item):
+        name, (source, binding, value) = item
         js, ir, count = boundary.prepare(args, name, source)
         functions = (object_argument_cases()[name]['functions'] if name in object_argument_sources()
                      else LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
@@ -192,7 +199,12 @@ def main():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
         standalone(args, output, name, value, compilers, nm)
         check_scalar_global_emission(args, ir, name)
-        saved[name] = ir, config, output
+        return name, (ir, config, output)
+
+    # Each case owns its files; publish completed results in source order.
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        for name, result in executor.map(check_positive, positives.items()):
+            saved[name] = result
 
     check_object_argument_controls(args, saved)
     if args.group == "object-keys":
