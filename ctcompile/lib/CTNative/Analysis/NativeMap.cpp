@@ -94,9 +94,6 @@ struct flowGraph {
         join(left, right);
         return true;
     }
-    static ctjs::FuncOp target(ctjs::CallDirectOp call) {
-        return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-    }
     static bool closed(ctjs::FuncOp fn) {
         return fn && !fn.getBody().empty() &&
                mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
@@ -124,7 +121,7 @@ struct flowGraph {
             for (ctjs::ReturnOp ret : exits) { join(exits.front().getValue(), ret.getValue()); }
         });
         module.walk([&](ctjs::CallDirectOp call) {
-            auto fn = target(call);
+            auto fn = call.getTarget();
             if (!fn || fn.getBody().empty()) { return; }
             callers[fn].push_back(call);
             mlir::Block & entry = fn.getBody().front();
@@ -208,7 +205,7 @@ std::string collect(plan & out, flowGraph & graph,
                 }
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallDirectOp>()) {
-            auto fn = flowGraph::target(call);
+            auto fn = call.getTarget();
             if (!flowGraph::closed(fn) || !flowGraph::exactCall(call, fn) ||
                 graph.returns[fn].empty()) {
                 return "native Map result requires a closed function with visible returns";
@@ -235,7 +232,7 @@ std::string collect(plan & out, flowGraph & graph,
             }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
-                auto fn = flowGraph::target(call);
+                auto fn = call.getTarget();
                 if (!flowGraph::closed(fn)) {
                     return "native Map argument requires a closed callee";
                 }

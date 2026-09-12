@@ -64,8 +64,7 @@ std::string environmentProblem(mlir::ModuleOp module,
             reason = "module has an unknown call";
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (!target || target.getBody().empty()) {
                 reason = "module has a call without a visible body";
             }
@@ -124,8 +123,7 @@ struct CTNativePartialEvaluatePass
         const std::string environment = environmentProblem(module, &closureProof);
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target) { callers[target].push_back(call); }
         });
         llvm::SmallVector<ctjs::FuncOp> functions;

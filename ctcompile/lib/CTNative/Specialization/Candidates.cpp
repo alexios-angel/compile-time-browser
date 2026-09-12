@@ -15,8 +15,7 @@ bool recursive(ctjs::FuncOp function) {
         auto next = pending.pop_back_val();
         if (!visited.insert(next).second) { continue; }
         next.getBody().walk([&](ctjs::CallDirectOp call) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             found |= target == function;
             if (target && !visited.contains(target)) { pending.push_back(target); }
         });

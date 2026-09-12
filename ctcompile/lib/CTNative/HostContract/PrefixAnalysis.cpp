@@ -34,8 +34,7 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
             }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target) { callers[target].push_back(call); }
         }
         if (operation->getName().getStringRef() == "ctjs.pass_new_target") {

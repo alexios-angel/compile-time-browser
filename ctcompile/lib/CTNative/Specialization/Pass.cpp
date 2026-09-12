@@ -20,8 +20,7 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
         });
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target) { callers[target].push_back(call); }
         });
         struct candidate {

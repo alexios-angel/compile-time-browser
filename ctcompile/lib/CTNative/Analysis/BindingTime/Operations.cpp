@@ -64,8 +64,7 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
             return state.values.lookup(value).time == BindingTime::Static;
         });
     } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         eligible = target && complete.lookup(target) &&
                    binding_time_detail::effectCalleeMatches(call, module) &&
                    !constructsClosures(target) && target.getUpvalueCount() == 0 &&

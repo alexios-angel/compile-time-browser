@@ -82,9 +82,7 @@ bool analyzer::step() {
 }
 
 ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
-    if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
-        return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-    }
+    if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) { return call.getTarget(); }
     return indirectFactories.lookup(operation);
 }
 

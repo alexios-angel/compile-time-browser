@@ -85,8 +85,7 @@ closureHeapProof prepareClosureHeapFacts(
         if (!original) { return; }
         if (llvm::isa<ctjs::CallDirectOp>(operation) && llvm::isa<ctjs::CallOp>(original)) {
             auto call = llvm::cast<ctjs::CallDirectOp>(operation);
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (target && !target.getBody().empty()) { result.closedCalls.insert(original); }
         }
         if (operation->getName() != original->getName()) { return; }

@@ -99,8 +99,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
     top->walk([&](ctjs::CallDirectOp call) {
         auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
         if (!listed) { return; }
-        auto fn =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto fn = call.getTarget();
         if (!fn || fn.getBody().empty()) { return; }
         mlir::Block & entry = fn.getBody().front();
         for (int32_t index : listed.asArrayRef()) {
@@ -216,8 +215,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
     top->walk([&](ctjs::CallDirectOp call) {
         auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
         if (!call->hasAttr("ctnative.receiver") && !listed) { return; }
-        auto fn =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto fn = call.getTarget();
         if (!fn || fn.getBody().empty()) { return; }
         mlir::Block & entry = fn.getBody().front();
         if (call->hasAttr("ctnative.receiver")) { join(call.getReceiver(), entry.getArgument(0)); }

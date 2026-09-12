@@ -12,8 +12,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             })) {
             return;
         }
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         if (target && seen.insert(target.getOperation()).second) { candidates.push_back(target); }
     });
     for (ctjs::FuncOp wrapper : candidates) {

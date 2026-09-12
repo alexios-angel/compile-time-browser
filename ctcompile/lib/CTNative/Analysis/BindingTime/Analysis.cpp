@@ -76,8 +76,7 @@ void BindingTimeAnalysis::Impl::solveSummaries() {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
     module.walk([&](ctjs::CallDirectOp call) {
         auto caller = call->getParentOfType<ctjs::FuncOp>();
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         if (caller && target && !llvm::is_contained(dependents[target], caller)) {
             dependents[target].push_back(caller);
         }
@@ -125,10 +124,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
     bool opaque = false;
     module.walk([&](mlir::Operation * op) {
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            if (auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    call, call.getCalleeAttr())) {
-                callers[fn].push_back(call);
-            }
+            if (auto fn = call.getTarget()) { callers[fn].push_back(call); }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
             call && nativeMapAction(op).empty() && !call->hasAttr(kNativeMapSnapshotCopy)) {

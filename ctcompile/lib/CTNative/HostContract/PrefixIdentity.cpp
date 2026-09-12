@@ -73,8 +73,7 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
             auto closure = call.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             if (closure && closure.getFunction() >= 0 &&
                 functions.lookup(static_cast<unsigned>(closure.getFunction())) == target) {
                 callee = target;

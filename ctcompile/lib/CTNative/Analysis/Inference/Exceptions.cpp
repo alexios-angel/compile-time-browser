@@ -35,8 +35,7 @@ struct invokeCompletions {
     explicit invokeCompletions(Kind kind) : kind(kind) {}
 
     bool collect(ctjs::CallDirectOp call) {
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         if (!target || target.getBody().empty() || target.getUpvalueCount() != 0 ||
             target.getBody().front().getNumArguments() != call.getNumOperands() ||
             mlir::SymbolTable::getSymbolVisibility(target) !=

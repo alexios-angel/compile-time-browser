@@ -41,8 +41,7 @@ effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
     module.walk([&](ctjs::FuncOp function) { functions.push_back(function); });
     module.walk([&](ctjs::CallDirectOp call) {
         auto caller = call->getParentOfType<ctjs::FuncOp>();
-        auto callee =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto callee = call.getTarget();
         if (caller && callee && !llvm::is_contained(dependents[callee], caller)) {
             dependents[callee].push_back(caller);
         }
@@ -173,8 +172,7 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
             }
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
             if (wrote || !ordinaryCall(call) || !effectCalleeMatches(call, module)) { return {}; }
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             const auto found = summaries.find(target);
             if (!target || found == summaries.end() || !found->second.known ||
                 call->getNumOperands() != target.getBody().front().getNumArguments()) {

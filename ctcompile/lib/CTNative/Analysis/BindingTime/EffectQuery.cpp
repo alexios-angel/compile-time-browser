@@ -15,8 +15,7 @@ bool safeEffectKey(llvm::StringRef name) {
 bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     auto newTarget = call.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
     if (!newTarget || !llvm::isa<ctjs::UndefinedAttr>(newTarget.getValue())) { return false; }
-    auto target =
-        mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+    auto target = call.getTarget();
     if (!target) { return false; }
     auto index = functionIndex(target);
     auto value = call.getCalleeValue();
@@ -81,8 +80,7 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             safe = target && !target.getBody().empty();
             return;
         }
@@ -146,8 +144,7 @@ bool local(const fact & value, ctjs::FuncOp caller) {
 
 bool effectQueries::invalidateCall(ctjs::CallDirectOp call, flow & state) const {
     if (!closedEnvironment || !effectCalleeMatches(call, module)) { return false; }
-    auto target =
-        mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+    auto target = call.getTarget();
     const auto found = summaries.find(target);
     auto newTarget = call.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
     if (!target || found == summaries.end() || !found->second.known || !newTarget ||

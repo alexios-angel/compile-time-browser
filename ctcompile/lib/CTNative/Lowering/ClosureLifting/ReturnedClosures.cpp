@@ -41,7 +41,7 @@ void closureLifter::returnedClosureCensus() {
                     reject("parameter requires a closed function with visible callers");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = closedValueFlow::target(call);
+                auto fn = call.getTarget();
                 if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
@@ -58,12 +58,12 @@ void closureLifter::returnedClosureCensus() {
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                     if (use.getOperandNumber() >= 3) {
-                        if (!closedValueFlow::closed(closedValueFlow::target(call))) {
+                        if (!closedValueFlow::closed(call.getTarget())) {
                             reject("argument requires a closed callee");
                         }
                         continue;
                     }
-                    if (use.getOperandNumber() == 2 && closedValueFlow::target(call) == target) {
+                    if (use.getOperandNumber() == 2 && call.getTarget() == target) {
                         plan.calls.push_back(user);
                         continue;
                     }

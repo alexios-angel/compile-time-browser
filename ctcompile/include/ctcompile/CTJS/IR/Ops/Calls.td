@@ -105,6 +105,8 @@ def CTJS_CallDirectOp
   // THE FOUR CallOpInterface HOOKS, inline as func.call spells them. Every
   // operand is an argument, in the callee's block-argument order.
   let extraClassDeclaration = [{
+    /// The ctjs.func the symbol names, or null when it names nothing.
+    ::ctcompile::ctjs::FuncOp getTarget();
     ::mlir::Operation::operand_range getArgOperands() { return getOperation()->getOperands(); }
     ::mlir::MutableOperandRange getArgOperandsMutable() {
       return ::mlir::MutableOperandRange(getOperation());

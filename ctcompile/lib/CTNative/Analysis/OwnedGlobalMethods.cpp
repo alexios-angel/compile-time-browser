@@ -30,8 +30,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                                                   : host.callables().front().capturedMap;
     // An indirect factory has already passed the complete live host proof:
     // its unique wrapper callback produces this exact captured allocation.
-    auto factory = directFactory ? mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                                       directFactory, directFactory.getCalleeAttr())
+    auto factory = directFactory ? directFactory.getTarget()
                                  : (capture ? capture->allocation->getParentOfType<ctjs::FuncOp>()
                                             : ctjs::FuncOp{});
     auto publicationScope = field->getParentOfType<ctjs::FuncOp>();

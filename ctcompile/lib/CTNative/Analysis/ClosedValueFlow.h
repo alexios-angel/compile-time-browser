@@ -36,9 +36,6 @@ struct closedValueFlow {
         add(b);
         parent[find(b)] = find(a);
     }
-    static ctjs::FuncOp target(ctjs::CallDirectOp call) {
-        return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-    }
     static bool closed(ctjs::FuncOp fn) {
         return fn && !fn.getBody().empty() &&
                mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
@@ -72,7 +69,7 @@ struct closedValueFlow {
             }
         });
         module.walk([&](ctjs::CallDirectOp call) {
-            auto fn = target(call);
+            auto fn = call.getTarget();
             if (!fn || fn.getBody().empty()) { return; }
             callers[fn].push_back(call);
             auto & entry = fn.getBody().front();

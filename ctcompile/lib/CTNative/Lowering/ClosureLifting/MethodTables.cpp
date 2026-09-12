@@ -82,7 +82,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     }
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = closedValueFlow::target(call);
+                auto fn = call.getTarget();
                 if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
@@ -127,7 +127,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
-                    auto fn = closedValueFlow::target(call);
+                    auto fn = call.getTarget();
                     if (use.getOperandNumber() == 0 && globalCalls.contains(call)) {
                         continue; // the live host edge checks this exact receiver
                     }
@@ -189,7 +189,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     call && use.getOperandNumber() == 2 &&
                     (call->hasAttr(kNativeStoredCall) || globalCalls.contains(call)) &&
-                    closedValueFlow::target(call) == targetOf(made)) {
+                    call.getTarget() == targetOf(made)) {
                     plans[made].calls.push_back(call);
                     continue;
                 }

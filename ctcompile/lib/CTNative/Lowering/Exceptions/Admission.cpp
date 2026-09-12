@@ -27,8 +27,7 @@ struct nonthrowingPrimitives {
     }
 
     bool call(ctjs::CallDirectOp direct) {
-        auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-            direct, direct.getCalleeAttr());
+        auto target = direct.getTarget();
         if (!target || target.getBody().empty() || !target.getBody().hasOneBlock() ||
             target.getUpvalueCount() != 0 ||
             mlir::SymbolTable::getSymbolVisibility(target) !=

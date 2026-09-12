@@ -296,8 +296,7 @@ struct presenceAnalysis {
                         out.unknown = true;
                     }
                 } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-                    auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        call, call.getCalleeAttr());
+                    auto target = call.getTarget();
                     if (!target || target.getBody().empty()) {
                         out.unknown = true;
                     } else {
@@ -709,8 +708,7 @@ struct presenceAnalysis {
                 current = {};
             }
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                call, call.getCalleeAttr());
+            auto target = call.getTarget();
             const auto summary = summaries.find(target);
             if (summary == summaries.end()) {
                 current = {};
