@@ -54,6 +54,7 @@
 #include <locale>
 #include <numbers>
 #include <random>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -86,13 +87,30 @@ struct row {
 #define CT_STDLIB_ROW(name_, js_, target_, header_, verdict_, witness_, why_)                      \
     row{#name_, js_, target_, header_, verdict::verdict_, witness_, why_},
 constexpr row map[] = {
-#include "StdLibMap.inc"
+#include <ctcompile/StdLib/StdLibMap.def>
 };
 #undef CT_STDLIB_ROW
 
-static_assert(std::size(map) == CT_STDLIB_ROW_COUNT,
-              "the generated row count and the generated table disagree, which means the emitter "
-              "wrote one of them from something other than the .td");
+// THE COUNTS, COMPUTED FROM THE TABLE, so the test asserts a number it did not
+// write down: a row deleted from the .def changes what the test demands.
+constexpr int count_of(verdict which) {
+    int n = 0;
+    for (const row & each : map) { n += each.verdict == which ? 1 : 0; }
+    return n;
+}
+constexpr int CT_STDLIB_ROW_COUNT = static_cast<int>(std::size(map));
+constexpr int CT_STDLIB_EXACT_COUNT = count_of(verdict::exact);
+constexpr int CT_STDLIB_DIVERGENT_COUNT = count_of(verdict::divergent);
+constexpr int CT_STDLIB_REFUSED_COUNT = count_of(verdict::refused);
+
+// A divergent row without a witness is a claim with nothing behind it, and the
+// whole point of the classification is that the claim is checked.
+static_assert(std::ranges::all_of(map,
+                                  [](const row & each) {
+                                      return (each.verdict == verdict::divergent) ==
+                                             !each.witness.empty();
+                                  }),
+              "a row is divergent exactly when it names a witness");
 
 // --- comparing two answers ------------------------------------------------
 
@@ -140,7 +158,7 @@ std::string interpreted(context & cx, std::string_view expression) {
 // probe reads as the pair it is.
 
 struct probe {
-    // The record in StdLibMap.td this probe is evidence about.
+    // The record in StdLibMap.def this probe is evidence about.
     const char * row;
     const char * js;
     std::string (*native)();
@@ -337,7 +355,7 @@ int main() {
     // ---- every probe names a row, and every row that can be probed is -----
     //
     // THE COVERAGE NUMBER IS DERIVED FROM THE TABLE, not written down. A row
-    // added to StdLibMap.td with no probe beside it fails here, which is what
+    // added to StdLibMap.def with no probe beside it fails here, which is what
     // stops the map growing claims nothing checks - and a `refused` row that
     // acquires a probe fails too, because a refusal with a witness is a
     // `divergent` row that was filed under the wrong verdict.
@@ -345,7 +363,7 @@ int main() {
     for (const probe & each : probes) {
         const row * which = find_row(each.row);
         if (which == nullptr) {
-            std::printf("FAILED - the probe for %s names no row in StdLibMap.td\n", each.row);
+            std::printf("FAILED - the probe for %s names no row in StdLibMap.def\n", each.row);
             ++failures;
             continue;
         }

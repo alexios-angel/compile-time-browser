@@ -4,7 +4,7 @@
 The specification's §8 table maps a JavaScript global onto a C++ or Boost
 facility. This document is the verdict on each row.
 
-The table itself is `ctcompile/include/ctcompile/StdLib/StdLibMap.td` and the
+The table itself is `ctcompile/include/ctcompile/StdLib/StdLibMap.def` and the
 test that keeps this document honest is `ctcompile/test/Runtime/StdLibMap.cpp`
 (`ctest -R ctcompile_stdlib_map`). **Nothing here is asserted that the test does
 not check**, and the two places a claim can be made — the `.td`'s `Verdict`
@@ -381,12 +381,12 @@ The refusal list *is* the roadmap. In the order the corpora would want them:
 
 ## Notes for whoever writes the lowering
 
-* **`ctcompile/include/ctcompile/StdLib/StdLibMap.td` is the table.** It
-  deliberately includes nothing — not `OpBase.td`, not a dialect — so it reads
-  with `llvm-tblgen --dump-json` on a box with no MLIR. The declarative rewrite
-  rules belong in a **second** `.td` that includes this one and `OpBase.td`;
-  that is the layer where MLIR belongs, and it is why the rows are in TableGen
-  rather than in a fifth `.def`.
+* **`ctcompile/include/ctcompile/StdLib/StdLibMap.def` is the table**, an
+  X-macro the test walks with no tblgen, python or MLIR in the build. It was
+  TableGen until 2026-09-12 so that Phase 53's dialect could grow DRR `Pat<>`s
+  beside the rows; that dialect's rewrites turned out to be PDLL and C++, which
+  cannot read plain records, and ND-14 fixed the table's role as a tested
+  inventory rather than a lowering table.
 * **The rewrite rules could not be written in this phase**, and the reason is
   ownership rather than design: a `Pat<>` needs a target operation, Phase 53's
   `ctnative` dialect did not exist when this landed, and every file where a

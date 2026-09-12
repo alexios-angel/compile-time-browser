@@ -116,7 +116,7 @@ mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::
 // stops being wrong. Numeric conversion of undefined produces NaN, making
 // this difference reachable without an explicit NaN literal.
 //
-// StdLibMap.td already classifies the library spelling `Math.pow` as
+// StdLibMap.def already classifies the library spelling `Math.pow` as
 // Divergent with this exact witness; this is the operator path catching up.
 mlir::Value lowering::exponentiate(mlir::OpBuilder & b, mlir::Location where, mlir::Value base,
                                    mlir::Value exponent) {
