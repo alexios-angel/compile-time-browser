@@ -1,6 +1,7 @@
 //===- Presence.cpp - structured must-analysis for nested Map reads -------===//
 #include "Presence.h"
 
+#include "../OwnedGlobalRoots.h"
 #include "../PrimitiveAlternatives.h"
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -248,6 +249,10 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> payloads;
     llvm::DenseMap<mlir::Operation *, payloadKind> writes, keys;
     llvm::DenseSet<mlir::Operation *> sizes;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<fact>> publications;
+    llvm::DenseMap<mlir::Operation *, mlir::Value> storedOrigins;
+    llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> storedPayloads;
+    llvm::DenseMap<mlir::Value, fact> retainedEntries;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
 
@@ -315,6 +320,93 @@ struct presenceAnalysis {
                     changed |= summaries[fn].merge(summaries[target]);
                 }
             }
+        }
+    }
+
+    void collectPublications(const OwnedGlobalRoots * globals) {
+        if (!globals || !globals->proved()) { return; }
+        for (const auto & root : globals->roots()) {
+            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+            const auto & captured = *root.methodTable->capturedMap;
+            auto allocation = captured.allocation;
+            for (ctjs::CallOp call : captured.calls) {
+                if (actions.lookup(call) == "set" &&
+                    familyOf(call.getReceiver()) == familyOf(allocation.getResult())) {
+                    publications.try_emplace(call);
+                }
+            }
+        }
+    }
+
+    void proveRetainedEntries(const OwnedGlobalRoots * globals) {
+        if (!globals || !globals->proved()) { return; }
+        for (const auto & root : globals->roots()) {
+            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+            const auto & captured = *root.methodTable->capturedMap;
+            if (captured.childMaps.empty()) { continue; }
+            auto allocation = captured.allocation;
+            const auto outer = familyOf(allocation.getResult());
+            llvm::DenseSet<mlir::Value> children;
+            for (ctjs::ConstructOp child : captured.childMaps) {
+                children.insert(familyOf(child.getResult()));
+            }
+            fact invariant;
+            bool valid = true;
+            // ponytail: one literal String key with uniform scalar writes;
+            // extend the finite invariant only when another source needs it.
+            for (ctjs::CallOp call : captured.calls) {
+                if (!children.contains(familyOf(call.getReceiver()))) { continue; }
+                const auto action = actions.lookup(call);
+                if (action == "delete" || action == "clear" || action.empty()) {
+                    valid = false;
+                    break;
+                }
+                if (action != "set") { continue; }
+                auto constant = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+                const auto payload = storedPayloads.lookup(call);
+                const auto tag = payload.tag();
+                if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
+                    (tag != mlir::TypeID::get<ctjs::BooleanAttr>() &&
+                     tag != mlir::TypeID::get<ctjs::NumberAttr>() &&
+                     tag != mlir::TypeID::get<ctjs::StringAttr>())) {
+                    valid = false;
+                    break;
+                }
+                if (!invariant.key) {
+                    invariant = {{}, call.getArgs()[0], payload};
+                } else if (comparePrimitiveMapKeys(invariant.key, call.getArgs()[0]) !=
+                               PrimitiveMapKeyRelation::Same ||
+                           !(invariant.payload == payload)) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid || !invariant.key) { continue; }
+            bool published = false;
+            for (ctjs::CallOp call : captured.calls) {
+                if (actions.lookup(call) != "set" || familyOf(call.getReceiver()) != outer) {
+                    continue;
+                }
+                published = true;
+                const auto origin = storedOrigins.lookup(call);
+                auto child =
+                    origin ? origin.getDefiningOp<ctjs::ConstructOp>() : ctjs::ConstructOp{};
+                const auto found = publications.find(call);
+                if (!child || !llvm::is_contained(captured.childMaps, child) ||
+                    found == publications.end() ||
+                    llvm::none_of(found->second, [&](const fact & value) {
+                        return value.present && value.payload == invariant.payload &&
+                               comparePrimitiveMapKeys(value.key, invariant.key) ==
+                                   PrimitiveMapKeyRelation::Same;
+                    })) {
+                    valid = false;
+                    break;
+                }
+            }
+            // The closed owner provides the complete use census only. All
+            // initialization, keys and payloads above came from this analysis's
+            // first pass, without any retained-child or native report fact.
+            if (valid && published) { retainedEntries[outer] = invariant; }
         }
     }
 
@@ -418,8 +510,15 @@ struct presenceAnalysis {
     // schema inference or prior invocations. Keep a finite nullable payload
     // independently of the broader storage union. Every possible alias joins
     // its alternatives; an unproved write clears them. has supplies no tag.
-    void write(state & current, ctjs::CallOp call) const {
+    void write(state & current, ctjs::CallOp call) {
         fact added = entry(call, current);
+        if (auto found = publications.find(call); found != publications.end()) {
+            found->second.clear();
+            const auto child = instanceOf(call.getArgs()[1], current);
+            for (const fact & value : current.entries) {
+                if (value.instance == child) { found->second.push_back(value); }
+            }
+        }
         const auto nextSize = current.sizeAfterMutation(added, false);
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
             if (mayAlias(instance, added.instance)) { current.currentSizes.erase(instance); }
@@ -434,6 +533,8 @@ struct presenceAnalysis {
         }
         added.payload = current.alternatives(call.getArgs()[1]).categories();
         added.storedOrigin = instanceOf(call.getArgs()[1], current);
+        storedPayloads[call] = added.payload;
+        storedOrigins[call] = added.storedOrigin;
         for (fact & previous : current.entries) {
             if (!mayAlias(previous.instance, added.instance)) { continue; }
             const auto relation =
@@ -571,7 +672,7 @@ struct presenceAnalysis {
                 current.observations.insert(op);
             } else if (action == "get") {
                 const auto wanted = entry(call, current);
-                for (const fact & value : current.entries) {
+                for (fact & value : current.entries) {
                     if (!value.present || value.instance != wanted.instance ||
                         comparePrimitiveMapKeys(
                             value.key, wanted.key, current.keyEvidence(value.key),
@@ -579,13 +680,23 @@ struct presenceAnalysis {
                         continue;
                     }
                     proved.insert(op);
-                    if (value.storedOrigin) {
-                        current.aliases[call.getResult()] = value.storedOrigin;
-                    }
+                    // A present lookup returns this entry's actual value. A
+                    // repeated lookup retains that alias only while the entry
+                    // binding survives every intervening possible mutation.
+                    if (!value.storedOrigin) { value.storedOrigin = call.getResult(); }
+                    current.aliases[call.getResult()] = value.storedOrigin;
+                    const auto origin = value.storedOrigin;
                     if (value.payload.known) {
                         payloads[op] = value.payload;
                         current.scalars[call.getResult()] = value.payload;
                     }
+                    if (auto retained = retainedEntries.find(familyOf(call.getReceiver()));
+                        retained != retainedEntries.end()) {
+                        auto childEntry = retained->second;
+                        childEntry.instance = origin;
+                        current.add(childEntry);
+                    }
+                    break;
                 }
             } else if (action == "delete") {
                 current.scalars[call.getResult()] =
@@ -623,22 +734,35 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
-                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters) {
+                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
+                          const OwnedGlobalRoots * globals) {
     if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
     for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
     analysis.buildSummaries(module);
-    module.walk([&](ctjs::FuncOp fn) {
-        state initial;
-        if (!fn.getBody().empty()) {
-            for (mlir::BlockArgument argument : fn.getBody().front().getArguments()) {
-                const auto found = parameters.find(argument);
-                if (found != parameters.end()) { initial.scalars[argument] = found->second; }
+    analysis.collectPublications(globals);
+    const auto run = [&] {
+        module.walk([&](ctjs::FuncOp fn) {
+            state initial;
+            if (!fn.getBody().empty()) {
+                for (mlir::BlockArgument argument : fn.getBody().front().getArguments()) {
+                    const auto found = parameters.find(argument);
+                    if (found != parameters.end()) { initial.scalars[argument] = found->second; }
+                }
             }
-        }
-        analysis.region(fn.getBody(), initial);
-    });
+            analysis.region(fn.getBody(), initial);
+        });
+    };
+    run();
+    analysis.proveRetainedEntries(globals);
+    if (!analysis.retainedEntries.empty()) {
+        analysis.proved.clear();
+        analysis.payloads.clear();
+        analysis.writes.clear();
+        analysis.keys.clear();
+        run();
+    }
     for (ctjs::CallOp read : reads) {
         if (!analysis.proved.contains(read)) {
             return "nested native Map get requires presence on every reaching path for the same "

@@ -442,7 +442,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     }
     return map_detail::provePresence(
         module, calls, sizes, reads, optionalReads, typedReads, snapshotCopies,
-        [&](mlir::Value value) { return graph.find(value); }, parameters);
+        [&](mlir::Value value) { return graph.find(value); }, parameters, globals);
 }
 
 } // namespace
