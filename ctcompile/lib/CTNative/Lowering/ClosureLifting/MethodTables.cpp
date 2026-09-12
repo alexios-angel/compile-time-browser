@@ -40,7 +40,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
         return owner && owner->methodTable.has_value();
     };
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
-    for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
+    for (mlir::Value value : flow.nodes()) { families[flow.find(value)].push_back(value); }
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
     for (ctjs::CreateClosureOp made : closures) { ++creations[targetOf(made)]; }
     mlir::DominanceInfo dominance(module);
@@ -82,7 +82,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     }
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = closedValueFlow::target(call);
+                auto fn = call.getTarget();
                 if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
@@ -97,7 +97,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
             for (mlir::OpOperand & use : value.getUses()) {
                 auto * user = use.getOwner();
                 if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-                    const auto key = constantKeyOf(set.getKey());
+                    const auto key = ctjs::constantKey(set.getKey());
                     if (use.getOperandNumber() == 2 && (slots.lookup(set) || globalSlot(set))) {
                         boundaries.push_back(user);
                         continue;
@@ -112,7 +112,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     continue;
                 }
                 if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-                    if (use.getOperandNumber() != 0 || !fieldKey(constantKeyOf(get.getKey()))) {
+                    if (use.getOperandNumber() != 0 || !fieldKey(ctjs::constantKey(get.getKey()))) {
                         reject("read needs a supported constant key");
                     }
                     reads.push_back(get);
@@ -127,7 +127,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
-                    auto fn = closedValueFlow::target(call);
+                    auto fn = call.getTarget();
                     if (use.getOperandNumber() == 0 && globalCalls.contains(call)) {
                         continue; // the live host edge checks this exact receiver
                     }
@@ -173,7 +173,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
             }
         }
         for (ctjs::GetPropertyOp read : reads) {
-            auto field = fields.find(constantKeyOf(read.getKey()));
+            auto field = fields.find(ctjs::constantKey(read.getKey()));
             if (field == fields.end()) {
                 reject("reads a field that was never initialized");
                 continue;
@@ -189,7 +189,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     call && use.getOperandNumber() == 2 &&
                     (call->hasAttr(kNativeStoredCall) || globalCalls.contains(call)) &&
-                    closedValueFlow::target(call) == targetOf(made)) {
+                    call.getTarget() == targetOf(made)) {
                     plans[made].calls.push_back(call);
                     continue;
                 }
@@ -226,8 +226,8 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
         for (ctjs::GetPropertyOp read : reads) {
             read->setAttr(kNativeMethodTable, name);
             read->setAttr(kNativeTableField,
-                          mlir::StringAttr::get(context, constantKeyOf(read.getKey())));
-            auto made = fields[constantKeyOf(read.getKey())]
+                          mlir::StringAttr::get(context, ctjs::constantKey(read.getKey())));
+            auto made = fields[ctjs::constantKey(read.getKey())]
                             .getValue()
                             .getDefiningOp<ctjs::CreateClosureOp>();
             read->setAttr(kNativeEnvironment,
@@ -244,13 +244,7 @@ void closureLifter::discardNativeSourceFacts() {
     // Module reports and presentation locations are not operation authority.
     module.walk([](mlir::Operation * op) {
         if (llvm::isa<mlir::ModuleOp>(op)) { return; }
-        llvm::SmallVector<mlir::StringAttr> discard;
-        for (mlir::NamedAttribute attribute : op->getAttrs()) {
-            if (attribute.getName().getValue().starts_with("ctnative.")) {
-                discard.push_back(attribute.getName());
-            }
-        }
-        for (mlir::StringAttr name : discard) { op->removeAttr(name); }
+        removeAttrsWithPrefix(op, "ctnative.");
     });
 }
 

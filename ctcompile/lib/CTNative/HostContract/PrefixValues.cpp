@@ -140,7 +140,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
                        ? stop(operation, "realm property value has not been initialized by source")
                        : field->second;
         }
-        if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
+        if (owner.kind != prefixValue::Kind::object || !text ||
+            !ctjs::ordinaryKey(text.getValue())) {
             return stop(operation, "property read lacks a fresh ordinary receiver/key");
         }
         auto field = objects[owner.object].fields.find(text.getValue());
@@ -164,7 +165,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
             publication(write, owner, value);
             return {};
         }
-        if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
+        if (owner.kind != prefixValue::Kind::object || !text ||
+            !ctjs::ordinaryKey(text.getValue())) {
             return stop(operation, "property write lacks a fresh ordinary receiver/key");
         }
         const auto value = values.lookup(write.getValue());
@@ -184,8 +186,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         auto computed = llvm::dyn_cast<ctjs::DeletePropertyOp>(operation);
         auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation);
         const auto owner = values.lookup(computed ? computed.getObject() : named.getObject());
-        const auto key = computed ? keyOf(computed.getKey()) : named.getName();
-        if (owner.kind != prefixValue::Kind::object || !ordinaryKey(key)) {
+        const auto key = computed ? ctjs::constantKey(computed.getKey()) : named.getName();
+        if (owner.kind != prefixValue::Kind::object || !ctjs::ordinaryKey(key)) {
             return stop(operation, "property deletion lacks a fresh ordinary receiver/key");
         }
         objects[owner.object].fields.erase(key);

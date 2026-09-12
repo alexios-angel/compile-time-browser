@@ -325,7 +325,7 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
     if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
     mlir::Block & entry = target.getBody().front();
-    const unsigned parameters = entry.getNumArguments() - 3;
+    const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     // CONDITION 4: every use of the closure VALUE is a call this lowers.
     //
     // A NAME'S CLOSURE MAY HAVE NO USES AT ALL - PHASE 59 SLICE 2 STEP 4.

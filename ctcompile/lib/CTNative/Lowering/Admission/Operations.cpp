@@ -226,14 +226,17 @@ bool admission::op(mlir::Operation * o) {
                 // A METHOD FIELD IS NOT A FIELD. Its store lowers to
                 // nothing and it takes no space in the class, so it is not
                 // a key that shadows an inherited name either.
-                if (!user->hasAttr("ctnative.method")) { written.insert(keyOf(set.getKey())); }
+                if (!user->hasAttr("ctnative.method")) {
+                    written.insert(ctjs::constantKey(set.getKey()));
+                }
             }
         }
         for (mlir::Operation * user : accesses) {
             if (user->hasAttr("ctnative.method")) { continue; }
-            const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
-                                            ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
-                                            : keyOf(llvm::cast<SetPropertyOp>(user).getKey());
+            const llvm::StringRef key =
+                llvm::isa<GetPropertyOp>(user)
+                    ? ctjs::constantKey(llvm::cast<GetPropertyOp>(user).getKey())
+                    : ctjs::constantKey(llvm::cast<SetPropertyOp>(user).getKey());
             if (!isCIdentifier(key)) {
                 return refuse(("field `" + key + "` is not a C identifier").str());
             }
@@ -310,7 +313,7 @@ bool admission::op(mlir::Operation * o) {
             // rules out a hole; every other key is an index, and the index
             // has to be a number - `a[k]` with a string `k` reads a
             // property, and `a["push"]` is a function.
-            if (keyOf(get.getKey()) == "length") { return true; }
+            if (ctjs::constantKey(get.getKey()) == "length") { return true; }
             return numeric(get.getKey(), "array index");
         }
         if (!isClosedObject(get.getObject())) {

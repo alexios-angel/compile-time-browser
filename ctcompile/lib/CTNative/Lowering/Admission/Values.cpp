@@ -21,14 +21,6 @@ bool admission::numeric(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// A value used as a BOOLEAN.
-bool admission::boolean(mlir::Value v, llvm::StringRef where) {
-    if (carrierOf(typeOf(v)) != carrier::boolean) {
-        return refuse((where + " operand is " + printed(typeOf(v)) + ", not a boolean").str());
-    }
-    return true;
-}
-
 // An observation preserves the alternatives of a proved scalar carrier.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     const auto stored = carrierOf(typeOf(v));
@@ -145,13 +137,6 @@ bool admission::isCellParameter(mlir::Value v) {
 // lowering, and every rule below that asks about a cell asks about either.
 bool admission::namesASharedCell(mlir::Value v) {
     return isCarriedCell(v.getDefiningOp()) || isCellParameter(v);
-}
-
-llvm::StringRef admission::keyOf(mlir::Value key) {
-    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return str ? str.getValue() : llvm::StringRef{};
 }
 
 bool admission::isCIdentifier(llvm::StringRef key) {
@@ -355,7 +340,7 @@ std::string admission::whyNotDense(mlir::Value array) {
         mlir::Operation * user = use.getOwner();
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0) {
-                const llvm::StringRef key = keyOf(set.getKey());
+                const llvm::StringRef key = ctjs::constantKey(set.getKey());
                 if (key == "length") {
                     return "an array literal whose `length` is assigned - that resizes it, "
                            "and a resize leaves holes no `std::vector` can hold";
@@ -376,7 +361,7 @@ std::string admission::whyNotDense(mlir::Value array) {
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0) {
-                const llvm::StringRef key = keyOf(get.getKey());
+                const llvm::StringRef key = ctjs::constantKey(get.getKey());
                 if (key.empty() || key == "length") { continue; }
                 return ("an array literal read through the named property `" + key + "`").str();
             }

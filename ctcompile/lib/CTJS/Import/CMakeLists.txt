@@ -27,9 +27,4 @@ target_link_libraries(ctcompile-ctjs-import
     MLIRIR
     MLIRControlFlowDialect)
 
-# The generated headers are SYSTEM - see the note in ctcompile/CMakeLists.txt.
-target_include_directories(ctcompile-ctjs-import SYSTEM
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
-
 add_library(ctcompile::ctjs-import ALIAS ctcompile-ctjs-import)

@@ -9,8 +9,9 @@
 //
 // UNDER UPSTREAM'S OWN FLAG NAME, `-mlir-to-cpp`, and pointed at OUR emitter.
 // That is the whole trick behind Stage 47A's gate: upstream's EmitC lit tests
-// are vendored verbatim in ctcompile/test/Target/Cpp/upstream/ and their RUN
-// lines say `mlir-translate -mlir-to-cpp`, so the only thing that has to move
+// are vendored in ctcompile/test/Target/Cpp/upstream/ (which tag each one is
+// from: TranslateToCpp.cpp's header) and their RUN lines say
+// `mlir-translate -mlir-to-cpp`, so the only thing that has to move
 // is which binary lit calls `mlir-translate` - which is one lit.local.cfg,
 // rather than 35 edited test files.
 //

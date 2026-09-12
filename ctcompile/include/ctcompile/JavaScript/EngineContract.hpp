@@ -100,24 +100,4 @@ static_assert(!std::is_trivially_copyable_v<function_proto>,
               "this assert is where that is noticed");
 static_assert(!std::is_trivially_copyable_v<program>, "the same, one level up");
 
-// --- THE POD HEADER OF A PROTO -------------------------------------------
-// The fields a serialized proto can write as a fixed record, before the
-// variable-length tables. Named here so Phase 15's record and this list cannot
-// drift silently: adding a field to function_proto without adding it here
-// leaves it unserialized, and nothing else would say so.
-struct proto_header {
-    std::uint16_t param_count;
-    std::uint16_t frame_size;
-    bool is_arrow;
-    bool is_generator;
-    std::uint32_t source_begin;
-    std::uint32_t source_end;
-};
-static_assert(std::is_trivially_copyable_v<proto_header>);
-
-// The entry point of a program is functions[0] - the top-level script. Stated
-// as a named constant because Phase 15's image format needs an entry index and
-// hard-coding 0 in three places is how they drift.
-inline constexpr std::size_t entry_function_index = 0;
-
 } // namespace ctcompile::engine_contract

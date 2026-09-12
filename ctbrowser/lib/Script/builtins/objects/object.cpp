@@ -889,7 +889,7 @@ void install_object(context & cx) {
             // THE SNAPSHOT IS A ROOT. A [[Set]] on the target can run a page's
             // setter, which can allocate, which can collect - and until it is
             // stored, a copied value's only reference is this vector, which no
-            // root in GCRoots.def reaches.
+            // root of context::each_root reaches.
             std::vector<value> held;
             held.reserve(entries.size());
             for (const auto & entry : entries) { held.push_back(entry.second); }

@@ -81,9 +81,9 @@ def main():
         assert created.count("text_length(capture_text)") == 2, created
         assert "append_marker(text)" in created, created
         if label == "callables":
-            assert "constexpr int32_t seed = 40;" in created, created
-            assert "constexpr int32_t offset = 2;" in created, created
-            assert "constexpr int32_t after = seed + offset;" in created, created
+            assert "int32_t const seed = 40;" in created, created
+            assert "int32_t const offset = 2;" in created, created
+            assert "int32_t const after = seed + offset;" in created, created
             assert re.search(
                 r"auto const second = ctnative::ctn_env_string\s*[({]", created
             ), created

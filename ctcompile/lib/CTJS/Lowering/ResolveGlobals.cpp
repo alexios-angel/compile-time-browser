@@ -132,7 +132,7 @@
 //
 //     THE SUMMARY'S LIMIT IS THIS CLAUSE'S OWN LIMIT, deliberately. A
 //     `constructor` key computed at run time is invisible to the summary
-//     exactly as `constant_key` makes it invisible here, so the closed world
+//     exactly as `constantKey` makes it invisible here, so the closed world
 //     has ONE stated hole rather than a different one on each side of the
 //     importer. An earlier summary refused every op::get_index in a body whose
 //     string pool held the word, which bought nothing the IR walk was not
@@ -440,7 +440,7 @@ std::optional<std::string> dynamic_global_writes(
         // desugared - and for `({}).constructor`, neither of which can be the
         // compiler. may_be_function() says which receivers can.
         if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
-            if (constant_key(get.getKey()) == "constructor" &&
+            if (constantKey(get.getKey()) == "constructor" &&
                 (super_is_open || may_be_function(get.getObject()))) {
                 mark(get.getResult(), watched::compiler);
             }
@@ -464,7 +464,7 @@ std::optional<std::string> dynamic_global_writes(
                    ")";
         }
         mlir::Block & entry = target.getBody().front();
-        const unsigned parameters = entry.getNumArguments() - 3;
+        const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
         if (supplied > parameters) {
             return std::string{name_of(kind)} + " is passed to " + target.getSymName().str() +
                    " beyond its " + std::to_string(parameters) +
@@ -515,7 +515,7 @@ std::optional<std::string> dynamic_global_writes(
                 // being converted to a string, and the property that comes out
                 // belongs to somebody else's object - marked conservatively,
                 // because narrowing that is not what this clause is about.
-                const llvm::StringRef key = constant_key(get.getKey());
+                const llvm::StringRef key = constantKey(get.getKey());
                 const bool hands_back = kind == watched::compiler
                                             ? hands_back_the_compiler(key)
                                             : hands_back_the_global_object(key);
@@ -534,7 +534,7 @@ std::optional<std::string> dynamic_global_writes(
                 if (use.getOperandNumber() != 0) {
                     return std::string{name_of(kind)} + " escapes into " + describe(op);
                 }
-                const llvm::StringRef key = constant_key(set.getKey());
+                const llvm::StringRef key = constantKey(set.getKey());
                 if (kind == watched::global_object && !key.empty() && key != "__proto__") {
                     bound_through.insert(
                         {mlir::StringAttr::get(module.getContext(), key), describe(op)});
@@ -711,7 +711,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             FuncOp target = answer.target;
             ++resolvedGlobals;
             ++resolved_here;
-            const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+            const unsigned parameters =
+                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
 
             // ---- the rewrite, per load ----------------------------------------
             std::optional<std::string> open;
@@ -856,7 +857,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
                 continue;
             }
-            const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+            const unsigned parameters =
+                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
             // ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO
             // SOMEBODY ELSE. CallDirectOp::verifySymbolUses holds the operand
             // count equal to the entry block's, so a surplus call must be

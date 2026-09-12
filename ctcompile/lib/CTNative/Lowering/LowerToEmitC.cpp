@@ -309,7 +309,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             std::string reason;
             fn.getBody().walk([&](mlir::Operation * op) {
                 if (!reason.empty() || nativeObjectFieldGroup(op) < 0) { return; }
-                const auto key = admission::keyOf(op->getOperand(1));
+                const auto key = ctjs::constantKey(op->getOperand(1));
                 const auto storage = carrierOf(fieldTypes.lookup(key));
                 if (!isScalarCarrier(storage) && !isStringCarrier(storage)) {
                     reason = "owning field `" + key.str() +

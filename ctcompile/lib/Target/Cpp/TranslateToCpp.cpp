@@ -12,8 +12,11 @@
 // next LLVM bump, and a whitespace change makes the real diff unreadable. It is
 // listed in .clang-format-ignore for exactly that reason.
 //
-//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the version
-//             cmake/LLVMVersion.cmake pins and the one this builds against
+//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the FORK BASE. The
+//             build pins 23.1.0 (cmake/LLVMVersion.cmake); the 22 -> 23 bump
+//             only removed the `emitc.apply` printer here and deferred rebasing
+//             onto 23's emitter (ctcompile/docs/LLVMUpgrade.md), so the diff
+//             against 22.1.8 is still the one to read at the next bump.
 //   file:     mlir/lib/Target/Cpp/TranslateToCpp.cpp
 //   sha256:   70003bc0d44bd6a467cd151a3492ea50e319e30a87cd975cf0f43a19a7cae0e8
 //   re-fetch: curl -fsSL https://raw.githubusercontent.com/llvm/llvm-project/\
@@ -28,11 +31,13 @@
 // entry, which is the opposite of lexical scoping.
 //
 // WHAT KEEPS THIS A SUPERSET RATHER THAN A DIVERGENCE, and it is not good
-// intentions: upstream's own 35 EmitC lit tests are vendored UNMODIFIED beside
-// ours in ctcompile/test/Target/Cpp/upstream/ and run against this file. A
-// change here that breaks one of them is a change that has stopped being a
-// superset, and it fails the suite the same afternoon rather than at the next
-// bump.
+// intentions: upstream's own 35 EmitC lit tests are vendored beside ours in
+// ctcompile/test/Target/Cpp/upstream/ and run against this file: 31 are
+// 22.1.8's unmodified, lvalue/global/common-cpp are 23.1.0's unmodified, and
+// expressions.mlir is 22's minus its two `emitc.apply` functions with one
+// expectation from 23 (its header says which). A change here that breaks one
+// of them is a change that has stopped being a superset, and it fails the
+// suite the same afternoon rather than at the next bump.
 //
 // Native printing extensions are gated by ctnative attributes. Source-name
 // allocation lives in Names/, const-binding analysis in Const/, and finite
@@ -40,7 +45,6 @@
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
 #include "Const/Bindings.h"
-#include "Constexpr/Bindings.h"
 #include "Callables/Body.h"
 #include "Names/SourceNames.h"
 #include "ReadableFloat.h"
@@ -200,8 +204,7 @@ struct CppEmitter {
 
   /// Emits a declaration of a variable with the given type and name.
   LogicalResult emitVariableDeclaration(Location loc, Type type,
-                                        StringRef name, bool constant = false,
-                                        bool constantExpression = false);
+                                        StringRef name, bool constant = false);
 
   /// Emits the variable declaration and assignment prefix for 'op'.
   /// - emits separate variable followed by std::tie for multi-valued operation;
@@ -249,15 +252,10 @@ struct CppEmitter {
   void finishFunction() {
     sourceNames.finish();
     constBindings.finish();
-    constexprBindings.finish();
   }
   bool isConstBinding(Value value) {
     return (!isa<OpResult>(value) || !shouldDeclareVariablesAtTop()) &&
            constBindings.qualifies(value);
-  }
-  bool isConstexprBinding(Value value) {
-    return isa<OpResult>(value) && !shouldDeclareVariablesAtTop() &&
-           constexprBindings.qualifies(value);
   }
 
   /// Return the existing or a new name for a loop induction variable of an
@@ -374,7 +372,6 @@ private:
 
   ctcompile::cpp::SourceNames sourceNames;
   ctcompile::cpp::ConstBindings constBindings;
-  ctcompile::cpp::ConstexprBindings constexprBindings;
 
   /// Only emit file ops whos id matches this value.
   std::string fileId;
@@ -1587,7 +1584,6 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
 void CppEmitter::prepareFunction(Operation *function,
                                 ArrayRef<std::string> parameters) {
   constBindings.prepare(function);
-  constexprBindings.prepare(function, constBindings);
   sourceNames.prepare(function, [&](Value value) {
     auto result = dyn_cast<OpResult>(value);
     if (!result)
@@ -1900,8 +1896,7 @@ LogicalResult CppEmitter::emitVariableDeclaration(OpResult result,
   if (failed(emitVariableDeclaration(result.getOwner()->getLoc(),
                                      result.getType(),
                                      getOrCreateName(result),
-                                     isConstBinding(result),
-                                     isConstexprBinding(result))))
+                                     isConstBinding(result))))
     return failure();
   if (trailingSemicolon)
     os << ";\n";
@@ -1972,8 +1967,7 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
         return success();
       if (hasValueInScope(result))
         return op.emitError("result variable for the operation already declared");
-      os << (isConstexprBinding(result) ? "constexpr auto " :
-             isConstBinding(result) ? "auto const " : "auto ")
+      os << (isConstBinding(result) ? "auto const " : "auto ")
          << getOrCreateName(result) << " = ";
     } else {
       if (failed(emitVariableDeclaration(result, /*trailingSemicolon=*/false)))
@@ -2127,8 +2121,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
 }
 
 LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
-                                                  StringRef name, bool constant,
-                                                  bool constantExpression) {
+                                                  StringRef name, bool constant) {
   if (auto arrType = dyn_cast<emitc::ArrayType>(type)) {
     if (failed(emitType(loc, arrType.getElementType())))
       return failure();
@@ -2138,11 +2131,9 @@ LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
     }
     return success();
   }
-  if (constantExpression)
-    os << "constexpr ";
   if (failed(emitType(loc, type)))
     return failure();
-  if (constant && !constantExpression)
+  if (constant)
     os << " const";
   os << " " << name;
   return success();

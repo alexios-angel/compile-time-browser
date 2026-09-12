@@ -81,18 +81,18 @@ std::string admission::whyOpen(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
-            use.getOperandNumber() == 0 && keyOf(user->getOperand(1)) == "__proto__") {
+            use.getOperandNumber() == 0 && ctjs::constantKey(user->getOperand(1)) == "__proto__") {
             return "an object literal reached through the inherited Object.prototype.__proto__ "
                    "accessor";
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0) {
-                if (!keyOf(get.getKey()).empty()) { continue; }
+                if (!ctjs::constantKey(get.getKey()).empty()) { continue; }
                 return "an object literal reached through a dynamic key";
             }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0) {
-                if (!keyOf(set.getKey()).empty()) { continue; }
+                if (!ctjs::constantKey(set.getKey()).empty()) { continue; }
                 return "an object literal reached through a dynamic key";
             }
             if (use.getOperandNumber() == 2) {
@@ -156,7 +156,7 @@ std::string admission::whyOpenReceiver(mlir::Value self) {
         mlir::Operation * user = use.getOwner();
         if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
             use.getOperandNumber() == 0) {
-            if (keyOf(user->getOperand(1)) == "__proto__") {
+            if (ctjs::constantKey(user->getOperand(1)) == "__proto__") {
                 return "it reaches the inherited Object.prototype.__proto__ accessor";
             }
             continue;

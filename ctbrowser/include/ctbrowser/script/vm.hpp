@@ -1348,7 +1348,7 @@ public:
 
     // A VALUE THE COLLECTOR CAN SEE, FOR AS LONG AS A C++ SCOPE HOLDS IT.
     //
-    // The precise collector walks exactly the roots in GCRoots.def, and a value
+    // The precise collector walks exactly the roots of each_root, and a value
     // in a C++ local is in none of them. `construct` allocates the instance,
     // then runs field initialisers, then calls the constructor body, with the
     // instance in a C++ local across both - under gc_stress that is a
@@ -1963,8 +1963,8 @@ private:
 
     // --- THE ONE ROOT INVENTORY --------------------------------------------
     //
-    // Every root the collector walks, in GCRoots.def's order and with that
-    // table's name on each, handed to a visitor. collect() marks through it
+    // Every root the collector walks, in CTBROWSER_ROOT_LABELS order and with
+    // that label on each, handed to a visitor. collect() marks through it
     // and nothing else about collect() changed when it was split out; the
     // escape oracle (type_record.cpp) walks the SAME inventory with the popped
     // frame's dead register window excluded, so a root the collector knows
@@ -2185,7 +2185,7 @@ private:
     // truncated until the compiled body returns, so the index stays valid and
     // the VALUES stay rooted - collect() marks registers_ in full.
     //
-    // NOT IN GCRoots.def, deliberately, unlike pending_new_target_ and
+    // NOT IN each_root, deliberately, unlike pending_new_target_ and
     // pending_closure_ beside them: these root an integer. There is nothing
     // here for the collector to trace.
     std::size_t pending_argv_base_ = 0;

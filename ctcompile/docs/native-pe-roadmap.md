@@ -291,11 +291,8 @@ Unknown effects, reentry, mutable captures and unsupported providers remain
 boundaries. Initial Map/Array and realm identities do not establish purity,
 compile-time execution permission or a complete native ownership proof.
 
-The emitted C++ now combines backward binding immutability with forward target
-[constant-expression analysis](native-constexpr-bindings.md). Exact scalar
-initializers can become `constexpr`, while runtime parameters, heap carriers and
-unsupported operations retain their prior qualification. This rederives target
-legality rather than trusting source BTA reports. Proved
+Immutable bindings print as `const`; a separate `constexpr` spelling was
+retired because the host compiler folds both identically. Proved
 [returned closures](native-returned-closures.md) with concrete signatures use
 creation-site lambdas and `std::function` aliases, with explicit owning captures
 and an owning tuple fallback for other admitted signatures. The final EmitC body

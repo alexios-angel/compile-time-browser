@@ -36,8 +36,7 @@ project(ctcompile
 set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
 get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
-list(APPEND CMAKE_MODULE_PATH "${CTCOMPILE_MONOREPO_ROOT}/cmake/modules"
-                              "${PROJECT_SOURCE_DIR}/cmake/modules")
+list(APPEND CMAKE_MODULE_PATH "${CTCOMPILE_MONOREPO_ROOT}/cmake/modules")
 include(CTProject)
 include(CTest)
 
@@ -47,10 +46,8 @@ include(CTest)
 # tree - which is the whole reason the standalone form is worth supporting.
 if(NOT TARGET ctbrowser::core)
   find_package(ctbrowser CONFIG REQUIRED)
-  set(CTCOMPILE_STANDALONE ON)
   message(STATUS "ctcompile: standalone against an installed ctbrowser")
 else()
-  set(CTCOMPILE_STANDALONE OFF)
   message(STATUS "ctcompile: building beside ctbrowser in the monorepo")
 endif()
 
@@ -122,6 +119,10 @@ if(CTCOMPILE_ENABLE_MLIR)
   # plain -I - and -I is searched before -isystem, so whatever llvm brew has
   # linked there shadows the install find_package chose. Measured on
   # 2026-09-02 with two llvms on the box. BEFORE puts the chosen one first.
+  # SYSTEM, so ctcompile's -Werror -Wconversion does not have to be relaxed to
+  # accommodate a dependency the engine does not have. That trade is spelled
+  # out where CTCOMPILE_WARNING_OPTIONS is set; this is the half of it that
+  # keeps the engine's bar where it is.
   include_directories(BEFORE SYSTEM ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 
   # THE PIN, CHECKED AT CONFIGURE TIME, through the function that already owns
@@ -146,11 +147,6 @@ if(CTCOMPILE_ENABLE_MLIR)
   include(TableGen)
   include(AddLLVM)
   include(AddMLIR)
-  # SYSTEM, so ctcompile's -Werror -Wconversion does not have to be relaxed to
-  # accommodate a dependency the engine does not have. That trade is spelled
-  # out where CTCOMPILE_WARNING_OPTIONS is set; this is the half of it that
-  # keeps the engine's bar where it is.
-  include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 
   # THE PDLL GUARD, INSTALLED AS THE TOOL ITSELF.
   #

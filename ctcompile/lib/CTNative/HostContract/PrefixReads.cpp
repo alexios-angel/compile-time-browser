@@ -47,7 +47,7 @@ struct emptyMapReader {
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             const auto owner = values.lookup(read.getObject());
-            const auto key = keyOf(read.getKey());
+            const auto key = ctjs::constantKey(read.getKey());
             if (owner.kind != prefixValue::Kind::resource ||
                 owner.object >= factory.resources.size()) {
                 return {};

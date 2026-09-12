@@ -59,7 +59,7 @@ prefixValue providerDiagnosticState::property(ctjs::GetPropertyOp read,
     if (text && !chargeText(prefix, text.getValue())) { return {}; }
     const auto & heap = objects ? *objects : prefix.objects;
     if (owner.kind == prefixValue::Kind::object && owner.object < heap.size() && text &&
-        ordinaryKey(text.getValue())) {
+        ctjs::ordinaryKey(text.getValue())) {
         // These identities were initialized by the source prefix. A missing
         // slot could consult a prototype and therefore cannot be summarized.
         const auto & fields = heap[owner.object].fields;
@@ -106,8 +106,8 @@ ctjs::CallOp providerDiagnosticState::consumer(ctjs::CallOp keys) {
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         auto load =
             read ? read.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
-        if (!read || !load || load.getName() != "Array" || keyOf(read.getKey()) != "from" ||
-            call.getReceiver() != load.getResult() ||
+        if (!read || !load || load.getName() != "Array" ||
+            ctjs::constantKey(read.getKey()) != "from" || call.getReceiver() != load.getResult() ||
             !llvm::is_contained(prefix.contract.initialIntrinsics, "Array")) {
             return {};
         }

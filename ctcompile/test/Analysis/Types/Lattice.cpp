@@ -37,7 +37,6 @@
 // is. Part 24 §A.2: "Every phase's gate is a comparison against the
 // interpreter."
 #include <ctcompile/CTNative/IR/CTNativeDialect.h>
-#include <ctcompile/CTNative/IR/CTNativeInterfaces.h>
 #include <ctcompile/CTNative/IR/CTNativeLattice.h>
 #include <ctcompile/CTNative/IR/CTNativeTypes.h>
 
@@ -46,10 +45,7 @@
 #include <ctbrowser/script/vm.hpp>
 
 #include "mlir/AsmParser/AsmParser.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/OwningOpRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -64,7 +60,6 @@ using ctcompile::ctnative::CTNativeDialect;
 using ctcompile::ctnative::kDefaultStringEncoding;
 using ctcompile::ctnative::kMaxVariantAlternatives;
 using ctcompile::ctnative::meet;
-using ctcompile::ctnative::StaticTypedOpInterface;
 using ctcompile::ctnative::StrEncoding;
 using mlir::Type;
 
@@ -356,20 +351,6 @@ const char * const kSampleTypes[] = {
 };
 
 //===--------------------------------------------------------------------===//
-// The StaticTyped interface, attached to an operation this dialect does not own
-//===--------------------------------------------------------------------===//
-//
-// PHASE 53 HAS NO OPERATIONS - that is the phase - so the interface is proved
-// against `builtin.unrealized_conversion_cast`, which can carry any result type
-// at all. An ExternalModel with no overrides uses the DEFAULT implementation
-// declared in CTNativeInterfaces.td, which is exactly the thing under test:
-// that the ODS default reads the single result's type and that the shared
-// `hasProvedNativeType()` can tell a proved type from an unproved one.
-struct CastIsStaticTyped
-    : public StaticTypedOpInterface::ExternalModel<CastIsStaticTyped,
-                                                   mlir::UnrealizedConversionCastOp> {};
-
-//===--------------------------------------------------------------------===//
 // The divergence pin
 //===--------------------------------------------------------------------===//
 //
@@ -536,37 +517,6 @@ int main() {
         const Type fifth = meet(four, five[kMaxVariantAlternatives]);
         check("the fifth falls off the cap into json",
               llvm::isa<ctcompile::ctnative::JsonType>(fifth));
-    }
-
-    // --- the StaticTyped interface ------------------------------------------
-    {
-        mlir::UnrealizedConversionCastOp::attachInterface<CastIsStaticTyped>(context);
-        mlir::OpBuilder builder(&context);
-        const mlir::Location loc = builder.getUnknownLoc();
-        mlir::OwningOpRef<mlir::ModuleOp> module(mlir::ModuleOp::create(builder, loc));
-        builder.setInsertionPointToStart(module->getBody());
-
-        const Type proved = parse(context, "!ctnative.num<f64>");
-        auto native = mlir::UnrealizedConversionCastOp::create(
-            builder, loc, mlir::TypeRange{proved}, mlir::ValueRange{});
-        auto nativeIface = mlir::cast<StaticTypedOpInterface>(native.getOperation());
-        check("the ODS default returns the single result's type",
-              nativeIface.getStaticType() == proved);
-        check("a ctnative result is a proved type", nativeIface.hasProvedNativeType());
-
-        auto builtin = mlir::UnrealizedConversionCastOp::create(
-            builder, loc, mlir::TypeRange{builder.getI32Type()}, mlir::ValueRange{});
-        auto builtinIface = mlir::cast<StaticTypedOpInterface>(builtin.getOperation());
-        check("a builtin result is NOT a proved type - an operation that claimed "
-              "the interface without an inference behind it",
-              !builtinIface.hasProvedNativeType());
-
-        auto twoResults = mlir::UnrealizedConversionCastOp::create(
-            builder, loc, mlir::TypeRange{proved, proved}, mlir::ValueRange{});
-        auto twoIface = mlir::cast<StaticTypedOpInterface>(twoResults.getOperation());
-        check("two results have no single static type, and that is not an error",
-              !twoIface.getStaticType());
-        check("and therefore nothing was proved about them", !twoIface.hasProvedNativeType());
     }
 
     // --- ND-1: the first declared divergence, pinned to the interpreter ------

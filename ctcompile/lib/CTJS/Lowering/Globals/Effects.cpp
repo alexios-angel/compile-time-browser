@@ -65,14 +65,6 @@ std::string describe(mlir::Operation * op) {
     return text;
 }
 
-// The constant string key of a property access, or empty.
-llvm::StringRef constant_key(mlir::Value key) {
-    auto constant = key.getDefiningOp<ConstantOp>();
-    if (!constant) { return {}; }
-    auto text = llvm::dyn_cast<StringAttr>(constant.getValue());
-    return text ? text.getValue() : llvm::StringRef{};
-}
-
 // CAN THIS VALUE BE A FUNCTION OBJECT?
 //
 // THE QUESTION THE `.constructor` CLAUSE FORGOT TO ASK. `o.constructor` is
@@ -161,7 +153,7 @@ bool may_be_function(mlir::Value value) {
 bool prototype_replaced(mlir::ModuleOp module) {
     bool replaced = false;
     module.walk([&](SetPropertyOp set) {
-        if (constant_key(set.getKey()) == "prototype" && may_be_function(set.getValue())) {
+        if (constantKey(set.getKey()) == "prototype" && may_be_function(set.getValue())) {
             replaced = true;
             return mlir::WalkResult::interrupt();
         }
@@ -217,7 +209,7 @@ bool hands_back_the_global_object(llvm::StringRef key) {
 //   call/apply/bind  hand back something that CALLS `Function`
 //
 // A COMPUTED KEY IS UNKNOWN and keeps the taint - which is what an empty
-// constant_key means here, and also what `o[""]` gets, harmlessly.
+// constantKey means here, and also what `o[""]` gets, harmlessly.
 bool hands_back_the_compiler(llvm::StringRef key) {
     return key.empty() || key == "constructor" || key == "prototype" || key == "__proto__" ||
            key == "call" || key == "apply" || key == "bind";

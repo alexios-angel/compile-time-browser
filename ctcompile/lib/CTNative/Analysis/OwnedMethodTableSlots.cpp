@@ -9,13 +9,6 @@
 
 namespace ctcompile::ctnative {
 namespace {
-llvm::StringRef keyOf(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    return key ? key.getValue() : llvm::StringRef{};
-}
-
 struct accesses {
     llvm::SmallVector<ctjs::SetPropertyOp> writes;
     llvm::SmallVector<ctjs::GetPropertyOp> reads;
@@ -68,10 +61,10 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
                 break;
             }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                fields[keyOf(store.getKey())].writes.push_back(store);
+                fields[ctjs::constantKey(store.getKey())].writes.push_back(store);
             } else {
                 auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
-                fields[keyOf(read.getKey())].reads.push_back(read);
+                fields[ctjs::constantKey(read.getKey())].reads.push_back(read);
             }
         }
         if (budgetExhausted) { break; }

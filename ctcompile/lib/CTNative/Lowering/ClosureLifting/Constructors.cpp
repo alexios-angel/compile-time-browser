@@ -99,9 +99,9 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
     for (mlir::Operation * user : c.getResult().getUsers()) {
         llvm::StringRef key;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            key = constantKeyOf(get.getKey());
+            key = ctjs::constantKey(get.getKey());
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            key = constantKeyOf(set.getKey());
+            key = ctjs::constantKey(set.getKey());
         }
         if (key == "prototype") {
             return "its constructor's `prototype` is read or written, which is a prototype "
@@ -124,7 +124,7 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
     mlir::Block & entry = target.getBody().front();
-    const unsigned parameters = entry.getNumArguments() - 3;
+    const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     // GUARD 5, before the generic clauses, so the diagnostic names the
     // prototype rather than whatever else the read happens to be.
     if (const std::optional<std::string> why = whyPrototypeIsTouched(c)) { return why; }

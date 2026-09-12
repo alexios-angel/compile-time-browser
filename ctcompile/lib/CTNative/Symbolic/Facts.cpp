@@ -165,8 +165,7 @@ Fact Analysis::operation(mlir::Operation * op) {
         if (!llvm::isa_and_nonnull<ctjs::UndefinedAttr>(get(call.getNewTarget()).literal)) {
             return {};
         }
-        auto target =
-            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        auto target = call.getTarget();
         return target ? returns.lookup(target) : Fact{};
     }
     return {};

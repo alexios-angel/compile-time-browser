@@ -12,7 +12,6 @@ add_library(ctcompile-ctjs-lowering
   EmitC/Constants.cpp
   EmitC/Support.cpp
   EmitC/Admission.cpp
-  CTJSToRuntime.cpp
   DropUncompiled.cpp
   EmitCBlockArguments.cpp
   LiftToSCF.cpp
@@ -35,9 +34,5 @@ target_link_libraries(ctcompile-ctjs-lowering
     MLIRUBDialect
     MLIRControlFlowToSCF
     MLIRTransforms)
-
-target_include_directories(ctcompile-ctjs-lowering SYSTEM
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 
 add_library(ctcompile::ctjs-lowering ALIAS ctcompile-ctjs-lowering)

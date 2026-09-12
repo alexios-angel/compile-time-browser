@@ -244,7 +244,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     mlir::Block & entry = target.getBody().front();
     const auto valueType = ctjs::ValueType::get(context);
     const unsigned captures = static_cast<unsigned>(target.getUpvalueCount());
-    const unsigned parameters = entry.getNumArguments() - 3;
+    const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
 
     // THE OBJECT PARAMETERS, READ BEFORE THE CAPTURES SHIFT THEM. The
     // census decided in terms of JS parameter numbers; the attribute is

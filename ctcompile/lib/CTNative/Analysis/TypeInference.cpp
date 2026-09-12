@@ -31,7 +31,6 @@
 // `(-1) >>> 0` is 4294967295, which does not fit an int32. That pair of facts
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
-#include "Inference/PropertyKey.h"
 #include "OwnedGlobalRoots.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -48,7 +47,7 @@
 #include <cmath>
 
 namespace ctcompile::ctnative {
-using inference_detail::constantKey;
+using ctjs::constantKey;
 
 void TypeValue::print(llvm::raw_ostream & os) const {
     if (type_ == nullptr) {

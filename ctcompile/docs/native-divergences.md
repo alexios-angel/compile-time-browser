@@ -297,7 +297,7 @@ not exist; each is listed so that phase cannot be written without meeting it.
 A confined site may be lowered by value only when **every value ever stored
 into it has a proved non-heap 54A type**. A boxed field inside a stack object
 is a reference the precise collector cannot see (it walks exactly
-`GCRoots.def`), so the object it points at is freed under it. Until Phase 47's
+`context::each_root`), so the object it points at is freed under it. Until Phase 47's
 per-field RAII rooting exists, anything else stays boxed. `couldBeHeap(Type)`
 mirrors `couldBeBigInt` (`TypeInference.cpp`): conservative on `boxed`,
 `json`, containers and `null`.
@@ -413,7 +413,7 @@ cases. So:
 This is not a corner of the language reachable only from a literal `NaN`.
 **Undefined is this tier's NaN** (ND-7), so `1 ** undefined` — a plain typo in
 ordinary source — computed `1` natively and `NaN` in the interpreter, on a
-program nothing refused. `StdLibMap.td` had classified the *library* spelling
+program nothing refused. `StdLibMap.def` had classified the *library* spelling
 `Math.pow` as Divergent with this exact witness since Phase 61, and
 `native-numeric.mlir` **pinned the bare `std::pow` call** — so the defect had a
 test defending it.
@@ -810,11 +810,11 @@ so the two messages stay distinguishable.
 ## ND-14 — the library map: fourteen mappings whose obvious C++ spelling is wrong
 
 **Status:** declared, listed target substitutions **refused**. **Against:** the ctbrowser VM.
-**Introduced:** Phase 61 (`StdLibMap.td`).
+**Introduced:** Phase 61 (`StdLibMap.def`).
 
 ### The divergence
 
-`ctcompile/include/ctcompile/StdLib/StdLibMap.td` classifies every library
+`ctcompile/include/ctcompile/StdLib/StdLibMap.def` classifies every library
 function the specification names as `exact` (19 rows), `divergent` (14) or
 `refused` (2). The fourteen divergent rows each carry a **witness expression**
 and the reason, and they are not corner cases:
@@ -842,7 +842,7 @@ use ECMAScript's fixed WhiteSpace + LineTerminator set. The former ASCII-helper
 
 ### What the tier does about it
 
-`StdLibMap.td` is a tested inventory, not a lowering table. Native builtin
+`StdLibMap.def` is a tested inventory, not a lowering table. Native builtin
 helpers and admission have their own proof paths; these classifications apply
 to the exact library expressions in each `Target` field. Repaired native
 helpers do not make those substitutions valid. The trim inventory correction
@@ -855,7 +855,7 @@ refuses, not so it can be emitted.
 ### The test
 
 `ctcompile/test/Runtime/StdLibMap.cpp`, registered as `ctcompile_stdlib_map`, over the
-TableGen-generated table.
+X-macro table.
 
 ---
 

@@ -16,6 +16,8 @@
 // A BASELINE WITHOUT ITS CONFIGURATION IS UNUSABLE SIX MONTHS LATER, so the
 // compiler, its flags, the CPU and the corpus sizes are recorded beside every
 // timing. The output is JSON on stdout; tools/check/baseline.py stores it.
+#include <ctcompile/Support/Manifest.hpp>
+
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/html.hpp>
@@ -78,33 +80,6 @@ struct stage {
     std::string stopped_because;
 };
 
-// A VM error carries a stack trace, and a stack trace carries newlines - which
-// are not legal inside a JSON string. Escaping is three lines and forgetting it
-// produces a file that every consumer rejects at load, which is exactly what
-// happened the first time this ran.
-[[nodiscard]] std::string json_escaped(std::string_view text) {
-    std::string out;
-    out.reserve(text.size() + 16);
-    for (const char c : text) {
-        switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20) {
-                char slot[7];
-                std::snprintf(slot, sizeof slot, "\\u%04x", static_cast<unsigned>(c));
-                out += slot;
-            } else {
-                out += c;
-            }
-        }
-    }
-    return out;
-}
-
 void print_json(std::string_view corpus, const std::vector<stage> & stages) {
     std::printf("    {\n      \"corpus\": \"%.*s\",\n      \"stages\": [\n",
                 static_cast<int>(corpus.size()), corpus.data());
@@ -114,8 +89,10 @@ void print_json(std::string_view corpus, const std::vector<stage> & stages) {
                     stages[i].name.c_str(), stages[i].ms, stages[i].bytes, stages[i].produced,
                     stages[i].completed ? "true" : "false");
         if (!stages[i].completed) {
-            std::printf(", \"stopped_because\": \"%s\"",
-                        json_escaped(stages[i].stopped_because).c_str());
+            // A VM error carries a stack trace, and a stack trace carries
+            // newlines, which are not legal inside a JSON string.
+            std::printf(", \"stopped_because\": %s",
+                        ctcompile::json_string(stages[i].stopped_because).c_str());
         }
         std::printf(" }%s\n", i + 1 == stages.size() ? "" : ",");
     }

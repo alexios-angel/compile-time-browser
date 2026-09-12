@@ -24,8 +24,7 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     // boxed dispatcher. That value does not escape merely by reaching an
     // unused implicit slot of another private body. Recheck non-observation
     // structurally; provenance annotations cannot authorize this exception.
-    auto body =
-        mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(direct, direct.getCalleeAttr());
+    auto body = direct.getTarget();
     if (!body || body.getBody().empty() || body.getUpvalueCount() != 0 ||
         mlir::SymbolTable::getSymbolVisibility(body) != mlir::SymbolTable::Visibility::Private) {
         return false;

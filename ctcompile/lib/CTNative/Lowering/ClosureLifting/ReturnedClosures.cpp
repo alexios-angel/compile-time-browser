@@ -8,7 +8,7 @@ void closureLifter::returnedClosureCensus() {
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     llvm::DenseSet<mlir::Value> returnedFamilies;
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
-    for (mlir::Value value : flow.nodes) {
+    for (mlir::Value value : flow.nodes()) {
         const auto root = flow.find(value);
         families[root].push_back(value);
         for (mlir::Operation * user : value.getUsers()) {
@@ -41,7 +41,7 @@ void closureLifter::returnedClosureCensus() {
                     reject("parameter requires a closed function with visible callers");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = closedValueFlow::target(call);
+                auto fn = call.getTarget();
                 if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
@@ -58,12 +58,12 @@ void closureLifter::returnedClosureCensus() {
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                     if (use.getOperandNumber() >= 3) {
-                        if (!closedValueFlow::closed(closedValueFlow::target(call))) {
+                        if (!closedValueFlow::closed(call.getTarget())) {
                             reject("argument requires a closed callee");
                         }
                         continue;
                     }
-                    if (use.getOperandNumber() == 2 && closedValueFlow::target(call) == target) {
+                    if (use.getOperandNumber() == 2 && call.getTarget() == target) {
                         plan.calls.push_back(user);
                         continue;
                     }
@@ -106,7 +106,7 @@ std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClos
     if (auto why = whyCapturesDoNotReach(c, c)) { return "returned closure: " + *why; }
     if (auto why = whyUpvalueReadsDoNotLift(c, target)) { return why; }
     for (mlir::Operation * site : plan.calls) {
-        if (argsOfCallSite(site).size() > entry.getNumArguments() - 3) {
+        if (argsOfCallSite(site).size() > entry.getNumArguments() - ctjs::implicit_arguments) {
             return "returned closure call has surplus arguments with frame semantics";
         }
         auto caller = site->getParentOfType<ctjs::FuncOp>();
