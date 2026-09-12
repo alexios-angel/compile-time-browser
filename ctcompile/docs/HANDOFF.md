@@ -40,16 +40,30 @@ subsequent **two-step rebuild and ownership CTest pass in 229.58s**, completing 
 same **nine baseline files / 28 diagnostics**. No browser/runtime/carrier/emitter
 source changed.
 
-**Checkpoint: native source execution and the standard full gate are pending.**
-The source workflow is still uncommitted. All 31 historical source bodies and exact
-Data **8359592c** remain unchanged. Node checks pass **80 observations / 66 mutations**.
-The source probe proves ownership for unchanged **99954bab**, but it remains **0/4
-native**: native inference joins its return to Opt Num, and direct global output
-requires a definite scalar type. Eight historical nested cases now have ownership
-while preserving this native refusal. Separate straight-line numeric-observer
-controls keep the method bodies and exercise existing nullable carriers; their C++
-gate is queued, so no native promotion is claimed yet. Full Bootstrap's last full-gate
-measurement remains **19/574**, Data **0/7 CommonJS, 0/7 browser, 0/8 AMD**.
+**1320795f** adds separately observed source controls **9017c484** (prior value,
+**4/4 native / nine calls**) and **2f7dad4b** (dynamic String keys, get-or-null and
+last-child removal, **6/6 native / sixteen calls**), both modes. Their entry observes
+`get(...) === 41`; the dynamic control also calls `remove('missing')` to establish
+its current formal category. Both retain the original method bodies and reuse the
+existing `nullable_scalar` carrier. All **31 historical source bodies** and exact
+Data **8359592c** remain unchanged. The native cohort passes **10 native programs /
+30 refusals**, **80 typed Node/interpreter observations / 66 distinguishing mutations**
+in **26.42s**. Both C++ layouts pass GCC/Clang/no-Script and lifetime sanitizers
+through **128 future calls**, previous values, saved-child clear, dynamic key ownership,
+child deletion/outer recreation, detached methods, entry reexecution and final release.
+Complete proof budgets/cutoffs: **2499/32** and **13397/32**.
+
+The unchanged prior-read source **99954bab** now proves ownership but remains **0/4
+native**: native inference joins its return to Opt Num, while direct global output
+requires a definite scalar. Eight historical cases now own their Maps while retaining
+this native refusal. Their preparation preserves actual receiver/callee/capture edges,
+call counts and source effects; stale/forged fingerprints still reject. Original dynamic
+source **0205c78a** remains **0/6** without ownership: its parameterized removal has no
+current call. These sources were preserved separately from the execution controls.
+
+**Checkpoint: the standard full gate is running on 1,367 frozen inputs.** All code is
+committed. Full Bootstrap's last full-gate measurement remains **19/574**, Data
+**0/7 CommonJS, 0/7 browser, 0/8 AMD**; no new full-gate result is claimed yet.
 
 Next: carry the original nullable result through an independently proved native
 result/output boundary, then exact Data's mixed/field-bearing payloads, object
@@ -59,11 +73,12 @@ indices: runtime **aca7091c** already fixed them, but `ownArrayIndex` still reje
 "0" with a stale disagreement comment. Details: `/tmp/ctcompile-nullable-next.md`
 and `/tmp/ctcompile-nullable-escape-next.md`.
 
-Evidence so far: `/tmp/ctcompile-nullable-{corrected-focused.log,
-corrected-focused-detail.log,owner-fix-focused.log,owner-fix-focused-detail.log,
-probe.log,final-node.log}`. Pending workflow: `/tmp/ctcompile-nullable-native-focused.log`,
-then `/tmp/ctcompile-nullable-full.log`. Parser remains **8eb3375**; Claude's pending
-**08:00:13 / 08:28:55 UTC** runtime/ABI journals still apply. Nothing was pushed.
+Evidence: `/tmp/ctcompile-nullable-boolean-focused.log` and
+`/tmp/ctcompile-nullable-boolean-probe.log`; focused ownership/escape evidence remains
+in the earlier nullable logs. Pending full workflow: `/tmp/ctcompile-nullable-full.log`.
+Parser remains **8eb3375**. Claude's pending **08:00:13 / 08:28:55 / 09:42:23 UTC**
+runtime/ABI journals must be reread after integration, including the pending shared
+`CTJS/Lowering/EmitC/Status.cpp` block-order fix. Nothing was pushed.
 
 ## Recovered inverted Map guards and mixed static BigInt retention, 2026-09-12
 
