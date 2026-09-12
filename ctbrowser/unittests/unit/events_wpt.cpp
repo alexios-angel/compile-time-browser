@@ -165,8 +165,12 @@ void test_related_target_is_retargeted_and_cleared() {
        " var e3 = new FocusEvent('demo', {relatedTarget: shadow});"
        " var ran = false; host.addEventListener('demo', function () { ran = true; });"
        " host.dispatchEvent(e3); seen.push(!ran && e3.target === null);"
+       " var e4 = new FocusEvent('demo', {relatedTarget: inner});"
+       " document.body.addEventListener('demo', function () { document.body.appendChild(inner); }, "
+       "{once: true});"
+       " document.body.dispatchEvent(e4); seen.push(e4.relatedTarget === host); inner.remove();"
        " return seen.join(','); })()",
-       "true,true,true,true");
+       "true,true,true,true,true,true");
 }
 
 void test_focus_moves_with_blur_and_related_targets() {

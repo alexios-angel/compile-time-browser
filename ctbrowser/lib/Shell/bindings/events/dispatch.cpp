@@ -312,10 +312,16 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     const value related_value = cx.lookup_property(event, "relatedTarget");
     const node_id related = handle_of(related_value);
     const bool related_in_shadow = related && doc_ != nullptr && in_shadow(related);
-    const auto related_for = [&](const path_step & step) {
-        if (!related_in_shadow) { return related_value; }
-        return wrap(cx, retarget(related, step));
-    };
+    // PER STEP, AND BEFORE ANY LISTENER RUNS: "append to an event path"
+    // fixes each item's relatedTarget as the path is built, so a listener
+    // that moves the related node (relatedTarget.window.js, "part 2") does
+    // not change what the later steps and the final value see.
+    std::vector<node_id> related_steps(path.size());
+    if (related_in_shadow) {
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            related_steps[i] = retarget(related, path[i]);
+        }
+    }
     if (related_in_shadow && at.on == listen_on::node && retarget(related, at) == at.node &&
         related != at.node) {
         object->set("target", value::null());
@@ -379,7 +385,8 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // whether this step is AT_TARGET - which the HOST of a shadow tree also is,
     // its shadow-adjusted target being itself, so a listener there sees phase 2
     // and hears a non-bubbling event.
-    const auto visit = [&](const path_step & step, double otherwise) {
+    const auto visit = [&](std::size_t index, double otherwise) {
+        const path_step & step = path[index];
         node_id shown = at.node;
         if (target_in_shadow) {
             shown = retarget(at.node, step);
@@ -390,7 +397,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
         const bool is_target = (step.on == at.on && step.node == at.node) ||
                                (step.on == listen_on::node && step.node == shown);
-        if (related_in_shadow) { object->set("relatedTarget", related_for(step)); }
+        if (related_in_shadow) { object->set("relatedTarget", wrap(cx, related_steps[index])); }
         object->set("currentTarget", object_of_step(cx, step));
         object->set("eventPhase", value::number(is_target ? 2 : otherwise));
         return is_target;
@@ -400,16 +407,16 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // listeners run here, at phase AT_TARGET rather than CAPTURING_PHASE.
     for (std::size_t i = path.size(); i-- > 0;) {
         if (stopped()) { break; }
-        (void)visit(path[i], 1);
+        (void)visit(i, 1);
         fire_at(path[i], type, event, true);
     }
     // BUBBLE: back up. A non-bubbling event gets this pass at the target only -
     // `continue` and not `break`, because a shadow host further up is a target
     // too and the steps between are merely skipped.
-    for (const path_step & step : path) {
+    for (std::size_t i = 0; i < path.size(); ++i) {
         if (stopped()) { break; }
-        if (!visit(step, 3) && !bubbles) { continue; }
-        fire_at(step, type, event, false);
+        if (!visit(i, 3) && !bubbles) { continue; }
+        fire_at(path[i], type, event, false);
     }
 
     // AFTER THE DISPATCH the event is not travelling any more, and the two
@@ -422,14 +429,13 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         // shadow tree (`clearTargets`), so nothing of a closed tree is left
         // on the object.
         node_id last = at.node;
-        path_step last_step = at;
-        for (auto it = path.rbegin(); it != path.rend(); ++it) {
-            if (it->on != listen_on::node) { continue; }
-            last = retarget(at.node, *it);
-            last_step = *it;
+        node_id last_related = related;
+        for (std::size_t i = path.size(); i-- > 0;) {
+            if (path[i].on != listen_on::node) { continue; }
+            last = retarget(at.node, path[i]);
+            if (related_in_shadow) { last_related = related_steps[i]; }
             break;
         }
-        const node_id last_related = related_in_shadow ? retarget(related, last_step) : related;
         const bool clear = (last && in_shadow(last)) || (last_related && in_shadow(last_related));
         const value final_target = clear ? value::null() : wrap(cx, last);
         object->set("target", final_target);
