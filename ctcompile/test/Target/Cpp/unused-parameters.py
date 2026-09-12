@@ -4,8 +4,8 @@
 import argparse
 from pathlib import Path
 import re
-import shutil
-import subprocess
+
+from harness import FLAGS, find_compilers, function_body, run
 
 MAIN = """
 int main() {
@@ -21,26 +21,6 @@ int main() {
 """
 
 
-def run(command):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result.stdout
-
-
-def function_body(text, name):
-    match = re.search(r"\b" + re.escape(name) + r"\([^;{}]*\)\s*\{", text)
-    if not match:
-        raise RuntimeError(f"missing function {name}\n{text}")
-    start = match.end()
-    depth = 1
-    for at in range(start, len(text)):
-        depth += (text[at] == "{") - (text[at] == "}")
-        if depth == 0:
-            return text[start:at]
-    raise RuntimeError(f"unterminated function {name}")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
@@ -49,36 +29,14 @@ def main():
     parser.add_argument("--opt", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("parameter regression requires " + " or ".join(choices))
-        compilers.append(compiler)
+    compilers = find_compilers()
 
     def compile_and_run(label, cpp, harness="", expected=""):
         source = args.work / f"{label}.cpp"
         source.write_text(cpp + harness)
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{label}-{index}").resolve()
-            run(
-                [
-                    compiler,
-                    "-std=c++23",
-                    "-O2",
-                    "-Wall",
-                    "-Wextra",
-                    "-Werror",
-                    "-Wconversion",
-                    "-pedantic",
-                    "-ffp-contract=off",
-                    "-I",
-                    str(args.fixtures),
-                    str(source),
-                    "-o",
-                    str(binary),
-                ]
-            )
+            run([compiler, *FLAGS, "-I", str(args.fixtures), str(source), "-o", str(binary)])
             assert run([str(binary)]) == expected
 
     for label in ["parameters", "hoisted"]:

@@ -4,17 +4,8 @@
 import argparse
 from pathlib import Path
 import random
-import shutil
-import subprocess
 
-
-def run(command):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    if result.returncode:
-        raise SystemExit(
-            "failed: " + " ".join(map(str, command)) + "\n" + result.stdout + result.stderr
-        )
-    return result.stdout
+from harness import FLAGS, find_compilers, run
 
 
 def patterns(width):
@@ -81,12 +72,7 @@ def main():
     parser.add_argument("--translate", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
-    compilers = []
-    for candidates in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in candidates if shutil.which(name)), None)
-        if not compiler:
-            raise SystemExit("readable float test requires " + " or ".join(candidates))
-        compilers.append(compiler)
+    compilers = find_compilers()
 
     args.work.mkdir(parents=True, exist_ok=True)
     source = args.work / "floats.mlir"
@@ -133,22 +119,7 @@ template<class Float, class UInt> bool same_bits(Float value, UInt expected) {
     cpp.write_text(prefix + emitted + "\n" + "\n".join(checks) + "\n")
     for index, compiler in enumerate(compilers):
         executable = args.work / f"floats-{index}"
-        run(
-            [
-                compiler,
-                "-std=c++23",
-                "-O2",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-pedantic",
-                "-Wconversion",
-                "-ffp-contract=off",
-                str(cpp),
-                "-o",
-                str(executable),
-            ]
-        )
+        run([compiler, *FLAGS, str(cpp), "-o", str(executable)])
         run([str(executable)])
         print(f"readable float literals: {Path(compiler).name} preserved {len(cases)} bit patterns")
 

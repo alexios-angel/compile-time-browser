@@ -3,8 +3,8 @@
 
 import argparse
 from pathlib import Path
-import shutil
-import subprocess
+
+from harness import FLAGS, find_compilers, run
 
 MAIN = """
 int main() {
@@ -39,42 +39,14 @@ int main() {
 """
 
 
-def run(command, *, failure_site=None):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    diagnostic = result.stdout + result.stderr
-    if failure_site is not None:
-        if result.returncode == 0 or failure_site not in diagnostic:
-            raise RuntimeError(
-                f"expected a pin failure at {failure_site}: {command!r}\n{diagnostic}"
-            )
-    elif result.returncode:
-        raise RuntimeError(f"const binding test failed: {command!r}\n{diagnostic}")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = []
-    for candidates in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in candidates if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("const binding test requires " + " or ".join(candidates))
-        compilers.append(compiler)
-    flags = [
-        "-std=c++23",
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-pedantic",
-        "-Wconversion",
-        "-ffp-contract=off",
-        "-I",
-        str(args.fixtures.resolve()),
-    ]
+    compilers = find_compilers()
+    flags = [*FLAGS, "-I", str(args.fixtures.resolve())]
     emitted = {}
     for label, harness in [("bindings", MAIN), ("hoisted", MAIN), ("isolation", ISOLATION_MAIN)]:
         text = (args.fixtures / f"{label}.cpp").read_text()

@@ -5,6 +5,7 @@
 # are standard LLVM out-of-tree convention, which the plan does not spell -
 # noted here rather than presented as though it did.
 import os
+import shutil
 
 import lit.formats
 import lit.llvm
@@ -72,3 +73,15 @@ config.substitutions.append(
 config.substitutions.append(
     ("%cxx", f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}")
 )
+
+# %gxx AND %clangxx ARE BOTH COMPILERS, NOT THE HOST ONE. The Target/Cpp tests
+# run the emitted C++ under GCC and Clang because a gate that silently drops a
+# compiler passes vacuously (test/cmake/Native.cmake); %cxx would be one of
+# them. Same preference order as Target/Cpp/harness.py so the python drivers
+# and the RUN lines pick the same binaries. Optimisation and sanitizer flags
+# stay on the RUN line, since they differ per test.
+for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18", "clang++"))):
+    found = next((shutil.which(c) for c in candidates if shutil.which(c)), candidates[-1])
+    config.substitutions.append(
+        (name, f"{found} -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic")
+    )
