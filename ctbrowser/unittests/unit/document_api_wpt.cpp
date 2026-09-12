@@ -161,10 +161,27 @@ void test_adopt_node_within_one_document_removes_and_returns() {
     is("(function () { var root = document.createElement('div').attachShadow({mode: 'closed'});"
        " try { document.adoptNode(root); } catch (e) { return e.name; } })()",
        "HierarchyRequestError");
-    // ACROSS DOCUMENTS IT IS REFUSED, by name: see install.cpp.
+    // ACROSS DOCUMENTS IT ADOPTS: the same object, now the other document's
+    // node, out of the tree it was in - see node_from in tree_ops.cpp.
     is("(function () { var doc = document.implementation.createHTMLDocument('T');"
-       " try { doc.adoptNode(document.getElementById('a')); } catch (e) { return e.name; } })()",
-       "NotSupportedError");
+       " var a = document.getElementById('a'); var r = doc.adoptNode(a);"
+       " return (r === a) + ',' + (a.ownerDocument === doc) + ',' + a.parentNode + ',' +"
+       " document.getElementById('a') + ',' + a.id; })()",
+       "true,true,null,null,a");
+    // And inserting another document's node adopts it on the way in, with its
+    // wrapper following it: dom/common.js appends an XML document's CDATA
+    // section to an HTML paragraph and reads it back through the same object.
+    is("(function () { var x = new Document(); var c = x.createCDATASection('1234');"
+       " var p = document.getElementById('box'); p.append(c);"
+       " return (p.lastChild === c) + ',' + (c.ownerDocument === document) + ',' + c.nodeType +"
+       " ',' + c.data + ',' + (c.parentNode === p); })()",
+       "true,true,4,1234,true");
+    // A doctype handed to createDocument is adopted into the document it makes.
+    is("(function () { var dt = document.implementation.createDocumentType('q', 'a', 'b');"
+       " var d = document.implementation.createDocument(null, 'r', dt);"
+       " return (d.doctype === dt) + ',' + (dt.ownerDocument === d) + ',' + (d.firstChild === dt)"
+       " + ',' + (d.lastChild === d.documentElement) + ',' + dt.publicId + dt.systemId; })()",
+       "true,true,true,true,ab");
 }
 
 // --- the two walkers -----------------------------------------------------------

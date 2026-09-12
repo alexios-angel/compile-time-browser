@@ -171,16 +171,10 @@ void dom_bindings::install_document(context & cx) {
     // `adoptNode(node)`, DOM 4.5. A Document is a NotSupportedError, a shadow
     // root a HierarchyRequestError, and otherwise the node is removed from its
     // parent and becomes this document's - which, WITHIN ONE DOCUMENT, is the
-    // removal alone. A template's contents fragment has no parent, so for it
-    // the method returns the node untouched, which is the specification's
-    // early return by another route.
-    //
-    // ACROSS TWO DOCUMENTS IT IS REFUSED, and the refusal is named rather
-    // than approximated. A node is a slot in ONE document's slab and its
-    // wrapper's methods capture that document; moving it would mean a copy
-    // under the same wrapper, and every closure on the wrapper would still
-    // reach into the tree it left. That is a different node handed back as
-    // the same object, which is worse than a NotSupportedError.
+    // removal alone, and ACROSS TWO is `node_from`'s adoption: the same object
+    // handed back, now over a node in this document's slab. A template's
+    // contents fragment has no parent, so for it the method returns the node
+    // untouched, which is the specification's early return by another route.
     method("adoptNode", [this](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (is_a_document(given)) {
@@ -199,10 +193,8 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         if (owner != this) {
-            throw_dom_exception(c, "NotSupportedError",
-                                "adoptNode: this engine cannot move a node between two "
-                                "documents - importNode copies one");
-            return value::undefined();
+            (void)node_from(c, given);
+            return given;
         }
         if (doc_->read().parent(node)) {
             (void)doc_->remove_child(node);
@@ -801,25 +793,21 @@ void dom_bindings::install_document(context & cx) {
                     }
                     const value made = make_xml_document(c, ns, qualified);
                     if (!doctype || secondary_documents_.empty()) { return made; }
-                    // COPIED, NOT ADOPTED: the node stays in this
-                    // document's slab and the new document gets one
-                    // with the same three strings. Adoption across
-                    // documents is the rung second_document.cpp
-                    // names, so `made.doctype === doctype` is false
-                    // until it lands.
-                    document & fresh = *secondary_documents_.back()->doc_;
-                    const auto txn = doc_->read();
-                    const node_id copied = fresh.create_document_type(
-                        txn.name(doctype), txn.public_id(doctype), txn.system_id(doctype));
+                    // ADOPTED into the new document - the same JavaScript object,
+                    // now that document's node - and put ahead of the element.
+                    // See node_from.
+                    dom_bindings & fresh = *secondary_documents_.back();
+                    const node_id adopted = fresh.node_from(c, given_doctype);
+                    document & tree = *fresh.doc_;
                     const node_id ahead_of =
-                        fresh.read().kind(fresh.root()).value_or(node_kind::document) ==
+                        tree.read().kind(tree.root()).value_or(node_kind::document) ==
                                 node_kind::element
-                            ? fresh.root()
+                            ? tree.root()
                             : node_id{};
                     if (ahead_of) {
-                        (void)fresh.insert_before(fresh.document_node(), copied, ahead_of);
+                        (void)tree.insert_before(tree.document_node(), adopted, ahead_of);
                     } else {
-                        (void)fresh.append_child(fresh.document_node(), copied);
+                        (void)tree.append_child(tree.document_node(), adopted);
                     }
                     return made;
                 })));

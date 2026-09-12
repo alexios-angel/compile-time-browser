@@ -106,9 +106,60 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
     return true;
 }
 
+// THE NODE A VALUE NAMES: ours as it is, another document's ADOPTED into this
+// one, and anything else as a Text node holding its string - which is what
+// "convert nodes into a node" says.
+//
+// ADOPTION, DOM 4.5 "adopt": the node leaves its parent, and it and every
+// descendant become this document's. A node is a slot in ONE document's slab,
+// so the move is a deep clone into this slab, the original's removal from its
+// tree, and - the part that makes it an adoption rather than an import - the
+// page's wrapper objects REBOUND to the copies: same JavaScript object, new
+// handle, and the methods and views re-installed by THESE bindings so that no
+// closure on it still reaches into the tree it left. That is exactly the
+// hazard the old note on adoptNode named, and re-installing is the answer to
+// it. What does not travel: event listeners and custom-element state, both
+// keyed by the old handle in the old document's tables. ponytail: a shadow
+// root is refused rather than moved, as importNode refuses it.
 node_id dom_bindings::node_from(context & cx, value v) {
     if (const node_id held = handle_of(v)) { return held; }
-    return doc_->create_text(cx.to_string(v));
+    dom_bindings * owner = owner_of(v);
+    if (owner == nullptr || owner == this || is_a_document(v)) {
+        return doc_->create_text(cx.to_string(v));
+    }
+    const node_id source = owner->handle_of(v);
+    if (!source || owner->shadow_tree_of(source) != nullptr) { return node_id{}; }
+    node_id made;
+    {
+        const auto from = owner->doc_->read();
+        made = clone_node(from, source, true, owner);
+        const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
+            if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
+                script::object_object * obj = it->second;
+                owner->wrappers_.erase(it);
+                obj->set(std::string{handle_property},
+                         value::number(static_cast<double>(pack(fresh))));
+                wrappers_.emplace(pack(fresh), obj);
+                install_element_methods(cx, *obj);
+                install_element_views(cx, *obj, fresh);
+                refresh_element(cx, *obj, fresh);
+            }
+            const std::span<const node_id> olds = from.children(old);
+            std::vector<node_id> news;
+            {
+                const auto mine = doc_->read();
+                const std::span<const node_id> made_kids = mine.children(fresh);
+                news.assign(made_kids.begin(), made_kids.end());
+            }
+            for (std::size_t i = 0; i < olds.size() && i < news.size(); ++i) {
+                self(self, olds[i], news[i]);
+            }
+        };
+        rebind(rebind, source, made);
+    }
+    (void)owner->doc_->remove_child(source);
+    owner->mutated();
+    return made;
 }
 
 // PARSE THE MARKUP, do not store it.

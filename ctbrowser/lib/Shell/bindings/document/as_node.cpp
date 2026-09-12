@@ -530,12 +530,19 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // replace variant, DOM 4.2.4.
     const auto may_become_a_child = [this](context & c, value given, node_id before,
                                            node_id ignore) {
-        const node_id id = handle_of(given);
+        node_id id = handle_of(given);
         if (!id) {
             if (is_a_document(given)) {
                 throw_dom_exception(c, "HierarchyRequestError", "a Document cannot be inserted");
                 return false;
             }
+            // ANOTHER DOCUMENT'S NODE is adopted first and checked second -
+            // see node_from. ponytail: the specification checks first, so a
+            // refused insertion here leaves the node adopted and detached
+            // rather than where it was.
+            if (owner_of(given) != nullptr) { id = node_from(c, given); }
+        }
+        if (!id) {
             // `node_from` turns anything that is not a wrapper into a Text
             // node, and a Document may never have a Text child. Refused BEFORE
             // the node is created rather than after, so a rejected
