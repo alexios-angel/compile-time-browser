@@ -819,6 +819,7 @@ void test_calc_size() {
     ok("min-height", "calc-size(auto, size)", "calc-size(auto, size)");
     bad("max-width", "calc-size(auto, size)");
     bad("width", "calc-size(none, size)");
+    bad("max-width", "calc-size(none, size)");
     ok("max-height", "calc-size(max-content, size)", "calc-size(max-content, size)");
     ok("height", "calc-size(min-content, size * 2)", "calc-size(min-content, 2 * size)");
     ok("max-width", "calc-size(max-content, size / 2)", "calc-size(max-content, 0.5 * size)");
@@ -847,6 +848,34 @@ void test_calc_size() {
     ok("width", "calc-size(0px, 0px)", "calc-size(0px, 0px)");
     bad("width", "calc-size(0, 0px)");
     bad("width", "calc-size(0px, 0)");
+}
+
+// random-serialize: a specified random() spells its key - the dashed name,
+// `element-scoped`, and the UA ident the scoping words mean - and its bounds
+// in canonical units.
+void test_random_spells_its_key() {
+    ok("width", "random(0px, 100px)", "random(element-scoped ua-width-1, 0px, 100px)");
+    ok("height", "random(auto, 0px, 100px)", "random(element-scoped ua-height-1, 0px, 100px)");
+    ok("width", "random(fixed 0.5, 0px, 100px)", "random(fixed 0.5, 0px, 100px)");
+    ok("width", "random(--foo, 0px, 100px)", "random(--foo, 0px, 100px)");
+    ok("width", "random(--foo element-scoped, 0px, 100px)",
+       "random(--foo element-scoped, 0px, 100px)");
+    ok("width", "random(element-scoped, 0px, 100px)", "random(element-scoped, 0px, 100px)");
+    ok("font-size", "random(property-scoped, 0px, 100px)", "random(ua-font-size, 0px, 100px)");
+    ok("width", "random(--foo property-index-scoped, 0px, 100px)",
+       "random(--foo ua-width-1, 0px, 100px)");
+    ok("height", "random(property-scoped element-scoped, 0px, 100px)",
+       "random(element-scoped ua-height, 0px, 100px)");
+    ok("width", "random(ua-height-1 element-scoped, 10px, 20%)",
+       "random(element-scoped ua-height-1, 10px, 20%)");
+    ok("width", "random(10 * 100px, 200em / 2)",
+       "random(element-scoped ua-width-1, 1000px, 100em)");
+    ok("width", "random(fixed calc(2 / 4), 0px, 100px)", "random(fixed calc(0.5), 0px, 100px)");
+    ok("rotate", "random(25deg, 1turn)", "random(element-scoped ua-rotate-1, 25deg, 360deg)");
+    ok("transition-delay", "random(--foo, 25ms, 50s, 5s)", "random(--foo, 0.025s, 50s, 5s)");
+    ok("margin", "random(0px, 1px) random(0px, 1px)",
+       "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
 }
 
 void test_interpolate_size_is_a_property() {
@@ -928,6 +957,7 @@ int main() {
     test_an_integer_property_rounds_its_math();
     test_the_random_item_argument_list();
     test_calc_size();
+    test_random_spells_its_key();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

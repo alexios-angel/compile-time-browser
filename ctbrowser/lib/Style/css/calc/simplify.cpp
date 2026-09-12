@@ -412,6 +412,128 @@ std::string simplify_math(std::string_view value) {
     return out;
 }
 
+std::string canonical_random(std::string_view value, std::string_view property) {
+    constexpr std::string_view name = "random(";
+    // One bound, in its canonical spelling: a dimension in its canonical unit,
+    // a product folded, a sum of units in §10.13's order, anything else as it
+    // came through simplify_math.
+    const auto bound = [](std::string_view arg) -> std::string {
+        const token_stream ts = tokenize(arg);
+        if (ts.tokens.size() == 2 && ts.tokens.front().type == token_type::dimension) {
+            if (!context_free_unit(ts.unit_of(ts.tokens.front()))) { return std::string{arg}; }
+            return canonical_dimension_text(arg, length_context{}).value_or(std::string{arg});
+        }
+        if (ts.tokens.size() == 2) { return std::string{arg}; }
+        const auto [outcome, sum] = evaluate_symbolic(arg);
+        if (outcome == math_outcome::resolved && sum.simple()) {
+            if (!sum.symbols.empty() || sum.has_percent) {
+                if (const std::string text = serialize_symbolic(sum); !text.empty()) {
+                    return text;
+                }
+            } else if (sum.is_number()) {
+                calc_result number;
+                number.px = sum.value;
+                number.is_number = true;
+                number.type = numeric_type::number;
+                return serialize_calc(number);
+            }
+        }
+        return simplify_math(arg);
+    };
+    std::string out;
+    std::size_t at = 0;
+    int depth = 0;
+    bool in_component = false;
+    std::size_t position = 0; // the component this random() sits in - fold.cpp counts the same
+    while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            out.append(value.substr(at, quoted - at));
+            at = quoted;
+            in_component = true;
+            continue;
+        }
+        if (name_at(value, at, std::array<std::string_view, 1>{name}).empty()) {
+            const char c = value[at];
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            const bool separator =
+                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
+            if (separator) {
+                if (in_component) { ++position; }
+                in_component = false;
+            } else {
+                in_component = true;
+            }
+            out.push_back(c);
+            ++at;
+            continue;
+        }
+        in_component = true;
+        const function_span span = span_of(value, at, name);
+        const std::string_view inner =
+            value.substr(at + name.size(), span.end - at - name.size() - (span.closed ? 1 : 0));
+        at = span.end;
+        std::vector<std::string_view> args = top_level_arguments(inner);
+        // The sharing head: a first argument made of identifiers, or `fixed`.
+        std::string head;
+        if (!args.empty()) {
+            const token_stream first = tokenize(trim(args.front(), html_whitespace));
+            if (!first.tokens.empty() && first.tokens.front().type == token_type::ident) {
+                const std::string_view text = trim(args.front(), html_whitespace);
+                if (ascii_istarts_with(text, "fixed")) {
+                    head = "fixed " + simplify_math(trim(text.substr(5), html_whitespace));
+                } else {
+                    std::string dashed;
+                    std::string ua;
+                    bool element_scoped = false;
+                    bool property_scoped = false;
+                    bool property_index_scoped = false;
+                    for (const std::string_view word : split_top_level(text, " \t\n\r\f")) {
+                        if (word.starts_with("--")) {
+                            dashed = std::string{word};
+                        } else if (ascii_istarts_with(word, "ua-")) {
+                            ua = ascii_lower_copy(word);
+                        } else if (ascii_iequals(word, "element-scoped")) {
+                            element_scoped = true;
+                        } else if (ascii_iequals(word, "property-scoped")) {
+                            property_scoped = true;
+                        } else if (ascii_iequals(word, "property-index-scoped")) {
+                            property_index_scoped = true;
+                        }
+                    }
+                    if (property_scoped) {
+                        ua = "ua-" + std::string{property};
+                    } else if (property_index_scoped) {
+                        ua = "ua-" + std::string{property} + '-' + std::to_string(position + 1);
+                    } else if (dashed.empty() && ua.empty() && !element_scoped) {
+                        ua = "ua-" + std::string{property} + '-' + std::to_string(position + 1);
+                        element_scoped = true;
+                    }
+                    for (const std::string & word :
+                         {dashed, std::string{element_scoped ? "element-scoped" : ""}, ua}) {
+                        if (word.empty()) { continue; }
+                        if (!head.empty()) { head += ' '; }
+                        head += word;
+                    }
+                }
+                args.erase(args.begin());
+            } else {
+                // No head at all: `auto`, spelled out.
+                head = "element-scoped ua-" + std::string{property} + '-' +
+                       std::to_string(position + 1);
+            }
+        }
+        out += name;
+        out += head;
+        for (const std::string_view arg : args) {
+            if (!out.ends_with('(')) { out += ", "; }
+            out += bound(trim(arg, html_whitespace));
+        }
+        out += ')';
+    }
+    return out;
+}
+
 std::optional<std::string> calc_size_text(std::string_view value, std::string_view keywords) {
     constexpr std::string_view name = "calc-size(";
     const std::string_view whole = trim(value, html_whitespace);
@@ -443,8 +565,11 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
             }
             return false;
         };
+        // An INTRINSIC size keyword the property takes: `none` is max-width's
+        // keyword and no size, `auto` is a size and not max-width's.
         any = word == "any";
-        if (!any && !listed("min-content max-content fit-content stretch") && !listed(keywords)) {
+        if (!any && !(listed("auto content min-content max-content fit-content stretch") &&
+                      listed(keywords))) {
             return std::nullopt;
         }
         out += word;

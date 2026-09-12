@@ -192,8 +192,11 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // of which this table models. `calc/` owns the rule and keeps the author's
     // bytes for everything it cannot answer, so a value with no math in it and a
     // value whose math needs a font size both come back untouched.
-    const std::string simplified =
-        may_have_math(normalized) ? simplify_math(normalized) : normalized;
+    std::string simplified = may_have_math(normalized) ? simplify_math(normalized) : normalized;
+    // ...AND A random() SPELLS ITS KEY, which needs the property's name.
+    if (!property.starts_with("--") && simplified.find("random(") != std::string::npos) {
+        simplified = canonical_random(simplified, property);
+    }
 
     const property_syntax * p = find_property(property);
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one

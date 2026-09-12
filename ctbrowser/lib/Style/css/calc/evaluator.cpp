@@ -947,7 +947,9 @@ private:
                     base = std::min(std::max(given->value, 0.0), 1.0 - 1e-9);
                     continue;
                 }
-                if (word.starts_with("--") || ascii_iequals(word, "element-scoped") ||
+                if (word.starts_with("--") || ascii_istarts_with(word, "ua-") ||
+                    ascii_iequals(word, "element-scoped") ||
+                    ascii_iequals(word, "property-scoped") ||
                     ascii_iequals(word, "property-index-scoped") || ascii_iequals(word, "auto")) {
                     if (!options.empty()) { options += ' '; }
                     options += word;
@@ -1204,10 +1206,15 @@ private:
 
 // THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
 // the same every time the same KEY asks for it, so a page reflows to the same
-// random layout it first had. The key is what the sharing options say -
+// random layout it first had. The key is what the sharing options say, read
+// the way random-serialize spells them: a `<dashed-ident>`, a UA ident
+// (`ua-width-1`, which `property-index-scoped` means and `property-scoped`
+// means without the index), and `element-scoped` -
 //
-//   nothing                 this element, this property, this position
-//   property-index-scoped   this property and position, on every element
+//   nothing                 element-scoped ua-<property>-<position>
+//   property-index-scoped   ua-<property>-<position>, on every element
+//   property-scoped         ua-<property>, every position, every element
+//   element-scoped alone    this element, whatever the property
 //   --name                  the name alone, everywhere
 //   --name element-scoped   the name, on this element
 //
@@ -1216,25 +1223,33 @@ private:
 // same reason.
 [[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
     std::string name;
+    std::string ua;
     bool element_scoped = false;
     bool property_scoped = false;
+    bool property_index_scoped = false;
     for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
         if (word.starts_with("--")) {
             name = std::string{word};
+        } else if (ascii_istarts_with(word, "ua-")) {
+            ua = ascii_lower_copy(word);
         } else if (ascii_iequals(word, "element-scoped")) {
             element_scoped = true;
-        } else if (ascii_iequals(word, "property-index-scoped")) {
+        } else if (ascii_iequals(word, "property-scoped")) {
             property_scoped = true;
+        } else if (ascii_iequals(word, "property-index-scoped")) {
+            property_index_scoped = true;
         }
     }
-    std::string key;
-    if (!name.empty()) {
-        key = name;
-        if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
-    } else {
-        key = std::string{ctx.property} + '|' + std::to_string(ctx.random_index);
-        if (!property_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    if (property_scoped) {
+        ua = "ua-" + std::string{ctx.property};
+    } else if (property_index_scoped) {
+        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
+    } else if (name.empty() && ua.empty() && !element_scoped) {
+        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
+        element_scoped = true;
     }
+    std::string key = name + '|' + ua;
+    if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
     std::uint64_t hash = 14695981039346656037ull;
     for (const char c : key) {
         hash ^= static_cast<unsigned char>(c);

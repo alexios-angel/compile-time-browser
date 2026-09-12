@@ -203,6 +203,14 @@ enum class math_context : std::uint8_t {
 [[nodiscard]] std::optional<std::string> calc_size_text(std::string_view value,
                                                         std::string_view keywords);
 
+// EVERY random() IN A SPECIFIED VALUE, ITS KEY SPELLED OUT (CSS Values 5
+// §random-caching, as random-serialize reads it): the sharing words become
+// the `<dashed-ident>`, `element-scoped` and UA-ident triple `random_base`
+// keys on - `random(0px, 100px)` in `width` is `random(element-scoped
+// ua-width-1, 0px, 100px)`, `property-scoped` is `ua-width` - and the
+// bounds take their canonical units. `fixed` keeps its number.
+[[nodiscard]] std::string canonical_random(std::string_view value, std::string_view property);
+
 // A folded value, and whether every calc() in it actually evaluated.
 //
 // The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a

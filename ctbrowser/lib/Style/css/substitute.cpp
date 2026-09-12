@@ -896,8 +896,16 @@ private:
             if (conditions_ != nullptr) { ctx.property = conditions_->property; }
             // `auto` is scoped to the element like a bare `element-scoped`: the
             // base is keyed on the element either way, and a name alone is not.
+            // An auto random-item() does NOT share with an auto random() in the
+            // same value, where a bare `element-scoped` one does
+            // (random-item-computed): its automatic key names the function.
             std::string options{trimmed};
-            if (ascii_iequals(trimmed, "auto") || trimmed.empty()) { options.clear(); }
+            std::string keyed_property{ctx.property};
+            if (ascii_iequals(trimmed, "auto") || trimmed.empty()) {
+                options.clear();
+                keyed_property = "random-item:" + keyed_property;
+                ctx.property = keyed_property;
+            }
             base = random_base(options, ctx);
         }
         // The items, split at the top-level commas after the key.
