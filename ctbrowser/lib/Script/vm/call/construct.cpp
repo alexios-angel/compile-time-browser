@@ -108,6 +108,9 @@ value context::construct(value callee, std::span<const value> args) {
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
+        // Rooted for the same reason invoke() roots a native's arguments: from
+        // C++ they live in the caller's span alone.
+        const rooted_values keep_args{*this, copy};
         const value saved = current_this_;
         current_this_ = self;
         const value produced = [&] {

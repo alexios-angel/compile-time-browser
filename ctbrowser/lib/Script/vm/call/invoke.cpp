@@ -89,6 +89,16 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         if (guard.overflowed()) { return value::undefined(); }
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
+        // THE ARGUMENTS ARE ROOTED FOR THE CALL. From C++ they live in the
+        // caller's span and nowhere else - drain_microtasks pops a job's
+        // arguments before invoking it - and a native that calls back into
+        // script collects: `deliver` held its handler record only here, the
+        // collection inside the handler freed it, and the settle through the
+        // dangling pointer corrupted the heap. An interpreted callee has its
+        // arguments in registers; a native has them in this vector.
+        const rooted_values keep_args{*this, copy};
+        const rooted keep_callee{*this, callable};
+        const rooted keep_this{*this, this_value};
         const value saved = current_this_;
         current_this_ = this_value;
         note_transition_into_cxx(*this);
