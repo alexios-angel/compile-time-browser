@@ -244,6 +244,34 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
     return true;
 }
 
+// STEP 2 OF match, matchAll, replace, replaceAll, search AND split: the
+// argument is asked for its own @@match / @@replace / @@search / @@split /
+// @@matchAll (GetMethod, 7.3.10 - a getter that throws propagates, a value
+// that is neither callable nor nullish is a TypeError), and when it has one
+// the answer is that method's, called on the argument with the ORIGINAL
+// receiver first. A real RegExp carries none here and takes the built-in
+// path below, so this is the extension point and nothing else.
+//
+// TRUE means `out` is the answer (or a throw is in flight) and the caller
+// returns it at once.
+[[nodiscard]] bool symbol_dispatch(context & cx, value target, const char * symbol,
+                                   std::span<value> a, value & out) {
+    out = value::undefined();
+    if (target.is_nullish()) { return false; }
+    const value method = cx.lookup_property(target, symbol);
+    if (cx.throw_pending()) { return true; }
+    if (method.is_nullish()) { return false; }
+    if (!method.is_callable()) {
+        cx.throw_error("TypeError", std::string{symbol} + " is not a function");
+        return true;
+    }
+    std::vector<value> args;
+    args.push_back(cx.current_this());
+    for (std::size_t i = 1; i < a.size(); ++i) { args.push_back(a[i]); }
+    out = cx.call(method, args, target);
+    return true;
+}
+
 } // namespace
 
 // String.prototype
@@ -460,6 +488,9 @@ void install_string(context & cx) {
         return c.string(s.substr(from, count));
     });
     text("split", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@split", a, dispatched)) {
+            return dispatched;
+        }
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         // THE LIMIT, which this used to ignore completely - so
@@ -697,6 +728,9 @@ void install_string(context & cx) {
 
     text("replace", 2,
          [replace_with](context & c, const std::string & s, std::span<value> a) -> value {
+             if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
+                 return dispatched;
+             }
              return replace_with(c, s, a, false);
          });
     // `match` - the single commonest thing done with a regular expression, and
@@ -708,6 +742,9 @@ void install_string(context & cx) {
     // else, and without it a single exec result carrying index, input and the
     // capture groups. Code branches on that difference.
     text("match", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
+        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@match", a, dispatched)) {
+            return dispatched;
+        }
         // 22.1.3.13 step 3: a non-RegExp argument is RegExpCreate'd, not
         // rejected. `"1234567890".match(3).index` is 2.
         const value pattern = as_regexp(c, arg_at(a, 0), "");
@@ -752,6 +789,9 @@ void install_string(context & cx) {
     // about what matched. `search` ignores `lastIndex` and the `g` flag by
     // specification, so it is reset first and the search always starts at 0.
     text("search", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
+        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@search", a, dispatched)) {
+            return dispatched;
+        }
         // 22.1.3.21 step 3, the same RegExpCreate `match` does:
         // `"abc".search("b")` is 1 and used to be -1.
         const value pattern = as_regexp(c, arg_at(a, 0), "");
@@ -778,6 +818,9 @@ void install_string(context & cx) {
         value list = c.make_array();
         auto * items = static_cast<array_object *>(list.as_heap());
         if (refuse_non_global(c, arg_at(a, 0), "String.prototype.matchAll")) { return list; }
+        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@matchAll", a, dispatched)) {
+            return dispatched;
+        }
         // 22.1.3.14 step 3 creates the RegExp with "g", which is what makes
         // `"aaa".matchAll("a")` three matches rather than the first forever.
         const value pattern = as_regexp(c, arg_at(a, 0), "g");
@@ -805,6 +848,9 @@ void install_string(context & cx) {
          [replace_with](context & c, const std::string & s, std::span<value> a) -> value {
              if (refuse_non_global(c, arg_at(a, 0), "String.prototype.replaceAll")) {
                  return c.string(s);
+             }
+             if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
+                 return dispatched;
              }
              return replace_with(c, s, a, true);
          });
