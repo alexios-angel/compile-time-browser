@@ -18,6 +18,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <string>
 #include <vector>
@@ -32,26 +33,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=target>hello</div>
 </body></html>)";
 
-// ONE EXPRESSION, EVALUATED INSIDE A `try`. The `try` is not politeness: it is
-// the outer handler a thrown exception would escape to if the fence were not
-// there, so a fence regression shows up here as "threw:Error" rather than as
-// the answer.
-[[nodiscard]] std::string answer(const std::string & expression) {
-    browser page{browser_options{400, 300}};
-    std::string html{page_html};
-    const std::string tail = "<script>try { console.log(String(" + expression +
-                             ")); } catch (e) { console.log('threw:' + e.name); }</script>";
-    html.insert(html.find("</body>"), tail);
-    page.load_html(html);
-    const std::vector<std::string> & logged = page.bindings().console_output();
-    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
-    return logged.back();
-}
-
+// A fresh page per case, since many of these mutate the document.
 void is(const std::string & expression, const std::string & expected) {
-    const std::string got = answer(expression);
-    CHECK_EQ(got, expected);
-    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+    ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 // --- a listener that throws ------------------------------------------------

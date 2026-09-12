@@ -13,12 +13,40 @@
 // document for an id without a script context, and only a test wants the raw
 // fragment rectangle rather than `getBoundingClientRect`.
 
+#include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <ctbrowser.hpp>
 
+#include "check.hpp"
+
 namespace ctbrowser_test {
+
+// ONE EXPRESSION against a FRESH page, and whatever it logged. Fresh because
+// most DOM cases mutate the document, and a case that changed the tree for
+// the next one would report a failure in the wrong place. The `try` is not
+// politeness: a thrown exception answers as "threw:<name>", which is what half
+// the DOM tests assert on, and without it a fence regression would look like
+// the answer. Eleven tests carried this before it moved here.
+[[nodiscard]] inline std::string answer_in(std::string html, const std::string & expression) {
+    ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
+    const std::string tail = "<script>try { console.log(String(" + expression +
+                             ")); } catch (e) { console.log('threw:' + e.name); }</script>";
+    html.insert(html.find("</body>"), tail);
+    page.load_html(html);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
+    return logged.back();
+}
+
+inline void is_in(const std::string & html, const std::string & expression,
+                  const std::string & expected) {
+    const std::string got = answer_in(html, expression);
+    CHECK_EQ(got, expected);
+    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+}
 
 // The first element whose `id` attribute is `want`, in document order.
 [[nodiscard]] inline ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {

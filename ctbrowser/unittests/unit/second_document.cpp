@@ -15,12 +15,10 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <string>
 #include <vector>
-
-using ctbrowser::shell::browser;
-using ctbrowser::shell::browser_options;
 
 namespace {
 
@@ -28,22 +26,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><head><title>the page</title></head><body><div id=here>x</div>
 </body></html>)";
 
-[[nodiscard]] std::string answer(const std::string & expression) {
-    browser page{browser_options{400, 300}};
-    std::string html{page_html};
-    const std::string tail = "<script>try { console.log(String(" + expression +
-                             ")); } catch (e) { console.log('threw:' + e.name); }</script>";
-    html.insert(html.find("</body>"), tail);
-    page.load_html(html);
-    const std::vector<std::string> & logged = page.bindings().console_output();
-    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
-    return logged.back();
-}
-
+// A fresh page per case, since many of these mutate the document.
 void is(const std::string & expression, const std::string & expected) {
-    const std::string got = answer(expression);
-    CHECK_EQ(got, expected);
-    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+    ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 void test_create_html_document_builds_a_whole_document() {

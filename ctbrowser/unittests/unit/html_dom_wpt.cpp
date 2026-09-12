@@ -9,6 +9,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <string>
 #include <vector>
@@ -23,22 +24,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=host></div>
 </body></html>)";
 
-[[nodiscard]] std::string answer(const std::string & expression) {
-    browser page{browser_options{400, 300}};
-    std::string html{page_html};
-    const std::string tail = "<script>try { console.log(String(" + expression +
-                             ")); } catch (e) { console.log('threw:' + e.name); }</script>";
-    html.insert(html.find("</body>"), tail);
-    page.load_html(html);
-    const std::vector<std::string> & logged = page.bindings().console_output();
-    if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
-    return logged.back();
-}
-
+// A fresh page per case, since many of these mutate the document.
 void is(const std::string & expression, const std::string & expected) {
-    const std::string got = answer(expression);
-    CHECK_EQ(got, expected);
-    if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+    ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 // --- reflection-*.html ------------------------------------------------------
@@ -310,11 +298,12 @@ void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
 // getter.html's shape: markup into a connected container, then the first
 // child's innerText, JSON-encoded so a newline or a tab is visible.
 [[nodiscard]] std::string inner_text_of(const std::string & markup) {
-    return answer("(function () { var h = document.getElementById('host');"
-                  " h.innerHTML = " +
-                  markup +
-                  "; var e = h.querySelector('#target') || h.firstChild;"
-                  " return JSON.stringify(e.innerText); })()");
+    return ctbrowser_test::answer_in(page_html,
+                                     "(function () { var h = document.getElementById('host');"
+                                     " h.innerHTML = " +
+                                         markup +
+                                         "; var e = h.querySelector('#target') || h.firstChild;"
+                                         " return JSON.stringify(e.innerText); })()");
 }
 
 void test_inner_text_collapses_whitespace_and_breaks_at_blocks() {
