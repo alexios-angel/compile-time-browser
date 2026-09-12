@@ -1642,6 +1642,18 @@ public:
         value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
         return settled != nullptr && !truthy(*settled);
     }
+    // THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
+    // rejected) -> resume. One native per context, made on first use.
+    [[nodiscard]] value await_job() {
+        if (await_job_.is_undefined()) {
+            await_job_ =
+                value::object(allocate<native_object>("await", [](context & c, std::span<value> a) {
+                    if (a.size() >= 3) { c.resume(a[0], a[1], truthy(a[2])); }
+                    return value::undefined();
+                }));
+        }
+        return await_job_;
+    }
     // Ask a pending promise to put this coroutine back when it settles. The
     // record goes on the promise's own handler list, so a resumption is queued
     // and ordered exactly like a `then` - because that is what it is.
@@ -1951,6 +1963,7 @@ private:
             visit(root_label::microtasks, job.fn);
             for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
         }
+        visit(root_label::microtasks, await_job_); // the one native every settled await queues
         // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
         // register once the module has finished evaluating, so without this a
         // collection between two modules frees the bindings the second one is
@@ -2196,6 +2209,7 @@ private:
     // bridge read it after a store from STRICT code and throw the TypeError
     // (10.1.9.2 / 13.15.2 PutValue step 6.b).
     bool store_rejected_ = false;
+    value await_job_ = value::undefined(); // see await_job(); a root in each_root
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;

@@ -307,6 +307,17 @@ TypeError now, in `lookup_property`/`store_property` so both tiers agree:
 "Cannot read properties of undefined (reading 'x')". `?.` is the way to ask
 without one.
 
+### Every `await` in a function is a job (since 2026-09-12)
+
+`await x` on a settled promise or a plain value read it straight out and
+carried on in the same turn; 27.7.5.3 makes the continuation a job even
+then. The frame is now lifted out exactly as for a pending promise and put
+back by one native job (`context::await_job`) queued at the await, so `await
+1` runs after the microtasks queued before it - which is what every ordering
+test and every MutationObserver callback relies on. A classic script's top
+level keeps the synchronous read (`return await 3` in a test script has no
+caller to hand a promise to).
+
 ### Strict mode, the part that changes what runs (since 2026-09-12)
 
 `function_proto::is_strict` is set by a `"use strict"` directive, inherited by
