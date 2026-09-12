@@ -395,6 +395,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                         return style::css::evaluate_media_condition(
                             condition, selector_engine_->environment());
                     };
+                    conditions.registered = [this, atoms](std::string_view name) {
+                        return selector_engine_->registration_of(atoms->intern(name));
+                    };
                 }
                 std::optional<std::string> done =
                     style::css::substitute_var(text, custom, *atoms, attributes, &conditions);

@@ -153,6 +153,17 @@ public:
     // trade recorded rather than hidden.
     void clear_origin(std::uint8_t origin);
 
+    // A REGISTERED CUSTOM PROPERTY, from a sheet's `@property` rule or from
+    // `CSS.registerProperty()`. The first registration of a name wins, which
+    // is what both the at-rule and the API say; false when the name was
+    // already taken. Registrations outlive `clear_origin`: an `@property` is
+    // not a rule that matches, and the API's are not in any sheet at all.
+    bool register_property(std::string_view name, css::property_registration registration);
+    [[nodiscard]] const css::property_registration * registration_of(atom name) const {
+        const auto it = registrations_.find(name.id);
+        return it == registrations_.end() ? nullptr : &it->second;
+    }
+
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
     // the shell because a test needs to be able to pin the viewport and
     // `prefers-reduced-motion` without a browser, and because the cascade is the thing
@@ -605,8 +616,14 @@ public:
     // tree can produce a value for, plus custom properties, caught by the `--` prefix
     // rather than by name. `font-size` inherits as the px the pre-pass in resolve()
     // computed, so a relative unit never compounds down the tree.
-    [[nodiscard]] static bool inherits(std::string_view property) {
-        if (property.starts_with("--")) { return true; }
+    [[nodiscard]] bool inherits(std::string_view property) const {
+        if (property.starts_with("--")) {
+            // A registered custom property says whether it does (CSS Properties
+            // and Values API 1 §2.3); an unregistered one always inherits.
+            const css::property_registration * registered =
+                registration_of(atoms_->intern(property));
+            return registered == nullptr || registered->inherits;
+        }
         static constexpr std::string_view names[] = {
             "border-collapse", "border-spacing", "caption-side",    "color",
             "cursor",          "direction",      "empty-cells",     "font-family",
@@ -836,6 +853,9 @@ public:
         conditions.media = [this](std::string_view text) {
             return css::evaluate_media_condition(text, environment_);
         };
+        conditions.registered = [this](std::string_view name) {
+            return registration_of(atoms_->intern(name));
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -994,6 +1014,56 @@ public:
             if (property == line_height_) { return line_height_lengths; }
             return atoms_->text(property).starts_with("font-") ? font_lengths : lengths;
         };
+
+        // PASS ONE AND SEVEN EIGHTHS: THE REGISTERED CUSTOM PROPERTIES, CSS
+        // Properties and Values API 1 §2.4. An unregistered custom property is
+        // a token stream stored verbatim and read lazily; a registered one has
+        // a computed value like any other property: its declaration is
+        // substituted, parsed against the syntax and computed like the type
+        // it names, and what does not parse - or `initial`, or nothing at all
+        // on a property that does not inherit - is the initial value. It sits
+        // here because a `<length>` computes against the element's own font
+        // size, which the passes above have just settled.
+        //
+        // A property that inherits and is not declared here is left to the
+        // parent's inherited half, which already holds its computed value:
+        // pushing a copy would give every element an inherited block of its
+        // own and undo the sharing the split below depends on.
+        for (const auto & [id, registration] : registrations_) {
+            const atom name{id};
+            declaration * own = nullptr;
+            for (declaration & d : out) {
+                if (d.property == name) { own = &d; }
+            }
+            std::optional<std::string> computed;
+            if (own != nullptr && own->value != guaranteed_invalid) {
+                std::string text = own->value;
+                bool substituted = true;
+                if (css::may_have_var(text)) {
+                    conditions.lengths = lengths;
+                    conditions.property = std::string{atoms_->text(name)};
+                    std::optional<std::string> done =
+                        css::substitute_var(text, lookup, *atoms_, attributes, &conditions);
+                    substituted = done.has_value();
+                    if (done) { text = std::move(*done); }
+                }
+                if (substituted) {
+                    computed = css::compute_registered(text, registration.syntax, lengths);
+                }
+            } else if (own == nullptr && registration.inherits && parent) {
+                continue;
+            }
+            if (!computed) {
+                computed =
+                    css::compute_registered(registration.initial, registration.syntax, lengths)
+                        .value_or(registration.initial);
+            }
+            if (own != nullptr) {
+                own->value = std::move(*computed);
+            } else {
+                out.push_back(declaration{name, std::move(*computed)});
+            }
+        }
 
         // PASS TWO: everything else. Substitute, then expand, then put.
         fold([&](const declaration & d) {
@@ -1380,6 +1450,10 @@ private:
     [[nodiscard]] static std::string_view unquoted(std::string_view text);
 
     std::vector<page_font> fonts_;
+    // The `@property` rules of one sheet's text, registered. Defined in engine.cpp.
+    void register_at_property_rules(std::string_view sheet_text);
+    // The registered custom properties, by atom id.
+    flat_map<std::uint32_t, css::property_registration> registrations_;
 
     [[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
     [[nodiscard]] atom class_name() const { return atoms_->intern("class"); }

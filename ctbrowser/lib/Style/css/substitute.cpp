@@ -729,16 +729,16 @@ private:
             if (b.colon == last || b.colon > b.to) { return false; } // no `:`
             const std::string condition =
                 std::string{trim(text_between(outer, b.from, b.colon), html_whitespace)};
-            bool holds = ascii_iequals(condition, "else");
-            if (!holds) {
-                std::string substituted;
-                if (run(condition, substituted, depth + 1)) {
-                    holds = evaluate_condition(substituted, depth) == truth::yes;
-                }
-                // A query that read the property being resolved is a cycle, and
-                // a cycle is invalid whichever branch it would have chosen.
-                if (cyclic_ || root_cycle_) { return false; }
+            bool holds = false;
+            std::string substituted;
+            if (run(condition, substituted, depth + 1)) {
+                // `else`, and a `var(--else)` that substitutes to it.
+                holds = ascii_iequals(trim(substituted, html_whitespace), "else") ||
+                        evaluate_condition(substituted, depth) == truth::yes;
             }
+            // A query that read the property being resolved is a cycle, and a
+            // cycle is invalid whichever branch it would have chosen.
+            if (cyclic_ || root_cycle_) { return false; }
             if (!holds) { continue; }
             std::string_view value = text_between_view(outer, b.colon + 1, b.to);
             while (!value.empty() &&
@@ -1003,22 +1003,46 @@ private:
         const std::string_view query = trim(text_between_view(s, colon + 1, to), html_whitespace);
         if (custom) {
             const std::optional<std::string> own = custom_value(property, depth);
+            const property_registration * registered =
+                conditions_->registered ? conditions_->registered(property) : nullptr;
+            const auto same = [](const std::optional<std::string> & a,
+                                 const std::optional<std::string> & b) {
+                if (!a && !b) { return truth::yes; }
+                if (!a || !b) { return truth::no; }
+                return significant(*a) == significant(*b) ? truth::yes : truth::no;
+            };
+            const auto parent = [&]() -> std::optional<std::string> {
+                return conditions_->inherited ? conditions_->inherited(property) : std::nullopt;
+            };
             // THE CSS-WIDE KEYWORDS NAME A VALUE TO COMPARE WITH rather than
             // being one: `initial` is the guaranteed-invalid value an
-            // unregistered property starts from, `inherit` and `unset` are the
-            // parent's. `revert` and `revert-layer` name nothing here.
-            if (ascii_iequals(query, "initial")) { return own ? truth::no : truth::yes; }
-            if (ascii_iequals(query, "inherit") || ascii_iequals(query, "unset")) {
-                const std::optional<std::string> parent =
-                    conditions_->inherited ? conditions_->inherited(property) : std::nullopt;
-                if (!own && !parent) { return truth::yes; }
-                if (!own || !parent) { return truth::no; }
-                return significant(*own) == significant(*parent) ? truth::yes : truth::no;
+            // unregistered property starts from and the initial value a
+            // registered one has, `inherit` is the parent's, and `unset` is
+            // whichever of the two the property inherits. `revert` and
+            // `revert-layer` name nothing here.
+            if (ascii_iequals(query, "initial")) {
+                if (registered == nullptr) { return own ? truth::no : truth::yes; }
+                return same(own, compute_registered(registered->initial, registered->syntax,
+                                                    conditions_->lengths));
+            }
+            if (ascii_iequals(query, "inherit")) { return same(own, parent()); }
+            if (ascii_iequals(query, "unset")) {
+                if (registered != nullptr && !registered->inherits) {
+                    return same(own, compute_registered(registered->initial, registered->syntax,
+                                                        conditions_->lengths));
+                }
+                return same(own, parent());
             }
             if (ascii_iequals(query, "revert") || ascii_iequals(query, "revert-layer")) {
                 return truth::no;
             }
             if (!own) { return truth::no; }
+            // A registered property compares computed values of its type, so
+            // `style(--length: 1em)` holds against a `30px` under a 30px font.
+            if (registered != nullptr) {
+                return same(own,
+                            compute_registered(query, registered->syntax, conditions_->lengths));
+            }
             return significant(*own) == significant(query) ? truth::yes : truth::no;
         }
         if (!conditions_->computed) { return truth::unknown; }
@@ -1067,6 +1091,33 @@ bool may_have_var(std::string_view value) noexcept {
         }
     }
     return false;
+}
+
+std::optional<std::string> compute_registered(std::string_view text, std::string_view syntax,
+                                              const length_context & ctx) {
+    const std::optional<std::vector<syntax_alternative>> parsed = parse_syntax(syntax);
+    // A syntax nothing here can read takes anything, as `*` does: refusing
+    // every value for it would make the property's initial value the only one
+    // it ever has.
+    std::string matched;
+    if (!parsed || parsed->empty()) {
+        matched = std::string{trim(text, html_whitespace)};
+    } else {
+        const std::optional<std::string> found = match_syntax(text, *parsed);
+        if (!found) { return std::nullopt; }
+        matched = *found;
+    }
+    // Then computed like the type it names: a `calc()` folded, a dimension in
+    // its canonical unit - `1em` under a 30px font is `30px`.
+    if (may_have_math(matched)) {
+        const folded_value done = fold_math(matched, ctx);
+        if (!done.ok) { return std::nullopt; }
+        matched = done.text;
+    }
+    if (const std::optional<std::string> canonical = canonical_dimension_text(matched, ctx)) {
+        matched = *canonical;
+    }
+    return matched;
 }
 
 std::optional<std::string> substitute_var(std::string_view value, const custom_lookup & lookup,

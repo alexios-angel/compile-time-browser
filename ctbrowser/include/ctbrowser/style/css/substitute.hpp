@@ -44,6 +44,30 @@ using custom_lookup = std::function<std::optional<std::string_view>(atom)>;
 // leaves this empty, and every `attr()` is then left as written.
 using attribute_lookup = std::function<std::optional<std::string>(std::string_view name)>;
 
+// A REGISTERED CUSTOM PROPERTY, CSS Properties and Values API 1 §2: the
+// `@property` rule or the `CSS.registerProperty()` call that gave `--x` a
+// syntax, an inheritance flag and an initial value. A registered property is
+// no longer a token stream that means whatever reads it: its value is parsed
+// against the syntax at computed-value time, computed like the type it names
+// (`1em` becomes `30px`), and falls back to the initial value when it does not
+// parse.
+struct property_registration {
+    std::string syntax = "*";
+    bool inherits = true;
+    std::string initial;
+};
+
+// The computed value of `text` for a registration, or nothing when the text
+// does not parse against the syntax. `*` takes anything; a `<length>` or
+// another dimension is folded against `ctx` into its canonical unit; a
+// `calc()` is folded wherever it sits.
+[[nodiscard]] std::optional<std::string> compute_registered(std::string_view text,
+                                                            std::string_view syntax,
+                                                            const length_context & ctx);
+
+// The lookup a style query needs: is this custom property registered, and how?
+using registration_lookup = std::function<const property_registration *(std::string_view property)>;
+
 // WHAT `if()` MAY ASK, CSS Values 5 §if-notation. The third arbitrary
 // substitution function: `if( <if-condition> : <declaration-value>? ; ... )`,
 // replaced by the value of the first branch whose condition holds, or `else`.
@@ -70,6 +94,9 @@ struct condition_environment {
     // A media condition's truth against the current environment, or nothing for
     // one that does not parse.
     std::function<std::optional<bool>(std::string_view condition)> media;
+    // Whether a custom property is registered: a query against one compares
+    // computed values of its type, and `initial` names its initial value.
+    registration_lookup registered;
     // The bases a range query resolves its dimensions against: `style(10em >
     // 3px)` needs a font size.
     length_context lengths;
