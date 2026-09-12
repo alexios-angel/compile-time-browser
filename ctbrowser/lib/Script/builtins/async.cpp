@@ -322,10 +322,22 @@ void install_promise(context & cx) {
     // AsyncFromSyncIteratorContinuation). `return`/`throw` forward the same way.
     cx.define_native(std::string{async_iterator_name}, [](context & c, std::span<value> a) {
         const value source = a.empty() ? value::undefined() : a[0];
-        if (const value async = c.lookup_property(source, "@@asyncIterator"); async.is_callable()) {
-            return c.call(async, {}, source);
+        if (source.is_nullish()) {
+            c.throw_error("TypeError", "the value is not async iterable");
+            return value::undefined();
+        }
+        // 7.4.3 GetIterator(async): GetMethod(@@asyncIterator) - a value that
+        // is neither undefined, null nor callable is the TypeError right
+        // there, and @@iterator is asked only when the method is ABSENT.
+        const value async = c.lookup_property(source, "@@asyncIterator");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (async.is_callable()) { return c.call(async, {}, source); }
+        if (!async.is_nullish()) {
+            c.throw_error("TypeError", "[Symbol.asyncIterator] is not a function");
+            return value::undefined();
         }
         const value sync = c.lookup_property(source, "@@iterator");
+        if (c.throw_pending()) { return value::undefined(); }
         if (!sync.is_callable()) {
             c.throw_error("TypeError", "the value is not async iterable");
             return value::undefined();

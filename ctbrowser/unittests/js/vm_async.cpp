@@ -473,6 +473,14 @@ void test_for_await() {
     expect_after_turn("var result = ''; var x;"
                       "(async () => { for await (x of [1, 2]) { result += x; } })();",
                       "12");
+    // GetIterator(async), 7.4.3: a [Symbol.asyncIterator] that is present but
+    // not callable is the TypeError; [Symbol.iterator] is asked only when it
+    // is absent - so the sync getter here is never read.
+    expect_after_turn("var result = ''; var it = { get [Symbol.iterator]() { result += 'sync'; }, "
+                      "[Symbol.asyncIterator]: false };"
+                      "(async () => { try { for await (const v of it) {} } catch (e) { result += "
+                      "e.constructor.name; } })();",
+                      "TypeError");
     // Outside an async function it is refused at compile time.
     CHECK(!compiler::compile("function f() { for await (const v of []) {} }").ok);
 
