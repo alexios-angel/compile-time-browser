@@ -236,19 +236,21 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
         for (const node_id child : from.children(at)) { self(self, child); }
     };
     find_body(find_body, from.root());
-    if (!body) { return; }
     // A COMMENT OR PROCESSING INSTRUCTION AHEAD OF ANY CONTENT lands on the
     // scratch document's own node - the "before html" rule - and it is part
     // of the fragment all the same: `div.innerHTML = '<?t a="b"?>'` and
-    // `= '<!--x-->'` both name one child. The Document node's children come
-    // first because that is where they were.
+    // `= '<!--x-->'` both name one child, and with nothing else there is no
+    // body at all. The Document node's children come first because that is
+    // where they were.
     for (const node_id child : from.children(from.document_node())) {
         const node_kind kind = from.kind(child).value_or(node_kind::element);
         if (kind == node_kind::comment || kind == node_kind::processing_instruction) {
             copy_subtree(from, child, target);
         }
     }
-    for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    if (body) {
+        for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    }
     mutated();
 }
 
