@@ -335,6 +335,31 @@ void test_for_of() {
     expect_result("var fns = []; for (const x of [1,2,3]) { fns.push(function () { return x; }); }"
                   "return fns[0]() + fns[2]();",
                   "4");
+    // THE PROTOCOL, LAZILY (14.7.5.6): a generator is pulled one value per
+    // iteration, so an infinite one ends at `break` - and `break` closes the
+    // iterator through its `return()` (7.4.10 IteratorClose), once, while a
+    // loop that ran to `done` does not call it.
+    expect_result("function* nat() { let i = 0; while (true) { yield i++; } }"
+                  "var s = 0; for (const x of nat()) { if (x > 3) { break; } s += x; } return s;",
+                  "6");
+    expect_result("var returned = 0, started = 0;"
+                  "var it = { [Symbol.iterator]() { return { next() { started++;"
+                  " return { done: false, value: started }; }, return() { returned++;"
+                  " return {}; } }; } };"
+                  "var seen = 0; for (const x of it) { seen += x; if (x == 2) { break; } }"
+                  "return [started, returned, seen].join(',');",
+                  "2,1,3");
+    expect_result(
+        "var returned = 0;"
+        "var it = { [Symbol.iterator]() { var n = 0; return { next() { n++;"
+        " return { done: n > 2, value: n }; }, return() { returned++; return {}; } }; } };"
+        "var t = 0; for (const x of it) { t += x; } return t + ',' + returned;",
+        "3,0");
+    // A non-iterable is the TypeError the specification says, not zero turns.
+    expect_result("try { for (const x of 5) {} return 'ran'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("try { for (const x of {}) {} return 'ran'; } catch (e) { return e.name; }",
+                  "TypeError");
 }
 
 void test_for_in() {

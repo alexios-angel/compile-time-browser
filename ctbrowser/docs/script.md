@@ -294,9 +294,9 @@ constructors - so `new Set(otherSet)` and `f(...map.keys())` work, and all of th
 agree. It covers arrays, strings, Maps, Sets, the views those hand out, and
 anything array-LIKE.
 
-**The limit that remains**: there is no `Symbol.iterator` dispatch, so an object
-with a `next()` of its own is not iterated. A generator would need the same
-machinery and is out of scope (below).
+`Symbol.iterator` dispatch came on 2026-09-12: `iterable_values` runs a page's
+own `[Symbol.iterator]()` through the protocol, and for-of pulls such an
+iterator lazily (the generators section below).
 
 ### Reading a property of undefined throws (since 2026-09-12)
 
@@ -616,15 +616,20 @@ which is precisely what a pawl that records the blocker is for:
   `{value: v, done: true}`. A `yield` inside the finally suspends again; a
   finally that returns overrides. An async generator's `.return()` still
   finishes on the spot.
-* **`for (x of gen())` MATERIALIZES.** `op::iterable` hands back an array by
-  construction, so the generator is drained - up to 2^20 values - rather than
-  pulled lazily. An INFINITE generator hangs there instead of looping for ever,
-  which is a bounded failure rather than a silent one. Laziness means a real
-  iterator protocol in the loop opcodes, which no corpus has asked for.
+* **`for (x of gen())` IS LAZY (since 2026-09-12).** The loop opens its
+  source through `__ctbrowser_for_of_open`, which answers undefined for what
+  `op::iterable` materialises exactly (arrays, strings, proxies, Map/Set and
+  their views, array-likes) and an iterator record for everything else; one
+  register tested per iteration picks the index loop or `__ctbrowser_iter_next`,
+  and `break` runs `__ctbrowser_iter_close`. So an infinite generator ends at
+  `break`, a page's own `[Symbol.iterator]` is pulled one value at a time, and
+  a non-iterable is the TypeError. Spread, `Array.from` and the Map/Set
+  constructors still drain through `iterable_values` (bounded at 2^20 steps,
+  then a RangeError). Not closed on a `return` or a throw out of the body -
+  that needs a handler, which ctcompile's importer refuses a function for.
 * **Async generators and `for await` exist since 2026-09-12** — the request
   queue lives on `coroutine_object`, `yield`/`return` await their operands,
-  and `for await` lowers to the real protocol (see `docs/test262.md`). Still
-  not done: closing the iterator on `break`/throw in the sync loop. Array
+  and `for await` lowers to the real protocol (see `docs/test262.md`). Array
   DESTRUCTURING runs the real protocol since 2026-09-12 (three natives,
   `__ctbrowser_iter_open/next/close`, IteratorClose on the normal early exit;
   not on a throw out of a default - a handler there costs the function its

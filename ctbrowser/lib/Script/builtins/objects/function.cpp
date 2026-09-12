@@ -341,6 +341,30 @@ void install_destructuring_iteration(context & cx) {
         record->set("done", value::boolean(!iterator.is_object()));
         return value::object(record);
     });
+    cx.define_native(std::string{for_of_open_name}, [](context & c, std::span<value> a) {
+        const value v = a.empty() ? value::undefined() : a[0];
+        // See for_of_open_name: the fast set is what iterable_values walks
+        // without the protocol, plus the array-like leniency the index loop
+        // has always had (ctcompile's escape oracle pins an inherited `0`
+        // getter firing under `for (x of {length: 1})`).
+        bool fast = v.is_array() || v.is_string() || v.is_kind(heap_kind::proxy);
+        if (!fast && v.is_object()) {
+            auto * obj = static_cast<object_object *>(v.as_heap());
+            fast = obj->find("__entries") != nullptr || obj->find("__items") != nullptr;
+            if (!fast && !c.lookup_property(v, "@@iterator").is_callable()) {
+                const value * length = obj->find("length");
+                fast = length != nullptr && length->is_number();
+            }
+        }
+        if (fast) { return value::undefined(); }
+        const value iterator = c.get_iterator(v);
+        auto * record = detail::new_table(c);
+        record->set("iterator", iterator);
+        record->set("next", iterator.is_object() ? c.lookup_property(iterator, "next")
+                                                 : value::undefined());
+        record->set("done", value::boolean(!iterator.is_object()));
+        return value::object(record);
+    });
     cx.define_native(std::string{iterator_next_name}, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::undefined(); }
         auto * record = static_cast<object_object *>(a[0].as_heap());

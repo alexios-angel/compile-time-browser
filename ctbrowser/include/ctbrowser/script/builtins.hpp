@@ -61,6 +61,15 @@ inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_itera
 inline constexpr std::string_view iterator_open_name = "__ctbrowser_iter_open";
 inline constexpr std::string_view iterator_next_name = "__ctbrowser_iter_next";
 inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close";
+// A SYNC for-of's OPEN (14.7.5.6): `undefined` when the source is one the
+// index loop over op::iterable already handles exactly - an array, a string,
+// a proxy, a Map or Set, a library iterator, or an array-like with no
+// @@iterator - and otherwise GetIterator(v) into the same record as
+// iterator_open_name, so a generator or a page's own iterable is pulled ONE
+// value at a time (an infinite one runs until `break`) and closed by
+// iterator_close_name on `break`. The loop chooses per iteration on that
+// register, so an array is still the index loop it always was.
+inline constexpr std::string_view for_of_open_name = "__ctbrowser_for_of_open";
 // `yield*` (14.4.14), as three natives around the generator's own yield:
 // `open(v, async)` is GetIterator(v, kind) into the same record shape,
 // `call(rec, sent)` is Call(rec.next, rec.iterator, sent) - the raw result,
