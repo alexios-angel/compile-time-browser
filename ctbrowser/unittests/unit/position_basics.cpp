@@ -16,58 +16,27 @@
 //
 // Text is measured with monospace_measure: one character is `font_size * 0.6`.
 
-#include <ctbrowser/core/core.hpp>
-#include <ctbrowser/dom/dom.hpp>
-#include <ctbrowser/layout/layout.hpp>
-#include <ctbrowser/style/style.hpp>
-
-#include "check.hpp"
-#include <cmath>
-#include <cstdio>
-#include <string>
-#include <string_view>
-
-using namespace ctbrowser;
-using namespace ctbrowser::layout;
+#include "layout_fixture.hpp"
 
 namespace {
 
-struct fixture {
-    atom_table atoms;
-    document doc{atoms};
-    style::engine styles{atoms};
-    style::style_map resolved;
-    box_node root;
+// The shared fixture, laid out: positioning is the one stage where the
+// viewport HEIGHT matters, because a fixed box is placed against it.
+struct placed {
+    fixture page;
     fragment out;
 
     void load(std::string_view html, std::string_view css, float width = 800, float height = 600) {
-        (void)parse_html(doc, html);
-        styles.add_sheet(css, 1);
-        const auto txn = doc.read();
-        resolved = styles.resolve_all(txn);
-        box_builder builder{atoms, resolved};
-        root = builder.build(txn, txn.root());
+        page.load(html, css);
         const engine eng{monospace_measure()};
-        out = eng.run(root, width, height);
-    }
-
-    [[nodiscard]] node_id find_id(std::string_view want) {
-        const auto txn = doc.read();
-        const atom key = atoms.intern("id");
-        node_id found{};
-        const auto walk = [&](auto && self, node_id at) -> void {
-            if (!found && txn.attribute_value(at, key) == want) { found = at; }
-            for (const node_id c : txn.children(at)) { self(self, c); }
-        };
-        walk(walk, txn.root());
-        return found;
+        out = eng.run(page.root, width, height);
     }
 
     // ABSOLUTE coordinates, which is the only frame in which a positioned box's
     // place can be stated: its fragment's own bounds are relative to whichever
     // parent it happens to hang off, and that parent is not its containing block.
     [[nodiscard]] rect at(std::string_view id) {
-        const node_id want = find_id(id);
+        const node_id want = page.find_id(id);
         rect found{};
         const auto walk = [&](auto && self, const fragment & f, float dx, float dy) -> void {
             if (f.source == want) {
@@ -82,21 +51,6 @@ struct fixture {
     }
 };
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
-void expect_near(float got, float want, std::string_view what) {
-    if (std::fabs(got - want) >= 0.01f) {
-        std::printf("FAIL %-56s got %.3f want %.3f\n", std::string{what}.c_str(),
-                    static_cast<double>(got), static_cast<double>(want));
-        ++ctbrowser_test_failures;
-    }
-}
-
 constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
 
 // --- relative -------------------------------------------------------------
@@ -105,7 +59,7 @@ void test_relative_moves_but_keeps_its_slot() {
     // THE WHOLE DIFFERENCE between relative and absolute, in one document. The
     // moved box is drawn 10 across and 20 down from where it was; the box AFTER
     // it does not notice, because the slot is still occupied.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=a></div><div id=b></div></body></html>",
            std::string{reset}
                .append("div { height: 40px } "
@@ -117,7 +71,7 @@ void test_relative_moves_but_keeps_its_slot() {
 }
 
 void test_relative_with_bottom_and_right_moves_the_other_way() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=a></div></body></html>",
            std::string{reset}
                .append("div { height: 40px } "
@@ -131,7 +85,7 @@ void test_relative_with_bottom_and_right_moves_the_other_way() {
 // --- absolute -------------------------------------------------------------
 
 void test_absolute_leaves_no_slot_behind() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=a></div><div id=b></div></body></html>",
            std::string{reset}
                .append("div { height: 40px } #a { position: absolute; top: 100px }")
@@ -144,7 +98,7 @@ void test_absolute_leaves_no_slot_behind() {
 void test_absolute_is_placed_against_the_nearest_POSITIONED_ancestor() {
     // Not against its parent, which is the whole point. `#mid` is an ordinary
     // static box between the anchor and the child, and it must make no difference.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=pad></div><div id=anchor><div id=mid>"
            "<div id=a></div></div></div></body></html>",
            std::string{reset}
@@ -162,7 +116,7 @@ void test_an_auto_offset_is_the_static_position() {
     // `.position-absolute` with no offsets at all is a real and common
     // declaration - it takes the element out of flow and leaves it exactly where
     // it was. That is what the empty fragment the flows leave behind is for.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=pad></div><div id=a></div></div></body></html>",
            std::string{reset}
                .append("#anchor { position: relative; height: 200px } "
@@ -174,7 +128,7 @@ void test_an_auto_offset_is_the_static_position() {
 }
 
 void test_a_static_position_collapses_hypothetical_margins() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=before></div><div id=a></div>"
            "<div id=after></div></div></body></html>",
            std::string{reset}
@@ -196,7 +150,7 @@ void test_both_offsets_stretch_and_one_shrink_wraps() {
     {
         // Both given and the width auto: the box stretches BETWEEN them, which is
         // how a full-width overlay is written.
-        fixture f;
+        placed f;
         f.load(html, std::string{reset}
                          .append("#anchor { position: relative; width: 300px; height: 100px } "
                                  "#a { position: absolute; left: 20px; right: 30px; "
@@ -209,7 +163,7 @@ void test_both_offsets_stretch_and_one_shrink_wraps() {
         // Only one given: it SHRINKS TO FIT, which is why
         // `.position-absolute.top-0.start-0` is the size of its text and not the
         // size of the page.
-        fixture f;
+        placed f;
         f.load(html, std::string{reset}
                          .append("#anchor { position: relative; width: 300px; height: 100px } "
                                  "#a { position: absolute; left: 20px; font-size: 10px }")
@@ -219,7 +173,7 @@ void test_both_offsets_stretch_and_one_shrink_wraps() {
 }
 
 void test_right_and_bottom_measure_from_the_far_edge() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=a>hi</div></div></body></html>",
            std::string{reset}
                .append("#anchor { position: relative; width: 300px; height: 100px } "
@@ -233,7 +187,7 @@ void test_right_and_bottom_measure_from_the_far_edge() {
 void test_the_containing_block_is_the_PADDING_box() {
     // Not the content box. Invisible until the anchor has padding, and then wrong
     // by exactly that padding on every descendant.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=a></div></div></body></html>",
            std::string{reset}
                .append("#anchor { position: relative; padding: 12px; height: 100px; "
@@ -247,7 +201,7 @@ void test_the_containing_block_is_the_PADDING_box() {
 }
 
 void test_with_no_positioned_ancestor_it_uses_the_page() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=wrap><div id=a></div></div></body></html>",
            std::string{reset}
                .append("#wrap { margin-left: 40px; margin-top: 40px; height: 100px } "
@@ -262,7 +216,7 @@ void test_fixed_is_placed_against_the_WINDOW() {
     // The document here is far taller than the window, which is the case that
     // tells the two apart: against the document a `bottom: 0` bar lands after the
     // last paragraph, where nobody will ever see it.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=tall></div><div id=bar></div></body></html>",
            std::string{reset}
                .append("#tall { height: 3000px } "
@@ -278,7 +232,7 @@ void test_translate_offsets_by_a_share_of_the_box_itself() {
     // `.translate-middle` is `translate(-50%, -50%)` and it is how every centred
     // overlay in Bootstrap is anchored. The percentages are of the box's OWN
     // size, which is what makes it centre ON its anchor point.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=a>hi</div></div></body></html>",
            std::string{reset}
                .append("#anchor { position: relative; width: 300px; height: 100px } "
@@ -294,7 +248,7 @@ void test_the_one_axis_translate_functions_are_their_own() {
     // Bootstrap writes both - `.translate-middle-x` and `.translate-middle`. A
     // parser that reads only the two-argument spelling centres one and silently
     // leaves the other where it was.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=a>hi</div><div id=b>hi</div>"
            "</div></body></html>",
            std::string{reset}
@@ -313,7 +267,7 @@ void test_the_one_axis_translate_functions_are_their_own() {
 // --- the shorthand --------------------------------------------------------
 
 void test_the_inset_shorthand() {
-    fixture f;
+    placed f;
     f.load("<html><body><div id=anchor><div id=a></div></div></body></html>",
            std::string{reset}
                .append("#anchor { position: relative; width: 300px; height: 100px } "
@@ -327,7 +281,7 @@ void test_the_inset_shorthand() {
 void test_a_positioned_box_is_still_an_anchor_with_no_offsets() {
     // `.position-relative` with nothing else is one of Bootstrap's commonest
     // declarations: it exists ONLY to be a containing block.
-    fixture f;
+    placed f;
     f.load("<html><body><div id=pad></div><div id=anchor><div id=a></div></div></body></html>",
            std::string{reset}
                .append("#pad { height: 50px } "

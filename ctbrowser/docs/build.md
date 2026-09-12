@@ -227,8 +227,7 @@ turned down rather than overlooked:
   nothing includes `<boost/crc.hpp>`. Kept for the record: `boost::crc_32_type`
   replaced the 256-entry CRC table `encode_png` rebuilt on every call. It IS the PNG polynomial (CRC-32/ISO-HDLC,
   0xEDB88320 reflected), so this is the same checksum from a library rather than
-  from memory, and `tools/check/check-png.py` verifies the bytes with Python's own
-  zlib independently of it. Header-only, so the cross-build needs nothing.
+  from memory. Header-only, so the cross-build needs nothing.
   **`encode_png` moved to `ctbrowser/lib/Shell/image/images.cpp` first**: it was `inline` in a
   public header, which made it the odd one out beside the BMP/PNG/JPEG decoders,
   and the rule against third-party headers in public ones is the reason the

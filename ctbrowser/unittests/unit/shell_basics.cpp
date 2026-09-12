@@ -41,13 +41,6 @@ using ctbrowser_test::find_id;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 constexpr std::string_view demo_page = R"(
 <!doctype html><html><head><title>A Title</title><style>
 .card { background-color: #ffffff; padding: 8px }

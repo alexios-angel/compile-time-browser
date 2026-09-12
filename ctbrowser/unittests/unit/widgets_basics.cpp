@@ -37,13 +37,6 @@ using ctbrowser_test::find_id;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 [[nodiscard]] std::string value_of(browser & page, std::string_view id) {
     const auto txn = page.doc().read();
     const node_id node = find_id(page, id);

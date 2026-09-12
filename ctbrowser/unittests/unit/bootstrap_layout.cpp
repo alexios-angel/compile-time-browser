@@ -55,14 +55,6 @@ constexpr int viewport_height = 768;
 constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
                                          "components", "position", "kitchen"};
 
-[[nodiscard]] std::string read_file(const std::filesystem::path & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream all;
-    all << in.rdbuf();
-    return all.str();
-}
-
 // The dump script, with its inputs bound. PROPS comes off disk rather than being
 // spelled again here: css-parity.py --emit-props writes it, so the Python list is
 // the only copy and this cannot drift from what the Chrome comparison asks.

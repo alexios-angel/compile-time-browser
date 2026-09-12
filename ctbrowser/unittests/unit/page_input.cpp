@@ -8,7 +8,7 @@
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
 // the order it had; the helpers more than one of the eight needs are in
-// page_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -21,8 +21,8 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "chrome_probe.hpp"
 #include "dom_probe.hpp"
-#include "page_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -37,10 +37,8 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-using ctbrowser_test::check;
 using ctbrowser_test::find_id;
 using ctbrowser_test::log_of;
-using ctbrowser_test::read_bytes;
 
 namespace {
 
@@ -56,9 +54,8 @@ namespace {
 // p5 having installed 200 globals.
 void test_p5_receives_input() {
     browser page{browser_options{300, 300}};
-    page.assets().add("p5.js", read_bytes("vendor/p5/p5.js"));
     page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
-        <script src="p5.js"></script></head><body style="margin:0"><script>
+        <script src="vendor/p5/p5.js"></script></head><body style="margin:0"><script>
         var log = '';
         var sketch = null;
         new p5(function (s) {

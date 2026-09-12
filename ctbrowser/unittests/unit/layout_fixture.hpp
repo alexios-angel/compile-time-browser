@@ -1,28 +1,10 @@
 #pragma once
-// The fixture the layout_*.cpp files share - a document, its styles and its
-// box tree - and the prose assertions every one of them is written with. They
-// were unit/layout_basics.cpp's until that file was split on 2026-09-08, and so
-// is the banner below: its three numbered claims are now layout_blocks.cpp (1
-// and the geometry half of 2), layout_margins.cpp and layout_inline.cpp (the
-// rest of 2), and layout_parallel.cpp (3). The includes and using-directives
-// are the ones that file had at file scope, so every file here sees exactly
-// what that one saw.
-//
-// ctbrowser.layout: the box tree, the fragment tree, and the parallel driver.
-//
-// Three things are actually being proved here, in increasing order of how much
-// they matter:
-//
-//   1. the box tree is not the DOM tree - display:none produces no box,
-//      whitespace produces no box, and mixed inline/block content produces
-//      ANONYMOUS boxes that no element corresponds to. the previous engine could not represent
-//      any of these because its boxes WERE its nodes.
-//   2. geometry is right - lengths resolve, padding and margins apply,
-//      children stack, and text wraps at the content width.
-//   3. PARALLEL LAYOUT IS IDENTICAL TO SEQUENTIAL. This is the load-bearing
-//      claim of the whole stage. Anything less than fragment-for-fragment,
-//      float-for-float equality means the concurrency is not free, and
-//      "mostly the same" is not a layout engine.
+// The fixture the layout_*.cpp, flex_basics.cpp and position_basics.cpp files
+// share - a document, its styles and its box tree - and the prose assertions
+// every one of them is written with. They were unit/layout_basics.cpp's until
+// that file was split on 2026-09-08; the includes and using-directives are the
+// ones that file had at file scope, so every file here sees exactly what that
+// one saw.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -86,16 +68,6 @@ inline std::size_t count_kind(const box_node & at, box_kind kind) {
 
 inline bool near(float a, float b) {
     return std::fabs(a - b) < 0.01f;
-}
-
-// CHECK() from check.hpp prints the expression that failed. Layout failures
-// read far better as prose ("second block stacks below the first") than as a
-// float comparison, so these assertions carry a message instead.
-inline void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
 }
 
 inline void expect_near(float got, float want, std::string_view what) {

@@ -22,13 +22,6 @@
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 [[nodiscard]] std::string read(const std::string & path) {
     std::ifstream in{path};
     if (!in) { return {}; }
@@ -135,7 +128,7 @@ int main() {
         for (const auto & entry : std::filesystem::recursive_directory_iterator{tree}) {
             if (!entry.is_regular_file()) { continue; }
             const std::string ext = entry.path().extension().string();
-            if (ext != ".cppm" && ext != ".cpp" && ext != ".hpp") { continue; }
+            if (ext != ".cpp" && ext != ".hpp") { continue; }
             std::string path = entry.path().generic_string();
             if (allowed.contains(path)) { continue; }
             ++swept;

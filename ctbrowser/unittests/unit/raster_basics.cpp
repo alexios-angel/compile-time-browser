@@ -35,13 +35,6 @@ using ctbrowser::paint::recorder;
 
 namespace {
 
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", std::string{what}.c_str());
-        ++ctbrowser_test_failures;
-    }
-}
-
 // A page, taken all the way from HTML to a layer tree.
 struct page {
     atom_table atoms;

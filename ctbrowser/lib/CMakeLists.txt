@@ -19,10 +19,10 @@ set(CTBROWSER_STRICT_WARNINGS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
 # 4.31 s with the default ld, and the engine produces TWENTY-SIX of them. That is the
 # single cheapest thing in this file. Checked rather than assumed, because a
 # toolchain without lld must still build.
-include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE CTBROWSER_HAVE_LINKER_CHECK)
+include(CheckLinkerFlag)
 option(CTBROWSER_USE_LLD "Link with lld when it is available" ON)
 set(CTBROWSER_LINK_OPTIONS "")
-if(CTBROWSER_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
+if(CTBROWSER_USE_LLD)
   check_linker_flag(CXX "-fuse-ld=lld" CTBROWSER_LLD_WORKS)
   if(CTBROWSER_LLD_WORKS)
     set(CTBROWSER_LINK_OPTIONS -fuse-ld=lld)
@@ -137,10 +137,7 @@ endif()
 # EVERY package an exported target links has to be findable by the consumer,
 # or find_package(ctbrowser) fails on a target it cannot resolve. Adding an
 # optional dependency to a library and forgetting this line is exactly the kind
-# of break tools/check/check-package.sh exists to catch - it caught these two.
-if(Freetype_FOUND)
-  string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(Freetype)")
-endif()
+# of break tools/check/check-package.sh exists to catch - it caught these.
 if(SDL3_image_FOUND)
   string(APPEND CTBROWSER_CONFIG_DEPS "\nfind_dependency(SDL3_image CONFIG)")
 endif()

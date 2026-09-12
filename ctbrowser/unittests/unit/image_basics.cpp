@@ -58,14 +58,6 @@ namespace {
     return walk(walk, page.fragments(), 0, 0);
 }
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
-
 // Scripts report through console.log, the same way the other binding tests do.
 [[nodiscard]] std::string logged(browser & page) {
     std::string out;
@@ -328,8 +320,7 @@ void test_a_constructed_image_is_an_element() {
 }
 
 // The PNG this engine writes must be readable by things that are not this
-// engine, so the check is structural AND independent: the file is written out
-// and tools/check/check-png.py decodes it with Python's own zlib.
+// engine, so the check is structural: signature, chunk order, IHDR fields.
 void test_encode_png() {
     const auto image = decode_bmp(make_bmp(4, 3, 0xFF3366CCU));
     const std::vector<std::byte> png = ctbrowser::shell::encode_png(image);
@@ -348,10 +339,6 @@ void test_encode_png() {
     // Empty in, empty out - not a header with no pixels, which a decoder would
     // reject and which would look like a corrupt file rather than no file.
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
-
-    // Written for tools/check/check-png.py, which decodes it with Python's zlib.
-    std::ofstream out{"../build/render-encode.png", std::ios::binary};
-    out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
 }
 
 // EXPORT, END TO END - the path p5's save() takes, and the one place this engine

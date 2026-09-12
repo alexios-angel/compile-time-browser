@@ -48,9 +48,8 @@ endif()
 # and still draws font8x8, which keeps the goldens reproducible on a machine
 # with no font libraries at all.
 if(SDL3_FOUND AND SDL3_ttf_FOUND)
-  ctbrowser_pick_sdl_target(ttf_target ttf_static SDL3_ttf::SDL3_ttf)
-  ctbrowser_pick_sdl_target(sdl_target sdl_static SDL3::SDL3)
-  target_link_libraries(ctbrowser-raster PUBLIC ${ttf_target} ${sdl_target})
+  target_link_libraries(ctbrowser-raster PUBLIC ${CTBROWSER_SDL3_TTF_TARGET}
+                                                ${CTBROWSER_SDL3_TARGET})
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_TTF=1)
   message(STATUS "ctbrowser: SDL3_ttf - real fonts available")
 else()

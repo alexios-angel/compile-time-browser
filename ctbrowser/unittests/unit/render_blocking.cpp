@@ -40,13 +40,6 @@ using ctbrowser_test::logged;
 
 namespace {
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out;
-    out.reserve(text.size());
-    for (const char c : text) { out.push_back(static_cast<std::byte>(c)); }
-    return out;
-}
-
 void test_blocking_is_a_token_list_with_one_supported_token() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><script>
