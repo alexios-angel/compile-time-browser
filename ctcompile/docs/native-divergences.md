@@ -297,7 +297,7 @@ not exist; each is listed so that phase cannot be written without meeting it.
 A confined site may be lowered by value only when **every value ever stored
 into it has a proved non-heap 54A type**. A boxed field inside a stack object
 is a reference the precise collector cannot see (it walks exactly
-`GCRoots.def`), so the object it points at is freed under it. Until Phase 47's
+`context::each_root`), so the object it points at is freed under it. Until Phase 47's
 per-field RAII rooting exists, anything else stays boxed. `couldBeHeap(Type)`
 mirrors `couldBeBigInt` (`TypeInference.cpp`): conservative on `boxed`,
 `json`, containers and `null`.

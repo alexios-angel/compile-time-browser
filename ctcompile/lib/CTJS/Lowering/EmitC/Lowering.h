@@ -38,7 +38,7 @@ struct compiled_entry {
 
     // WHERE EACH JAVASCRIPT VALUE IS ROOTED.
     //
-    // THE COLLECTOR IS PRECISE and walks exactly the roots in GCRoots.def. A
+    // THE COLLECTOR IS PRECISE and walks exactly the roots of context::each_root. A
     // value living only in a C++ local of the emitted function is reachable
     // from NONE of them, so a helper that collects can free it while the
     // generated code still holds its bits - and 33 of the 69 ABI rows are

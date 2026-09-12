@@ -79,29 +79,6 @@ bool known_kind(std::string_view k) {
 
 } // namespace
 
-// THE OTHER TWO INVENTORIES, walked for the same reason the opcode table is:
-// a table nobody reads is a table whose shape is a guess.
-struct call_path {
-    std::string_view name, signature;
-    bool canonical, resets_stack, clears_failure, drains_microtasks;
-    std::string_view note;
-};
-#define CT_CALL_PATH(name_, sig_, canonical_, resets_, clears_, drains_, note_)                    \
-    call_path{#name_, sig_, canonical_, resets_, clears_, drains_, note_},
-constexpr call_path call_paths[] = {
-#include <ctcompile/JavaScript/CallPaths.def>
-};
-#undef CT_CALL_PATH
-
-struct gc_root {
-    std::string_view name, owner, marked_in, note;
-};
-#define CT_GC_ROOT(name_, owner_, marked_in_, note_) gc_root{#name_, owner_, marked_in_, note_},
-constexpr gc_root gc_roots[] = {
-#include <ctcompile/JavaScript/GCRoots.def>
-};
-#undef CT_GC_ROOT
-
 // THE HELPER DESCRIPTORS, as the compiler needs them: a name to emit, and the
 // three obligations a call site has to honour.
 struct helper {
@@ -180,33 +157,6 @@ int main() {
               r.name);
         check(!r.impl.empty(), "impl must say where the semantics live", r.name);
     }
-
-    // EXACTLY ONE CANONICAL ENTRY into the VM. Phase 3's whole job is that every
-    // other path routes through it or stops existing; two canonical paths would
-    // mean two places a mixed-mode dispatch decision has to be made, and the
-    // second one is the one that gets forgotten.
-    int canonical = 0;
-    for (const call_path & p : call_paths) {
-        if (p.canonical) { ++canonical; }
-        // Only a TOP-LEVEL entry may clear the stack. Doing it from a nested one
-        // discards the frames of whoever was running.
-        check(!p.resets_stack || !p.canonical,
-              "the canonical entry must not reset the stack - it is entered from inside a run",
-              p.name);
-    }
-    check(canonical == 1, "exactly one call path is the canonical one", "CallPaths.def");
-
-    // The one hook the embedder gets, and the reason Phase 4 cannot simply call
-    // set_external_roots: it ASSIGNS rather than appends.
-    bool has_external = false;
-    for (const gc_root & r : gc_roots) {
-        check(!r.name.empty() && !r.owner.empty(), "a root must name itself and its owner", r.name);
-        if (r.name == "external") { has_external = true; }
-    }
-    check(has_external,
-          "the external-roots hook must be in the table - AOT frames reach the collector "
-          "through it",
-          "GCRoots.def");
 
     // --- EVERY PARAMETER OF EVERY HELPER, CLASSIFIED ----------------------
     //

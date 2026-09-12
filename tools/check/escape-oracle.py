@@ -71,7 +71,7 @@ WRITERS = 68
 
 KINDS = ["obj", "arr", "fn", "cell"]
 
-# One per row of ctcompile's GCRoots.def, in `context::each_root` order.
+# One per CTBROWSER_ROOT_LABELS row (script/type_record.hpp), in `context::each_root` order.
 ROOT_LABELS = [
     "globals",
     "registers",
@@ -249,7 +249,7 @@ def read_recording(path: str) -> Recording:
                         label, count = item.split(":")
                         if label not in ROOT_LABELS:
                             raise SystemExit(
-                                f"{path}: unknown root label `{label}` - GCRoots.def moved?"
+                                f"{path}: unknown root label `{label}` - CTBROWSER_ROOT_LABELS moved?"
                             )
                         site.routes[label] = int(count)
                 # THE LINE MUST ACCOUNT FOR ITSELF.

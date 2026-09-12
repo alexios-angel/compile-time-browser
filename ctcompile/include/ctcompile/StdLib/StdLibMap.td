@@ -21,8 +21,8 @@
 //              state. These are the rows a test CANNOT pin, so the reason is
 //              all there is and it has to be written properly.
 //
-// WHY TABLEGEN AND NOT A .def. This tree already has four X-macro tables
-// (aot_helpers.def, bytecode_opcodes.def, CallPaths.def, GCRoots.def) and they
+// WHY TABLEGEN AND NOT A .def. This tree already has two X-macro tables
+// (aot_helpers.def, bytecode_opcodes.def) and they
 // are the right shape for a table only C++ reads. This one has a second reader
 // coming: Phase 53's `ctnative` dialect turns the `exact` rows into declarative
 // rewrite rules, and a DRR `Pat<>` is TableGen or it is a hundred hand-written
