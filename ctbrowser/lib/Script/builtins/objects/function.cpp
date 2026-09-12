@@ -284,7 +284,7 @@ void install_dynamic_function(context & cx) {
     // alive by name, which this engine's register frames do not; test262's
     // eval-code/direct tests measure that gap by name. A non-string comes
     // back unchanged (step 1).
-    cx.define_native("eval", [](context & c, std::span<value> a) {
+    detail::global_fn(cx, "eval", 1, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_string()) { return a.empty() ? value::undefined() : a[0]; }
         program compiled = compiler::compile_for_eval(c.to_string(a[0]));
         if (!compiled.ok) {

@@ -696,28 +696,13 @@ void install_promise(context & cx) {
     detail::constant(promise_new, "prototype", value::object(detail::promise_prototype(cx)));
     cx.define_global("Promise", value::object(promise_new));
 
-    cx.define_native("isNaN", [](context &, std::span<value> a) {
+    // 19.2.2 and 19.2.3, both of arity 1.
+    detail::global_fn(cx, "isNaN", 1, [](context &, std::span<value> a) {
         return value::boolean(std::isnan(num_at(a, 0)));
     });
-    cx.define_native("isFinite", [](context &, std::span<value> a) {
+    detail::global_fn(cx, "isFinite", 1, [](context &, std::span<value> a) {
         return value::boolean(std::isfinite(num_at(a, 0)));
     });
-    // Their own `name` and `length` (19.2.2, 19.2.3, both of arity 1).
-    // define_native allocates a bare native, so `length` was absent and `name`
-    // came from context::own_property's synthesised fallback - which cannot
-    // refuse a write or be deleted, and which verifyProperty reports as two
-    // failures at once.
-    const auto slots = [&](const char * name, double arity) {
-        const value fn = cx.global(name);
-        if (!fn.is_kind(heap_kind::native)) { return; }
-        auto * made = static_cast<native_object *>(fn.as_heap());
-        made->is_constructor = false; // a global function, clause 19
-        made->define("length", value::number(arity), attr_configurable);
-        made->define("name", cx.string(name), attr_configurable);
-    };
-    slots("isNaN", 1);
-    slots("isFinite", 1);
-    slots("eval", 1);
     // `String` is a NAMESPACE as well as a coercion, the same way Number is.
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.

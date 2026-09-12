@@ -602,6 +602,15 @@ inline void install_arity(context & cx, native_object * fn, double arity) {
     made->is_constructor = false;
     return made;
 }
+// A GLOBAL FUNCTION of clause 19 - isNaN, parseInt, eval: a method_native
+// with its own `length` and `name`, as a global. context::define_native
+// allocates a bare native, which suits the compiler's private entry points
+// and not a function a page can verifyProperty.
+inline void global_fn(context & cx, std::string name, double arity, native_fn fn) {
+    auto * made = method_native(cx, name, std::move(fn));
+    install_arity(cx, made, arity);
+    cx.define_global(std::move(name), value::object(made));
+}
 // A getter or setter, for define_accessor: a function that is not a constructor.
 [[nodiscard]] inline value accessor_fn(context & cx, std::string name, native_fn fn) {
     return value::object(method_native(cx, std::move(name), std::move(fn)));
