@@ -133,8 +133,15 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"all: revert;"});
     block.clear();
     parse_declaration_block(block, "font: 12px serif");
-    CHECK_EQ(block.size(), std::size_t{1});
+    CHECK_EQ(block.size(), std::size_t{7});
     CHECK_EQ(declaration_value(block, "font"), std::string{"12px serif"});
+    CHECK_EQ(declaration_value(block, "font-weight"), std::string{"normal"});
+    // font-shorthand-serialization: the slash is a component of its own.
+    CHECK_EQ(round_trip("font: 10px/1 Ahem"), std::string{"font: 10px / 1 Ahem;"});
+    CHECK_EQ(round_trip("font: italic bold 700 12px / 1.5 'Times New Roman', serif"),
+             std::string{"font: italic 700 12px / 1.5 Times New Roman, serif;"});
+    CHECK_EQ(round_trip("font: menu"), std::string{"font: menu;"});
+    CHECK_EQ(round_trip("font: Arial"), std::string{});
 
     // A value this table cannot split stays whole, and a whole shorthand
     // still reads back - shorthand-serialization's `background: var(--a)`.

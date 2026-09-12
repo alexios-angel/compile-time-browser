@@ -33,6 +33,7 @@ enum class shape : std::uint8_t {
     pair,   // 1-2 values: start/end, x/y or row/column; one sets both
     bar,    // `a || b || c`: each part goes to the longhand that takes it
     flex,   // Flexbox 1 §7.1.1's own defaults
+    font,   // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
     border, // `bar` over width/style/color, applied to four sides, plus
             // border-image reset to its initial values
     all,    // every longhand; CSS-wide keywords only
@@ -91,7 +92,7 @@ constexpr shorthand_syntax table[] = {
     {"inset-block", shape::pair, "inset-block-start inset-block-end", ""},
     {"overflow", shape::pair, "overflow-x overflow-y", ""},
     {"gap", shape::pair, "row-gap column-gap", ""},
-    {"font", shape::whole,
+    {"font", shape::font,
      "font-style font-variant font-weight font-stretch font-size line-height font-family", ""},
     {"background", shape::whole,
      "background-color background-image background-position background-size "
@@ -343,6 +344,74 @@ split split_flex(std::span<const std::string_view> parts, std::vector<std::strin
     return split::ok;
 }
 
+// `font`: `[ <style> || <variant> || <weight> || <stretch> ]? <size> [ / <line-height> ]?
+// <family>#`, CSS Fonts 4 §3.1. The keywords before the size are told apart by
+// name, because three of the four longhands are freeform and would take
+// anything; a system font (`caption`, `menu`) stays whole.
+split split_font(std::span<const std::string_view> parts, std::vector<std::string> & out) {
+    if (parts.empty()) { return split::invalid; }
+    static constexpr std::string_view styles = "italic oblique";
+    static constexpr std::string_view variants = "small-caps";
+    static constexpr std::string_view weights = "bold bolder lighter";
+    static constexpr std::string_view stretches =
+        "ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded "
+        "extra-expanded ultra-expanded";
+    static constexpr std::string_view system =
+        "caption icon menu message-box small-caption status-bar";
+    if (parts.size() == 1 && has_keyword(system, parts[0])) { return split::whole; }
+    std::string style = "normal", variant = "normal", weight = "normal", stretch = "normal";
+    std::size_t i = 0;
+    for (; i < parts.size(); ++i) {
+        const std::string word = ascii_lower_copy(parts[i]);
+        bool number = false;
+        std::string text;
+        if (word == "normal") { continue; }
+        if (has_keyword(styles, word)) {
+            style = word;
+        } else if (has_keyword(variants, word)) {
+            variant = word;
+        } else if (has_keyword(weights, word) ||
+                   (number = check_declaration("font-weight", word, false).valid)) {
+            weight = number ? check_declaration("font-weight", word, false).serialized : word;
+        } else if (has_keyword(stretches, word)) {
+            stretch = word;
+        } else {
+            break;
+        }
+    }
+    if (i >= parts.size()) { return split::invalid; }
+    // The size, with `/ line-height` glued to it, glued to the next part, or
+    // standing alone between the two.
+    std::string_view size_part = parts[i++];
+    std::string_view height_part;
+    if (const std::size_t slash = size_part.find('/'); slash != std::string_view::npos) {
+        height_part = size_part.substr(slash + 1);
+        size_part = size_part.substr(0, slash);
+        if (height_part.empty() && i < parts.size()) { height_part = parts[i++]; }
+    } else if (i < parts.size() && parts[i].front() == '/') {
+        height_part = parts[i++].substr(1);
+        if (height_part.empty() && i < parts.size()) { height_part = parts[i++]; }
+    }
+    const value_check size = check_declaration("font-size", size_part, false);
+    if (!size.valid) { return split::invalid; }
+    std::string height = "normal";
+    if (!height_part.empty()) {
+        const value_check checked = check_declaration("line-height", height_part, false);
+        if (!checked.valid) { return split::invalid; }
+        height = checked.serialized;
+    }
+    if (i >= parts.size()) { return split::invalid; }
+    std::string family;
+    for (; i < parts.size(); ++i) {
+        if (!family.empty()) { family += ' '; }
+        family += parts[i];
+    }
+    const value_check families = check_declaration("font-family", family, false);
+    if (!families.valid) { return split::invalid; }
+    out = {style, variant, weight, stretch, size.serialized, height, families.serialized};
+    return split::ok;
+}
+
 // `border`: width || style || color, then every side, then border-image reset.
 split split_border(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     const expansion * top = expansion_of("border-top");
@@ -375,6 +444,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
+    case shape::font: return split_font(parts, out);
     case shape::all:
     case shape::whole: break;
     }
@@ -398,6 +468,23 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     if (parts.size() == 4 && parts[3] == parts[1]) { parts.pop_back(); }
     if (parts.size() == 3 && parts[2] == parts[0]) { parts.pop_back(); }
     if (parts.size() == 2 && parts[1] == parts[0]) { parts.pop_back(); }
+    return join(parts);
+}
+
+// `font`, folded: the keywords that are not `normal`, the size, ` / ` and
+// the line-height when it is not `normal`, then the family.
+[[nodiscard]] std::string fold_font(std::span<const std::string> v) {
+    std::vector<std::string> parts;
+    for (std::size_t i = 0; i < 4; ++i) {
+        if (!ascii_iequals(v[i], "normal")) { parts.push_back(v[i]); }
+    }
+    parts.push_back(v[4]);
+    if (!ascii_iequals(v[5], "normal")) {
+        parts.push_back("/");
+        parts.push_back(v[5]);
+    }
+    if (v[6].empty()) { return {}; }
+    parts.push_back(v[6]);
     return join(parts);
 }
 
@@ -430,6 +517,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::pair: return v[0] == v[1] ? v[0] : join(v);
     case shape::bar: return fold_bar(e, v);
     case shape::flex: return join(v);
+    case shape::font: return fold_font(v);
     case shape::border: {
         // Four equal sides per component, and border-image at its initial
         // values - CSS Backgrounds 3 §5.3: `border` resets it, so a block that
