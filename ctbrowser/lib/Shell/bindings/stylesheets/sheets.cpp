@@ -348,9 +348,13 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 // constructed sheet are the document's own - and the origin
                 // is the URL's tuple, compared the way `location.origin`
                 // reports it.
-                record.origin_clean =
-                    !parse_absolute(record.href).valid ||
-                    location_parts(record.href).origin == location_parts(location_href_).origin;
+                // An http(s) href that does not even parse is not this
+                // document's origin either.
+                const bool remote = ascii_istarts_with(record.href, "http://") ||
+                                    ascii_istarts_with(record.href, "https://");
+                record.origin_clean = !remote || (parse_absolute(record.href).valid &&
+                                                  location_parts(record.href).origin ==
+                                                      location_parts(location_href_).origin);
                 std::string text;
                 if (assets_ != nullptr) {
                     const std::vector<std::byte> bytes = assets_->load(record.href);
