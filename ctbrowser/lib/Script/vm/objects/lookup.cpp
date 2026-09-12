@@ -61,6 +61,17 @@ value context::lookup_index(value target, value key) {
 }
 
 value context::lookup_property(value target, const std::string & name) {
+    // A PROPERTY OF null OR undefined IS A TypeError (7.3.2 GetV -> ToObject),
+    // not undefined. Until 2026-09-12 it was undefined, and docs/script.md
+    // recorded why that hurt: a missing object surfaced one step later under
+    // the wrong name. Here rather than in op::get_prop alone because the
+    // compiled tier calls this same member, so the two cannot disagree.
+    if (target.is_nullish()) [[unlikely]] {
+        throw_error("TypeError", "Cannot read properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     " (reading '" + name + "')");
+        return value::undefined();
+    }
     // A PROXY ANSWERS FIRST, or hands the question to its target. This sits at
     // the top because a proxy's whole purpose is to be asked before anything
     // else looks at the object underneath it.

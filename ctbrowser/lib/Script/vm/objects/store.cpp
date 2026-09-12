@@ -98,6 +98,14 @@ void context::pass_new_target(value from) {
 }
 
 void context::store_property(value target, const std::string & name, value v) {
+    // `null.x = v` is a TypeError (7.3.4 PutValue step 5.a) - see the read
+    // side in lookup_property.
+    if (target.is_nullish()) [[unlikely]] {
+        throw_error("TypeError", "Cannot set properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     " (setting '" + name + "')");
+        return;
+    }
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.
     if (target.is_kind(heap_kind::proxy)) {

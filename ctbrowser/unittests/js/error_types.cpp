@@ -139,5 +139,20 @@ int main() {
               "return (e instanceof TypeError)+','+(e instanceof Error);})()",
               "true,true");
 
+    // A PROPERTY OF null OR undefined IS A TypeError (7.3.2), read, written
+    // or called - and `?.` is the way to ask without one. Until 2026-09-12 a
+    // read answered undefined and the failure surfaced one step later under
+    // the wrong name.
+    js_expect("(function(){try{return null.x;}catch(e){return e instanceof TypeError;}})()",
+              "true");
+    js_expect("(function(){var u;try{u.x=1;}catch(e){return e.constructor.name;}})()", "TypeError");
+    js_expect("(function(){var u;try{u.f();}catch(e){return e instanceof TypeError;}})()", "true");
+    js_expect("(function(){var u;try{u[0];}catch(e){return e.message;}})()",
+              "Cannot read properties of undefined (reading '0')");
+    js_expect("(function(){var u;return u?.x === undefined && u?.[0] === undefined;})()", "true");
+    js_expect("(function(){try{var {a} = null;}catch(e){return e instanceof TypeError;}})()",
+              "true");
+    js_expect("(function(){try{null.f();}catch(e){return 'one';}return 'none';})()", "one");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -599,6 +599,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             {
                 value callee = reg(in.a);
                 value receiver = value::undefined();
+                // THE LOOKUP CAN THROW - a getter, a proxy trap, or a nullish
+                // receiver - and a throw has already unwound to its handler by
+                // the time it returns. Calling `undefined` after that would
+                // throw a SECOND TypeError from the landing site.
+                const std::size_t unwound = unwinds_;
                 if (in.code == op::call_receiver) {
                     // The callee was resolved elsewhere (up the prototype chain, for
                     // `super`) and the receiver is passed explicitly.
@@ -612,6 +617,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     receiver = reg(in.a);
                     callee = lookup_index(receiver, reg(in.c));
                 }
+                if (unwinds_ != unwound) { break; }
                 const std::size_t arg_base = base + in.a + 1;
                 if (callee.is_kind(heap_kind::native)) {
                     auto * nat = static_cast<native_object *>(callee.as_heap());

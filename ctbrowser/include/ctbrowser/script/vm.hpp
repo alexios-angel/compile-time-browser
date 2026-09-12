@@ -1759,6 +1759,7 @@ private:
     // frame between here and the one that owns it. Returning false means
     // nothing caught it, which is an uncaught exception.
     [[nodiscard]] bool unwind_to_handler() {
+        ++unwinds_;
         while (!handlers_.empty()) {
             const handler h = handlers_.back();
             handlers_.pop_back();
@@ -2097,6 +2098,11 @@ private:
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;
+    // How many throws have unwound, ever. A handler that called into
+    // something that may throw compares it before and after, which is the
+    // only way to know a throw crossed the call: the landing already cleared
+    // thrown_.
+    std::size_t unwinds_ = 0;
     std::size_t collections_ = 0;
     bool gc_stress_ = false;
     // TOTAL allocations, never reset: the cap is about a loop that does not
