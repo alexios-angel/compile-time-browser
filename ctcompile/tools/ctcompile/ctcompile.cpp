@@ -37,11 +37,19 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace po = boost::program_options;
+
+// A string's bytes, as a bundle entry stores them.
+std::vector<std::byte> bytes_of(std::string_view text) {
+    const std::span<const std::byte> bytes = std::as_bytes(std::span{text});
+    return {bytes.begin(), bytes.end()};
+}
 
 int main(int argc, char ** argv) try {
     // VISIBLE and HIDDEN, which is what makes `--help` readable: the positional
@@ -256,11 +264,7 @@ int main(int argc, char ** argv) try {
         return 1;
     }
 
-    bundle.entries.push_back(
-        {ctbrowser::shell::bundle_kind::html,
-         {},
-         std::vector<std::byte>(reinterpret_cast<const std::byte *>(html.data()),
-                                reinterpret_cast<const std::byte *>(html.data() + html.size()))});
+    bundle.entries.push_back({ctbrowser::shell::bundle_kind::html, {}, bytes_of(html)});
 
     // THE RESOURCES, UNDER THE NAMES THE DOCUMENT USED. p5-basic.html asks for
     // `../../vendor/p5/p5.js`, which is not a path relative to the application
@@ -344,10 +348,7 @@ int main(int argc, char ** argv) try {
         font_directory = "fonts";
         record.font_directory = font_directory;
         bundle.entries.push_back(
-            {ctbrowser::shell::bundle_kind::meta, "font_path",
-             std::vector<std::byte>(reinterpret_cast<const std::byte *>(font_directory.data()),
-                                    reinterpret_cast<const std::byte *>(font_directory.data() +
-                                                                        font_directory.size()))});
+            {ctbrowser::shell::bundle_kind::meta, "font_path", bytes_of(font_directory)});
     } else {
         // NOT BEHIND --verbose. An application that renders with the built-in
         // bitmap font because the faces were not found where this looked is an
@@ -359,13 +360,7 @@ int main(int argc, char ** argv) try {
                      " - name the directory with --fonts\n";
     }
     bundle.entries.push_back(
-        {ctbrowser::shell::bundle_kind::meta, "title", std::vector<std::byte>{}});
-    {
-        const std::string name = entry.stem().string();
-        auto & title = bundle.entries.back().bytes;
-        title.assign(reinterpret_cast<const std::byte *>(name.data()),
-                     reinterpret_cast<const std::byte *>(name.data() + name.size()));
-    }
+        {ctbrowser::shell::bundle_kind::meta, "title", bytes_of(entry.stem().string())});
 
     // THE MANIFEST GOES IN THE BUNDLE, so a packaged application can always say
     // what it is without the directory it was built from. `bundle_bytes` is the
@@ -373,11 +368,7 @@ int main(int argc, char ** argv) try {
     // it stays 0 in the copy inside and is filled in for the copy on disk.
     {
         const std::string json = ctcompile::to_json(record);
-        bundle.entries.push_back(
-            {ctbrowser::shell::bundle_kind::meta, "manifest",
-             std::vector<std::byte>(
-                 reinterpret_cast<const std::byte *>(json.data()),
-                 reinterpret_cast<const std::byte *>(json.data() + json.size()))});
+        bundle.entries.push_back({ctbrowser::shell::bundle_kind::meta, "manifest", bytes_of(json)});
     }
 
     const std::vector<std::byte> bytes = ctbrowser::shell::write_bundle(bundle);
@@ -427,10 +418,7 @@ int main(int argc, char ** argv) try {
             std::ifstream in{launcher, std::ios::binary};
             const std::string raw{std::istreambuf_iterator<char>{in},
                                   std::istreambuf_iterator<char>{}};
-            base.resize(raw.size());
-            for (std::size_t i = 0; i < raw.size(); ++i) {
-                base[i] = static_cast<std::byte>(static_cast<unsigned char>(raw[i]));
-            }
+            base = bytes_of(raw);
         }
         if (base.empty()) {
             std::cerr << "ctcompile: cannot read the launcher " << launcher << '\n';
