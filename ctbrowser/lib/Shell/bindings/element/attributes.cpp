@@ -169,6 +169,10 @@ void dom_bindings::bind_attr_object(context & cx, script::object_object & attr, 
     const std::string local{attribute_local_name(*atoms_, held)};
     const atom name = held.name;
     const atom uri = held.ns;
+    // THE DOCUMENT THAT BOUND IT: an Attr moved to another document's element
+    // through setNamedItem is adopted, and its ownerDocument says so
+    // (attributes-namednodemap-cross-document.window.js).
+    attr.set("ownerDocument", document_);
     // A detached Attr's value is ONE string behind the three spellings, so a
     // page that writes `attr.value` and reads `attr.nodeValue` sees the write.
     // An attached one reads the element - and REMEMBERS what it read, which is
@@ -483,8 +487,10 @@ void dom_bindings::install_named_node_map(context & cx) {
             return value::null();
         }
         dom_bindings & self = *at.self;
+        // ANY other element's, another document's included: the owner is
+        // read off the Attr, not looked up in this document's wrappers.
         const value owner_now = c.lookup_property(given, "ownerElement");
-        if (const node_id bound = self.handle_of(owner_now); bound && bound != at.id) {
+        if (owner_now.is_object() && self.handle_of(owner_now) != at.id) {
             self.throw_dom_exception(c, "InUseAttributeError",
                                      "setNamedItem: the attribute belongs to another element");
             return value::null();
