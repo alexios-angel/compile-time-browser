@@ -919,6 +919,19 @@ void test_steps_takes_an_integer() {
     bad("transition-timing-function", "steps(1.1e1, start)");
 }
 
+// A three-channel colour function takes three or four components.
+void test_colour_function_arity() {
+    bad("background-color", "rgb(0)");
+    bad("color", "rgb(1, 2)");
+    bad("color", "hsl(1 2 3 4 5)");
+    ok("color", "rgb(1, 2, 3)", "rgb(1, 2, 3)");
+    ok("color", "rgb(1 2 3 / 0.5)", "rgb(1 2 3 / 0.5)");
+    ok("color", "rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)");
+    ok("color", "rgb(calc(1 + 1) 2 3)", "rgb(calc(2) 2 3)");
+    ok("color", "rgb(from red r g b)", "rgb(from red r g b)");
+    ok("color", "color(srgb 1 0 0)", "color(srgb 1 0 0)");
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -1001,6 +1014,7 @@ int main() {
     test_random_spells_its_key();
     test_url_request_modifiers();
     test_steps_takes_an_integer();
+    test_colour_function_arity();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");
