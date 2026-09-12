@@ -372,10 +372,14 @@ void install_array(context & cx) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flatMap")) { return out; }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         if (!detail::generic_walk_ok(c, len)) { return out; }
         const context::rooted keep(c, out); // as `map` - see the note there
         auto * result = static_cast<array_object *>(out.as_heap());
@@ -402,10 +406,12 @@ void install_array(context & cx) {
     method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findLast")) { return value::undefined(); }
+        const double len = detail::array_like_length(c, self); // before the callback (steps 2-4)
+        if (c.throw_pending()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
         const value this_arg = arg_at(a, 1);
-        for (double k = detail::array_like_length(c, self) - 1; k >= 0; k -= 1.0) {
+        for (double k = len - 1; k >= 0; k -= 1.0) {
             const value item = detail::element_at(c, self, k);
             const value args[3] = {item, value::number(k), self};
             if (context::truthy(c.call(callback, args, this_arg))) { return item; }
@@ -415,10 +421,12 @@ void install_array(context & cx) {
     method(cx, array_proto, "findLastIndex", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findLastIndex")) { return value::number(-1); }
+        const double len = detail::array_like_length(c, self); // before the callback (steps 2-4)
+        if (c.throw_pending()) { return value::number(-1); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
         const value this_arg = arg_at(a, 1);
-        for (double k = detail::array_like_length(c, self) - 1; k >= 0; k -= 1.0) {
+        for (double k = len - 1; k >= 0; k -= 1.0) {
             const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
             if (context::truthy(c.call(callback, args, this_arg))) { return value::number(k); }
         }

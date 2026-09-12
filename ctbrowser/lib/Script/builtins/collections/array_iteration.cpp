@@ -100,10 +100,14 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     const auto each = [](context & c, std::span<value> a, const char * name, auto && body) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return false; }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return false; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return false; }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             // A HOLE IS SKIPPED, not visited with undefined. That is the whole
             // difference between `[, 1].forEach(f)` calling back once and
@@ -123,10 +127,14 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "map")) { return out; }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
         // in none of the collector's roots. It is allocated BEFORE the first
         // call, so a callback that collects - `$262.gc()`, or gc stress, which
@@ -170,10 +178,14 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     method(cx, array_proto, "find", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "find")) { return value::undefined(); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             const value item = detail::element_at(c, self, k);
             const value call_args[3] = {item, value::number(k), self};
@@ -184,10 +196,14 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     method(cx, array_proto, "findIndex", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findIndex")) { return value::number(-1); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::number(-1); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
             if (context::truthy(c.call(callback, call_args, this_arg))) { return value::number(k); }
@@ -220,9 +236,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     const auto fold = [](context & c, std::span<value> a, const char * name, bool backwards) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return value::undefined(); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
-        const double len = detail::array_like_length(c, self);
         double k = backwards ? len - 1 : 0;
         const double step = backwards ? -1.0 : 1.0;
         const auto in_range = [&] { return backwards ? k >= 0 : k < len; };
