@@ -484,10 +484,48 @@ bool dom_bindings::has_activation_behavior(const read_txn & txn, node_id node) c
 
 void dom_bindings::run_activation_behavior(context & cx, node_id target) {
     control_kind kind = control_kind::none;
+    std::string javascript_url;
     {
         const auto txn = doc_->read();
-        kind = control_kind_of(atoms_->text(txn.tag(target).value_or(atom{})),
-                               txn.attribute_value(target, atoms_->intern("type")));
+        const std::string_view tag = atoms_->text(txn.tag(target).value_or(atom{}));
+        kind = control_kind_of(tag, txn.attribute_value(target, atoms_->intern("type")));
+        if (tag == "a" || tag == "area") {
+            const std::string_view href = txn.attribute_value(target, atoms_->intern("href"));
+            if (ascii_istarts_with(href, "javascript:")) {
+                javascript_url = std::string{href.substr(std::string_view{"javascript:"}.size())};
+            }
+        }
+    }
+    // A `javascript:` LINK RUNS ITS SCRIPT, and that is the whole navigation:
+    // HTML 7.4.2.1 evaluates the percent-decoded URL body as a classic script
+    // in the document's realm, as a TASK queued from the navigate - so it is a
+    // zero-delay timer here, which is what puts it after the click's own
+    // listeners and microtasks. In the bindings rather than the browser's
+    // follow_link because the bindings own the context; the browser would
+    // have to re-enter `run` from inside the dispatch that is running now.
+    // dom/events/Event-dispatch-click's "pick the first with activation
+    // behavior <a href>" is two nested `javascript:` anchors and expects the
+    // inner one's script, once.
+    if (!javascript_url.empty()) {
+        std::string source;
+        source.reserve(javascript_url.size());
+        for (std::size_t i = 0; i < javascript_url.size(); ++i) {
+            if (javascript_url[i] == '%' && i + 2 < javascript_url.size() &&
+                hex_value(javascript_url[i + 1]) >= 0 && hex_value(javascript_url[i + 2]) >= 0) {
+                source.push_back(static_cast<char>(hex_value(javascript_url[i + 1]) * 16 +
+                                                   hex_value(javascript_url[i + 2])));
+                i += 2;
+            } else {
+                source.push_back(javascript_url[i]);
+            }
+        }
+        script::program compiled =
+            script::compiler::compile("return (function () {\n" + source + "\n});");
+        if (compiled.ok) {
+            const value body = cx.run_nested(cx.own_program(std::move(compiled)));
+            if (body.is_callable()) { (void)add_timer(body, 0, false); }
+        }
+        return;
     }
     if (kind == control_kind::checkbox || kind == control_kind::radio) {
         // HTML's input activation behaviour for the two: nothing unless the

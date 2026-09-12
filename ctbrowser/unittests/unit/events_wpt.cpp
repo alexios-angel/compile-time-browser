@@ -181,6 +181,61 @@ void test_offset_x_is_measured_from_the_target_box() {
        "42,12");
 }
 
+// --- activation behaviour ----------------------------------------------------
+
+void test_a_javascript_link_runs_its_script_once_as_a_task() {
+    // Event-dispatch-click.html "pick the first with activation behavior <a
+    // href>": two nested `javascript:` anchors, a click at the inner one, and
+    // only the inner script runs - later, as a task, not inside the dispatch.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "window.ran = [];"
+                   "var link = document.createElement('a');"
+                   "link.href = 'javascript:ran.push(%27link%27)';"
+                   "document.body.appendChild(link);"
+                   "var child = link.appendChild(document.createElement('a'));"
+                   "child.href = 'javascript:ran.push(\"child\")';"
+                   "child.dispatchEvent(new MouseEvent('click', {bubbles: true}));"
+                   "console.log('sync=' + ran.join());"
+                   "setTimeout(function () { console.log('later=' + ran.join()); }, 0);"
+                   "</script></body></html>");
+    (void)page.tick(16.0);
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{2});
+    if (logged.size() == 2) {
+        CHECK_EQ(logged[0], std::string{"sync="});
+        CHECK_EQ(logged[1], std::string{"later=child"});
+    }
+}
+
+void test_queue_microtask_shares_the_promise_queue() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_html);
+    CHECK(page.run_script("Promise.resolve().then(function () { console.log('promise'); });"
+                          "queueMicrotask(function () { console.log('micro'); });"
+                          "console.log('sync');"));
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK_EQ(logged.size(), std::size_t{3});
+    if (logged.size() == 3) {
+        CHECK_EQ(logged[0], std::string{"sync"});
+        CHECK_EQ(logged[1], std::string{"promise"});
+        CHECK_EQ(logged[2], std::string{"micro"});
+    }
+    is("(function () { try { queueMicrotask(1); } catch (e) { return e.name; } })()", "TypeError");
+}
+
+void test_an_image_input_submits_its_form() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><form id=f><input name=q value=1>"
+                   "<input id=go type=image alt=go></form><script>"
+                   "document.getElementById('f').addEventListener('submit', function () {"
+                   " console.log('submit'); });"
+                   "document.getElementById('go').click();"
+                   "</script></body></html>");
+    CHECK_EQ(page.bindings().console_output().size(), std::size_t{1});
+    CHECK_EQ(page.last_submission().size(), std::size_t{1});
+}
+
 } // namespace
 
 int main() {
@@ -190,5 +245,8 @@ int main() {
     test_window_event_is_hidden_inside_a_shadow_tree();
     test_a_detached_tree_reaches_neither_document_nor_window();
     test_offset_x_is_measured_from_the_target_box();
+    test_a_javascript_link_runs_its_script_once_as_a_task();
+    test_queue_microtask_shares_the_promise_queue();
+    test_an_image_input_submits_its_form();
     REPORT("events_wpt");
 }

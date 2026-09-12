@@ -191,6 +191,18 @@ void dom_bindings::install_timers(context & cx) {
     };
     cx.define_native("clearTimeout", cancel);
     cx.define_native("clearInterval", cancel);
+    // HTML 8.6 `queueMicrotask`: the VM's own queue, which every promise
+    // reaction is already on, so the ordering between the two is the one a
+    // page observes in a browser. A non-callable is a TypeError by the IDL.
+    cx.define_native("queueMicrotask", [](context & c, std::span<value> args) {
+        const value callback = arg(args, 0);
+        if (!callback.is_callable()) {
+            c.throw_error("TypeError", "queueMicrotask: the callback is not a function");
+            return value::undefined();
+        }
+        c.queue_microtask(callback);
+        return value::undefined();
+    });
     cx.define_native("requestAnimationFrame", [this](context &, std::span<value> args) {
         animation_callbacks_.push_back(arg(args, 0));
         return value::number(++next_timer_id_);

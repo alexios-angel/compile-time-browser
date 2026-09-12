@@ -51,9 +51,16 @@ void browser::activate(node_id target) {
         mark(dirty::paint);
         return;
     }
-    if (kind != control_kind::button) { return; }
     const std::string_view type = txn.attribute_value(target, atoms_.intern("type"));
     const node_id form = form_store::owning_form(txn, atoms_, target);
+    // `<input type=image>` IS A SUBMIT BUTTON with a picture on it - HTML
+    // 4.10.5.1.20 - though control_kind_of files it with the text controls
+    // because that is how it is laid out.
+    if (tag == "input" && type == "image") {
+        submit(form);
+        return;
+    }
+    if (kind != control_kind::button) { return; }
     if (type == "reset") {
         forms_.reset_form(txn, form);
         mark(dirty::paint);
