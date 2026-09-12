@@ -519,6 +519,13 @@ int main() {
         "2");
     js_expect("(function(){var a=[1];a.k=2;var b={...a};return b[0]+'/'+b.k;})()", "1/2");
     js_expect("(function(){var a=[];Object.freeze(a);a.k=1;return a.k;})()", "undefined");
+    js_expect("(function(){var a=[9];a.k=1;var s=[];for(var i in a){s.push(i);}return s.join()+'|'"
+              "+Object.getOwnPropertyNames(a).join();})()",
+              "0,k|0,length,k");
+    // for-in over a function sees its enumerable own properties.
+    js_expect(
+        "(function(){function f(){} f.a=1;var s=[];for(var k in f){s.push(k);}return s.join();})()",
+        "a");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

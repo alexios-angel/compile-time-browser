@@ -115,6 +115,12 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         for (std::size_t i = 0; i < arr->length(); ++i) {
             visit(std::to_string(i), cx.lookup_index(of, value::number(static_cast<double>(i))));
         }
+        // ...and the named own properties after the indices (10.4.2.1).
+        if (arr->named) {
+            std::vector<std::string> keys;
+            arr->named->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
+            for (const std::string & k : keys) { visit(k, cx.lookup_property(of, k)); }
+        }
         return;
     }
     for (const std::string & key : own_property_names(cx, of, key_filter::strings)) {
