@@ -151,9 +151,29 @@ void test_sheet_attribute_and_origin() {
     CHECK_EQ(logged(page, "far="), std::string{"far=SecurityError,SecurityError,0"});
 }
 
+// getComputedStyle-resolved-colors: a system colour resolves to an rgb(),
+// and a logical border longhand answers as its physical one.
+void test_resolved_colours() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        #t { background-color: Menu; border: 1px solid Menu; color: Menu; caret-color: Menu }
+        </style></head><body><div id=t></div><script>
+        const cs = getComputedStyle(document.getElementById('t'));
+        console.log('sys=' + ['background-color', 'border-top-color', 'border-block-end-color',
+                              'border-inline-start-color', 'color', 'caret-color',
+                              'border-block-start-width', 'border-inline-end-style']
+                        .map(p => cs.getPropertyValue(p)).join('|'));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sys="),
+             std::string{"sys=rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|"
+                         "rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|1px|solid"});
+}
+
 } // namespace
 
 int main() {
+    test_resolved_colours();
     test_class_strings_and_iterators();
     test_removed_rules_charset_keyframes_and_container();
     test_declaration_blocks();

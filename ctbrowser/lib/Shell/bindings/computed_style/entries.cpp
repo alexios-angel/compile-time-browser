@@ -844,9 +844,30 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // `border-left` are shorthands there and were missing from the list, so all
     // four were enumerated as longhands - which is the exact assertion
     // getComputedStyle-getter-v-properties makes about each of them by name.
+    // A LOGICAL BORDER LONGHAND IS ITS PHYSICAL ONE in horizontal-tb, which is
+    // the only writing mode this engine lays out: `border-block-start-color`
+    // answers as `border-top-color` (getComputedStyle-resolved-colors).
+    const auto physical_of = [](std::string_view property) -> std::string_view {
+        constexpr std::string_view block = "border-block-";
+        constexpr std::string_view inline_ = "border-inline-";
+        const bool is_block = property.starts_with(block);
+        if (!is_block && !property.starts_with(inline_)) { return {}; }
+        const std::string_view rest = property.substr(is_block ? block.size() : inline_.size());
+        const bool start = rest.starts_with("start-");
+        if (!start && !rest.starts_with("end-")) { return {}; }
+        const std::string_view suffix = rest.substr(start ? 6 : 4);
+        static constexpr std::string_view sides[2][2][3] = {
+            {{"border-bottom-width", "border-bottom-style", "border-bottom-color"},
+             {"border-top-width", "border-top-style", "border-top-color"}},
+            {{"border-right-width", "border-right-style", "border-right-color"},
+             {"border-left-width", "border-left-style", "border-left-color"}}};
+        const std::size_t kind = suffix == "width" ? 0 : (suffix == "style" ? 1 : 2);
+        return sides[is_block ? 0 : 1][start ? 1 : 0][kind];
+    };
     for (const style::css::property_syntax & p : style::css::known_properties()) {
         if (p.shorthand) { continue; }
-        std::string text = value_of(p.name);
+        const std::string_view physical = physical_of(p.name);
+        std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
         answers.emplace_back(std::string{p.name}, std::move(text));
