@@ -1909,6 +1909,16 @@ private:
     flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
         attr_objects_;
     void forget_attr_object(node_id owner, std::string_view ns, std::string_view local);
+    // `new DOMParser().parseFromString(markup, type)`, HTML 8.6.2: a SECOND
+    // document - this document's HTML parser over `markup` for text/html, the
+    // XML parser for the four XML types - as a real Document or XMLDocument in
+    // the realm, so `createElement`, `documentElement.tagName` and the rest
+    // answer as the type says. See document/second_document.cpp.
+    [[nodiscard]] value parse_from_string(context & cx, std::string_view markup,
+                                          std::string_view type);
+    // The bindings for a document this one made, linked and installed - the
+    // half of make_html_document and make_xml_document they share.
+    dom_bindings & adopt_second_document(context & cx, document & fresh);
 };
 
 } // namespace ctbrowser::shell

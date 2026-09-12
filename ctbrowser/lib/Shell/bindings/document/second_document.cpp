@@ -57,9 +57,7 @@ void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
 // calls, so the tree a made document has is the tree a parsed one has - and
 // the title goes in through `set_text` afterwards, which is how an argument
 // containing `<` stays a text node rather than becoming markup.
-value dom_bindings::make_html_document(context & cx, const std::string * title) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fresh) {
     auto & made = *secondary_documents_.emplace_back(
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
@@ -74,6 +72,13 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
     // that page and true for one that had touched an element first.
     ensure_dom_interfaces(cx);
     made.adopt_interfaces_of(*this);
+    return made;
+}
+
+value dom_bindings::make_html_document(context & cx, const std::string * title) {
+    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+    dom_bindings & made = adopt_second_document(cx, fresh);
     if (title != nullptr) {
         const node_id head = made.first_html_element("head");
         const node_id element = fresh.create_element(atoms_->intern_lower("title"));
@@ -108,14 +113,7 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
     // anything, so nothing else would have set the flag.
     fresh.set_xml(true);
     fresh.set_quirks(false);
-    auto & made = *secondary_documents_.emplace_back(
-        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
-                                       std::function<void(node_id)>{}));
-    made.secondary_ = true;
-    made.primary_ = this;
-    made.cx_ = &cx;
-    ensure_dom_interfaces(cx); // see make_html_document
-    made.adopt_interfaces_of(*this);
+    dom_bindings & made = adopt_second_document(cx, fresh);
     // DOM 4.5.1's own table, and it is the NAMESPACE that decides rather than
     // anything about the tree: `createDocument(null, "x")` is application/xml
     // whatever `x` is called. `Document-contentType/contentType/
@@ -157,6 +155,41 @@ dom_bindings * dom_bindings::owner_of(value v) {
         if (made.get() != this && made->handle_of(v)) { return made.get(); }
     }
     return nullptr;
+}
+
+// `parseFromString`, HTML 8.6.2. text/html runs the HTML parser with
+// scripting disabled - nothing here executes a <script> - and the four XML
+// types run the XML parser; an ill-formed one is, per the specification, a
+// document whose root is a <parsererror>, and here it is the tree the parser
+// had when it stopped plus that element, which is what a page checks for.
+value dom_bindings::parse_from_string(context & cx, std::string_view markup,
+                                      std::string_view type) {
+    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    if (type == "text/html") {
+        (void)parse_html(fresh, markup);
+        dom_bindings & made = adopt_second_document(cx, fresh);
+        made.install_document(cx);
+        return made.document_;
+    }
+    const xml_parse_result read = parse_xml(fresh, markup);
+    dom_bindings & made = adopt_second_document(cx, fresh);
+    made.content_type_ = std::string{type};
+    if (!read.error.empty()) {
+        const node_id error = fresh.create_element(atoms_->intern("parsererror"), node_ns::other);
+        (void)fresh.append_child(error, fresh.create_text(read.error));
+        if (fresh.read().kind(fresh.root()).value_or(node_kind::document) == node_kind::element) {
+            (void)fresh.append_child(fresh.root(), error);
+        } else {
+            fresh.build().set_root(error);
+        }
+        made.namespaces_.emplace(
+            made.pack(error), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});
+    }
+    made.install_document(cx);
+    if (const value proto = interface_prototype("XMLDocument"); proto.is_object()) {
+        made.document_object()->prototype = proto;
+    }
+    return made.document_;
 }
 
 unsigned dom_bindings::foreign_document_position(value given) {
