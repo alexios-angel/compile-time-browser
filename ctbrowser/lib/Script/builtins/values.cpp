@@ -88,6 +88,23 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("acosh", [](double x) { return std::acosh(x); });
     unary("atanh", [](double x) { return std::atanh(x); });
     unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
+    // 21.3.2.17 Math.f16round: the nearest binary16, ties to even, straight
+    // from the double - through `float` first would round twice. A binary16
+    // has 10 fraction bits and a least exponent of -14, so the unit in the
+    // last place is 2^(e-10) with e clamped there, the quotient by it is
+    // exact, and nearbyint under the default rounding mode is ties-to-even.
+    // 65520 is the halfway point above the largest finite value (65504) and
+    // rounds to the even 65536, which binary16 cannot hold: Infinity.
+    unary("f16round", [](double x) {
+        if (!std::isfinite(x) || x == 0) { return x; }
+        const double a = std::fabs(x);
+        if (a >= 65520.0) { return std::copysign(std::numeric_limits<double>::infinity(), x); }
+        int e = 0;
+        (void)std::frexp(a, &e); // a = m * 2^e, m in [0.5, 1)
+        const int exponent = std::max(e - 1, -14);
+        const double ulp = std::ldexp(1.0, exponent - 10);
+        return std::copysign(std::nearbyint(a / ulp) * ulp, x);
+    });
     // ToUint32 (7.1.6) OVER AN ALREADY-COERCED NUMBER. `context::to_uint32` is
     // the STATIC conversion and answers 0 for every object, so `Math.imul({
     // valueOf: () => 3}, 2)` was 0 and `Math.clz32("1")` was 32 - both because
