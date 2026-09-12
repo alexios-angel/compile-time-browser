@@ -129,10 +129,9 @@ void test_a_control_reserves_the_room_its_text_is_drawn_in() {
     const rect box = box_of(page, "t");
     const float text = raster::font8x8_advance("0000000000", 16);
     // Ten characters of value in a size=10 field: the box has to hold the text
-    // plus the inset on BOTH sides, or the last character is clipped by a
-    // field that claimed it would fit.
-    check(box.width >= text + 2 * layout::control_text_inset,
-          "the box holds its full value plus the inset on both sides");
+    // plus the UA sheet's 5px padding + 1px border on BOTH sides, or the last
+    // character is clipped by a field that claimed it would fit.
+    check(box.width >= text + 2 * 6, "the box holds its full value plus the inset on both sides");
 }
 
 void test_a_seeded_value_is_drawn() {
