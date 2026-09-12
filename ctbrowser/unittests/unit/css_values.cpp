@@ -401,6 +401,10 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     ok("z-index", "calc(sibling-index())", "sibling-index()");
     ok("animation-duration", "calc(100ms * sibling-count())", "calc(0.1s * sibling-count())");
     ok("left", "calc(10px * sibling-index() + 10%)", "calc(10% + (10px * sibling-index()))");
+    // ...and a function OVER one is not applied to nought (hypot-pow-sqrt-computed),
+    // nor is a random() drawn before computed-value time (random-serialize).
+    ok("margin-left", "calc(1px * sqrt(sibling-index()))", "calc(1px * sqrt(sibling-index()))");
+    ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
     // (CSS Values 5 §calc-size, calc-size-parsing).

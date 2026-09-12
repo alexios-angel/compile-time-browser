@@ -30,6 +30,11 @@ namespace {
     const token_stream ts = tokenize(text);
     for (const css_token & t : ts.tokens) {
         if (t.type == token_type::dimension && !context_free_unit(ts.unit_of(t))) { return false; }
+        // A random() is drawn at computed-value time, so a specified value
+        // keeps it however plain its bounds are.
+        if (t.type == token_type::function && ascii_iequals(ts.text_of(t), "random(")) {
+            return false;
+        }
     }
     return true;
 }

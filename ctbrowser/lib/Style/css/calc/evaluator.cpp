@@ -914,6 +914,9 @@ private:
     // optional step of the same type.
     [[nodiscard]] std::optional<term> random_of() {
         ++at_; // the function token, `(` included
+        // A SPECIFIED VALUE KEEPS ITS random(): the draw happens at
+        // computed-value time and nowhere earlier (random-serialize).
+        if (basis_ == basis::symbolic) { return unresolvable(); }
         // The options: everything before the first comma, read as tokens.
         std::string options;
         bool fixed = false;
@@ -1011,8 +1014,9 @@ private:
         for (const term & one : *args) {
             if (!one.is_number()) { return fail(); }
             // A number still carrying a percentage - `pow(50% / 1px, 1)` - has
-            // no magnitude until layout.
-            if (one.has_percent) { return unresolvable(); }
+            // no magnitude until layout, and neither has a symbolic one:
+            // `sqrt(sibling-index())` in a specified value is not `sqrt(0)`.
+            if (one.has_percent || !one.symbols.empty()) { return unresolvable(); }
         }
         const double b = args->size() > 1 ? (*args)[1].value : fallback;
         term out;
@@ -1028,7 +1032,7 @@ private:
         const std::optional<std::vector<term>> args = arguments(1, 1);
         if (!args) { return std::nullopt; }
         const term & one = args->front();
-        if (one.has_percent) { return unresolvable(); }
+        if (one.has_percent || !one.symbols.empty()) { return unresolvable(); }
         double radians = 0.0;
         if (one.is_number()) {
             radians = one.value;
@@ -1055,6 +1059,8 @@ private:
             if (!uniform(*args)) { return std::nullopt; }
         } else if (!args->front().is_number()) {
             return fail();
+        } else if (!args->front().symbols.empty()) {
+            return unresolvable();
         }
         const double a = arity == 2 ? scalar_of((*args)[0]) : args->front().value;
         const double b = arity == 2 ? scalar_of((*args)[1]) : 0.0;
