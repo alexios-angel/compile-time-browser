@@ -175,14 +175,7 @@ float box_builder::parse_number(std::string_view text) {
 }
 
 std::string box_builder::first_family(std::string_view list) {
-    std::size_t start = 0;
-    while (start < list.size() && (list[start] == ' ' || list[start] == '\t')) { ++start; }
-    std::size_t end = list.find(',', start);
-    if (end == std::string_view::npos) { end = list.size(); }
-    std::string_view first = list.substr(start, end - start);
-    while (!first.empty() && (first.back() == ' ' || first.back() == '\t')) {
-        first.remove_suffix(1);
-    }
+    std::string_view first = trim(list.substr(0, list.find(',')), " \t");
     // Quoted names - `font-family: "Fira Sans"` - are the same name.
     if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
         first.back() == first.front()) {

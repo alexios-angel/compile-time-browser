@@ -94,16 +94,12 @@ enum class unit : std::uint8_t {
 // plain percentage rather than dropping it - the percentage is the part that
 // matters for the two places Bootstrap writes one.
 [[nodiscard]] inline float parse_calc_offset(std::string_view rest) {
-    std::size_t at = 0;
-    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
-    if (at >= rest.size() || (rest[at] != '+' && rest[at] != '-')) { return 0; }
-    const float sign = rest[at] == '-' ? -1.0f : 1.0f;
-    ++at;
-    while (at < rest.size() && (rest[at] == ' ' || rest[at] == '\t')) { ++at; }
+    rest = trim(rest, " \t");
+    if (rest.empty() || (rest.front() != '+' && rest.front() != '-')) { return 0; }
+    const float sign = rest.front() == '-' ? -1.0f : 1.0f;
+    rest = trim(rest.substr(1), " \t");
     float px = 0;
-    if (std::from_chars(rest.data() + at, rest.data() + rest.size(), px).ec != std::errc{}) {
-        return 0;
-    }
+    if (std::from_chars(rest.data(), rest.data() + rest.size(), px).ec != std::errc{}) { return 0; }
     return sign * px;
 }
 
@@ -138,9 +134,7 @@ struct length {
 };
 
 [[nodiscard]] inline length parse_length(std::string_view text) {
-    std::size_t i = 0;
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
-    text.remove_prefix(i);
+    text = trim(text, " \t");
     if (text.empty()) { return length{}; }
     if (text == "auto") { return length{0, unit::auto_}; }
     // `calc(50% + 12px)` - THE ONE CALC FORM THAT REACHES LAYOUT. The cascade folds
@@ -470,9 +464,7 @@ struct flex_spec {
 // invalid for the two factors and the caller clamps; `order` may be negative,
 // which is how a utility pulls an item in front of its source-order siblings.
 [[nodiscard]] inline float parse_flex_number(std::string_view text, float fallback) {
-    std::size_t i = 0;
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) { ++i; }
-    text.remove_prefix(i);
+    text = trim(text, " \t");
     if (text.empty()) { return fallback; }
     float value = 0;
     if (std::from_chars(text.data(), text.data() + text.size(), value).ec != std::errc{}) {
