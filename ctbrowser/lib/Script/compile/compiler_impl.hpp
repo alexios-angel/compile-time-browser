@@ -465,10 +465,10 @@ public:
     // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
 
-    // Names a nested function might close over. Collected BEFORE the body is
-    // compiled, because function declarations hoist and are therefore compiled
-    // before the `let` that a closure would capture has been reached - without
-    // this pre-scan the enclosing-local check simply never fires.
+    // The names a SCRIPT declares with var/let/const, at any block depth and
+    // outside any function. Only the script frame's list is read - the strict
+    // assignment probe in compile_assign consults it - so only compile_program
+    // collects.
     void collect_declared_names(std::int32_t body);
 
     // Hoist this body's own `let`/`const`/`var` names into registers before

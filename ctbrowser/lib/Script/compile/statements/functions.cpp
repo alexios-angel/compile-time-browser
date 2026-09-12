@@ -269,7 +269,6 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::load_false, flag});
         proto().emit(instruction{op::new_cell, flag});
     }
-    collect_declared_names(n.a);
     // Declarations are hoisted to the top of the body BEFORE any nested
     // function is compiled. Without this, a nested function DECLARATION
     // (which hoists, so it compiles first) resolves the enclosing local
