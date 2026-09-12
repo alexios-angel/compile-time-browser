@@ -113,6 +113,7 @@ inline constexpr std::uint32_t keyframe_rule = 8;
 inline constexpr std::uint32_t namespace_rule = 10;
 inline constexpr std::uint32_t counter_style_rule = 11;
 inline constexpr std::uint32_t supports_rule = 12;
+inline constexpr std::uint32_t font_feature_values_rule = 14;
 
 // --- shared helpers, defined in serialize.cpp -------------------------------
 

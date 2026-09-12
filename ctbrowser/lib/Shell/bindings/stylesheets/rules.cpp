@@ -66,6 +66,26 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
         if (!rule.selector.empty()) { out += serialize_css_identifier(rule.selector) + " "; }
         return out + serialize_url(rule.prelude) + ";";
     }
+    // `@font-feature-values <family>#`, whose block is feature blocks each a
+    // list of `name: <integer>+`. One line, blocks in the order they arrived.
+    if (rule.type == font_feature_values_rule) {
+        std::string out = "@font-feature-values " + rule.prelude + " {";
+        std::string type;
+        for (const css_rule_record::feature_value & f : rule.features) {
+            if (f.type != type) {
+                if (!type.empty()) { out += " }"; }
+                type = f.type;
+                out += " @" + type + " {";
+            }
+            out += " " + serialize_css_identifier(f.name) + ":";
+            for (const double n : f.numbers) {
+                out += " " + std::to_string(static_cast<long long>(n));
+            }
+            out += ";";
+        }
+        if (!type.empty()) { out += " }"; }
+        return out + " }";
+    }
     // AN AT-RULE WHOSE BLOCK IS DECLARATIONS - `@font-face`, `@page`,
     // `@counter-style`. The prelude is `@page`'s page selector and empty for
     // most of them, and CSSOM 6.4.5 puts a SPACE on each side of the block
@@ -285,6 +305,8 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             made.type = counter_style_rule;
         } else if (ascii_iequals(name, "keyframes") || ascii_iequals(name, "-webkit-keyframes")) {
             made.type = keyframes_rule;
+        } else if (ascii_iequals(name, "font-feature-values")) {
+            made.type = font_feature_values_rule;
         } else {
             made.type = 0;
         }
@@ -363,6 +385,55 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         } else if (made.type == page_rule) {
             bool ok = false;
             made.prelude = serialize_page_selector(made.prelude, ok);
+        } else if (made.type == font_feature_values_rule && open != std::string_view::npos &&
+                   close != std::string_view::npos) {
+            // CSS Fonts 4 §8.9: `<family-name>#`, then feature blocks, each
+            // `@<feature-type> { <custom-ident>: <integer>+; ... }`. A block
+            // whose name is not one of the seven, and an entry whose value is
+            // not integers, are dropped as the parser drops them.
+            made.prelude = style::css::serialize_font_family(collapse_whitespace(made.prelude));
+            static constexpr std::string_view feature_types[] = {
+                "stylistic", "historical-forms", "styleset",  "character-variant",
+                "swash",     "ornaments",        "annotation"};
+            for (const std::string_view span : split_top_level_rules(body)) {
+                const std::string_view one = trim(span, html_whitespace);
+                const std::size_t brace = brace_at(one);
+                const std::size_t shut =
+                    brace == std::string_view::npos ? brace : block_end(one, brace);
+                if (one.empty() || one.front() != '@' || brace == std::string_view::npos ||
+                    shut == std::string_view::npos) {
+                    continue;
+                }
+                const std::string type =
+                    ascii_lower_copy(trim(one.substr(1, brace - 1), html_whitespace));
+                if (std::find(std::begin(feature_types), std::end(feature_types), type) ==
+                    std::end(feature_types)) {
+                    continue;
+                }
+                const style::css::stylesheet parsed = style::css::parse_declaration_list(
+                    one.substr(brace + 1, shut - brace - 1), *atoms_);
+                for (const style::css::raw_declaration & d : parsed.declarations) {
+                    css_rule_record::feature_value entry;
+                    entry.type = type;
+                    entry.name = std::string{atoms_->text(d.property)};
+                    bool ok = true;
+                    for (const std::string_view part :
+                         split_top_level(parsed.text_of(d), " \t\n\r\f")) {
+                        const style::css::value_check n = check_declaration("order", part, false);
+                        if (!n.valid) {
+                            ok = false;
+                            break;
+                        }
+                        entry.numbers.push_back(std::stod(n.serialized));
+                    }
+                    if (!ok || entry.numbers.empty()) { continue; }
+                    std::erase_if(made.features, [&](const css_rule_record::feature_value & f) {
+                        return f.type == entry.type && f.name == entry.name;
+                    });
+                    made.features.push_back(std::move(entry));
+                }
+            }
+            made.verbatim.clear();
         }
         if (at_rule_holds_rules(made.at_name)) {
             // RECURSIVELY, THROUGH THIS SAME FUNCTION, rather than through the

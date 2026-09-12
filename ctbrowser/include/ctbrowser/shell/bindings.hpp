@@ -884,6 +884,15 @@ public:
         std::size_t sheet = static_cast<std::size_t>(-1);
         // An `@import`'s own sheet - `rule.styleSheet` - into css_sheets_.
         std::size_t imported_sheet = static_cast<std::size_t>(-1);
+        // `@font-feature-values`' feature blocks, CSS Fonts 4 §8.9: one entry
+        // per `name: <integer>+` under `@styleset`, `@annotation` and the
+        // rest, which the rule's seven CSSFontFeatureValuesMaps are views of.
+        struct feature_value {
+            std::string type; // "styleset", "annotation", ...
+            std::string name;
+            std::vector<double> numbers;
+        };
+        std::vector<feature_value> features;
     };
     struct css_sheet_record {
         node_id owner; // the <style>/<link>; unset for a constructed sheet
