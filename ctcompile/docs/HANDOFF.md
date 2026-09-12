@@ -6,6 +6,64 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Global key alias chains, 2026-09-11
+
+Continued exact **511cca31** from **0e5cfbef** and the **2026-09-12
+02:05:52 UTC** journal. The checkout was clean and preceding work fully gated;
+old codex-wip work was already merged. Separate agents handled HostContract,
+source/lifetime regressions and the next Bootstrap payload audit; root checked
+all consumers and serialized the devbox gates. No browser/runtime source changed.
+
+**2359a6dd** proves complete acyclic global alias chains for empty object Map
+keys. A budgeted iterative predecessor walk checks every initialization;
+a complete successor census finds intermediate and branched bindings before
+checking all reads and uses. Independent owner validation rechecks every edge
+in strict entry order before publishing anything. Original allocations, stores,
+loads and call actuals remain intact. Existing native identity storage and C++
+emission handle the chains without a new carrier or runtime helper.
+Unread descendants, early/nonentry reads or stores, duplicate/later stores,
+cycles, foreign consumers and object-valued scalar observations remain refusals.
+
+Unchanged **511cca31** now admits **4/4 functions**, preserves **four calls**
+and produces typed **trace=0**. New branched **629982b5** admits **7/7 functions**,
+preserves **15 calls** and produces **trace=11**, covering three alias hops,
+an intermediate used only by another initializer, a branch and two identities.
+All **42 prior source bodies/hashes/function/call/trace values** are unchanged.
+The focused cohort passes **16 native programs / 31 refusals**, **47 source rows /
+54 typed Node/interpreter observations** and **24 distinguishing mutations**.
+Both C++ layouts pass GCC/Clang execution; alias-only retention, saved callables,
+**128 future rounds**, entry reexecution and final owner release pass lifetime
+ASan/UBSan/leak checks. Proof budgets complete at **1931 / 32 cutoffs** for the
+exact chain and **50830 / 30 cutoffs** for the branched family.
+
+The **320-step devbox build**, final no-op rebuild and **4/4 focused CTests in
+1.35 seconds** pass. The existing all-CPU `--group object-keys` workflow passes
+in **32.43 seconds**. Stable clang-format **22.1.8** passes **795 files**;
+the actual bundled-23 check retains the same **nine byte-identical baseline
+differences**. All **1240 frozen input hashes** match the devbox.
+The full standard **530-test gate is pending**; no full pass or fresh Bootstrap
+count is claimed yet. Evidence: `/tmp/ctcompile-chain-{build,focused,full}.log`,
+`/tmp/ctcompile-chain-frozen.json`, `/tmp/ctcompile-key-chain-tests-static.json`.
+
+**Next: caller-owned Map payloads**, unchanged **ca0f13c2**
+(`object_argument_global_object_payload`, four functions/five calls/trace=1)
+and anonymous companion **a056b669**, still refused in this focused run.
+Permit a proved empty caller leaf at the exact `Map.set` payload position while
+keeping property uses and object returns refused. The complete family must also
+account for those payload writes **before** computing invocation return facts:
+`HostContract/Values.cpp` currently detects nonprimitive contents only through
+method-local object creation. Otherwise a sibling unseeded getter can retain an
+incorrect primitive proof. Reuse the existing object-value carrier and add a
+payload-only lifetime case: storing the same object as key and payload can hide
+a missing payload owner. The actionable audit is
+`/tmp/ctcompile-chain-next-payload.md`.
+
+Actual Bootstrap Data additionally needs nested Maps and component/element
+ownership, plus full host/publication proofs; these small isolates do not prove
+full Data admission. Generic ordinary-object escape refinement still needs
+independent own-data/prototype authority. Full native Bootstrap and direct
+browser API integration remain unfinished.
+
 ## Global key aliases, 2026-09-11
 
 Resumed exact **abbf4b9c**, then **600b8fb6**, from **4d0db5a6** and the
