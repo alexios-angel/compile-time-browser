@@ -89,21 +89,29 @@ void test_the_document_reports_itself_as_a_node() {
 
 // --- the child list this engine models -------------------------------------
 
-void test_the_document_has_exactly_one_child() {
+void test_the_document_has_a_doctype_and_an_element() {
     is("document.hasChildNodes()", "true");
-    is("document.childNodes.length", "1");
-    is("document.childNodes[0] === document.documentElement", "true");
-    // firstChild and documentElement MUST be the same node or the model is
-    // already inconsistent with itself.
-    is("document.firstChild === document.documentElement", "true");
+    // This page begins `<!DOCTYPE html>`, so the Document's children are the
+    // DocumentType and then <html> - the same two a browser reports.
+    is("document.childNodes.length", "2");
+    is("document.childNodes[0] === document.doctype", "true");
+    is("document.childNodes[1] === document.documentElement", "true");
+    is("document.firstChild === document.doctype", "true");
     is("document.lastChild === document.documentElement", "true");
-    // THE ONE WRONG ANSWER IN THE BLOCK, asserted so that it is a decision
-    // rather than a surprise: this page begins `<!DOCTYPE html>`, so a browser
-    // reports a DocumentType here. `node_kind` has no `document_type`, so
-    // `document.doctype` is null and firstChild is <html> instead. When a
-    // doctype node arrives, this line is what says so.
-    is("document.doctype === null", "true");
-    is("document.firstChild.tagName", "HTML");
+    is("document.doctype.nodeType + ',' + document.doctype.nodeName + ',' +"
+       " document.doctype.name + ',' + JSON.stringify(document.doctype.publicId) + ',' +"
+       " JSON.stringify(document.doctype.systemId)",
+       "10,html,html,\"\",\"\"");
+    is("document.doctype instanceof DocumentType", "true");
+    is("document.doctype.parentNode === document", "true");
+    is("document.doctype.isConnected", "true");
+    is("document.contains(document.doctype)", "true");
+    is("document.compareDocumentPosition(document.doctype)", "20");
+    // Removed like any node, and the document's answer follows.
+    is("(function () { var d = document.doctype; d.remove(); return String(document.doctype) +"
+       " ',' + document.childNodes.length + ',' + (document.firstChild === "
+       "document.documentElement); })()",
+       "null,1,true");
 }
 
 // --- contains --------------------------------------------------------------
@@ -200,21 +208,30 @@ void test_append_and_prepend_on_the_document() {
     // A string argument becomes a Text node - which a Document may never have.
     is("document.append('text')", "threw:HierarchyRequestError");
     is("document.prepend('text')", "threw:HierarchyRequestError");
-    // No arguments is a documented no-op, and it is the one insertion on this
-    // document that succeeds.
-    is("String(document.append()) + ',' + document.childNodes.length", "undefined,1");
+    // No arguments is a documented no-op.
+    is("String(document.append()) + ',' + document.childNodes.length", "undefined,2");
     // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING IS INSERTED, which is what
     // `append-on-Document.html` measures: the child list is untouched after.
     is("(function () { try { document.append(document.createElement('x'), "
        "document.createElement('y')); } catch (e) { return e.name + ',' + "
        "document.childNodes.length; } return 'no throw'; })()",
-       "HierarchyRequestError,1");
+       "HierarchyRequestError,2");
     is("document.appendChild(document.createElement('x'))", "threw:HierarchyRequestError");
-    // A Comment is the one child the DOM permits here and this engine cannot
-    // hold - there is no node above <html> for a sibling of it to hang from.
-    // NotSupportedError, not HierarchyRequestError: no specification puts one
-    // here, so the name cannot be read as a claim about the hierarchy.
-    is("document.appendChild(document.createComment('c'))", "threw:NotSupportedError");
+    // A Comment IS a legal child of a Document, before or after the element,
+    // and a second doctype is not.
+    is("(function () { var c = document.createComment('c'); document.appendChild(c);"
+       " return (document.lastChild === c) + ',' + (c.parentNode === document) + ',' +"
+       " document.childNodes.length; })()",
+       "true,true,3");
+    is("(function () { var c = document.createComment('c'); document.prepend(c);"
+       " return (document.firstChild === c) + ',' + document.childNodes.length; })()",
+       "true,3");
+    is("document.appendChild(document.implementation.createDocumentType('x', '', ''))",
+       "threw:HierarchyRequestError");
+    // An element may not go ahead of the doctype.
+    is("document.insertBefore(document.createElement('x'), document.doctype)",
+       "threw:HierarchyRequestError");
+    // `replaceChildren` would detach <html>, which this engine cannot do.
     is("document.replaceChildren()", "threw:NotSupportedError");
     is("document.insertBefore(document.createElement('x'), document.documentElement)",
        "threw:HierarchyRequestError");
@@ -224,11 +241,21 @@ void test_append_and_prepend_on_the_document() {
     is("document.removeChild(document.body)", "threw:NotFoundError");
     is("document.removeChild(document.documentElement)", "threw:NotSupportedError");
     is("document.replaceChild(document.createElement('x'), document.body)", "threw:NotFoundError");
-    is("document.cloneNode()", "threw:NotSupportedError");
+    // `cloneNode` is a second document: empty when shallow, the doctype and
+    // the tree when deep - and equal to this one only then.
+    is("(function () { var d = document.cloneNode(); return d.nodeType + ',' + d.childNodes.length"
+       " + ',' + (d !== document) + ',' + d.contentType + ',' + d.compatMode; })()",
+       "9,0,true,text/html,CSS1Compat");
+    is("(function () { var d = document.cloneNode(true); return d.childNodes.length + ',' +"
+       " d.doctype.name + ',' + d.documentElement.tagName + ',' + (d.body !== document.body) +"
+       " ',' + d.getElementById('p1').textContent; })()",
+       "2,html,HTML,true,one");
     is("document.isSameNode(document)", "true");
     is("document.isSameNode(document.body)", "false");
     is("document.isEqualNode(document)", "true");
     is("document.isEqualNode(document.body)", "false");
+    is("document.isEqualNode(document.cloneNode(true))", "true");
+    is("document.isEqualNode(document.cloneNode())", "false");
 }
 
 // --- normalize --------------------------------------------------------------
@@ -344,7 +371,7 @@ void test_the_font_face_set() {
 
 int main() {
     test_the_document_reports_itself_as_a_node();
-    test_the_document_has_exactly_one_child();
+    test_the_document_has_a_doctype_and_an_element();
     test_contains_and_the_document_containing_everything();
     test_compare_document_position_reports_the_real_bitmask();
     test_lookup_namespace_uri_and_its_two_siblings();

@@ -237,6 +237,15 @@ void dom_bindings::install_node_methods(context & cx) {
                    adjacent_place(c, self, arg_string(c, args, 0));
                if (!place) { return value::null(); }
                const node_id child = handle_of(arg(args, 1));
+               // AN ELEMENT, by the IDL: a doctype or a text node is a TypeError
+               // before any hierarchy question is asked - insert-adjacent.html
+               // hands it a DocumentType by name.
+               if (child &&
+                   doc_->read().kind(child).value_or(node_kind::element) != node_kind::element) {
+                   c.throw_error("TypeError",
+                                 "insertAdjacentElement: the argument is not an Element");
+                   return value::null();
+               }
                if (!pre_insert_valid(c, place->first, child, arg(args, 1), value::null())) {
                    return value::null();
                }
@@ -657,7 +666,9 @@ void dom_bindings::install_node_methods(context & cx) {
         switch (txn.kind(self).value_or(node_kind::element)) {
         case node_kind::element: return self;
         case node_kind::text:
-        case node_kind::comment: {
+        case node_kind::comment:
+        case node_kind::cdata_section:
+        case node_kind::processing_instruction: {
             const node_id parent = txn.parent(self);
             return parent && txn.kind(parent).value_or(node_kind::text) == node_kind::element
                        ? parent
@@ -670,7 +681,8 @@ void dom_bindings::install_node_methods(context & cx) {
                 }
             }
             return node_id{};
-        case node_kind::document_fragment: return node_id{};
+        case node_kind::document_fragment:
+        case node_kind::document_type: return node_id{};
         }
         return node_id{};
     };

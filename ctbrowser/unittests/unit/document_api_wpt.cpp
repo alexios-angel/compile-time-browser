@@ -161,10 +161,27 @@ void test_adopt_node_within_one_document_removes_and_returns() {
     is("(function () { var root = document.createElement('div').attachShadow({mode: 'closed'});"
        " try { document.adoptNode(root); } catch (e) { return e.name; } })()",
        "HierarchyRequestError");
-    // ACROSS DOCUMENTS IT IS REFUSED, by name: see install.cpp.
+    // ACROSS DOCUMENTS IT ADOPTS: the same object, now the other document's
+    // node, out of the tree it was in - see node_from in tree_ops.cpp.
     is("(function () { var doc = document.implementation.createHTMLDocument('T');"
-       " try { doc.adoptNode(document.getElementById('a')); } catch (e) { return e.name; } })()",
-       "NotSupportedError");
+       " var a = document.getElementById('a'); var r = doc.adoptNode(a);"
+       " return (r === a) + ',' + (a.ownerDocument === doc) + ',' + a.parentNode + ',' +"
+       " document.getElementById('a') + ',' + a.getAttribute('id'); })()",
+       "true,true,null,null,a");
+    // And inserting another document's node adopts it on the way in, with its
+    // wrapper following it: dom/common.js appends an XML document's CDATA
+    // section to an HTML paragraph and reads it back through the same object.
+    is("(function () { var x = new Document(); var c = x.createCDATASection('1234');"
+       " var p = document.getElementById('box'); p.append(c);"
+       " return (p.lastChild === c) + ',' + (c.ownerDocument === document) + ',' + c.nodeType +"
+       " ',' + c.data + ',' + (c.parentNode === p); })()",
+       "true,true,4,1234,true");
+    // A doctype handed to createDocument is adopted into the document it makes.
+    is("(function () { var dt = document.implementation.createDocumentType('q', 'a', 'b');"
+       " var d = document.implementation.createDocument(null, 'r', dt);"
+       " return (d.doctype === dt) + ',' + (dt.ownerDocument === d) + ',' + (d.firstChild === dt)"
+       " + ',' + (d.lastChild === d.documentElement) + ',' + dt.publicId + dt.systemId; })()",
+       "true,true,true,true,ab");
 }
 
 // --- the two walkers -----------------------------------------------------------
@@ -204,12 +221,13 @@ void test_tree_walker_defaults_and_moves() {
        " { acceptNode: function (n) { return n.id === 'box' ? 2 : 1; } });"
        " return w.firstChild().id; })()",
        "tpl");
-    // Rooted at the document itself: the first node is <html> and its parent
-    // is the document.
+    // Rooted at the document itself: the first node is the doctype - this
+    // page begins `<!DOCTYPE html>` - then <html>, and each one's parent is the
+    // document.
     is("(function () { var w = document.createTreeWalker(document);"
-       " var first = w.nextNode(); return first.tagName + ',' + (w.parentNode() === document) +"
-       " ',' + w.parentNode(); })()",
-       "HTML,true,null");
+       " var first = w.nextNode(); var second = w.nextNode(); return first.nodeType + ',' +"
+       " second.tagName + ',' + (w.parentNode() === document) + ',' + w.parentNode(); })()",
+       "10,HTML,true,null");
     // A filter that re-enters its own walker is an InvalidStateError - and it
     // is NOT pinned here: the throw is raised inside the nested call, unwinds
     // to the page's `try`, and the OUTER nextNode then calls the filter again

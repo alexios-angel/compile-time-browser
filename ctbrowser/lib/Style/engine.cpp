@@ -191,7 +191,7 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
             f.is_empty = false;
             break;
         }
-        if (kind == node_kind::text && !txn.text(child).empty()) {
+        if (is_text_kind(kind) && !txn.text(child).empty()) {
             f.is_empty = false;
             break;
         }

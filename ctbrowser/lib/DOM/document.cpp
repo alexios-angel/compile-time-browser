@@ -44,6 +44,42 @@ std::expected<atom, dom_error> read_txn::tag(node_id id) const noexcept {
     return n->tag;
 }
 
+atom read_txn::name(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    if (n == nullptr) { return atom{}; }
+    switch (n->kind) {
+    case node_kind::element:
+    case node_kind::document_type:
+    case node_kind::processing_instruction: return n->tag;
+    case node_kind::document:
+    case node_kind::text:
+    case node_kind::comment:
+    case node_kind::document_fragment:
+    case node_kind::cdata_section: return atom{};
+    }
+    return atom{};
+}
+
+// The two identifiers share the doctype's text block, NUL between them - the
+// one byte neither can carry, because the tokenizer never emits it and
+// `createDocumentType` is handed DOMStrings that a page has no reason to put
+// one in. ponytail: two strings in one block; a second text slot on `node`
+// would cost every node 8 bytes for the one kind that has two.
+std::string_view read_txn::public_id(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    if (n == nullptr || n->kind != node_kind::document_type) { return {}; }
+    const std::string_view both = n->text.load(std::memory_order_acquire)->value;
+    return both.substr(0, both.find('\0'));
+}
+
+std::string_view read_txn::system_id(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    if (n == nullptr || n->kind != node_kind::document_type) { return {}; }
+    const std::string_view both = n->text.load(std::memory_order_acquire)->value;
+    const std::size_t nul = both.find('\0');
+    return nul == std::string_view::npos ? std::string_view{} : both.substr(nul + 1);
+}
+
 node_ns read_txn::element_ns(node_id id) const noexcept {
     const node * n = doc_->find(id);
     // A missing node and a text node are both HTML as far as anyone asking
@@ -113,6 +149,10 @@ node_id read_txn::root() const noexcept {
     return doc_->root_;
 }
 
+node_id read_txn::document_node() const noexcept {
+    return doc_->document_node_;
+}
+
 std::uint64_t read_txn::version() const noexcept {
     return doc_->version();
 }
@@ -125,7 +165,8 @@ bool read_txn::is_ancestor_of(node_id ancestor, node_id descendant) const noexce
 }
 
 document::document(atom_table & atoms) : atoms_(&atoms) {
-    root_ = nodes_.insert(node_kind::document);
+    document_node_ = nodes_.insert(node_kind::document);
+    root_ = document_node_;
 }
 
 document::~document() = default;
@@ -150,6 +191,52 @@ node_id document::create_comment(std::string_view value) {
 
 node_id document::create_fragment() {
     return nodes_.insert(node_kind::document_fragment);
+}
+
+node_id document::create_document_type(atom name, std::string_view public_id,
+                                       std::string_view system_id) {
+    const node_id id = nodes_.insert(node_kind::document_type, name);
+    std::string both{public_id};
+    both += '\0';
+    both += system_id;
+    find(id)->text.store(new text_block{std::move(both)}, std::memory_order_release);
+    return id;
+}
+
+node_id document::create_processing_instruction(atom target, std::string_view data) {
+    const node_id id = nodes_.insert(node_kind::processing_instruction, target);
+    find(id)->text.store(new text_block{std::string{data}}, std::memory_order_release);
+    return id;
+}
+
+node_id document::create_cdata_section(std::string_view value) {
+    const node_id id = nodes_.insert(node_kind::cdata_section);
+    find(id)->text.store(new text_block{std::string{value}}, std::memory_order_release);
+    return id;
+}
+
+void document::set_document_element(node_id id, node_id before) {
+    const std::lock_guard structure{structure_};
+    const node_id previous = root_;
+    root_ = id;
+    node * doc_node = find(document_node_);
+    if (doc_node == nullptr || id == document_node_ || id == previous) { return; }
+    // Wherever it was before, it is a child of the Document now - and one with
+    // NO parent pointer, see document_node.
+    if (node * fresh_node = find(id); fresh_node != nullptr) { detach_locked(fresh_node, id); }
+    const child_list * stale = doc_node->children.load(std::memory_order_acquire);
+    auto * fresh = new child_list{stale->items};
+    const auto gone = std::ranges::remove(fresh->items, id);
+    fresh->items.erase(gone.begin(), gone.end());
+    // The old element's slot if it had one; otherwise ahead of `before`, or at
+    // the end.
+    if (const auto slot = std::ranges::find(fresh->items, previous); slot != fresh->items.end()) {
+        *slot = id;
+    } else {
+        fresh->items.insert(std::ranges::find(fresh->items, before), id);
+    }
+    publish(doc_node->children, static_cast<const child_list *>(fresh));
+    bump_version();
 }
 
 void document::detach_locked(node * child_node, node_id child) {

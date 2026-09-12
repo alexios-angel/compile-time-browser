@@ -9,6 +9,11 @@ using namespace detail;
 
 value dom_bindings::wrap(context & cx, node_id id) {
     if (!id) { return value::null(); }
+    // THE DOCUMENT NODE IS `document`. A doctype, a comment or a PI beside the
+    // document element has the Document node as its parent - see
+    // document::document_node - and `parentNode` on one must be the document
+    // object the page holds, not a second wrapper over the same node.
+    if (id == doc_->document_node() && document_.is_object_like()) { return document_; }
     // The interfaces, if they can be built yet - see ensure_dom_interfaces. A
     // no-op after the first success, and the reason it is HERE is that this is
     // the earliest thing a page can do that needs one.
@@ -42,6 +47,40 @@ value dom_bindings::wrap(context & cx, node_id id) {
         if (kind == node_kind::document_fragment) {
             install_fragment_members(cx, *obj, id);
             if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
+        }
+        // A CDATASection and a ProcessingInstruction are CharacterData: `data`
+        // and `nodeValue` are their text, both ways. install_element_views
+        // wires those two for Text and Comment only, so they are re-defined
+        // here for the two kinds it does not know - and `target`, which only a
+        // PI has, is read-only.
+        if (kind == node_kind::cdata_section || kind == node_kind::processing_instruction) {
+            for (const char * spelling : {"data", "nodeValue"}) {
+                obj->define_accessor(spelling,
+                                     value::object(cx.allocate<script::native_object>(
+                                         spelling,
+                                         [this, id](context & c, std::span<value>) {
+                                             return c.string(std::string{doc_->read().text(id)});
+                                         })),
+                                     value::object(cx.allocate<script::native_object>(
+                                         spelling, [this, id](context & c, std::span<value> a) {
+                                             const value given = arg(a, 0);
+                                             (void)doc_->set_text(id, given.is_null()
+                                                                          ? std::string{}
+                                                                          : arg_string(c, a, 0));
+                                             mutated();
+                                             return value::undefined();
+                                         })));
+            }
+        }
+        if (kind == node_kind::processing_instruction) {
+            obj->define_accessor("target",
+                                 value::object(cx.allocate<script::native_object>(
+                                     "target",
+                                     [this, id](context & c, std::span<value>) {
+                                         return c.string(
+                                             std::string{atoms_->text(doc_->read().name(id))});
+                                     })),
+                                 value::undefined());
         }
         // `template.content`, HTML 4.12.3: the DocumentFragment the parser put
         // the element's children into - see document::template_content - and,
@@ -142,6 +181,25 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
         case node_kind::document_fragment:
             obj.set("nodeName", cx.string("#document-fragment"));
             obj.set("nodeType", value::number(11));
+            break;
+        // A doctype is named for its name and a PI for its target - DOM 4.4's
+        // nodeName table - and neither is folded, whatever the document.
+        case node_kind::document_type:
+            obj.set("nodeName", cx.string(std::string{atoms_->text(txn.name(id))}));
+            obj.set("nodeType", value::number(10));
+            // The DocumentType interface's three attributes. Data properties
+            // rather than accessors because none of the three can change.
+            obj.set("name", cx.string(std::string{atoms_->text(txn.name(id))}));
+            obj.set("publicId", cx.string(std::string{txn.public_id(id)}));
+            obj.set("systemId", cx.string(std::string{txn.system_id(id)}));
+            break;
+        case node_kind::processing_instruction:
+            obj.set("nodeName", cx.string(std::string{atoms_->text(txn.name(id))}));
+            obj.set("nodeType", value::number(7));
+            break;
+        case node_kind::cdata_section:
+            obj.set("nodeName", cx.string("#cdata-section"));
+            obj.set("nodeType", value::number(4));
             break;
         }
         // `ownerDocument` - null on the Document itself and `document` on
@@ -327,7 +385,21 @@ bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id r
     }
     case node_kind::text:
     case node_kind::comment:
+    case node_kind::cdata_section:
         if (txn.text(left) != txn.text(right)) { return false; }
+        break;
+    // A doctype is its name and two identifiers, a PI its target and data -
+    // the rows of DOM 4.4's "equals" table for the two.
+    case node_kind::document_type:
+        if (txn.name(left) != txn.name(right) || txn.public_id(left) != txn.public_id(right) ||
+            txn.system_id(left) != txn.system_id(right)) {
+            return false;
+        }
+        break;
+    case node_kind::processing_instruction:
+        if (txn.name(left) != txn.name(right) || txn.text(left) != txn.text(right)) {
+            return false;
+        }
         break;
     // A Document and a DocumentFragment have nothing of their own to compare;
     // they are their children, which is what the walk below does.
