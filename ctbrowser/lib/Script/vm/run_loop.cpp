@@ -625,7 +625,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                         registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
                     const value saved_this = current_this_;
                     current_this_ = receiver;
-                    const value produced = nat->fn(*this, args);
+                    const value produced = [&] {
+                        const native_scope pinned{*this};
+                        return nat->fn(*this, args);
+                    }();
                     current_this_ = saved_this;
                     reg(in.a) = produced;
                     break;

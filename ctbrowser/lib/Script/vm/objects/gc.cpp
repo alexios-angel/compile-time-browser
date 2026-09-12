@@ -180,6 +180,16 @@ std::size_t context::collect() {
     // oracle walks too. The whole register file and every frame: a
     // collection has no dead window.
     mark_roots(registers_.size());
+    // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED - see context::native_scope.
+    // Newest first, down to and including the head at the outermost entry;
+    // that one object was live before the native and pinning it keeps the
+    // epoch pointer valid across this sweep.
+    if (native_depth_ > 0) {
+        for (heap_object * o = heap_; o != nullptr; o = o->next) {
+            mark_object(o);
+            if (o == native_epoch_) { break; }
+        }
+    }
     return sweep();
 }
 

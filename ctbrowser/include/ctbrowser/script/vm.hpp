@@ -1280,13 +1280,45 @@ public:
         std::size_t count_;
     };
 
+    // WHAT A NATIVE IN PROGRESS MAY BE HOLDING. A native allocates an object,
+    // calls back into JavaScript (`to_string` on an argument, a callback, a
+    // getter) and then uses the object - `new Blob([part])` stringifies each
+    // part with the Blob it is building in a C++ local. The precise collector
+    // has no inventory of C++ locals, so every such native was a use-after-free
+    // once collection could run inside a turn; the first one found was
+    // `loadBlob`'s result no longer being `instanceof Blob`. Rather than audit
+    // ~1,300 natives for `rooted`, the collector PINS EVERYTHING ALLOCATED
+    // SINCE THE OUTERMOST NATIVE WAS ENTERED: the heap is a newest-first list,
+    // so that is the prefix down to the object that was the head at entry.
+    // Bounded, because a native's own allocations are bounded; what is NOT
+    // pinned is what testharness.js's per-subtest `apply` was called on, so a
+    // synchronous script of ten thousand subtests still collects. A collector
+    // policy, not a root: it is applied in collect(), outside each_root, so the
+    // escape oracle's notion of "reachable" does not learn it.
+    class native_scope {
+    public:
+        explicit native_scope(context & cx) : cx_(&cx) {
+            if (cx.native_depth_++ == 0) { cx.native_epoch_ = cx.heap_; }
+        }
+        ~native_scope() {
+            if (--cx_->native_depth_ == 0) { cx_->native_epoch_ = nullptr; }
+        }
+        native_scope(const native_scope &) = delete;
+        native_scope & operator=(const native_scope &) = delete;
+
+    private:
+        context * cx_;
+    };
+
     // COLLECT AT EVERY SAFEPOINT, FOR TESTS.
     //
-    // The only thing that collects in an ordinary run is `collect_if_due`, once
-    // per tick, from the browser's frame loop - so a collection NEVER happens
-    // while script is running, and a rooting bug is unreachable. This TEST MODE
-    // collects the whole heap at every safepoint, which is enormously slow, and
-    // is the only way the rooting discipline the ABI demands can be exercised.
+    // Until 2026-09-12 the only thing that collected in an ordinary run was
+    // `collect_if_due`, once per tick, from the browser's frame loop - so a
+    // collection NEVER happened while script was running, and a rooting bug
+    // was unreachable. `safepoint()` now collects when the heap is due, but
+    // only at a call boundary. This TEST MODE collects the whole heap at every
+    // safepoint, which is enormously slow, and is the only way the rooting
+    // discipline the ABI demands can be exercised.
     void set_gc_stress(bool on) noexcept { gc_stress_ = on; }
     [[nodiscard]] bool gc_stress() const noexcept { return gc_stress_; }
 
@@ -1306,11 +1338,24 @@ public:
     // further down, after call_frame.
     void record_step(instruction in);
 
-    // A point where the ABI says a collection may happen. Does nothing unless
-    // stress is on, so this is one predictable not-taken branch on the paths
-    // that call it.
+    // A point where the ABI says a collection may happen. Under stress it
+    // always does; otherwise only when the heap has grown past the threshold
+    // `collect_if_due` keeps - the tick's rule, applied inside a turn, so a
+    // synchronous script that never yields is bounded the way a page on a
+    // timer is. Before this it was stress-only, and seven WPT reflection
+    // files - thousands of subtests in ONE top-level script - grew until a
+    // 4 GB address-space cap killed the process. One compare on the path that
+    // calls it: `invoke`, every C++ entry into JavaScript - which is what
+    // `Function.prototype.apply` is, and what testharness.js runs every
+    // subtest through. An interpreted JS-to-JS call is deliberately NOT one:
+    // ctcompile/test/EscapeCycle.cpp pins that `churn(1000)` collects exactly
+    // once under stress and returns with its 4,000 dead nodes unswept.
     void safepoint() {
-        if (gc_stress_) { (void)collect(); }
+        if (gc_stress_) [[unlikely]] {
+            (void)collect();
+            return;
+        }
+        (void)collect_if_due();
     }
 
     // HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
@@ -1320,8 +1365,11 @@ public:
     [[nodiscard]] std::size_t collections() const noexcept { return collections_; }
 
     // Collect if the heap has grown enough to be worth it. Called once per
-    // tick, so a long-running page's garbage is bounded instead of accumulating
-    // for the life of the document.
+    // tick, and from `safepoint()` at every call boundary, so a long-running
+    // page's garbage is bounded instead of accumulating for the life of the
+    // document - or of one synchronous script. The threshold doubles with the
+    // survivors, so the work is amortised O(1) per allocation and the heap
+    // peaks at about twice the live set.
     std::size_t collect_if_due() {
         if (live_objects_ < collect_threshold_) { return 0; }
         const std::size_t freed = collect();
@@ -1975,6 +2023,10 @@ private:
     type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
+    // See native_scope: the head of the heap when the outermost native in
+    // progress was entered, and how many natives are in progress.
+    heap_object * native_epoch_ = nullptr;
+    std::size_t native_depth_ = 0;
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;

@@ -110,7 +110,10 @@ value context::construct(value callee, std::span<const value> args) {
         std::vector<value> copy{args.begin(), args.end()};
         const value saved = current_this_;
         current_this_ = self;
-        const value produced = nat->fn(*this, copy);
+        const value produced = [&] {
+            const native_scope pinned{*this};
+            return nat->fn(*this, copy);
+        }();
         current_this_ = saved;
         // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
         // evaluate to the fresh empty instance, because a native returning a
