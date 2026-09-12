@@ -81,8 +81,8 @@ integration before interpreting a new oracle disagreement.
 Evidence: `/tmp/ctcompile-inner-{corrected-focused.log,test-fix-focused.log,
 full.log,full-detail.log,full-summary.json,full-frozen.json,full-revision.json}`,
 `/tmp/ctcompile-inner-full-measured/summary.json` and
-`/tmp/ctcompile-inner-driver-node.json`. All code and handoffs are committed
-locally; nothing was pushed.
+`/tmp/ctcompile-inner-driver-node.json`. Repository code and this handoff are
+committed locally; the external plan journals are updated. Nothing was pushed.
 
 ## Conditional child Maps and recovered UShr, 2026-09-12
 
