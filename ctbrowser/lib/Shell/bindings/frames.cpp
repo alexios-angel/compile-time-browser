@@ -265,22 +265,34 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     const auto trap = [&](const char * name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
-    trap("get", [](context & c, std::span<value> args) {
+    // NOT THE PAGE'S BROWSING-CONTEXT STATE, though. `location`, `history`
+    // and their kin are per-context, and this frame has none (see the header):
+    // handing back the page's would let `frame.contentWindow.location.href =
+    // x` rewrite the top document's address, which is worse than the
+    // `undefined` a page can test for.
+    const auto shared_global = [](context & c, std::string_view name) {
+        for (const std::string_view own :
+             {"location", "history", "frames", "name", "opener", "closed", "event"}) {
+            if (own == name) { return false; }
+        }
+        return c.has_global(name);
+    };
+    trap("get", [shared_global](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         if (target->find(name) == nullptr && target->find_accessor(name) == nullptr &&
-            c.has_global(name)) {
+            shared_global(c, name)) {
             return c.global(name);
         }
         return c.lookup_property(args[0], name);
     });
-    trap("has", [](context & c, std::span<value> args) {
+    trap("has", [shared_global](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         return value::boolean(target->find(name) != nullptr ||
-                              target->find_accessor(name) != nullptr || c.has_global(name));
+                              target->find_accessor(name) != nullptr || shared_global(c, name));
     });
     const value frame_view = value::object(
         cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
