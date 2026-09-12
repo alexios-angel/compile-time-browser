@@ -7,7 +7,7 @@ import re
 import subprocess
 
 from .driver_common import (
-    boundary, check_budgets, check_call_preservation, comparable_provenance, contract,
+    CONSTANT_GLOBAL_NODE, boundary, check_budgets, check_call_preservation, comparable_provenance, contract,
     forge_leaf_evidence, host, methods, owned, source_calls,
 )
 from .harness_objects import instrument_leaf_objects
@@ -185,11 +185,25 @@ var trace = host.slot.get();
 host.slot.set(41, 'value');
 var trace = host.slot.get('value');
 ''', 15, functions=6, retained=True, reused=True, separate=True, dynamic=True)
-    # Ownership can close even while the original nullable global observation refuses.
+    # Preserve the original programs when admitting their exact nullable output.
     for name in ('conditional_unknown_contents', 'conditional_alias_delete',
                  'cross_unseeded_before', 'cross_unseeded_after', 'cross_delete_before',
                  'cross_delete_after', 'cross_clear_before', 'cross_clear_after'):
-        rows['nested_map_' + name]['owner'] = True
+        rows['nested_map_' + name].update(owner=True, admitted=True, retained=True)
+    rows['nested_map_conditional_alias_delete'].update(reused=True, alias=True)
+    for mutation in ('unseeded', 'delete', 'clear'):
+        for order in ('before', 'after'):
+            name = 'cross_' + mutation + '_' + order
+            row = rows['nested_map_' + name]
+            row.update(separate=True, nullable=True, replacement=mutation == 'unseeded')
+            # A separate source observes actual absence without rewriting a method.
+            source = row['source'].replace('var trace = host.slot.get();',
+                'host.slot.poison();\nvar trace = host.slot.get();')
+            add(name + '_undefined', source, row['calls'] + 1, functions=6,
+                admitted=True, retained=True, separate=True)
+            rows['nested_map_' + name + '_undefined'].update(
+                poison=row['poison'], nullable=True, replacement=row['replacement'],
+                expected_trace='undefined')
     add('previous_observed', previous.replace('var trace = host.slot.get(41);',
         'var trace = host.slot.get(41) === 41;'), 9,
         admitted=True, retained=True, reused=True, previous=True)
@@ -234,6 +248,9 @@ def nested_map_observer(source, row):
         seen[1][2] === seen[2][2] && seen[stride + 1][2] === seen[stride + 2][2];'''
     if row['repeated']:
         distinct = 'ok = ok && seen[0][2] === seen[1][2] && seen[2][2] === seen[3][2];'
+    if row.get('alias'):
+        distinct = '''ok = ok && seen[0][2] !== seen[1][2] && seen[1][2] === seen[3][2] &&
+        seen[1][2].get('value') === undefined;'''
     reused = row['reused']
     recreate = '''const outer = seen[0][0], saved = seen[0][2];
     outer.clear(); saved.set('value', 47);
@@ -249,6 +266,18 @@ def nested_map_observer(source, row):
     outer.clear(); saved.set('value', 47);
     ok = ok && get() === 0 && set(19) === 19 && get() === 19 && outer.size === 1 &&
          outer.get(1) !== saved && saved.get('value') === 47;'''
+    if row.get('nullable'):
+        observed = observed.replace('const set = host.slot.set, get = host.slot.get;',
+            'const set = host.slot.set, get = host.slot.get, poison = host.slot.poison;')
+        recreate = '''const poisoned = seen[0][0].get(1);
+    poison();
+    ok = ok && get() === undefined && seen[0][0].size === 1 &&
+         (seen[0][0].get(1) !== poisoned) === REPLACEMENT &&
+         poisoned.get('value') === POISONED_VALUE;
+    set(29);
+    ''' + recreate
+        recreate = recreate.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
+            'POISONED_VALUE', '127.5' if row['replacement'] else 'undefined')
     if row['previous']:
         observed = observed.replace('get(17) === 17 && get(-3) === -3',
             'get(17) === 41 && get(-3) === 17').replace(
@@ -280,9 +309,11 @@ def nested_map_observer(source, row):
     saved.set('value', 47);
     ok = ok && set(19) === 19 && get() === 19 && outer.size === 1 &&
          outer.get(1) !== saved && saved.get('value') === 47;''')
-    stride = 2 if row['repeated'] or row['dynamic'] else 1 if row['children'] == 1 else 3
+    if row.get('alias'):
+        recreate = recreate.replace('outer.size === 1', 'outer.size === 2')
+    stride = 2 if row['repeated'] or row['dynamic'] or row.get('alias') else 1 if row['children'] == 1 else 3
     return observed.replace('STRIDE', str(stride)).replace(
-        'OUTER_SIZE', '1' if row['retained'] else '0').replace('DISTINCT', distinct).replace(
+        'OUTER_SIZE', '2' if row.get('alias') else '1' if row['retained'] else '0').replace('DISTINCT', distinct).replace(
         'METHOD', 'get' if reused else 'set').replace('ITEM', 'result' if reused else 'value').replace(
         'IDENTITY', '===' if reused else '!==').replace('FIRST_VALUE', '-3' if reused else '17').replace(
         'REUSE_CHECK', "if (seen[0][2].get('value') !== value) { ok = false; }" if reused else '').replace(
@@ -291,6 +322,8 @@ def nested_map_observer(source, row):
 
 def nested_map_lifetime_cpp(cpp, row):
     # Reuse the existing weak allocation observer; generated ownership is unchanged.
+    if row.get('nullable'):
+        return nested_map_mutation_lifetime_cpp(cpp, row)
     changed = instrument_leaf_objects(cpp, allocations=0) + r'''
 int main() {
     using Child = ctnative::number_map<std::string>;
@@ -372,8 +405,7 @@ int main() {
             'get = {};', 'get = {};\n    if (ctn_test_maps[0].expired() || set(29) != 29) '
             '{ return 286; }\n    set = {};')
     if row['previous']:
-        changed = changed.replace('std::function<js_num(js_num)>',
-            'std::function<ctnative::nullable_scalar(js_num)>').replace('for (int call = 0; call < 128; ++call)',
+        changed = changed.replace('for (int call = 0; call < 128; ++call)',
             'js_num previous = 41;\n    for (int call = 0; call < 128; ++call)').replace(
             'get(value) != value', 'get(value) != previous').replace(
             '        for (std::size_t index = before;',
@@ -382,8 +414,25 @@ int main() {
             '    ctnative::map_clear(outer);', '''    ctnative::map_clear(saved);
     if (get(13) != 13 || outer->at(js_num{1}) != saved || saved->at("value") != 13) { return 293; }
     ctnative::map_clear(outer);''')
+    if row.get('alias'):
+        changed = changed.replace('(retained ? 1U : 0U)', '2U').replace(
+            'child != ctn_test_maps.back().lock()',
+            '(child != ctn_test_maps[1].lock() || outer->at(js_num{2}) != ctn_test_maps[2].lock() || '
+            'outer->at(js_num{2})->size() != 0U)').replace(
+            '    ctnative::map_clear(outer);', '    ctnative::map_clear(outer);\n'
+            '    if (!ctn_test_maps[2].expired()) { return 294; }').replace(
+            'get(19) != 19', 'get(19) != 19 || outer->size() != 2U || '
+            'outer->at(js_num{1}) == outer->at(js_num{2})')
+    if row['previous'] or row.get('alias'):
+        changed = changed.replace('std::function<js_num(js_num)>',
+            'std::function<ctnative::nullable_scalar(js_num)>')
         changed = re.sub(r'\bget\((value|13|19|23)\)',
                          r'ctnative::global_number(get(\1))', changed)
+        if row['expected_trace'] is not True:
+            changed = changed.replace('    auto owner = g_host;',
+                '    static_assert(std::is_same_v<decltype(g_trace), ctnative::nullable_scalar>);\n'
+                '    if (ctnative::global_number(g_trace) != 41) { return 310; }\n'
+                '    auto owner = g_host;')
     if row['dynamic']:
         changed = changed.replace('auto set = table->m_set;', '''auto set = table->m_set;
     auto remove = table->m_remove;
@@ -421,6 +470,86 @@ int main() {
             '    set = {};\n    if (ctn_test_maps[0].expired()) { return 290; }\n    remove = {};')
     return changed.replace('CHILDREN', str(row['children'])).replace(
         'RETAINED', str(row['retained']).lower()).replace('REUSED', str(row['reused']).lower())
+
+
+def nested_map_mutation_lifetime_cpp(cpp, row):
+    # Call the real sibling after publication; neither its tag nor its child
+    # lifetime can be inferred from the initial Number observation.
+    changed = instrument_leaf_objects(cpp, allocations=0) + r'''
+int main() {
+    using Child = ctnative::number_map<std::string>;
+    using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
+    using Result = ctnative::nullable_scalar;
+    constexpr bool replacement = REPLACEMENT;
+    constexpr std::size_t initial_maps = INITIAL_MAPS;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != initial_maps) { return 295; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    auto poison = table->m_poison;
+    static_assert(std::is_same_v<decltype(get), std::function<Result()>>);
+    static_assert(std::is_same_v<decltype(set), std::function<js_num(js_num)>>);
+    static_assert(std::is_same_v<decltype(poison), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(g_trace), Result>);
+    if (get().tag != Result::kind::INITIAL_TAG ||
+        g_trace.tag != Result::kind::INITIAL_TAG) { return 296; }
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired()) { return 297; }
+    auto outer = std::const_pointer_cast<Outer>(
+        std::static_pointer_cast<const Outer>(ctn_test_maps[0].lock()));
+    for (int call = 0; call < 128; ++call) {
+        const auto before = ctn_test_maps.size();
+        const js_num value = call % 2 == 0 ? -call : call + 0.5;
+        if (set(value) != value || ctnative::global_number(get()) != value ||
+            ctn_test_maps.size() != before + 1) { return 298; }
+        auto saved = outer->at(js_num{1});
+        std::weak_ptr saved_lifetime = saved;
+        if (poison() != 0 || get().tag != Result::kind::undefined || outer->size() != 1U ||
+            ctn_test_maps.size() != before + 1 + (replacement ? 1U : 0U) ||
+            (outer->at(js_num{1}) != saved) != replacement) { return 299; }
+        const auto prior = ctnative::map_get(saved, std::string{"value"});
+        if (replacement ? prior.tag != Result::kind::number || prior.value != value
+                        : prior.tag != Result::kind::undefined) { return 300; }
+        saved.reset();
+        if (saved_lifetime.expired() != replacement) { return 301; }
+    }
+    ctnative::map_clear(outer);
+    if (ctnative::global_number(get()) != 0 || set(19) != 19 ||
+        ctnative::global_number(get()) != 19) { return 302; }
+    auto saved = outer->at(js_num{1});
+    std::weak_ptr saved_lifetime = saved;
+    ctnative::map_clear(outer);
+    if (saved_lifetime.expired() || saved->at("value") != 19 ||
+        ctnative::global_number(get()) != 0 || set(23) != 23 ||
+        ctnative::global_number(get()) != 23 || outer->at(js_num{1}) == saved) { return 303; }
+    saved.reset();
+    if (!saved_lifetime.expired()) { return 304; }
+    const auto next = ctn_test_maps.size();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != next + initial_maps ||
+        ctn_test_maps[0].lock() == ctn_test_maps[next].lock() ||
+        ctnative::global_number(get()) != 23) { return 305; }
+    outer.reset();
+    get = {};
+    if (ctn_test_maps[0].expired() || set(31) != 31) { return 306; }
+    set = {};
+    if (ctn_test_maps[0].expired() || poison() != 0) { return 307; }
+    poison = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[next].expired()) { return 308; }
+    g_host.reset();
+    for (const auto & map : ctn_test_maps) {
+        if (!map.expired()) { return 309; }
+    }
+    return 0;
+}
+'''
+    initial_maps = 2 + row['replacement'] * (1 + (row['expected_trace'] == 'undefined'))
+    return changed.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
+        'INITIAL_MAPS', str(initial_maps)).replace(
+        'INITIAL_TAG', 'undefined' if row['expected_trace'] == 'undefined' else 'number')
 
 
 def nested_map_census(args, ir, name, row):
@@ -481,11 +610,12 @@ def check_nested_maps(args, node, reference, compilers, nm):
         js = args.work / f'{name}-observed.js'
         js.write_text(source)
         result = host.run([str(reference), str(js)]) if reference else None
-        expected_text = 'true' if expected is True else str(expected)
-        observer = methods.BOOLEAN_NODE if isinstance(expected, bool) else boundary.NODE
-        types = ('(0 number, 1 boolean, 0 string, 0 null, 0 undefined)' if isinstance(expected, bool)
-                 else '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)')
-        if (host.run([node, '-e', observer, str(js)]).stdout != f'trace={expected_text}\n'
+        expected_text = str(expected).lower() if isinstance(expected, bool) else str(expected)
+        kind = ('boolean' if isinstance(expected, bool) else expected
+                if expected in ('null', 'undefined') else 'number')
+        types = '(' + ', '.join(f'{int(tag == kind)} {tag}' for tag in
+                               ('number', 'boolean', 'string', 'null', 'undefined')) + ')'
+        if (host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != f'trace={expected_text}\n'
                 or result and (result.stdout != f'trace={expected_text}\n' or types not in result.stderr)):
             raise RuntimeError(f'{name}: typed source observation changed')
 
@@ -517,7 +647,9 @@ def check_nested_maps(args, node, reference, compilers, nm):
         readback = "again.get('value')" if row['repeated'] else "saved.get('value')"
         replacements = [("t.get(1).get('value')" if row['separate'] else readback, '41'),
                         (".set('value', value);", ".set('value', 0);")]
-        if row['children'] == 2:
+        if row.get('alias'):
+            replacements.append(('t.set(2, new Map);', 't.set(2, t.get(1));'))
+        elif row['children'] == 2:
             replacements.append(('second = new Map;', 'second = first;'))
         if row['retained']:
             replacements.append(('t.set(1, child);', 't.set(1, child); t.clear();') if row['separate']
@@ -596,13 +728,15 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 raise RuntimeError(f'{label}: forged leaf/presence facts changed nested C++')
         if not row['admitted']:
             return
-        expected_output = 'trace=true\n' * 2 if row['expected_trace'] is True else 'trace=41\n' * 2
+        expected_text = str(row['expected_trace']).lower()
+        expected_output = f'trace={expected_text}\n' * 2
         deduced = args.work / f'{name}.deduced.mlir'
         host.run([args.opt, str(default), '--ctnative-print-deduced', '-o', str(deduced)])
         for mode, native in (('explicit', default), ('deduced', deduced)):
             cpp = host.run([args.translate, '--mlir-to-cpp', str(native)]).stdout
             signature = ('std::function<js_num(js_num, std::string)>' if row['dynamic'] else
-                         'std::function<ctnative::nullable_scalar(js_num)>' if row['previous'] else
+                         'std::function<ctnative::nullable_scalar()>' if row.get('nullable') else
+                         'std::function<ctnative::nullable_scalar(js_num)>' if row['previous'] or row.get('alias') else
                          'std::function<js_num(js_num)>')
             if owned.VM.search(cpp) or signature not in cpp:
                 raise RuntimeError(f'{name}/{mode}: lost typed standalone nested Map output')
