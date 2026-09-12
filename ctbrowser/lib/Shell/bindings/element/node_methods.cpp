@@ -125,7 +125,8 @@ void dom_bindings::install_node_methods(context & cx) {
     const std::initializer_list<const char *> element = {"Element"};
     const std::initializer_list<const char *> parent_node = {"Element", "Document",
                                                              "DocumentFragment"};
-    const std::initializer_list<const char *> child_node = {"Element", "CharacterData"};
+    const std::initializer_list<const char *> child_node = {"Element", "CharacterData",
+                                                            "DocumentType"};
     const auto method = [&](std::initializer_list<const char *> on, const char * name,
                             unsigned length, script::native_fn fn) {
         define_operation(cx, on, name, length, std::move(fn));
