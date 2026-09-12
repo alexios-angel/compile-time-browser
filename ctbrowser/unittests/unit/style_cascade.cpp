@@ -469,9 +469,40 @@ void test_font_face_sources() {
              std::string{"<none>"});
 }
 
+// `ch` IS THE ADVANCE OF `0` IN THE ELEMENT'S FONT when the shell injects a
+// measurement, and half an em when nothing does (CSS Values 4 §6.1.1,
+// line-break-ch-unit). The face is the element's own: family, weight (600 and
+// up is bold) and style, over what it inherited; in `font-size` itself the
+// `ch` is the parent's, like `em`.
+void test_ch_measures_the_zero_glyph() {
+    fixture f;
+    // A stand-in backend: 0.6em for monospace, 0.5em otherwise, bold +0.1em.
+    f.styles.set_text_measure(
+        [](std::string_view text, float size, std::string_view family, bool bold, bool) {
+            const float ratio = (family == "monospace" ? 0.6f : 0.5f) + (bold ? 0.1f : 0.0f);
+            return static_cast<float>(text.size()) * size * ratio;
+        });
+    f.load("<div id=a><p id=b>x</p><i id=c>y</i></div>",
+           "#a { font-family: monospace, serif; font-size: 10px; width: 10ch }"
+           "#b { font-weight: 700; width: 10ch; font-size: 2ch }"
+           "#c { font-family: 'Fira Sans'; padding-left: 4rch; width: 10ch }");
+    expect_value(f, f.find_id("a"), "width", "60px", "10ch of a 10px monospace");
+    // 2ch of the PARENT's face and size (12px), then 10ch of a bold 12px face.
+    expect_value(f, f.find_id("b"), "font-size", "12px", "font-size: 2ch uses the parent");
+    expect_value(f, f.find_id("b"), "width", "84px", "10ch of a bold 12px monospace");
+    expect_value(f, f.find_id("c"), "width", "50px", "10ch of a proportional face");
+    // The root's `0` advance for rch: the root is 16px in the default face.
+    expect_value(f, f.find_id("c"), "padding-left", "32px", "4rch of the root's face");
+
+    fixture bare;
+    bare.load("<div>x</div>", "div { font-size: 10px; width: 10ch }");
+    expect_value(bare, bare.find("div"), "width", "50px", "10ch with nothing measuring");
+}
+
 } // namespace
 
 int main() {
+    test_ch_measures_the_zero_glyph();
     test_specificity_and_source_order();
     test_author_beats_user_agent();
     test_identical_styles_are_shared();

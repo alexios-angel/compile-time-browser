@@ -39,6 +39,13 @@ struct length_context {
     // pinned by the goldens.
     float line_height = 20.0f;
     float root_line_height = 20.0f;
+    // THE ADVANCE OF `0` IN THE ELEMENT'S FONT, and in the root's, which is
+    // what `ch` and `rch` measure (CSS Values 4 §6.1.1). Only a font backend
+    // knows it and the style engine has it injected (engine::set_text_measure);
+    // zero means nothing measured, and the unit takes CSS's own fallback of
+    // half an em.
+    float zero_advance = 0.0f;
+    float root_zero_advance = 0.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
