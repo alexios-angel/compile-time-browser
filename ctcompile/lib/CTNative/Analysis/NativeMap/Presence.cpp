@@ -40,6 +40,7 @@ struct fact {
     // Payload is valid whenever present, independently of definite membership.
     // Deletion cannot change a surviving value, so it clears only this flag.
     bool present = true;
+    mlir::Value storedOrigin{};
     bool matches(const fact & other) const {
         return instance == other.instance &&
                comparePrimitiveMapKeys(key, other.key) == PrimitiveMapKeyRelation::Same;
@@ -67,6 +68,9 @@ struct state {
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
+    // A definite get copies the stored owner. Its SSA alias outlives replacement
+    // or deletion of the outer entry; this never unifies a schema's instances.
+    llvm::DenseMap<mlir::Value, mlir::Value> aliases{};
 
     PrimitiveMapKeyEvidence keyEvidence(mlir::Value value) const {
         const auto found = exactSizes.find(value);
@@ -200,6 +204,7 @@ struct state {
                 other.entries, [&](const fact & candidate) { return value.matches(candidate); });
             value.payload = value.payload.joined(found->payload);
             value.present &= found->present;
+            if (value.storedOrigin != found->storedOrigin) { value.storedOrigin = {}; }
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
             if (!other.observations.contains(op)) { observations.erase(op); }
@@ -215,6 +220,9 @@ struct state {
         for (auto & [value, kind] : llvm::make_early_inc_range(scalars)) {
             kind = kind.joined(other.alternatives(value));
             if (!kind.known) { scalars.erase(value); }
+        }
+        for (const auto & [value, origin] : llvm::make_early_inc_range(aliases)) {
+            if (other.aliases.lookup(value) != origin) { aliases.erase(value); }
         }
     }
 };
@@ -247,17 +255,28 @@ struct presenceAnalysis {
                      const llvm::DenseSet<mlir::Operation *> & copies)
         : familyOf(family), snapshotCopies(copies) {}
 
-    // set is the only alias edge that proves runtime identity. Closed
-    // parameter/return edges merely share a schema and cannot be used here.
-    mlir::Value instanceOf(mlir::Value value) const {
-        while (auto call = value.getDefiningOp<ctjs::CallOp>()) {
-            if (actions.lookup(call) != "set") { break; }
+    // Only fluent set and a definite get of an exact stored origin prove
+    // runtime identity. Closed parameter/return edges share only a schema.
+    mlir::Value instanceOf(mlir::Value value, const state & current) const {
+        while (true) {
+            if (const auto origin = current.aliases.lookup(value)) { return origin; }
+            auto call = value.getDefiningOp<ctjs::CallOp>();
+            if (!call || actions.lookup(call) != "set") { break; }
             value = call.getReceiver();
         }
         return value;
     }
-    fact entry(ctjs::CallOp call) const {
-        return {instanceOf(call.getReceiver()), call.getArgs()[0], {}};
+    fact entry(ctjs::CallOp call, const state & current) const {
+        return {instanceOf(call.getReceiver(), current), call.getArgs()[0], {}};
+    }
+    bool mayAlias(mlir::Value left, mlir::Value right) const {
+        // The caller checked every constructor; two fresh sites are distinct
+        // within this path. Parameters and returned values retain may-alias.
+        if (left != right && left.getDefiningOp<ctjs::ConstructOp>() &&
+            right.getDefiningOp<ctjs::ConstructOp>()) {
+            return false;
+        }
+        return familyOf(left) == familyOf(right);
     }
 
     void buildSummaries(mlir::ModuleOp module) {
@@ -299,32 +318,36 @@ struct presenceAnalysis {
         }
     }
 
-    void invalidate(state & current, const effects & effect) const {
+    void invalidate(state & current, const effects & effect, mlir::Value instance = {}) const {
         if (effect.unknown) {
             current = {};
             return;
         }
+        const auto affected = [&](mlir::Value value, const auto & families) {
+            return families.contains(familyOf(value)) && (!instance || mayAlias(instance, value));
+        };
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
-            if (effect.written.contains(familyOf(instance)) ||
-                effect.erased.contains(familyOf(instance))) {
+            if (affected(instance, effect.written) || affected(instance, effect.erased)) {
                 current.currentSizes.erase(instance);
             }
         }
         for (const auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
-            if (effect.written.contains(familyOf(instance)) ||
-                (!possible.empty() && effect.erased.contains(familyOf(instance)))) {
+            if (affected(instance, effect.written) ||
+                (!possible.empty() && affected(instance, effect.erased))) {
                 current.possibleKeys.erase(instance);
             }
         }
-        llvm::erase_if(current.entries, [&](const fact & value) {
-            return effect.erased.contains(familyOf(value.instance));
-        });
+        llvm::erase_if(current.entries,
+                       [&](const fact & value) { return affected(value.instance, effect.erased); });
         for (fact & value : current.entries) {
-            if (effect.written.contains(familyOf(value.instance))) { value.payload = {}; }
+            if (affected(value.instance, effect.written)) {
+                value.payload = {};
+                value.storedOrigin = {};
+            }
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
             auto call = llvm::cast<ctjs::CallOp>(op);
-            if (effect.erased.contains(familyOf(call.getReceiver()))) {
+            if (affected(instanceOf(call.getReceiver(), current), effect.erased)) {
                 current.observations.erase(op);
             }
         }
@@ -350,17 +373,15 @@ struct presenceAnalysis {
         auto call = condition.getDefiningOp<ctjs::CallOp>();
         if (call && actions.lookup(call) == "has" && branch != inverted &&
             current.observations.contains(call)) {
-            current.add(entry(call));
+            current.add(entry(call, current));
         }
     }
 
     void eraseKey(state & current, ctjs::CallOp call) const {
-        const auto affected = entry(call);
+        const auto affected = entry(call, current);
         const auto nextSize = current.sizeAfterMutation(affected, true);
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
-            if (familyOf(instance) == familyOf(affected.instance)) {
-                current.currentSizes.erase(instance);
-            }
+            if (mayAlias(instance, affected.instance)) { current.currentSizes.erase(instance); }
         }
         // Only this runtime instance definitely lost the erased key. Other
         // Maps in its schema family may alias it, so their upper bounds remain
@@ -377,7 +398,7 @@ struct presenceAnalysis {
         const auto mayErase = [&](fact value) {
             // A schema family may contain several runtime instances. Without
             // an independent disjointness proof, any of them may be this Map.
-            return familyOf(value.instance) == familyOf(affected.instance) &&
+            return mayAlias(value.instance, affected.instance) &&
                    comparePrimitiveMapKeys(value.key, affected.key, current.keyEvidence(value.key),
                                            current.keyEvidence(affected.key)) !=
                        PrimitiveMapKeyRelation::Distinct;
@@ -386,7 +407,9 @@ struct presenceAnalysis {
             if (mayErase(value)) { value.present = false; }
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
-            if (mayErase(entry(llvm::cast<ctjs::CallOp>(op)))) { current.observations.erase(op); }
+            if (mayErase(entry(llvm::cast<ctjs::CallOp>(op), current))) {
+                current.observations.erase(op);
+            }
         }
         if (nextSize) { current.currentSizes[affected.instance] = *nextSize; }
     }
@@ -396,15 +419,13 @@ struct presenceAnalysis {
     // independently of the broader storage union. Every possible alias joins
     // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
-        fact added = entry(call);
+        fact added = entry(call, current);
         const auto nextSize = current.sizeAfterMutation(added, false);
         for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
-            if (familyOf(instance) == familyOf(added.instance)) {
-                current.currentSizes.erase(instance);
-            }
+            if (mayAlias(instance, added.instance)) { current.currentSizes.erase(instance); }
         }
         for (auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
-            if (familyOf(instance) != familyOf(added.instance)) { continue; }
+            if (!mayAlias(instance, added.instance)) { continue; }
             if (instance == added.instance && possible.size() < kMaxPrimitiveMapSizeCandidates) {
                 possible.push_back(added.key);
             } else {
@@ -412,8 +433,9 @@ struct presenceAnalysis {
             }
         }
         added.payload = current.alternatives(call.getArgs()[1]).categories();
+        added.storedOrigin = instanceOf(call.getArgs()[1], current);
         for (fact & previous : current.entries) {
-            if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
+            if (!mayAlias(previous.instance, added.instance)) { continue; }
             const auto relation =
                 comparePrimitiveMapKeys(previous.key, added.key, current.keyEvidence(previous.key),
                                         current.keyEvidence(added.key));
@@ -421,8 +443,10 @@ struct presenceAnalysis {
             if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
                 previous.payload = added.payload;
                 previous.present = true;
+                previous.storedOrigin = added.storedOrigin;
             } else {
                 previous.payload = previous.payload.joined(added.payload);
+                if (previous.storedOrigin != added.storedOrigin) { previous.storedOrigin = {}; }
             }
         }
         current.add(added);
@@ -445,7 +469,7 @@ struct presenceAnalysis {
     void operation(mlir::Operation * op, state & current) {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
-            const auto instance = instanceOf(read.getObject());
+            const auto instance = instanceOf(read.getObject(), current);
             const auto fact = current.sizeFacts(instance);
             current.sizeBounds[read.getResult()] = fact.lower;
             if (fact.exact) { current.exactSizes[read.getResult()] = *fact.exact; }
@@ -546,7 +570,7 @@ struct presenceAnalysis {
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
                 current.observations.insert(op);
             } else if (action == "get") {
-                const auto wanted = entry(call);
+                const auto wanted = entry(call, current);
                 for (const fact & value : current.entries) {
                     if (!value.present || value.instance != wanted.instance ||
                         comparePrimitiveMapKeys(
@@ -555,6 +579,9 @@ struct presenceAnalysis {
                         continue;
                     }
                     proved.insert(op);
+                    if (value.storedOrigin) {
+                        current.aliases[call.getResult()] = value.storedOrigin;
+                    }
                     if (value.payload.known) {
                         payloads[op] = value.payload;
                         current.scalars[call.getResult()] = value.payload;
@@ -567,9 +594,10 @@ struct presenceAnalysis {
             } else if (action == "clear") {
                 effects erase;
                 erase.erased.insert(familyOf(call.getReceiver()));
-                invalidate(current, erase);
-                current.possibleKeys[instanceOf(call.getReceiver())] = {};
-                current.currentSizes[instanceOf(call.getReceiver())] = 0;
+                const auto instance = instanceOf(call.getReceiver(), current);
+                invalidate(current, erase, instance);
+                current.possibleKeys[instance] = {};
+                current.currentSizes[instance] = 0;
             } else if (action.empty()) {
                 current = {};
             }

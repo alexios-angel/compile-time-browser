@@ -1,8 +1,179 @@
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
+namespace {
+
+void checkStoredMapAliases(mlir::MLIRContext & context) {
+    using namespace ctcompile;
+    const std::string prelude = R"mlir(
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %two = ctjs.constant #ctjs.number<4611686018427387904>
+  %boolean = ctjs.constant #ctjs.boolean<true>
+  %setName = ctjs.constant #ctjs.string<"set">
+  %getName = ctjs.constant #ctjs.string<"get">
+  %clearName = ctjs.constant #ctjs.string<"clear">
+  %constructor = ctjs.load_global "Map"
+  %outer = ctjs.construct %constructor(%constructor)
+  %first = ctjs.construct %constructor(%constructor)
+  %second = ctjs.construct %constructor(%constructor)
+  %firstSetter = ctjs.get_property %first[%setName]
+  %secondSetter = ctjs.get_property %second[%setName]
+  %firstSeed = ctjs.call %firstSetter(%first, %one, %one)
+  %secondSeed = ctjs.call %secondSetter(%second, %two, %boolean)
+  %setter = ctjs.get_property %outer[%setName]
+  %getter = ctjs.get_property %outer[%getName]
+  %firstStored = ctjs.call %setter(%outer, %one, %first)
+  %secondStored = ctjs.call %setter(%outer, %two, %second)
+  %saved = ctjs.call %getter(%outer, %one)
+)mlir";
+    const std::string clearOuter = R"mlir(
+  %clearer = ctjs.get_property %outer[%clearName]
+  %cleared = ctjs.call %clearer(%outer)
+)mlir";
+    const std::string clearSecond = R"mlir(
+  %secondAlias = ctjs.call %getter(%outer, %two)
+  %clearer = ctjs.get_property %secondAlias[%clearName]
+  %cleared = ctjs.call %clearer(%secondAlias)
+)mlir";
+    const std::string overwrite = "  %overwritten = ctjs.call %setter(%outer, %one, %second)\n";
+    const std::string uncertain = "  %overwritten = ctjs.call %setter(%outer, %p, %second)\n";
+    const std::string helper = R"mlir(
+ctjs.func private @mutate(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value,
+                          %map: !ctjs.value, %child: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %name = ctjs.constant #ctjs.string<"set">
+  %method = ctjs.get_property %map[%name]
+  %written = ctjs.call %method(%map, %one, %child)
+  %u = ctjs.constant #ctjs.undefined
+  ctjs.return %u
+}
+)mlir";
+    const std::string summarized =
+        "  %called = ctjs.call_direct @mutate(%receiver, %new_target, %callee, %outer, %second)\n";
+    const std::string clearHelper = R"mlir(
+ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value,
+                              %map: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %name = ctjs.constant #ctjs.string<"clear">
+  %method = ctjs.get_property %map[%name]
+  %cleared = ctjs.call %method(%map)
+  %u = ctjs.constant #ctjs.undefined
+  ctjs.return %u
+}
+)mlir";
+    const std::string summarizedClear =
+        "  %called = ctjs.call_direct @clearChild(%receiver, %new_target, %callee, %second)\n";
+    struct aliasRow {
+        const char * what;
+        std::string effect;
+        const char * tag;
+        bool fresh = false;
+    };
+    const std::vector<aliasRow> rows = {
+        {"a definite nested get aliases its stored child", "", "number"},
+        {"saved child identity survives outer replacement and clear", overwrite + clearOuter,
+         "number"},
+        {"clearing another fresh child preserves saved first-child contents", clearSecond,
+         "number"},
+        {"clearing the original child invalidates its saved alias", R"mlir(
+  %clearer = ctjs.get_property %first[%clearName]
+  %cleared = ctjs.call %clearer(%first)
+)mlir",
+         ""},
+        {"possible outer overwrite preserves an earlier saved child", uncertain, "number"},
+        {"possible outer overwrite cannot grant a later get an old origin", uncertain, "", true},
+        {"exact outer overwrite selects the replacement origin",
+         "  %written = ctjs.call %secondSetter(%second, %one, %boolean)\n" + overwrite, "bool",
+         true},
+        {"summarized outer writes preserve an earlier saved child", summarized, "number"},
+        {"summarized writes clear a later get's stored-origin fact", summarized, "", true},
+        {"a formal child mutation conservatively invalidates its schema family", summarizedClear,
+         ""},
+        {"branch-local mutations of other owners preserve saved child contents",
+         "  %condition = ctjs.truthy %p\n  scf.if %condition {\n" + clearSecond + "  } else {\n" +
+             clearOuter + "  }\n",
+         "number"},
+        {"distinct branch payload origins cannot become one definite get alias",
+         "  %condition = ctjs.truthy %p\n  scf.if %condition {\n" + overwrite + "  } else {\n  }\n",
+         "", true},
+        {"equal branch payload origins preserve the definite get alias", R"mlir(
+  %condition = ctjs.truthy %p
+  scf.if %condition {
+    %written = ctjs.call %setter(%outer, %one, %first)
+  } else {
+    %again = ctjs.call %setter(%outer, %one, %first)
+  }
+)mlir",
+         "number", true},
+    };
+    for (const auto & row : rows) {
+        const std::string receiver = row.fresh ? "%fresh" : "%saved";
+        const auto source = prologue() + prelude + row.effect +
+                            (row.fresh ? "  %fresh = ctjs.call %getter(%outer, %one)\n" : "") +
+                            "  %read = ctjs.get_property " + receiver + "[%getName]\n" +
+                            "  %observed = ctjs.call %read(" + receiver + ", %one) {check}\n" +
+                            "  ctjs.return %observed\n}\n" +
+                            (row.effect == summarized        ? helper
+                             : row.effect == summarizedClear ? clearHelper
+                                                             : "");
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+        if (!module) {
+            std::printf("FAIL %s: stored-alias fixture did not parse\n", row.what);
+            ++failures;
+            continue;
+        }
+        for (const bool clone : {false, true}) {
+            mlir::OwningOpRef<mlir::ModuleOp> fresh;
+            auto current = *module;
+            if (clone) {
+                fresh = mlir::OwningOpRef<mlir::ModuleOp>{module->clone()};
+                current = *fresh;
+            }
+            mlir::Operation * observed = nullptr;
+            std::vector<mlir::Operation *> before;
+            std::vector<std::vector<mlir::Value>> operands;
+            mlir::Builder attrs(&context);
+            current.walk([&](mlir::Operation * op) {
+                before.push_back(op);
+                operands.emplace_back(op->operand_begin(), op->operand_end());
+                op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
+                op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("forged"));
+                if (op->hasAttr("check")) { observed = op; }
+            });
+            ctnative::prepareNativeMaps(current);
+            auto tag = observed
+                           ? observed->getAttrOfType<mlir::StringAttr>(ctnative::kNativeMapReadType)
+                           : mlir::StringAttr{};
+            const bool present = *row.tag != '\0';
+            if (!observed || ctnative::nativeMapAction(observed) != "get" ||
+                observed->hasAttr(ctnative::kNativeMapPresent) != present ||
+                (tag ? tag.getValue() : llvm::StringRef{}) != row.tag) {
+                std::printf("FAIL %s: %s stored alias presence/type differs from %s\n", row.what,
+                            clone ? "fresh" : "reused", present ? row.tag : "unproved");
+                ++failures;
+            }
+            std::vector<mlir::Operation *> after;
+            current.walk([&](mlir::Operation * op) { after.push_back(op); });
+            bool intact = before == after;
+            for (size_t index = 0; intact && index < before.size(); ++index) {
+                intact &= llvm::equal(before[index]->getOperands(), operands[index]);
+            }
+            if (!intact) {
+                std::printf("FAIL %s: stored-alias preparation changed executable source\n",
+                            row.what);
+                ++failures;
+            }
+        }
+    }
+    std::printf("stored Map aliases: %zu rows, reused/fresh modules and forged reports\n",
+                rows.size());
+}
+
+} // namespace
 
 void checkMapZeroSizePresence(mlir::MLIRContext & context) {
+    checkStoredMapAliases(context);
     using namespace ctcompile;
     const std::string prelude = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
