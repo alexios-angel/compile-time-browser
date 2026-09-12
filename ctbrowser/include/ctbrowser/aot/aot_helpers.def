@@ -25,8 +25,8 @@
  *   may_reenter   this helper can run user JavaScript before it returns
  *   is_safepoint  a collection can happen inside it, so every live value the
  *                 caller holds must be reachable from a root ACROSS the call.
- *                 The collector is precise and walks exactly the roots in
- *                 ctcompile/include/ctcompile/JavaScript/GCRoots.def; a value
+ *                 The collector is precise and walks exactly the roots of
+ *                 context::each_root (script/vm.hpp); a value
  *                 living only in a native frame is reachable from NONE of them.
  *
  * TWO TIERS OF FAILURE, and they are not the same thing. raise() sets a flag no
@@ -1601,7 +1601,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_define_accessor, /* opcode */ define_setter)
  * op::call reuses the caller's window and guarantees only frame_size+8, and
  * it sets current_this_ for the whole nested loop where op::call sets it
  * only around a native.
- * DELEGATES TO: context::call (CallPaths.def canonical entry,
+ * DELEGATES TO: context::call (the canonical entry,
  *   vm/call/invoke.cpp) for every accepted callee kind - native, generator
  *   (-> make_generator), JS closure: the arms of context::invoke. The pre-call
  *   acceptance test is op::call's OWN predicate,
@@ -1932,8 +1932,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_await_settled, /* opcode */ await_value)
  * particular hole is where the eligibility predicate sits: function_proto
  * carries is_generator (statements/functions.cpp's compile_function_body) but the
  * compiler's is_async
- * (compiler_impl.hpp:119) is never copied to the proto and is absent from
- * engine_contract::proto_header (EngineContract.hpp:86-93), so Phase 3's
+ * (compiler_impl.hpp:119) is never copied to the proto, so Phase 3's
  * dispatch and ctcompile must each derive the predicate and CANNOT derive
  * it from the same data. Today a disagreement means native code runs off
  * the end of a yield with no diagnostic. This makes it a named engine fault
@@ -2052,9 +2051,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * helper dangles, so the lookup stays inside each helper. The allocation
  * here is safe under a real collector because the half-built object is
  * stored into of.namespace_object BEFORE the accessor loop, and that field
- * is GCRoots.def's `module_namespace` row - the exact counterexample to
+ * is `root_label::module_namespace` - the exact counterexample to
  * ct_aot_iterable_values's unrooted C++ local. (It said "GC root 12";
- * GCRoots.def lists module_exports twelfth and module_namespace
+ * CTBROWSER_ROOT_LABELS lists module_exports twelfth and module_namespace
  * thirteenth. Cite a root by NAME - an ordinal moves whenever one is
  * inserted above it, and one was.)
  * DELEGATES TO: context::module_namespace_for (vm/call/modules.cpp) - the same
@@ -2075,7 +2074,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  * (script::function_proto & fn : compiled->functions) fn.module =
  * specifier;` in browser::instantiate_module, under the comment 'The
  * compiler cannot do this: a specifier is the loader's name for a file.' It
- * is also absent from engine_contract::proto_header, so Phase 15 does not
+ * is also not written by program_image/write.cpp, so Phase 15 does not
  * serialize it today. Baking a literal would make the image's referrer the
  * compiler's GUESS at what the loader will call the file, and browser/scripts.cpp's
  * resolve_specifier rewrites only './' and '../' - so a wrong referrer

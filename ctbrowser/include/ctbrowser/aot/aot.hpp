@@ -30,7 +30,7 @@ namespace ctbrowser::aot {
 //   ct_aot_ctx    the script context a helper acts on
 //   ct_aot_frame  one compiled function's frame: its register span, its depth,
 //                 its handler base. What makes its values reachable by the
-//                 precise collector, which walks only the roots in GCRoots.def
+//                 precise collector, which walks only the roots of context::each_root
 //   ct_aot_site   a call or property site's identity, stable across executions.
 //                 Where Phase 26 attaches an inline cache WITHOUT an ABI break
 //   ct_aot_ic     one inline cache's storage, caller-allocated

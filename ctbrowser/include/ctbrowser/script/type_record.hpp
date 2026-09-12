@@ -159,7 +159,7 @@ struct register_observation {
 // and the self-test pins the blind spot as a row (`transit`) so nobody reads
 // retention-at-exit as coverage of the call sink.
 
-// THE ROOT INVENTORY'S LABELS. One per row of ctcompile's GCRoots.def, in the
+// THE ROOT INVENTORY'S LABELS. One per root, in the
 // order `context::each_root` visits them - which is the order collect() has
 // always marked them in. An escaped object is reported with the FIRST label
 // that reached it, which turns a soundness violation into a diagnosis: `via
