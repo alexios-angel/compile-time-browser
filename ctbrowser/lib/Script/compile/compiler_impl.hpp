@@ -128,6 +128,9 @@ public:
     // compiler::compile from the script_kind; see the note on that enum for why
     // the distinction is not cosmetic.
     bool module_scope_ = false;
+    // `eval`: a trailing expression statement is the program's return value.
+    // See compiler::compile_for_eval.
+    bool completion_value_ = false;
 
     // THE BYTES THE AST WAS PARSED FROM, which is NOT `out_.source`.
     //

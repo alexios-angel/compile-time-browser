@@ -59,8 +59,22 @@ void compiler_impl::compile_program() {
     for (const std::int32_t s : kids(root)) {
         if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
     }
-    for (const std::int32_t s : kids(root)) {
-        if (at(declared_by(s)).kind != vp::nk::func_decl) { compile_stmt(s); }
+    const std::span<const std::int32_t> body = kids(root);
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        const std::int32_t s = body[i];
+        if (at(declared_by(s)).kind == vp::nk::func_decl) { continue; }
+        // `eval("a; b")` is b: the last statement, when it is an expression,
+        // is returned rather than discarded.
+        if (completion_value_ && i + 1 == body.size() && at(s).kind == vp::nk::expr_stmt &&
+            at(s).a >= 0) {
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t r = alloc_reg();
+            compile_expr(at(s).a, r);
+            proto().emit(instruction{op::ret, r});
+            release_to(mark);
+            continue;
+        }
+        compile_stmt(s);
     }
     proto().emit(instruction{op::ret_undef});
     finish_frame(fn().proto, 0);

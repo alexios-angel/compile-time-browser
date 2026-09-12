@@ -591,7 +591,23 @@ void test_structured_clone() {
 
 } // namespace
 
+// `eval`, as an INDIRECT eval (global scope): the completion value comes
+// back, declarations land on the global object, a syntax error is a
+// catchable SyntaxError, and a non-string is returned as is.
+void test_eval() {
+    expect_result("return eval('1 + 1');", "2");
+    expect_result("return eval('var q = 5; q * 2');", "10");
+    expect_result("eval('var made = 7'); return made;", "7");
+    expect_result("return eval(42);", "42");
+    expect_result("return typeof eval('function f() { return 3; }; f');", "function");
+    expect_result(
+        "try { eval('let x = ;'); return 'no'; } catch (e) { return e instanceof SyntaxError; }",
+        "true");
+    expect_result("return eval('') === undefined;", "true");
+}
+
 int main() {
+    test_eval();
     test_regex();
     test_array_length_is_writable();
     test_collections();
