@@ -393,7 +393,14 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // this rule existed, so nothing that works today can start failing.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
     ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
-    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(sibling-index())");
+    // calc-sibling-function-parsing: the function is a term of its own, and
+    // what multiplies it folds around it.
+    ok("rotate", "calc(1turn * sibling-count())", "calc(360deg * sibling-count())");
+    ok("rotate", "calc(sibling-index() * 2rad * pi)", "calc(360deg * sibling-index())");
+    ok("z-index", "calc(sibling-index())", "sibling-index()");
+    ok("animation-duration", "calc(100ms * sibling-count())", "calc(0.1s * sibling-count())");
+    ok("left", "calc(10px * sibling-index() + 10%)", "calc(10% + (10px * sibling-index()))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
     // (CSS Values 5 §calc-size, calc-size-parsing).

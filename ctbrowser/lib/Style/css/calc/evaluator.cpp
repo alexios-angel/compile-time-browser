@@ -89,11 +89,51 @@ struct arithmetic {
     return out;
 }
 
+// A SYMBOL THAT IS A FUNCTION rather than a unit - `sibling-index()` in a
+// specified value - and a term made only of those.
+[[nodiscard]] bool function_symbol(std::string_view key) noexcept {
+    return key.ends_with("()");
+}
+[[nodiscard]] bool function_only(const term & t) noexcept {
+    return !t.symbols.empty() && t.value == 0.0 && !t.has_percent &&
+           std::ranges::all_of(t.symbols, [](const auto & s) { return function_symbol(s.first); });
+}
+
 [[nodiscard]] arithmetic multiply(const term & a, const term & b) {
     // A NUMBER SCALES THE OTHER OPERAND, which is the product every stylesheet
     // writes.
-    if (a.is_number() && !a.has_percent) { return {scaled(b, a.value)}; }
-    if (b.is_number() && !b.has_percent) { return {scaled(a, b.value)}; }
+    if (a.is_number() && !a.has_percent && a.symbols.empty()) { return {scaled(b, a.value)}; }
+    if (b.is_number() && !b.has_percent && b.symbols.empty()) { return {scaled(a, b.value)}; }
+    // A FUNCTION TERM TIMES A DIMENSION is a product with nothing to fold:
+    // `1turn * sibling-count()` is the term `360deg * sibling-count()`, keyed
+    // on both so the canonical spelling is one entry. The other side is a
+    // plain magnitude in its canonical unit, or a unit term of its own.
+    if (function_only(a) != function_only(b)) {
+        const term & fn = function_only(a) ? a : b;
+        const term & other = function_only(a) ? b : a;
+        if (other.has_percent || std::ranges::any_of(other.symbols, [](const auto & s) {
+                return function_symbol(s.first);
+            })) {
+            return {std::nullopt, true};
+        }
+        term out;
+        for (std::size_t i = 0; i < out.dims.size(); ++i) {
+            out.dims[i] = static_cast<std::int8_t>(fn.dims[i] + other.dims[i]);
+        }
+        const std::string unit =
+            other.symbols.empty() ? std::string{canonical_unit(other.type())} : std::string{};
+        const double magnitude = other.symbols.empty() ? other.value : 0.0;
+        for (const auto & [key, coefficient] : fn.symbols) {
+            if (other.symbols.empty()) {
+                add_symbol(out, unit.empty() ? key : unit + '*' + key, coefficient * magnitude);
+            } else {
+                for (const auto & [other_unit, other_coefficient] : other.symbols) {
+                    add_symbol(out, other_unit + '*' + key, coefficient * other_coefficient);
+                }
+            }
+        }
+        return {out};
+    }
     // TWO DIMENSIONS MULTIPLY INTO A TYPE OF THEIR OWN - the exponents add, CSS
     // Values 4 §10.2 - and `2px * 3px` is an area on its way to being divided
     // back down, or a syntax error if it never is (`settle()` decides). A
@@ -649,7 +689,16 @@ private:
             if (!at_close()) { return fail(); }
             take_close();
             const std::uint32_t known = index ? ctx_.sibling_index : ctx_.sibling_count;
-            if (basis_ == basis::symbolic || known == 0) { return unresolvable(); }
+            // A SPECIFIED VALUE KEEPS THE FUNCTION AS A TERM OF ITS OWN, a
+            // <number> no basis can supply, so `calc(1turn * sibling-count())`
+            // simplifies to `calc(360deg * sibling-count())` around it
+            // (calc-sibling-function-parsing, CSS Values 4 §10.12).
+            if (basis_ == basis::symbolic) {
+                term out;
+                add_symbol(out, index ? "sibling-index()" : "sibling-count()", 1.0);
+                return out;
+            }
+            if (known == 0) { return unresolvable(); }
             term out;
             out.value = known;
             return out;

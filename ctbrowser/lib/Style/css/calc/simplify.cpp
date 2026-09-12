@@ -229,7 +229,16 @@ std::string simplify_math(std::string_view value) {
         if (const auto [outcome, sum] = evaluate_symbolic(body);
             outcome == math_outcome::resolved) {
             if (const std::string text = serialize_symbolic(sum); !text.empty()) {
-                out.append("calc(").append(text).append(")");
+                // A lone function is the whole value: `calc(sibling-index())`
+                // is `sibling-index()`.
+                const bool lone_function = text.ends_with("()") &&
+                                           text.find(' ') == std::string::npos &&
+                                           sum.symbols.size() == 1 && !sum.has_percent;
+                if (lone_function) {
+                    out.append(text);
+                } else {
+                    out.append("calc(").append(text).append(")");
+                }
                 continue;
             }
         }
