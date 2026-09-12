@@ -147,6 +147,50 @@ void test_window_event_is_hidden_inside_a_shadow_tree() {
        "true,true,true");
 }
 
+void test_related_target_is_retargeted_and_cleared() {
+    // relatedTarget.window.js: a relatedTarget inside a closed tree names the
+    // host outside it; a target inside one leaves both null afterwards; and a
+    // relatedTarget that retargets to the target itself is no dispatch at all.
+    is("(function () {"
+       " var host = document.body.appendChild(document.createElement('div'));"
+       " var shadow = host.attachShadow({mode: 'closed'});"
+       " var inner = shadow.appendChild(document.createElement('div'));"
+       " var seen = [];"
+       " document.body.addEventListener('demo', function (e) {"
+       "   seen.push(e.relatedTarget === host); });"
+       " var e1 = new FocusEvent('demo', {relatedTarget: inner});"
+       " document.body.dispatchEvent(e1); seen.push(e1.relatedTarget === host);"
+       " var e2 = new FocusEvent('demo', {relatedTarget: host});"
+       " inner.dispatchEvent(e2); seen.push(e2.target === null && e2.relatedTarget === null);"
+       " var e3 = new FocusEvent('demo', {relatedTarget: shadow});"
+       " var ran = false; host.addEventListener('demo', function () { ran = true; });"
+       " host.dispatchEvent(e3); seen.push(!ran && e3.target === null);"
+       " return seen.join(','); })()",
+       "true,true,true,true");
+}
+
+void test_focus_moves_with_blur_and_related_targets() {
+    // shadow-relatedTarget.html: focus leaving one field for another fires
+    // `blur` naming the next and `focus` naming the previous, neither
+    // bubbling, `focusin`/`focusout` bubbling - and the one inside a closed
+    // tree is seen from outside as its host.
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!DOCTYPE html><html><body><div id=host></div><input id=light><script>
+    var root = host.attachShadow({mode: 'closed'}); root.innerHTML = '<input id=s>';
+    var seen = [];
+    ['focus', 'blur', 'focusin', 'focusout'].forEach(function (t) {
+      document.body.addEventListener(t, function (e) {
+        seen.push('body:' + t + ':' + e.eventPhase); });
+      light.addEventListener(t, function (e) {
+        seen.push(t + ':' + (e.relatedTarget === host) + ':' + e.bubbles); });
+    });
+    root.getElementById('s').focus(); light.focus();
+    console.log(seen.join(' '));
+    </script></body></html>)");
+    CHECK_EQ(page.bindings().console_output().back(),
+             "body:focusin:3 body:focusout:3 focus:true:false focusin:true:true body:focusin:3");
+}
+
 // --- a detached tree ---------------------------------------------------------
 
 void test_a_detached_tree_reaches_neither_document_nor_window() {
@@ -239,6 +283,8 @@ void test_an_image_input_submits_its_form() {
 } // namespace
 
 int main() {
+    test_related_target_is_retargeted_and_cleared();
+    test_focus_moves_with_blur_and_related_targets();
     test_a_composed_event_crosses_the_shadow_boundary();
     test_an_uncomposed_event_stops_at_the_shadow_root();
     test_the_target_is_retargeted_at_the_host();

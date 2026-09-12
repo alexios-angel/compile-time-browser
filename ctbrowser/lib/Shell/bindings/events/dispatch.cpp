@@ -270,8 +270,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     //
     // ALL OF IT IS GATED ON THE TARGET BEING IN A SHADOW TREE AT ALL, which is
     // one root walk, so a page with no shadow DOM pays nothing per step.
-    // ponytail: `relatedTarget` is not retargeted and `composedPath()` does not
-    // hide a closed tree's nodes - relatedTarget.window.js is the file for both.
+    // ponytail: `composedPath()` does not hide a closed tree's nodes.
     const auto in_shadow = [&](node_id node) {
         const auto txn = doc_->read();
         return shadow_tree_of(root_of_tree(txn, node, false)) != nullptr;
@@ -302,6 +301,29 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
         return a;
     };
+    // `relatedTarget` IS RETARGETED TOO - concept-event-dispatch step 4 against
+    // the target, then per step (invoke step 4) - so a `focus` leaving a
+    // closed shadow tree names the host and not the input inside it. A
+    // relatedTarget that retargets to the target itself while not being it
+    // (step 6's condition) is a dispatch that does not happen: the targets
+    // are cleared and nothing is invoked - relatedTarget.window.js's "Reset
+    // targets on early return".
+    const value related_value = cx.lookup_property(event, "relatedTarget");
+    const node_id related = handle_of(related_value);
+    const bool related_in_shadow = related && doc_ != nullptr && in_shadow(related);
+    const auto related_for = [&](const path_step & step) {
+        if (!related_in_shadow) { return related_value; }
+        return wrap(cx, retarget(related, step));
+    };
+    if (related_in_shadow && at.on == listen_on::node && retarget(related, at) == at.node &&
+        related != at.node) {
+        object->set("target", value::null());
+        object->set("srcElement", value::null());
+        object->set("relatedTarget", value::null());
+        object->set(std::string{cancel_bubble_property}, value::boolean(false));
+        object->set(std::string{stop_immediate_property}, value::boolean(false));
+        return prevented(event);
+    }
     object->set(std::string{stop_immediate_property}, value::boolean(false));
     object->set(std::string{dispatch_property}, value::boolean(true));
     ++dispatch_depth_;
@@ -367,6 +389,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
         const bool is_target = (step.on == at.on && step.node == at.node) ||
                                (step.on == listen_on::node && step.node == shown);
+        if (related_in_shadow) { object->set("relatedTarget", related_for(step)); }
         object->set("currentTarget", object_of_step(cx, step));
         object->set("eventPhase", value::number(is_target ? 2 : otherwise));
         return is_target;
@@ -391,20 +414,28 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // AFTER THE DISPATCH the event is not travelling any more, and the two
     // properties that say where it is have to say so - a page keeps the object
     // and reads them later.
-    if (target_in_shadow) {
-        // concept-event-dispatch steps 5.9-5.10: the target is the last step's
-        // shadow-adjusted target, and null when that is still inside a shadow
-        // tree - `clearTargets` - so nothing of a closed tree is left on the
-        // object.
+    if (target_in_shadow || related_in_shadow) {
+        // concept-event-dispatch steps 6.10-6.11 and 11: the target is the
+        // last step's shadow-adjusted target and the relatedTarget its
+        // retargeted one - and BOTH are null when either is still inside a
+        // shadow tree (`clearTargets`), so nothing of a closed tree is left
+        // on the object.
         node_id last = at.node;
+        path_step last_step = at;
         for (auto it = path.rbegin(); it != path.rend(); ++it) {
             if (it->on != listen_on::node) { continue; }
             last = retarget(at.node, *it);
+            last_step = *it;
             break;
         }
-        const value final_target = in_shadow(last) ? value::null() : wrap(cx, last);
+        const node_id last_related = related_in_shadow ? retarget(related, last_step) : related;
+        const bool clear = (last && in_shadow(last)) || (last_related && in_shadow(last_related));
+        const value final_target = clear ? value::null() : wrap(cx, last);
         object->set("target", final_target);
         object->set("srcElement", final_target);
+        object->set("relatedTarget", clear               ? value::null()
+                                     : related_in_shadow ? wrap(cx, last_related)
+                                                         : related_value);
     }
     object->set("currentTarget", value::null());
     object->set("eventPhase", value::number(0));

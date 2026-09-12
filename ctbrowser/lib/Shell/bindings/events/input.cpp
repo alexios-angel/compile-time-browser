@@ -90,6 +90,29 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
     return dispatch_event("error", node_id{}, event);
 }
 
+// `focus`/`blur` and `focusin`/`focusout` (UI Events 5.4.4): FocusEvents whose
+// `relatedTarget` is the other element of the change, the first pair not
+// bubbling and the second bubbling. `dispatch()` alone made a bubbling plain
+// Event with no relatedTarget, which a page cannot tell from any other.
+bool dom_bindings::dispatch_focus(std::string_view type, node_id target, node_id related) {
+    if (cx_ == nullptr || !target) { return false; }
+    value event = make_event(*cx_, type, target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    const bool bubbles = type == "focusin" || type == "focusout";
+    object->set("bubbles", value::boolean(bubbles));
+    object->set("cancelable", value::boolean(false));
+    object->set("composed", value::boolean(true));
+    object->set("relatedTarget", related ? wrap(*cx_, related) : value::null());
+    if (const value ctor =
+            cx_->has_global("FocusEvent") ? cx_->global("FocusEvent") : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
+    return dispatch_event(type, target, event);
+}
+
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
     value event = make_event(*cx_, type, target);

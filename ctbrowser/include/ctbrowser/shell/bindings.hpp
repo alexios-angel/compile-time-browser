@@ -1902,6 +1902,9 @@ public:
     // `document.readyState`, with `readystatechange` at the document when it
     // changes.
     void set_ready_state(std::string_view state);
+    // A FocusEvent at `target` naming `related` (the element focus came from
+    // or went to): `focus`/`blur` do not bubble, `focusin`/`focusout` do.
+    bool dispatch_focus(std::string_view type, node_id target, node_id related);
 };
 
 } // namespace ctbrowser::shell
