@@ -211,6 +211,26 @@ void test_flat_tree_and_pseudo_arguments() {
              std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
 
+// getComputedStyle-sticky-pos-percent: a sticky inset's percentage resolves
+// against the nearest scroll container's content box, `auto` stays `auto`,
+// and a calc() folds against the same basis.
+void test_sticky_insets() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body style="margin: 0">
+        <div style="height: 500px; overflow: hidden; padding: 10px 0; border: 5px solid">
+          <div style="height: 400px">
+            <div id="t" style="height: 100px; position: sticky; left: 0; top: 50%;
+                               bottom: calc(10% - 1px);"></div>
+          </div>
+        </div>
+        <script>
+        const cs = getComputedStyle(document.getElementById('t'));
+        console.log('sticky=' + cs.top + ',' + cs.bottom + ',' + cs.left + ',' + cs.right);
+        </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sticky="), std::string{"sticky=250px,49px,0px,auto"});
+}
+
 // ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -
 // its `length` follows a removed <style> - and it still iterates, indexes and
 // answers `item()`, and is one object.
@@ -254,6 +274,7 @@ int main() {
     test_resolved_colours();
     test_flat_tree_and_pseudo_arguments();
     test_live_sheet_list();
+    test_sticky_insets();
     test_descriptors_refuse_tree_counting();
     test_class_strings_and_iterators();
     test_removed_rules_charset_keyframes_and_container();

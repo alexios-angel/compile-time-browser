@@ -713,8 +713,53 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (!at.has_box || at.position == layout::position_kind::static_) {
                 return computed_length(text);
             }
-            if (at.position == layout::position_kind::relative ||
-                at.position == layout::position_kind::sticky) {
+            // A STICKY INSET RESOLVES AGAINST THE SCROLLPORT - the nearest
+            // scroll container, or the viewport when there is none (CSS
+            // Position 3 §3.4; getComputedStyle-sticky-pos-percent puts
+            // `top: 50%` under an `overflow: hidden` ancestor and expects half
+            // of THAT). `auto` is its own value; both sides may be given.
+            if (at.position == layout::position_kind::sticky) {
+                float scrollport = horizontal
+                                       ? static_cast<float>(viewport_width_)
+                                       : (fragments_ != nullptr ? fragments_->bounds.height : 0.0f);
+                for (std::size_t up = 1; up < at.chain.size(); ++up) {
+                    const std::string overflow = collapse_keyword(
+                        declared_on(at.chain[up], horizontal ? "overflow-x" : "overflow-y"));
+                    if (overflow.empty() || overflow == "visible" || overflow == "clip") {
+                        continue;
+                    }
+                    const layout::box_node * scroller = box_for(boxes_, at.chain[up]);
+                    const layout::fragment * frag = fragment_for(fragments_, at.chain[up]);
+                    if (scroller == nullptr || frag == nullptr) { continue; }
+                    const layout::constraints c{frag->bounds.width, frag->bounds.height,
+                                                scroller->font_size};
+                    const layout::resolved_edges e = layout::resolve_edges(*scroller, c);
+                    // Its CONTENT box, which is what the getComputedStyle-insets-
+                    // sticky rows measure (clientHeight less the paddings).
+                    scrollport = horizontal ? frag->bounds.width - e.horizontal_inner()
+                                            : frag->bounds.height - e.vertical_inner();
+                    break;
+                }
+                scrollport = std::max(0.0f, scrollport);
+                // A `calc(10% - 1px)` is folded against the same basis.
+                if (style::css::may_have_math(text)) {
+                    style::css::length_context ctx;
+                    ctx.font_size = at.font_size;
+                    ctx.root_font_size = at.root_font_size;
+                    ctx.viewport_width = static_cast<float>(viewport_width_);
+                    ctx.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+                    ctx.percent_basis = scrollport;
+                    const style::css::math_answer used = style::css::evaluate_math(text, ctx);
+                    if (used.outcome == style::css::math_outcome::resolved &&
+                        used.value.type == style::css::numeric_type::length &&
+                        !used.value.has_percent) {
+                        return px_text(static_cast<float>(used.value.px));
+                    }
+                }
+                if (mine.is_auto()) { return computed_length(text); }
+                return px_text(mine.resolve(scrollport, at.font_size));
+            }
+            if (at.position == layout::position_kind::relative) {
                 // A relative box's containing block is the one it would have had
                 // staying put - its parent's content box - and NOT the nearest
                 // positioned ancestor, which is the absolute rule.
