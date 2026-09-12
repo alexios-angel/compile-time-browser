@@ -45,7 +45,10 @@ void dom_bindings::define_operation(context & cx, std::initializer_list<const ch
                 }
                 return value::undefined();
             });
-        (void)length; // the second commit gives the native its `length`
+        // `length` is the number of REQUIRED arguments - WebIDL's, so
+        // `appendChild.length` is 1 and `insertBefore.length` 2 - and it is
+        // configurable and nothing else, as on every built-in function.
+        native->define("length", value::number(length), script::attr_configurable);
         // NOT ENUMERABLE: an IDL operation is a built-in, and
         // `Body-FrameSet-Event-Handlers.html` counts what `for...in` reports.
         proto->define(name, value::object(native), script::attr_builtin);
