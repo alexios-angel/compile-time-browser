@@ -130,23 +130,29 @@ value context::lookup_property(value target, const std::string & name) {
         // cap because a page can make the chain cyclic and a lookup must not
         // hang because of it.
         auto * obj = static_cast<object_object *>(target.as_heap());
-        // A STRING WRAPPER'S `length` AND INDICES are own properties off its
-        // [[StringData]] slot (10.4.3.1); only those two shapes of name ask.
-        if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
-            if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
-                const std::string & text = static_cast<string_object *>(slot->as_heap())->text;
-                if (name == "length") { return value::number(static_cast<double>(text.size())); }
-                if (std::uint32_t at = 0;
-                    object_object::array_index_key(name, at) && at < text.size()) {
-                    return string(std::string{text[at]});
-                }
-            }
-        }
         // HASHED ONCE FOR THE WHOLE CHAIN. Every level below is asked for the
         // same name, and each `find` used to hash it again.
         const prehashed_name key{name, hash_name(name)};
         for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
             if (value * found = obj->find(key)) { return *found; }
+            // A STRING WRAPPER'S `length` AND INDICES are own properties off
+            // its [[StringData]] slot (10.4.3.1), asked for only after the own
+            // table missed - nothing in it can shadow them - and only for those
+            // two shapes of name, so an ordinary object's `.length` pays one
+            // comparison.
+            if (depth == 0 &&
+                (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9'))) {
+                if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
+                    const std::string & text = static_cast<string_object *>(slot->as_heap())->text;
+                    if (name == "length") {
+                        return value::number(static_cast<double>(text.size()));
+                    }
+                    if (std::uint32_t at = 0;
+                        object_object::array_index_key(name, at) && at < text.size()) {
+                        return string(std::string{text[at]});
+                    }
+                }
+            }
             // An accessor found anywhere on the chain is CALLED, with the
             // original target as its receiver - a getter defined on a prototype
             // reads the instance, which is the entire point of putting one
