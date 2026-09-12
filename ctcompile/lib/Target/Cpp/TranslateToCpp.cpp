@@ -12,8 +12,11 @@
 // next LLVM bump, and a whitespace change makes the real diff unreadable. It is
 // listed in .clang-format-ignore for exactly that reason.
 //
-//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the version
-//             cmake/LLVMVersion.cmake pins and the one this builds against
+//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the FORK BASE. The
+//             build pins 23.1.0 (cmake/LLVMVersion.cmake); the 22 -> 23 bump
+//             only removed the `emitc.apply` printer here and deferred rebasing
+//             onto 23's emitter (ctcompile/docs/LLVMUpgrade.md), so the diff
+//             against 22.1.8 is still the one to read at the next bump.
 //   file:     mlir/lib/Target/Cpp/TranslateToCpp.cpp
 //   sha256:   70003bc0d44bd6a467cd151a3492ea50e319e30a87cd975cf0f43a19a7cae0e8
 //   re-fetch: curl -fsSL https://raw.githubusercontent.com/llvm/llvm-project/\
@@ -28,11 +31,13 @@
 // entry, which is the opposite of lexical scoping.
 //
 // WHAT KEEPS THIS A SUPERSET RATHER THAN A DIVERGENCE, and it is not good
-// intentions: upstream's own 35 EmitC lit tests are vendored UNMODIFIED beside
-// ours in ctcompile/test/Target/Cpp/upstream/ and run against this file. A
-// change here that breaks one of them is a change that has stopped being a
-// superset, and it fails the suite the same afternoon rather than at the next
-// bump.
+// intentions: upstream's own 35 EmitC lit tests are vendored beside ours in
+// ctcompile/test/Target/Cpp/upstream/ and run against this file: 31 are
+// 22.1.8's unmodified, lvalue/global/common-cpp are 23.1.0's unmodified, and
+// expressions.mlir is 22's minus its two `emitc.apply` functions with one
+// expectation from 23 (its header says which). A change here that breaks one
+// of them is a change that has stopped being a superset, and it fails the
+// suite the same afternoon rather than at the next bump.
 //
 // Native printing extensions are gated by ctnative attributes. Source-name
 // allocation lives in Names/, const-binding analysis in Const/, and finite
