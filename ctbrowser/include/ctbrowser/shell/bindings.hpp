@@ -1733,17 +1733,16 @@ private:
     // Blob` has to be true whoever made it.
     value blob_prototype_;
 
-    // THE DOM'S INTERFACE OBJECTS - `window.HTMLCanvasElement` and friends.
+    // THE CONTEXT INTERFACE OBJECTS - `window.CanvasRenderingContext2D` and
+    // friends; the element interfaces live in the table (interface_prototypes_).
     //
     // A browser exposes one per interface, and libraries use them two ways that
     // both have to work: feature detection (`!!window.CanvasRenderingContext2D`)
-    // and identity (`el instanceof HTMLCanvasElement`). A bare marker object
-    // satisfies the first and makes the second silently FALSE.
+    // and identity (`ctx instanceof CanvasRenderingContext2D`). A bare marker
+    // object satisfies the first and makes the second silently FALSE.
     //
     // So each carries a real `prototype`, and the objects that are instances get
     // that prototype linked. See interface_prototype().
-    value canvas_element_prototype_;
-    value image_element_prototype_;
     // `Event.prototype` and `CustomEvent.prototype`. Every event object this
     // engine makes is linked to one, which is what carries `e.constructor`,
     // `e instanceof Event` and the four phase constants a page reads as

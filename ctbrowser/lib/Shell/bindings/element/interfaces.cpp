@@ -24,9 +24,8 @@ struct dom_interface {
 //   HTMLDivElement -> HTMLElement -> Element -> Node -> EventTarget -> Object
 //
 // EventTarget comes first so that everything below it can name it, and the
-// interfaces another translation unit already owns - EventTarget itself,
-// HTMLCanvasElement, HTMLImageElement - are ADOPTED rather than rebuilt: see
-// install_dom_interfaces.
+// interfaces another translation unit already owns - EventTarget, HTMLElement -
+// are ADOPTED rather than rebuilt: see install_dom_interfaces.
 constexpr dom_interface interface_table[] = {
     {"EventTarget", "", ""},
     {"Node", "EventTarget", ""},
@@ -714,9 +713,8 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     interface_prototypes_.assign(count, value::undefined());
 
     // THE ONES ANOTHER FILE ALREADY OWNS ARE ADOPTED, NOT REBUILT. `EventTarget`
-    // is constructible and carries addEventListener; `HTMLCanvasElement` and
-    // `HTMLImageElement` are defined by install_window and canvas wrappers are
-    // already linked to them. Taking `Ctor.prototype` off the global that
+    // is constructible and carries addEventListener; `HTMLElement` comes from
+    // install_custom_elements. Taking `Ctor.prototype` off the global that
     // exists is what keeps ONE prototype per interface however many places make
     // one, and it is what makes this function safe to call twice.
     for (std::size_t i = 0; i < count; ++i) {
@@ -752,7 +750,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // NOT CONSTRUCTIBLE - for all but three of them. `new
             // HTMLDivElement()` throws in a browser too, and saying so is
             // better than handing back an object that is not an element - the
-            // same choice install_window made for HTMLCanvasElement.
+            // same choice install_window made for CanvasRenderingContext2D.
             //
             // THE THREE THAT ARE: `new Text("x")`, `new Comment("x")` and `new
             // DocumentFragment()`. The DOM makes exactly those constructible
@@ -780,7 +778,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             cx.define_global(name, ctor_value);
         }
         // `constructor` and `@@toStringTag`, ON AN ADOPTED PROTOTYPE TOO - the
-        // four interfaces install_window builds carry neither, so
+        // interfaces adopted from elsewhere carry neither, so
         // `canvas.constructor.name` read `HTMLElement` off the parent link until
         // this ran for them as well. Never OVERWRITTEN: a prototype that already
         // names its constructor knows better than this loop does.

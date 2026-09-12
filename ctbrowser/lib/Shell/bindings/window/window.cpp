@@ -232,17 +232,19 @@ void dom_bindings::install_window(context & cx) {
 
     // --- the DOM's interface objects -----------------------------------
     //
-    // `window.HTMLCanvasElement` and friends. A library uses them two ways and
-    // both have to work: FEATURE DETECTION, which is why Phaser refused to
-    // start at all - `Features.canvas = !!window['CanvasRenderingContext2D']`
-    // and then `if (!Features.canvas) throw` - and IDENTITY, `el instanceof
-    // HTMLCanvasElement`, which Phaser asks nine times and p5 four.
+    // `window.CanvasRenderingContext2D` and friends; the element interfaces
+    // (`HTMLCanvasElement` included) come from the table in
+    // element/interfaces.cpp. A library uses them two ways and both have to
+    // work: FEATURE DETECTION, which is why Phaser refused to start at all -
+    // `Features.canvas = !!window['CanvasRenderingContext2D']` and then `if
+    // (!Features.canvas) throw` - and IDENTITY, `ctx instanceof
+    // CanvasRenderingContext2D`.
     //
     // A bare marker object would answer the first and make the second silently
     // false, so each of these carries a real prototype and the objects that are
     // instances are linked to it. They are NOT constructible: `new
-    // HTMLCanvasElement()` throws in a browser too, and saying so is better
-    // than handing back an object that is not an element.
+    // CanvasRenderingContext2D()` throws in a browser too, and saying so is
+    // better than handing back an object that is not a context.
     const auto interface_object = [&cx](const char * name, value & prototype_out) {
         auto * prototype = static_cast<script::object_object *>(cx.make_object().as_heap());
         prototype_out = value::object(prototype);
@@ -259,8 +261,6 @@ void dom_bindings::install_window(context & cx) {
     // and lives with the registry - bindings/custom_elements.cpp - and it has
     // to exist before install_dom_interfaces builds the table around it.
     install_custom_elements(cx);
-    interface_object("HTMLCanvasElement", canvas_element_prototype_);
-    interface_object("HTMLImageElement", image_element_prototype_);
     interface_object("CanvasRenderingContext2D", canvas2d_prototype_);
     interface_object("WebGLRenderingContext", webgl_prototype_);
     interface_object("WebGL2RenderingContext", webgl2_prototype_);
