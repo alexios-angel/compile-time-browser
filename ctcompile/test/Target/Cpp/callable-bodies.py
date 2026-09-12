@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 
-
 MAIN = """
 int main() {
     const auto first = ctn_bind_inline(40);
@@ -72,8 +71,17 @@ def main():
         if not compiler:
             raise RuntimeError("callable-body regression requires " + " or ".join(choices))
         compilers.append(compiler)
-    flags = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
-             "-Wconversion", "-pedantic", "-I", str(args.fixtures)]
+    flags = [
+        "-std=c++23",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wconversion",
+        "-pedantic",
+        "-I",
+        str(args.fixtures),
+    ]
     emitted = {}
     for label in ["callables", "hoisted"]:
         cpp = (args.fixtures / f"{label}.cpp").read_text()
@@ -110,8 +118,13 @@ def main():
             assert "constexpr int32_t seed = 40;" in created, created
             assert "constexpr int32_t offset = 2;" in created, created
             assert "constexpr int32_t after = seed + offset;" in created, created
-            assert re.search(r"auto const second = ctnative::ctn_env_string\s*[({]", created), created
-            assert 'CTCOMPILE_PIN(second, "callable-creation.js:4:1", ctnative::ctn_env_string const);' in created, created
+            assert re.search(
+                r"auto const second = ctnative::ctn_env_string\s*[({]", created
+            ), created
+            assert (
+                'CTCOMPILE_PIN(second, "callable-creation.js:4:1", ctnative::ctn_env_string const);'
+                in created
+            ), created
         else:
             assert "constexpr " not in created and "CTCOMPILE_PIN" not in created, created
         nested = body(cpp, "nested_creation")
@@ -140,9 +153,15 @@ def main():
     source = args.work / "wrong-creation-pin.cpp"
     source.write_text(emitted["callables"].replace(before, after, 1) + MAIN)
     for index, compiler in enumerate(compilers):
-        rejected = subprocess.run([compiler, *flags, "-fsyntax-only", str(source)],
-                                  text=True, capture_output=True, timeout=120)
-        assert rejected.returncode != 0 and "callable-creation.js:4:1" in rejected.stderr, rejected.stderr
+        rejected = subprocess.run(
+            [compiler, *flags, "-fsyntax-only", str(source)],
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        assert (
+            rejected.returncode != 0 and "callable-creation.js:4:1" in rejected.stderr
+        ), rejected.stderr
         binary = (args.work / f"pin-disabled-{index}").resolve()
         run([compiler, *flags, "-DCTCOMPILE_NO_TYPE_PINS", str(source), "-o", str(binary)])
         run([str(binary)])
@@ -151,11 +170,17 @@ def main():
         ("invalid-creation.mlir", "invalid native callable creation"),
         ("invalid-signature.mlir", "invalid native callable creation"),
     ]:
-        rejected = subprocess.run([args.translate, "--mlir-to-cpp", str(args.fixtures / fixture)],
-                                  text=True, capture_output=True, timeout=120)
+        rejected = subprocess.run(
+            [args.translate, "--mlir-to-cpp", str(args.fixtures / fixture)],
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
         assert rejected.returncode != 0, rejected.stdout
         assert diagnostic in rejected.stderr, rejected.stderr
-    print("callable bodies: inline creation, capture conversions, exact pins, forwarding and diagnostics agree under GCC/Clang")
+    print(
+        "callable bodies: inline creation, capture conversions, exact pins, forwarding and diagnostics agree under GCC/Clang"
+    )
 
 
 if __name__ == "__main__":

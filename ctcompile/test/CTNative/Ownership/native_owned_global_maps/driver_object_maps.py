@@ -47,10 +47,18 @@ from .driver_globals import (
 )
 
 PRIMITIVE_ABSENCE_CARRIERS = {
-    "seeded_cleared", "seeded_deleted", "seeded_deleted_earlier", "result_seeded_false_deleted",
-    "result_seeded_mixed_false_deleted", "result_seeded_mixed_string_deleted",
-    "saved_read_write_deleted", "saved_read_write_missing_source", "saved_join_deleted_true",
-    "guarded_saved_mutated_arm", "shortcircuit_mutated_arm", "nullable_host_result_deleted",
+    "seeded_cleared",
+    "seeded_deleted",
+    "seeded_deleted_earlier",
+    "result_seeded_false_deleted",
+    "result_seeded_mixed_false_deleted",
+    "result_seeded_mixed_string_deleted",
+    "saved_read_write_deleted",
+    "saved_read_write_missing_source",
+    "saved_join_deleted_true",
+    "guarded_saved_mutated_arm",
+    "shortcircuit_mutated_arm",
+    "nullable_host_result_deleted",
 }
 
 
@@ -58,43 +66,104 @@ def primitive_absence_carrier_cases():
     cases = {}
     mixed_string = "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.str<utf8>>>"
 
-    def add(name, source, value, old, replacement, repaired_value, calls, functions=6,
-            carrier=mixed_string, *, repeated=False, size_argument=False):
+    def add(
+        name,
+        source,
+        value,
+        old,
+        replacement,
+        repaired_value,
+        calls,
+        functions=6,
+        carrier=mixed_string,
+        *,
+        repeated=False,
+        size_argument=False,
+    ):
         if source.count(old) != 1:
             raise RuntimeError(f"{name}: lost its exact absence repair")
-        sequence = [("fn$3", 4), ("fn$4", 5), ("fn$3", 4)] if functions == 5 else (
-            [("fn$4", 5 if repeated else 4), ("fn$5", 5)] * (2 if repeated else 1)
-            + [("fn$3", 5 if size_argument else 4)])
+        sequence = (
+            [("fn$3", 4), ("fn$4", 5), ("fn$3", 4)]
+            if functions == 5
+            else (
+                [("fn$4", 5 if repeated else 4), ("fn$5", 5)] * (2 if repeated else 1)
+                + [("fn$3", 5 if size_argument else 4)]
+            )
+        )
         dependencies = [(1, 0)] + ([(3, 2)] if repeated else [])
         if size_argument:
             dependencies.append((4, 3))
-        cases[name] = dict(source=source, value=value, repair=source.replace(old, replacement),
-            old=old, replacement=replacement, repaired_value=repaired_value, calls=calls,
-            functions=functions, carrier=carrier, sequence=sequence, dependencies=dependencies)
+        cases[name] = dict(
+            source=source,
+            value=value,
+            repair=source.replace(old, replacement),
+            old=old,
+            replacement=replacement,
+            repaired_value=repaired_value,
+            calls=calls,
+            functions=functions,
+            carrier=carrier,
+            sequence=sequence,
+            dependencies=dependencies,
+        )
 
     for name, calls in (("seeded_deleted", 9), ("seeded_deleted_earlier", 10)):
-        add(name, seeded_result_refusals()[name], "undefined", "state.delete(0); ", "", 1,
-            calls, 5, "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>")
-    add("seeded_cleared", seeded_result_refusals()["seeded_cleared"], "undefined",
-        "state.clear();", "state.has(0);", 1, 9, 5,
-        "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>")
+        add(
+            name,
+            seeded_result_refusals()[name],
+            "undefined",
+            "state.delete(0); ",
+            "",
+            1,
+            calls,
+            5,
+            "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>",
+        )
+    add(
+        "seeded_cleared",
+        seeded_result_refusals()["seeded_cleared"],
+        "undefined",
+        "state.clear();",
+        "state.has(0);",
+        1,
+        9,
+        5,
+        "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>",
+    )
     # The repair changes only the mutation; the evaluated method call remains.
     cases["seeded_cleared"]["repair_calls"] = 9
     source, value = payload_result_refusals()["result_seeded_false_deleted"]
-    add("result_seeded_false_deleted", source, value, "state.delete(false); ", "", 1, 10,
-        carrier="!ctnative.map<!ctnative.opt<!ctnative.bool>, !ctnative.bool>")
+    add(
+        "result_seeded_false_deleted",
+        source,
+        value,
+        "state.delete(false); ",
+        "",
+        1,
+        10,
+        carrier="!ctnative.map<!ctnative.opt<!ctnative.bool>, !ctnative.bool>",
+    )
     for name, key, carrier in (
-        ("result_seeded_mixed_false_deleted", "0",
-         "!ctnative.map<!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>, "
-         "!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>"),
+        (
+            "result_seeded_mixed_false_deleted",
+            "0",
+            "!ctnative.map<!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>, "
+            "!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>",
+        ),
         ("result_seeded_mixed_string_deleted", "''", mixed_string),
     ):
         source, value = mixed_result_refusals()[name]
         add(name, source, value, f"state.delete({key}); ", "", 3, 10, carrier=carrier)
     source, value, _, _ = saved_read_refusals()["saved_read_write_deleted"]
-    add("saved_read_write_deleted", source, value,
+    add(
+        "saved_read_write_deleted",
+        source,
+        value,
         "state.delete(false); const result = state.get(false);",
-        "const result = state.get(false); state.delete(false);", 1, 12)
+        "const result = state.get(false); state.delete(false);",
+        1,
+        12,
+    )
     source, value, old, replacement = saved_read_refusals()["saved_read_write_missing_source"]
     add("saved_read_write_missing_source", source, value, old, replacement, 1, 14)
     for name, rows, calls in (
@@ -104,34 +173,56 @@ def primitive_absence_carrier_cases():
         ("nullable_host_result_deleted", nullable_host_result_refusals(), 16),
     ):
         source, value, old, replacement, repaired_value = rows[name]
-        add(name, source, value, old, replacement, repaired_value, calls, repeated=True,
-            size_argument=name == "nullable_host_result_deleted")
+        add(
+            name,
+            source,
+            value,
+            old,
+            replacement,
+            repaired_value,
+            calls,
+            repeated=True,
+            size_argument=name == "nullable_host_result_deleted",
+        )
     if cases.keys() != PRIMITIVE_ABSENCE_CARRIERS:
         raise RuntimeError("changed the measured primitive absence carrier inventory")
     return cases
 
 
 def check_primitive_absence_preparation(text, original, case, name):
-    calls = re.findall(r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
-                       r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+    calls = re.findall(
+        r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+        r"\{ctnative\.stored_call = 1 : i32\}",
+        text,
+        re.M,
+    )
     actuals = [arguments.split(", ") for _, _, arguments in calls]
-    if (len(source_calls(text)) != case["calls"]
-            or len(source_calls(original)) != case["calls"]
-            or [(target, len(arguments)) for (_, target, _), arguments in zip(calls, actuals)]
-            != case["sequence"]
-            or any(actuals[consumer][-1] != calls[producer][0]
-                   for consumer, producer in case["dependencies"])
-            or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
+    if (
+        len(source_calls(text)) != case["calls"]
+        or len(source_calls(original)) != case["calls"]
+        or [(target, len(arguments)) for (_, target, _), arguments in zip(calls, actuals)]
+        != case["sequence"]
+        or any(
+            actuals[consumer][-1] != calls[producer][0]
+            for consumer, producer in case["dependencies"]
+        )
+        or f'ctjs.store_global "trace", {calls[-1][0]}' not in text
+    ):
         raise RuntimeError(f"{name}: absence carrier changed prepared result operands/order")
     entry = text.split("\n  }", 1)[0]
     receivers = dict(re.findall(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[", entry))
     captures = dict(re.findall(r"(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]", entry))
     for arguments in actuals:
-        if receivers.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
+        if (
+            receivers.get(arguments[2]) != arguments[0]
+            or captures.get(arguments[3]) != arguments[2]
+        ):
             raise RuntimeError(f"{name}: changed a current receiver/callee/capture operand")
     for action in ("set", "get", "has", "delete", "clear"):
         source_count = len(re.findall(rf"\bstate\.{action}\(", case["source"]))
-        prepared_count = len(re.findall(rf'ctjs\.call [^\n]*ctnative\.map_action = "{action}"', text))
+        prepared_count = len(
+            re.findall(rf'ctjs\.call [^\n]*ctnative\.map_action = "{action}"', text)
+        )
         if source_count != prepared_count:
             raise RuntimeError(f"{name}: changed {source_count} live Map.{action} calls")
     for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct"):
@@ -149,39 +240,62 @@ process.stdout.write('trace=undefined\n');
     for name, case in primitive_absence_carrier_cases().items():
         js, ir, count = boundary.prepare(args, name, case["source"])
         raw = args.work / f"{name}.raw.mlir"
-        if (count != case["functions"] or len(source_calls(raw.read_text())) != case["calls"]
-                or len(source_calls(ir.read_text())) != case["calls"]):
+        if (
+            count != case["functions"]
+            or len(source_calls(raw.read_text())) != case["calls"]
+            or len(source_calls(ir.read_text())) != case["calls"]
+        ):
             raise RuntimeError(f"{name}: changed the exact source function/call census")
         observer = undefined_node if case["value"] == "undefined" else boundary.NODE
         expected = f'trace={case["value"]}\n'
-        if (host.run([node, "-e", observer, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
+        if (
+            host.run([node, "-e", observer, str(js)]).stdout != expected
+            or host.run([str(reference), str(js)]).stdout != expected
+        ):
             raise RuntimeError(f"{name}: Node/interpreter absent result mismatch")
-        repaired_js, repaired_ir, repaired_count = boundary.prepare(args, name + "-restored", case["repair"])
+        repaired_js, repaired_ir, repaired_count = boundary.prepare(
+            args, name + "-restored", case["repair"]
+        )
         repaired_expected = f'trace={case["repaired_value"]}\n'
-        if (repaired_count != count
-                or host.run([node, "-e", boundary.NODE, str(repaired_js)]).stdout != repaired_expected
-                or host.run([str(reference), str(repaired_js)]).stdout != repaired_expected):
+        if (
+            repaired_count != count
+            or host.run([node, "-e", boundary.NODE, str(repaired_js)]).stdout != repaired_expected
+            or host.run([str(reference), str(repaired_js)]).stdout != repaired_expected
+        ):
             raise RuntimeError(f"{name}: exact repair lost its independent observation")
         if "repair_calls" in case:
             repaired_raw = args.work / f"{name}-restored.raw.mlir"
-            if (len(source_calls(repaired_raw.read_text())) != case["repair_calls"]
-                    or len(source_calls(repaired_ir.read_text())) != case["repair_calls"]):
+            if (
+                len(source_calls(repaired_raw.read_text())) != case["repair_calls"]
+                or len(source_calls(repaired_ir.read_text())) != case["repair_calls"]
+            ):
                 raise RuntimeError(f"{name}: exact repair dropped an evaluated source call")
         config = contract(args, ir, name)
         repaired_config = contract(args, repaired_ir, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
+
             def reject(input_ir, label, current_config):
-                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
+                failed = owned.lower(
+                    args, input_ir, label, current_config, options=options, cleanup=False
+                )
                 text = methods.census(failed, count, label, admitted=0)
-                origin = "ctjs.load_upvalue" if case["carrier"].startswith("!ctnative.map<") else "ctjs.call_direct"
+                origin = (
+                    "ctjs.load_upvalue"
+                    if case["carrier"].startswith("!ctnative.map<")
+                    else "ctjs.call_direct"
+                )
                 expected_reason = f'a value of type {case["carrier"]} from `{origin}`'
-                if ("ctnative.host_owner_proved = true" not in text
-                        or expected_reason not in boundary.REFUSAL.findall(text)):
+                if (
+                    "ctnative.host_owner_proved = true" not in text
+                    or expected_reason not in boundary.REFUSAL.findall(text)
+                ):
                     raise RuntimeError(f"{label}: lost exact complete-owner carrier diagnostic")
                 if origin == "ctjs.load_upvalue":
-                    reason = ("native Map needs supported keys and numeric, boolean, closed mixed, "
-                        "owning-string, object-identity union or acyclic Map values; inferred " + case["carrier"])
+                    reason = (
+                        "native Map needs supported keys and numeric, boolean, closed mixed, "
+                        "owning-string, object-identity union or acyclic Map values; inferred "
+                        + case["carrier"]
+                    )
                 else:
                     reason = "stored callable result has no supported concrete signature"
                 if reason not in boundary.REFUSAL.findall(text):
@@ -191,7 +305,9 @@ process.stdout.write('trace=undefined\n');
 
             label = name + "-" + mode
             reject(ir, label, config)
-            repaired = owned.lower(args, repaired_ir, label + "-restored", repaired_config, options=options)
+            repaired = owned.lower(
+                args, repaired_ir, label + "-restored", repaired_config, options=options
+            )
             repaired_text = methods.census(repaired, count, label + "-restored", admitted=count)
             if "ctnative.host_owner_proved = true" not in repaired_text:
                 raise RuntimeError(f"{label}: exact absence repair lost native ownership")
@@ -199,14 +315,32 @@ process.stdout.write('trace=undefined\n');
                 forged_name = label + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
                 forged.write_text(forge_map_presence(ir.read_text(), payload))
-                stale = methods.refused(args, forged, forged_name + "-stale", config,
-                    options=options, reason="fingerprint mismatch", admitted=0)
-                check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                stale = methods.refused(
+                    args,
+                    forged,
+                    forged_name + "-stale",
+                    config,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
+                check_call_preservation(
+                    forged.read_text(), stale.read_text(), forged_name + "-stale"
+                )
                 fresh = contract(args, forged, forged_name)
                 checked = reject(forged, forged_name, fresh)
-                rerun = methods.refused(args, checked, forged_name + "-rerun", fresh,
-                    options=options, reason="fingerprint mismatch", admitted=0)
-                check_call_preservation(checked.read_text(), rerun.read_text(), forged_name + "-rerun")
+                rerun = methods.refused(
+                    args,
+                    checked,
+                    forged_name + "-rerun",
+                    fresh,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
+                check_call_preservation(
+                    checked.read_text(), rerun.read_text(), forged_name + "-rerun"
+                )
 
 
 def check_primitive_absence_observations(args, node, reference):
@@ -214,63 +348,85 @@ def check_primitive_absence_observations(args, node, reference):
     observed = primitive_absence_observer_source(source)
     js = args.work / "primitive-absence-observed.js"
     js.write_text(observed)
-    if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=255\n"
-            or host.run([str(reference), str(js)]).stdout != "trace=255\n"):
-        raise RuntimeError("empty String deletion lost independent Undefined/empty/future key observations")
-    for index, (old, replacement) in enumerate((
-        ("state.delete('');", "state.has('');"),
-        ("state.set('', 'stored'); ", ""),
-        ("return state.get('');", "return '';"),
-    )):
+    if (
+        host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=255\n"
+        or host.run([str(reference), str(js)]).stdout != "trace=255\n"
+    ):
+        raise RuntimeError(
+            "empty String deletion lost independent Undefined/empty/future key observations"
+        )
+    for index, (old, replacement) in enumerate(
+        (
+            ("state.delete('');", "state.has('');"),
+            ("state.set('', 'stored'); ", ""),
+            ("return state.get('');", "return '';"),
+        )
+    ):
         if source.count(old) != 1:
             raise RuntimeError("primitive absence mutation lost its exact source")
         js = args.work / f"primitive-absence-blind-{index}.js"
         js.write_text(primitive_absence_observer_source(source.replace(old, replacement)))
         if host.run([node, "-e", boundary.NODE, str(js)]).stdout == "trace=255\n":
-            raise RuntimeError("primitive absence observer cannot distinguish a missing mutation/read")
-
+            raise RuntimeError(
+                "primitive absence observer cannot distinguish a missing mutation/read"
+            )
 
 
 def check_primitive_absence_forgeries(args, saved, node, reference):
     name = "result_seeded_empty_deleted"
     ir, config, output = saved[name]
     expected_cpp = comparable_provenance(
-        host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
+        host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
+    )
     source = primitive_absence_sources()[name][0]
     old = "state.delete('');"
     if source.count(old) != 1:
         raise RuntimeError("empty String absence lost its exact deletion repair")
-    js, repaired_ir, count = boundary.prepare(args, name + "-restored", source.replace(old, "state.has('');"))
-    if (count != 6 or len(source_calls(repaired_ir.read_text())) != 10
-            or host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
-            or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
+    js, repaired_ir, count = boundary.prepare(
+        args, name + "-restored", source.replace(old, "state.has('');")
+    )
+    if (
+        count != 6
+        or len(source_calls(repaired_ir.read_text())) != 10
+        or host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
+        or host.run([str(reference), str(js)]).stdout != "trace=1\n"
+    ):
         raise RuntimeError("empty String absence repair lost its independent trace/calls")
     repaired_config = contract(args, repaired_ir, name + "-restored")
     for mode, options in (("default", ""), ("disabled", "optimize=false")):
-        repaired = owned.lower(args, repaired_ir, name + "-" + mode + "-restored", repaired_config,
-                               options=options)
+        repaired = owned.lower(
+            args, repaired_ir, name + "-" + mode + "-restored", repaired_config, options=options
+        )
         methods.census(repaired, 6, name + "-restored", admitted=6)
         for payload in ("bool", "string", "nullable_string"):
             label = name + "-" + mode + "-forged-" + payload
             forged = args.work / f"{label}.mlir"
             forged.write_text(forge_map_presence(ir.read_text(), payload))
-            stale = methods.refused(args, forged, label + "-stale", config,
-                options=options, reason="fingerprint mismatch", admitted=0)
+            stale = methods.refused(
+                args,
+                forged,
+                label + "-stale",
+                config,
+                options=options,
+                reason="fingerprint mismatch",
+                admitted=0,
+            )
             check_call_preservation(forged.read_text(), stale.read_text(), label + "-stale")
             fresh = contract(args, forged, label)
             checked = owned.lower(args, forged, label, fresh, options=options)
             text = methods.census(checked, 6, label, admitted=6)
             cpp = host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout
-            if ("ctnative.host_owner_proved = true" not in text
-                    or comparable_provenance(cpp, forged) != expected_cpp):
-                raise RuntimeError(f"{label}: forged scalar facts changed native Undefined/key semantics")
+            if (
+                "ctnative.host_owner_proved = true" not in text
+                or comparable_provenance(cpp, forged) != expected_cpp
+            ):
+                raise RuntimeError(
+                    f"{label}: forged scalar facts changed native Undefined/key semantics"
+                )
     rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
     text = methods.census(rerun, 6, name + "-rerun", admitted=6)
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("prepared primitive absence source reused stale owner authority")
-
-
-
 
 
 def check_leaf_object_observations(args, node, reference):
@@ -280,16 +436,26 @@ def check_leaf_object_observations(args, node, reference):
         observed, value = leaf_object_observer_source(source, name)
         observed_js = args.work / f"{name}-object-observer.js"
         observed_js.write_text(observed)
-        if (host.run([node, "-e", boundary.NODE, str(observed_js)]).stdout != f"trace={value}\n"
-                or host.run([str(reference), str(observed_js)]).stdout != f"trace={value}\n"):
+        if (
+            host.run([node, "-e", boundary.NODE, str(observed_js)]).stdout != f"trace={value}\n"
+            or host.run([str(reference), str(observed_js)]).stdout != f"trace={value}\n"
+        ):
             raise RuntimeError(f"{name}: independent future object identity/field mismatch")
-        mutations = [("const item = {};", "const item = host;")] if name == "leaf_object_plain" else []
+        mutations = (
+            [("const item = {};", "const item = host;")] if name == "leaf_object_plain" else []
+        )
         if name in {"leaf_object_number_field", "leaf_object_identity_repair"}:
-            mutations = [("const item = {value: 1};", "const item = host;"), ("{value: 1}", "{value: 0}")]
+            mutations = [
+                ("const item = {value: 1};", "const item = host;"),
+                ("{value: 1}", "{value: 0}"),
+            ]
         if name in {"leaf_object_scalar_writes", "leaf_object_alias", "leaf_object_lifetime"}:
-            mutations = [("item.value = state.size;", "item.value = 1;"),
-                         ("item.flag = false;", "item.flag = true;"),
-                         ("empty: null", "empty: 0"), ("absent: void 0", "absent: null")]
+            mutations = [
+                ("item.value = state.size;", "item.value = 1;"),
+                ("item.flag = false;", "item.flag = true;"),
+                ("empty: null", "empty: 0"),
+                ("absent: void 0", "absent: null"),
+            ]
         for index, (old, replacement) in enumerate(mutations):
             if source.count(old) != 1:
                 raise RuntimeError(f"{name}: leaf observer mutation lost its unique source origin")
@@ -297,42 +463,71 @@ def check_leaf_object_observations(args, node, reference):
             blind = args.work / f"{name}-object-observer-blind-{index}.js"
             blind.write_text(mutated)
             if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={value}\n":
-                raise RuntimeError(f"{name}: object identity/field observer cannot distinguish {replacement}")
+                raise RuntimeError(
+                    f"{name}: object identity/field observer cannot distinguish {replacement}"
+                )
 
 
 def check_leaf_object_forgeries(args, saved, names=None):
     for name in names or ("leaf_object_plain", "leaf_object_scalar_writes", "leaf_object_lifetime"):
         ir, config, output = saved[name]
-        functions = (object_argument_cases()[name]['functions'] if name in object_argument_sources()
-                     else LEAF_OBJECT_FUNCTIONS.get(name, 5))
+        functions = (
+            object_argument_cases()[name]["functions"]
+            if name in object_argument_sources()
+            else LEAF_OBJECT_FUNCTIONS.get(name, 5)
+        )
         expected_cpp = comparable_provenance(
-            host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
+            host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
+        )
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             for payload in ("bool", "string", "nullable_string"):
                 forged_name = name + "-" + mode + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
                 forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
-                failed = methods.refused(args, forged, forged_name + "-stale", config,
-                    options=options, reason="fingerprint mismatch", admitted=0)
-                check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                failed = methods.refused(
+                    args,
+                    forged,
+                    forged_name + "-stale",
+                    config,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
+                check_call_preservation(
+                    forged.read_text(), failed.read_text(), forged_name + "-stale"
+                )
                 if name in scalar_global_cases() or name in constant_global_cases():
                     check_scalar_global_preparation(failed.read_text(), forged.read_text(), name)
                 fresh = contract(args, forged, forged_name)
                 checked = owned.lower(args, forged, forged_name, fresh, options=options)
                 text = methods.census(checked, functions, forged_name, admitted=functions)
-                if ("ctnative.host_owner_proved = true" not in text
-                        or comparable_provenance(
-                            host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout,
-                            forged) != expected_cpp):
-                    raise RuntimeError(f"{forged_name}: forged leaf facts changed native owners or fields")
+                if (
+                    "ctnative.host_owner_proved = true" not in text
+                    or comparable_provenance(
+                        host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout, forged
+                    )
+                    != expected_cpp
+                ):
+                    raise RuntimeError(
+                        f"{forged_name}: forged leaf facts changed native owners or fields"
+                    )
 
 
 def check_leaf_object_refusals(args, positives, node, reference, controls=None):
     if controls is None:
-        controls = {name: row for name, row in leaf_object_refusals().items()
-                    if name not in {"leaf_object_saved_identity", "leaf_object_distinct_identity",
-                                    *LEAF_ABSENCE_PROMOTED_REFUSALS, *STRING_FIELD_PROMOTED}}
+        controls = {
+            name: row
+            for name, row in leaf_object_refusals().items()
+            if name
+            not in {
+                "leaf_object_saved_identity",
+                "leaf_object_distinct_identity",
+                *LEAF_ABSENCE_PROMOTED_REFUSALS,
+                *STRING_FIELD_PROMOTED,
+            }
+        }
     for name, (source, value, old, replacement, repaired_name, calls) in controls.items():
+
         def preserved(before, after, label):
             check_call_preservation(before, after, label)
             if name in scalar_global_cases() or name in constant_global_cases():
@@ -342,12 +537,22 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
         check_leaf_absence_census(args, rejected, name)
         if count != 5 or len(source_calls(rejected.read_text())) != calls:
             raise RuntimeError(f"{name}: changed the exact leaf-object source census")
-        if (host.run([node, "-e", numeric_node_observer(value), str(js)]).stdout != f"trace={value}\n"
-                or host.run([str(reference), str(js)]).stdout != numeric_reference_output(name, value)):
+        if host.run(
+            [node, "-e", numeric_node_observer(value), str(js)]
+        ).stdout != f"trace={value}\n" or host.run(
+            [str(reference), str(js)]
+        ).stdout != numeric_reference_output(
+            name, value
+        ):
             raise RuntimeError(f"{name}: Node/interpreter leaf-object refusal mismatch")
-        if source.count(old) != 1 or source.replace(old, replacement) != positives[repaired_name][0]:
+        if (
+            source.count(old) != 1
+            or source.replace(old, replacement) != positives[repaired_name][0]
+        ):
             raise RuntimeError(f"{name}: repair no longer restores its independently gated source")
-        _, restored, restored_count = boundary.prepare(args, name + "-restored", source.replace(old, replacement))
+        _, restored, restored_count = boundary.prepare(
+            args, name + "-restored", source.replace(old, replacement)
+        )
         if restored_count != LEAF_OBJECT_FUNCTIONS.get(repaired_name, 5):
             raise RuntimeError(f"{name}: changed repaired source function census")
         config = contract(args, rejected, name)
@@ -356,30 +561,48 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             mode_name = name + "-" + mode
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
             preserved(rejected.read_text(), failed.read_text(), mode_name)
-            postdelete = (name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
-                          or name in numeric_entry_refusals() or name in scalar_global_refusals())
+            postdelete = (
+                name in LEAF_ABSENCE_UNOWNED
+                or name in LEAF_CLEAR_UNOWNED
+                or name in numeric_entry_refusals()
+                or name in scalar_global_refusals()
+            )
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                 raise RuntimeError(f"{name}: possible absence manufactured a complete host owner")
-            repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
-            text = methods.census(repaired, restored_count, mode_name + "-restored", admitted=restored_count)
+            repaired = owned.lower(
+                args, restored, mode_name + "-restored", restored_config, options=options
+            )
+            text = methods.census(
+                repaired, restored_count, mode_name + "-restored", admitted=restored_count
+            )
             if "ctnative.host_owner_proved = true" not in text:
                 raise RuntimeError(f"{name}: exact leaf-object repair did not restore ownership")
             for payload in ("bool", "string", "nullable_string"):
                 forged_name = mode_name + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
                 forged.write_text(forge_leaf_evidence(rejected.read_text(), payload))
-                stale = methods.refused(args, forged, forged_name + "-stale", config,
-                    options=options, reason="fingerprint mismatch", admitted=0)
+                stale = methods.refused(
+                    args,
+                    forged,
+                    forged_name + "-stale",
+                    config,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
                 preserved(forged.read_text(), stale.read_text(), forged_name + "-stale")
                 fresh = contract(args, forged, forged_name)
-                failed = methods.refused(args, forged, forged_name, fresh, options=options, admitted=0)
+                failed = methods.refused(
+                    args, forged, forged_name, fresh, options=options, admitted=0
+                )
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent leaf/use reanalysis")
                 preserved(forged.read_text(), failed.read_text(), forged_name)
                 if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                     raise RuntimeError(f"{forged_name}: forged absence manufactured a host owner")
-                rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
-                                        options=options, admitted=0)
+                rerun = methods.refused(
+                    args, failed, forged_name + "-rerun", fresh, options=options, admitted=0
+                )
                 preserved(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
@@ -390,9 +613,11 @@ def check_leaf_readback_carriers(args, positives, node, reference, controls, com
             raise RuntimeError(f"{name}: changed exact complete-owner carrier source")
         expected = f"trace={value}\n"
         reference_result = host.run([str(reference), str(js)])
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or reference_result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr):
+        if (
+            host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+            or reference_result.stdout != expected
+            or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr
+        ):
             raise RuntimeError(f"{name}: complete-owner carrier observation mismatch")
         if source.count(old) != 1 or source.replace(old, replacement) != positives[repair][0]:
             raise RuntimeError(f"{name}: carrier repair changed its exact source")
@@ -402,10 +627,15 @@ def check_leaf_readback_carriers(args, positives, node, reference, controls, com
             text = methods.census(output, 5, label, admitted=5)
             cpp = host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout
             entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
-            if ("ctnative.host_owner_proved = true" not in text
-                    or "std::function<ctnative::nullable_scalar(std::string)>" not in cpp
-                    or not entry or entry[1].count("ctnative::invoke_callable(") != 2):
-                raise RuntimeError(f"{label}: lost complete local origins or published nullable calls")
+            if (
+                "ctnative.host_owner_proved = true" not in text
+                or "std::function<ctnative::nullable_scalar(std::string)>" not in cpp
+                or not entry
+                or entry[1].count("ctnative::invoke_callable(") != 2
+            ):
+                raise RuntimeError(
+                    f"{label}: lost complete local origins or published nullable calls"
+                )
             return comparable_provenance(cpp, input_ir)
 
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
@@ -417,18 +647,28 @@ def check_leaf_readback_carriers(args, positives, node, reference, controls, com
                 label = mode_name + "-forged-" + payload
                 forged = args.work / f"{label}.mlir"
                 forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
-                stale = methods.refused(args, forged, label + "-stale", config,
-                    options=options, reason="fingerprint mismatch", admitted=0)
+                stale = methods.refused(
+                    args,
+                    forged,
+                    label + "-stale",
+                    config,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
                 check_call_preservation(forged.read_text(), stale.read_text(), label + "-stale")
                 fresh = contract(args, forged, label)
                 checked = owned.lower(args, forged, label, fresh, options=options)
                 if check_native(checked, forged, label) != expected_cpp:
                     raise RuntimeError(f"{label}: forged schema facts changed native field output")
-                rerun = owned.lower(args, checked, label + "-rerun", fresh,
-                    options=options, cleanup=False)
+                rerun = owned.lower(
+                    args, checked, label + "-rerun", fresh, options=options, cleanup=False
+                )
                 text = methods.census(rerun, count, label + "-rerun", admitted=count)
-                if ("ctnative.host_owner_proved = false" not in text
-                        or "fingerprint mismatch" not in text):
+                if (
+                    "ctnative.host_owner_proved = false" not in text
+                    or "fingerprint mismatch" not in text
+                ):
                     raise RuntimeError(f"{label}: native field rerun reused source authority")
 
 
@@ -439,8 +679,11 @@ def check_leaf_readback_observations(args, node, reference):
         ("local_identity_distinct_stored", "saved === replacement", "saved === item"),
         ("historical_object_saved_identity", "saved === item", "state.get(key) === item"),
         ("local_field_get", "return saved.value;", "return 0;"),
-        ("local_field_saved_overwrite", "return saved === item ? saved.value : 0;",
-         "return state.get(key).value;"),
+        (
+            "local_field_saved_overwrite",
+            "return saved === item ? saved.value : 0;",
+            "return state.get(key).value;",
+        ),
         ("local_field_saved_alias_write", "item.value = 2;", "item.value = 1;"),
         ("local_field_boolean", "value: false", "value: true"),
         ("local_field_null", "value: null", "value: void 0"),
@@ -474,22 +717,28 @@ def check_leaf_readback_observations(args, node, reference):
         observed = args.work / f"{name}-future.js"
         observed.write_text(source)
         expected = "trace=31\n"
-        if (host.run([node, "-e", boundary.NODE, str(observed)]).stdout != expected
-                or host.run([str(reference), str(observed)]).stdout != expected):
+        if (
+            host.run([node, "-e", boundary.NODE, str(observed)]).stdout != expected
+            or host.run([str(reference), str(observed)]).stdout != expected
+        ):
             raise RuntimeError(f"{name}: future callable field/identity observation mismatch")
         if name.endswith("_checked"):
             continue
-        for index, (old, replacement) in enumerate((
-            ("item.value = value;", "item.value = 3;"),
-            ("state.delete(key);", "state.has(key);"),
-            ("return saved === item ? saved.value : 0;", "return saved === item ? 1 : 0;"),
-        )):
+        for index, (old, replacement) in enumerate(
+            (
+                ("item.value = value;", "item.value = 3;"),
+                ("state.delete(key);", "state.has(key);"),
+                ("return saved === item ? saved.value : 0;", "return saved === item ? 1 : 0;"),
+            )
+        ):
             if source.count(old) != 1:
                 raise RuntimeError(f"{name}: lost a unique future field observation")
             blind = args.work / f"{name}-future-blinded-{index}.js"
             blind.write_text(source.replace(old, replacement))
             if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
-                raise RuntimeError(f"{name}: future field observation cannot distinguish {replacement}")
+                raise RuntimeError(
+                    f"{name}: future field observation cannot distinguish {replacement}"
+                )
 
 
 def check_comparison_identity_observations(args, node, reference):
@@ -497,19 +746,28 @@ def check_comparison_identity_observations(args, node, reference):
     for name, repair in LEAF_COMPARISON_REPAIRS.items():
         source, _, value = positives[name]
         expression = "saved === {value: 1}" if name.startswith("historical_") else "saved === {}"
-        if (source.count(expression) != 1
-                or source.replace(expression, "saved === item") != positives[repair][0]
-                or value == positives[repair][2]):
+        if (
+            source.count(expression) != 1
+            or source.replace(expression, "saved === item") != positives[repair][0]
+            or value == positives[repair][2]
+        ):
             raise RuntimeError(f"{name}: distinct identity lost its exact saved-object repair")
     for name in LEAF_COMPARISON_CASES:
         source = positives[name][0]
         observed, expected = comparison_identity_observer_source(source, name)
         js = args.work / f"{name}-comparison-future.js"
         js.write_text(observed)
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={expected}\n"
-                or host.run([str(reference), str(js)]).stdout != f"trace={expected}\n"):
-            raise RuntimeError(f"{name}: future strict identity or saved object observation mismatch")
-        mutations = [("saved ===", "saved !=="), ("const item =", "const item = host; const unused =")]
+        if (
+            host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={expected}\n"
+            or host.run([str(reference), str(js)]).stdout != f"trace={expected}\n"
+        ):
+            raise RuntimeError(
+                f"{name}: future strict identity or saved object observation mismatch"
+            )
+        mutations = [
+            ("saved ===", "saved !=="),
+            ("const item =", "const item = host; const unused ="),
+        ]
         if name.startswith("historical_"):
             mutations.extend([("value: 1", "value: 2"), ("state.delete(key);", "state.has(key);")])
         for index, (old, replacement) in enumerate(mutations):

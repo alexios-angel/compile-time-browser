@@ -47,8 +47,9 @@ def main():
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
-    raw = subprocess.run([args.tblgen, "--dump-json", args.input],
-                         check=True, capture_output=True, text=True).stdout
+    raw = subprocess.run(
+        [args.tblgen, "--dump-json", args.input], check=True, capture_output=True, text=True
+    ).stdout
     records = json.loads(raw)
 
     # THE `Row` INSTANCE LIST, WHICH IS THE ONLY THING READ. A json dump also
@@ -71,8 +72,10 @@ def main():
         row = records[name]
         verdict = row["Verdict"]
         if verdict not in VERDICTS:
-            sys.exit("stdlib-map-emit: %s has verdict %r, which is not one of %s"
-                     % (name, verdict, ", ".join(VERDICTS)))
+            sys.exit(
+                "stdlib-map-emit: %s has verdict %r, which is not one of %s"
+                % (name, verdict, ", ".join(VERDICTS))
+            )
         # A divergent row without a witness is a claim with nothing behind it,
         # and the whole point of the classification is that the claim is checked.
         if verdict == "divergent" and not row["Witness"]:
@@ -80,10 +83,18 @@ def main():
         if verdict != "divergent" and row["Witness"]:
             sys.exit("stdlib-map-emit: %s is %s but names a witness" % (name, verdict))
         counts[verdict] += 1
-        lines.append("CT_STDLIB_ROW(%s, %s, %s, %s, %s, %s,\n              %s)"
-                     % (name, c_string(row["JS"]), c_string(row["Target"]),
-                        c_string(row["Header"]), verdict,
-                        c_string(row["Witness"]), c_string(row["Why"])))
+        lines.append(
+            "CT_STDLIB_ROW(%s, %s, %s, %s, %s, %s,\n              %s)"
+            % (
+                name,
+                c_string(row["JS"]),
+                c_string(row["Target"]),
+                c_string(row["Header"]),
+                verdict,
+                c_string(row["Witness"]),
+                c_string(row["Why"]),
+            )
+        )
 
     # THE COUNTS AS BUILD CONSTANTS, so the test asserts a number it did not
     # write down: a row deleted from the .td changes what the test demands.
@@ -94,8 +105,10 @@ def main():
 
     with open(args.output, "w") as out:
         out.write("\n".join(lines) + "\n")
-    print("stdlib-map-emit: %d rows (%s)"
-          % (len(names), ", ".join("%d %s" % (counts[v], v) for v in VERDICTS)))
+    print(
+        "stdlib-map-emit: %d rows (%s)"
+        % (len(names), ", ".join("%d %s" % (counts[v], v) for v in VERDICTS))
+    )
 
 
 if __name__ == "__main__":

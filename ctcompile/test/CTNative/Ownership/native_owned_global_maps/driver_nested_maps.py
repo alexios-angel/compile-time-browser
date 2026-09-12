@@ -7,15 +7,24 @@ import re
 import subprocess
 
 from .driver_common import (
-    CONSTANT_GLOBAL_NODE, boundary, check_budgets, check_call_preservation, comparable_provenance, contract,
-    forge_leaf_evidence, host, methods, owned, source_calls,
+    CONSTANT_GLOBAL_NODE,
+    boundary,
+    check_budgets,
+    check_call_preservation,
+    comparable_provenance,
+    contract,
+    forge_leaf_evidence,
+    host,
+    methods,
+    owned,
+    source_calls,
 )
 from .harness_objects import instrument_leaf_objects
 
 
 def nested_map_cases():
     # These are bounded ownership witnesses, not Bootstrap's exact Data source.
-    base = '''var host = {};
+    base = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
     return { get(value) {
@@ -28,25 +37,60 @@ def nested_map_cases():
     } };
 });
 var trace = host.slot.get(41);
-'''
+"""
     rows = {}
 
-    def add(name, source, calls, *, admitted=False, functions=4, children=1, retained=False,
-            reused=False, separate=False, repeated=False, previous=False, dynamic=False, owner=None):
-        rows['nested_map_' + name] = dict(source=source, functions=functions, calls=calls,
-            sha256=hashlib.sha256(source.encode()).hexdigest(), admitted=admitted,
-            children=children, retained=retained, reused=reused, separate=separate, repeated=repeated,
-            previous=previous, dynamic=dynamic, owner=admitted if owner is None else owner, expected_trace=41)
+    def add(
+        name,
+        source,
+        calls,
+        *,
+        admitted=False,
+        functions=4,
+        children=1,
+        retained=False,
+        reused=False,
+        separate=False,
+        repeated=False,
+        previous=False,
+        dynamic=False,
+        owner=None,
+    ):
+        rows["nested_map_" + name] = dict(
+            source=source,
+            functions=functions,
+            calls=calls,
+            sha256=hashlib.sha256(source.encode()).hexdigest(),
+            admitted=admitted,
+            children=children,
+            retained=retained,
+            reused=reused,
+            separate=separate,
+            repeated=repeated,
+            previous=previous,
+            dynamic=dynamic,
+            owner=admitted if owner is None else owner,
+            expected_trace=41,
+        )
 
-    add('retained', base, 8, admitted=True, retained=True)
-    add('saved_delete', base.replace("        child.set('value', value);",
-        "        t.delete(1);\n        child.set('value', value);"), 9, admitted=True)
-    distinct = base.replace('''        const child = new Map;
+    add("retained", base, 8, admitted=True, retained=True)
+    add(
+        "saved_delete",
+        base.replace(
+            "        child.set('value', value);",
+            "        t.delete(1);\n        child.set('value', value);",
+        ),
+        9,
+        admitted=True,
+    )
+    distinct = base.replace(
+        """        const child = new Map;
         child.set('value', 0);
         t.set(1, child);
         const saved = t.get(1);
         child.set('value', value);
-        return saved.get('value');''', '''        const first = new Map, second = new Map;
+        return saved.get('value');""",
+        """        const first = new Map, second = new Map;
         first.set('value', 17);
         second.set('value', 23);
         t.set(1, first);
@@ -56,38 +100,93 @@ var trace = host.slot.get(41);
         t.delete(2);
         t.clear();
         saved.set('value', value);
-        return other.get('value') === 23 ? saved.get('value') : 0;''')
-    add('distinct_saved', distinct, 15, admitted=True, children=2)
-    add('distinct_absence', distinct.replace("second.set('value', 23);",
-        "second.set('other', 23);").replace("other.get('value') === 23",
-        "other.get('value') === void 0"), 15, admitted=True, children=2)
-    add('unproved_key', base.replace('get(value)', 'get(value, key)').replace(
-        'const saved = t.get(1);', 'const saved = t.get(key);').replace(
-        'host.slot.get(41)', 'host.slot.get(41, 1)'), 8)
-    for action in ('delete(1)', 'clear()'):
-        add('stale_' + action.split('(')[0], base.replace('get(value)', 'get(value, flag)').replace(
-            'const saved = t.get(1);',
-            'if (flag) { t.' + action + '; }\n        const saved = t.get(1);').replace(
-            'host.slot.get(41)', 'host.slot.get(41, false)'), 9)
-    for name, payload in (('self_cycle', 'child'), ('outer_cycle', 't'),
-                          ('child_owns_map', 'new Map')):
-        add(name, base.replace("        child.set('value', value);",
-            "        child.set('edge', " + payload + ");\n        child.set('value', value);"), 9)
-    add('child_as_key', base.replace('        const saved = t.get(1);',
-        '        t.set(child, child);\n        const saved = t.get(1);'), 9)
-    add('nonstandard_child', base.replace('const child = new Map;',
-                                        'const child = new Map([]);'), 8)
-    add('foreign_consumer', 'function consume(item) { return 0; }\n' + base.replace(
-        '        const saved = t.get(1);',
-        '        consume(child);\n        const saved = t.get(1);'), 9, functions=5)
-    add('returned_child', base.replace("return saved.get('value');", 'return saved;').replace(
-        'host.slot.get(41);', "host.slot.get(41).get('value');"), 8)
-    add('conditional_initialize', base.replace('''        const child = new Map;
+        return other.get('value') === 23 ? saved.get('value') : 0;""",
+    )
+    add("distinct_saved", distinct, 15, admitted=True, children=2)
+    add(
+        "distinct_absence",
+        distinct.replace("second.set('value', 23);", "second.set('other', 23);").replace(
+            "other.get('value') === 23", "other.get('value') === void 0"
+        ),
+        15,
+        admitted=True,
+        children=2,
+    )
+    add(
+        "unproved_key",
+        base.replace("get(value)", "get(value, key)")
+        .replace("const saved = t.get(1);", "const saved = t.get(key);")
+        .replace("host.slot.get(41)", "host.slot.get(41, 1)"),
+        8,
+    )
+    for action in ("delete(1)", "clear()"):
+        add(
+            "stale_" + action.split("(")[0],
+            base.replace("get(value)", "get(value, flag)")
+            .replace(
+                "const saved = t.get(1);",
+                "if (flag) { t." + action + "; }\n        const saved = t.get(1);",
+            )
+            .replace("host.slot.get(41)", "host.slot.get(41, false)"),
+            9,
+        )
+    for name, payload in (
+        ("self_cycle", "child"),
+        ("outer_cycle", "t"),
+        ("child_owns_map", "new Map"),
+    ):
+        add(
+            name,
+            base.replace(
+                "        child.set('value', value);",
+                "        child.set('edge', " + payload + ");\n        child.set('value', value);",
+            ),
+            9,
+        )
+    add(
+        "child_as_key",
+        base.replace(
+            "        const saved = t.get(1);",
+            "        t.set(child, child);\n        const saved = t.get(1);",
+        ),
+        9,
+    )
+    add(
+        "nonstandard_child", base.replace("const child = new Map;", "const child = new Map([]);"), 8
+    )
+    add(
+        "foreign_consumer",
+        "function consume(item) { return 0; }\n"
+        + base.replace(
+            "        const saved = t.get(1);",
+            "        consume(child);\n        const saved = t.get(1);",
+        ),
+        9,
+        functions=5,
+    )
+    add(
+        "returned_child",
+        base.replace("return saved.get('value');", "return saved;").replace(
+            "host.slot.get(41);", "host.slot.get(41).get('value');"
+        ),
+        8,
+    )
+    add(
+        "conditional_initialize",
+        base.replace(
+            """        const child = new Map;
         child.set('value', 0);
-        t.set(1, child);''', '        t.has(1) || t.set(1, new Map);').replace(
-        "child.set('value', value);", "saved.set('value', value);"), 8,
-        admitted=True, retained=True, reused=True)
-    add('cross_invocation', '''var host = {};
+        t.set(1, child);""",
+            "        t.has(1) || t.set(1, new Map);",
+        ).replace("child.set('value', value);", "saved.set('value', value);"),
+        8,
+        admitted=True,
+        retained=True,
+        reused=True,
+    )
+    add(
+        "cross_invocation",
+        """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
     return {
@@ -97,70 +196,128 @@ var trace = host.slot.get(41);
 });
 host.slot.set(41);
 var trace = host.slot.get();
-''', 9, functions=5, admitted=True, retained=True, separate=True)
+""",
+        9,
+        functions=5,
+        admitted=True,
+        retained=True,
+        separate=True,
+    )
     for name, digest in {
-        'conditional_initialize': '74539aebaf2ec85ee44e45f9ea5fc4c7e2b37523bb0224507d6cdd171acffe26',
-        'cross_invocation': '369d7ceafb8d173d004395715e833aa9ec9f94e494c742e3ddab6a405d735a28',
+        "conditional_initialize": "74539aebaf2ec85ee44e45f9ea5fc4c7e2b37523bb0224507d6cdd171acffe26",
+        "cross_invocation": "369d7ceafb8d173d004395715e833aa9ec9f94e494c742e3ddab6a405d735a28",
     }.items():
-        if rows['nested_map_' + name]['sha256'] != digest:
-            raise RuntimeError(f'{name}: changed the historical child Map source')
-    conditional = rows['nested_map_conditional_initialize']['source']
-    add('repeated_lookup', conditional.replace("        return saved.get('value');",
-        "        const again = t.get(1);\n        return again.get('value');"), 9,
-        admitted=True, retained=True, reused=True, repeated=True)
+        if rows["nested_map_" + name]["sha256"] != digest:
+            raise RuntimeError(f"{name}: changed the historical child Map source")
+    conditional = rows["nested_map_conditional_initialize"]["source"]
+    add(
+        "repeated_lookup",
+        conditional.replace(
+            "        return saved.get('value');",
+            "        const again = t.get(1);\n        return again.get('value');",
+        ),
+        9,
+        admitted=True,
+        retained=True,
+        reused=True,
+        repeated=True,
+    )
     mixed = "mix(value) { t.set(1, value); return value; }"
-    add('conditional_mixed_before', conditional.replace('return { get(value) {',
-        'return { ' + mixed + ', get(value) {') + 'host.slot.mix(0);\n', 10, functions=5)
-    add('conditional_mixed_after', conditional.replace('    } };',
-        '    }, ' + mixed + ' };') + 'host.slot.mix(0);\n', 10, functions=5)
-    add('conditional_unknown_contents', conditional.replace("        saved.set('value', value);",
-        "        const prior = saved.get('value');\n        saved.set('value', value);").replace(
-        "return saved.get('value');", "return prior === void 0 ? saved.get('value') : prior;"), 9,
-        retained=True, reused=True, previous=True)
-    add('conditional_alias_delete', conditional.replace("        return saved.get('value');",
-        "        t.has(2) || t.set(2, new Map);\n        const other = t.get(2);\n"
-        "        other.delete('value');\n        return saved.get('value');"), 12, children=2)
-    cross = rows['nested_map_cross_invocation']['source']
-    inverted = cross.replace("if (t.has(1)) { return t.get(1).get('value'); } return 0;",
-        "if (!t.has(1)) { return 0; } return t.get(1).get('value');")
-    add('cross_inverted_guard', inverted, 9, functions=5, admitted=True, retained=True,
-        separate=True)
-    add('cross_inverted_wrong_key', inverted.replace('!t.has(1)', '!t.has(2)'), 9,
-        functions=5)
-    rows['nested_map_cross_inverted_wrong_key']['expected_trace'] = 0
+    add(
+        "conditional_mixed_before",
+        conditional.replace("return { get(value) {", "return { " + mixed + ", get(value) {")
+        + "host.slot.mix(0);\n",
+        10,
+        functions=5,
+    )
+    add(
+        "conditional_mixed_after",
+        conditional.replace("    } };", "    }, " + mixed + " };") + "host.slot.mix(0);\n",
+        10,
+        functions=5,
+    )
+    add(
+        "conditional_unknown_contents",
+        conditional.replace(
+            "        saved.set('value', value);",
+            "        const prior = saved.get('value');\n        saved.set('value', value);",
+        ).replace(
+            "return saved.get('value');", "return prior === void 0 ? saved.get('value') : prior;"
+        ),
+        9,
+        retained=True,
+        reused=True,
+        previous=True,
+    )
+    add(
+        "conditional_alias_delete",
+        conditional.replace(
+            "        return saved.get('value');",
+            "        t.has(2) || t.set(2, new Map);\n        const other = t.get(2);\n"
+            "        other.delete('value');\n        return saved.get('value');",
+        ),
+        12,
+        children=2,
+    )
+    cross = rows["nested_map_cross_invocation"]["source"]
+    inverted = cross.replace(
+        "if (t.has(1)) { return t.get(1).get('value'); } return 0;",
+        "if (!t.has(1)) { return 0; } return t.get(1).get('value');",
+    )
+    add(
+        "cross_inverted_guard",
+        inverted,
+        9,
+        functions=5,
+        admitted=True,
+        retained=True,
+        separate=True,
+    )
+    add("cross_inverted_wrong_key", inverted.replace("!t.has(1)", "!t.has(2)"), 9, functions=5)
+    rows["nested_map_cross_inverted_wrong_key"]["expected_trace"] = 0
     for name, mutation, calls in (
-        ('unseeded', "t.set(1, new Map);", 11),
-        ('delete', "if (t.has(1)) { t.get(1).delete('value'); }", 13),
-        ('clear', "if (t.has(1)) { t.get(1).clear(); }", 13),
-        ('mixed', "if (t.has(1)) { t.get(1).set('value', true); }", 13),
+        ("unseeded", "t.set(1, new Map);", 11),
+        ("delete", "if (t.has(1)) { t.get(1).delete('value'); }", 13),
+        ("clear", "if (t.has(1)) { t.get(1).clear(); }", 13),
+        ("mixed", "if (t.has(1)) { t.get(1).set('value', true); }", 13),
     ):
-        sibling = 'poison() { ' + mutation + ' return 0; }'
-        for order in ('before', 'after'):
-            source = (cross.replace('    return {\n', '    return {\n        ' + sibling + ',\n')
-                      if order == 'before' else cross.replace('\n    };', ',\n        ' + sibling + '\n    };'))
-            source = source.replace('host.slot.set(41);', 'host.slot.poison();\nhost.slot.set(41);')
-            add('cross_' + name + '_' + order, source, calls, functions=6)
-            rows['nested_map_cross_' + name + '_' + order]['poison'] = (
-                mutation, 'true' if name == 'mixed' else 'undefined')
-    previous = rows['nested_map_conditional_unknown_contents']['source']
+        sibling = "poison() { " + mutation + " return 0; }"
+        for order in ("before", "after"):
+            source = (
+                cross.replace("    return {\n", "    return {\n        " + sibling + ",\n")
+                if order == "before"
+                else cross.replace("\n    };", ",\n        " + sibling + "\n    };")
+            )
+            source = source.replace("host.slot.set(41);", "host.slot.poison();\nhost.slot.set(41);")
+            add("cross_" + name + "_" + order, source, calls, functions=6)
+            rows["nested_map_cross_" + name + "_" + order]["poison"] = (
+                mutation,
+                "true" if name == "mixed" else "undefined",
+            )
+    previous = rows["nested_map_conditional_unknown_contents"]["source"]
     if hashlib.sha256(previous.encode()).hexdigest() != (
-            '99954babb9c04e417826a46d8a90096d672b3f101bb914b2279900dacc66ed63'):
-        raise RuntimeError('changed the historical nullable child Map source')
+        "99954babb9c04e417826a46d8a90096d672b3f101bb914b2279900dacc66ed63"
+    ):
+        raise RuntimeError("changed the historical nullable child Map source")
     for name, payload, prefix, expected, calls, functions in (
-        ('boolean', 'true', '', 'true', 13, 5),
-        ('string', "'poison'", '', "'poison'", 13, 5),
-        ('opaque', 'opaque()', 'function opaque() { return true; }\n', 'true', 14, 6),
+        ("boolean", "true", "", "true", 13, 5),
+        ("string", "'poison'", "", "'poison'", 13, 5),
+        ("opaque", "opaque()", "function opaque() { return true; }\n", "true", 14, 6),
     ):
         mutation = "if (t.has(1)) { t.get(1).set('value', " + payload + "); }"
-        sibling = 'poison() { ' + mutation + ' return 0; }'
-        for order in ('before', 'after'):
-            source = (previous.replace('return { get(value) {',
-                'return { ' + sibling + ', get(value) {') if order == 'before' else
-                previous.replace('    } };', '    }, ' + sibling + ' };'))
-            key = 'previous_' + name + '_' + order
-            add(key, prefix + source + 'host.slot.poison();\n', calls, functions=functions)
-            rows['nested_map_' + key]['previous_poison'] = (mutation, expected)
-    add('dynamic_nullable', '''var host = {};
+        sibling = "poison() { " + mutation + " return 0; }"
+        for order in ("before", "after"):
+            source = (
+                previous.replace("return { get(value) {", "return { " + sibling + ", get(value) {")
+                if order == "before"
+                else previous.replace("    } };", "    }, " + sibling + " };")
+            )
+            key = "previous_" + name + "_" + order
+            add(key, prefix + source + "host.slot.poison();\n", calls, functions=functions)
+            rows["nested_map_" + key]["previous_poison"] = (mutation, expected)
+    add(
+        "dynamic_nullable",
+        """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
     return {
@@ -184,40 +341,82 @@ var trace = host.slot.get();
 });
 host.slot.set(41, 'value');
 var trace = host.slot.get('value');
-''', 15, functions=6, retained=True, reused=True, separate=True, dynamic=True)
+""",
+        15,
+        functions=6,
+        retained=True,
+        reused=True,
+        separate=True,
+        dynamic=True,
+    )
     # Preserve the original programs when admitting their exact nullable output.
-    for name in ('conditional_unknown_contents', 'conditional_alias_delete',
-                 'cross_unseeded_before', 'cross_unseeded_after', 'cross_delete_before',
-                 'cross_delete_after', 'cross_clear_before', 'cross_clear_after'):
-        rows['nested_map_' + name].update(owner=True, admitted=True, retained=True)
-    rows['nested_map_conditional_alias_delete'].update(reused=True, alias=True)
-    for mutation in ('unseeded', 'delete', 'clear'):
-        for order in ('before', 'after'):
-            name = 'cross_' + mutation + '_' + order
-            row = rows['nested_map_' + name]
-            row.update(separate=True, nullable=True, replacement=mutation == 'unseeded')
+    for name in (
+        "conditional_unknown_contents",
+        "conditional_alias_delete",
+        "cross_unseeded_before",
+        "cross_unseeded_after",
+        "cross_delete_before",
+        "cross_delete_after",
+        "cross_clear_before",
+        "cross_clear_after",
+    ):
+        rows["nested_map_" + name].update(owner=True, admitted=True, retained=True)
+    rows["nested_map_conditional_alias_delete"].update(reused=True, alias=True)
+    for mutation in ("unseeded", "delete", "clear"):
+        for order in ("before", "after"):
+            name = "cross_" + mutation + "_" + order
+            row = rows["nested_map_" + name]
+            row.update(separate=True, nullable=True, replacement=mutation == "unseeded")
             # A separate source observes actual absence without rewriting a method.
-            source = row['source'].replace('var trace = host.slot.get();',
-                'host.slot.poison();\nvar trace = host.slot.get();')
-            add(name + '_undefined', source, row['calls'] + 1, functions=6,
-                admitted=True, retained=True, separate=True)
-            rows['nested_map_' + name + '_undefined'].update(
-                poison=row['poison'], nullable=True, replacement=row['replacement'],
-                expected_trace='undefined')
-    add('previous_observed', previous.replace('var trace = host.slot.get(41);',
-        'var trace = host.slot.get(41) === 41;'), 9,
-        admitted=True, retained=True, reused=True, previous=True)
-    dynamic = rows['nested_map_dynamic_nullable']['source']
-    add('dynamic_nullable_observed', dynamic.replace("var trace = host.slot.get('value');",
-        "host.slot.remove('missing');\nvar trace = host.slot.get('value') === 41;"),
-        16, functions=6, admitted=True, retained=True, reused=True, separate=True, dynamic=True)
-    rows['nested_map_previous_observed']['expected_trace'] = True
-    rows['nested_map_dynamic_nullable_observed']['expected_trace'] = True
+            source = row["source"].replace(
+                "var trace = host.slot.get();", "host.slot.poison();\nvar trace = host.slot.get();"
+            )
+            add(
+                name + "_undefined",
+                source,
+                row["calls"] + 1,
+                functions=6,
+                admitted=True,
+                retained=True,
+                separate=True,
+            )
+            rows["nested_map_" + name + "_undefined"].update(
+                poison=row["poison"],
+                nullable=True,
+                replacement=row["replacement"],
+                expected_trace="undefined",
+            )
+    add(
+        "previous_observed",
+        previous.replace("var trace = host.slot.get(41);", "var trace = host.slot.get(41) === 41;"),
+        9,
+        admitted=True,
+        retained=True,
+        reused=True,
+        previous=True,
+    )
+    dynamic = rows["nested_map_dynamic_nullable"]["source"]
+    add(
+        "dynamic_nullable_observed",
+        dynamic.replace(
+            "var trace = host.slot.get('value');",
+            "host.slot.remove('missing');\nvar trace = host.slot.get('value') === 41;",
+        ),
+        16,
+        functions=6,
+        admitted=True,
+        retained=True,
+        reused=True,
+        separate=True,
+        dynamic=True,
+    )
+    rows["nested_map_previous_observed"]["expected_trace"] = True
+    rows["nested_map_dynamic_nullable_observed"]["expected_trace"] = True
     return rows
 
 
 def nested_map_observer(source, row):
-    observed = source + '''
+    observed = source + """
 (function() {
     const get = host.slot.get;
     host = {};
@@ -243,61 +442,95 @@ def nested_map_observer(source, row):
     RECREATE
     trace = ok ? 1 : 0;
 })();
-'''
-    distinct = '' if row['children'] == 1 else '''ok = ok && seen[0][2] !== seen[1][2] &&
-        seen[1][2] === seen[2][2] && seen[stride + 1][2] === seen[stride + 2][2];'''
-    if row['repeated']:
-        distinct = 'ok = ok && seen[0][2] === seen[1][2] && seen[2][2] === seen[3][2];'
-    if row.get('alias'):
-        distinct = '''ok = ok && seen[0][2] !== seen[1][2] && seen[1][2] === seen[3][2] &&
-        seen[1][2].get('value') === undefined;'''
-    reused = row['reused']
-    recreate = '''const outer = seen[0][0], saved = seen[0][2];
+"""
+    distinct = (
+        ""
+        if row["children"] == 1
+        else """ok = ok && seen[0][2] !== seen[1][2] &&
+        seen[1][2] === seen[2][2] && seen[stride + 1][2] === seen[stride + 2][2];"""
+    )
+    if row["repeated"]:
+        distinct = "ok = ok && seen[0][2] === seen[1][2] && seen[2][2] === seen[3][2];"
+    if row.get("alias"):
+        distinct = """ok = ok && seen[0][2] !== seen[1][2] && seen[1][2] === seen[3][2] &&
+        seen[1][2].get('value') === undefined;"""
+    reused = row["reused"]
+    recreate = (
+        """const outer = seen[0][0], saved = seen[0][2];
     outer.clear(); saved.set('value', 47);
     ok = ok && get(19) === 19 && outer.size === 1 && outer.get(1) !== saved &&
-         saved.get('value') === 47;''' if reused else ''
-    if row['separate']:
-        observed = observed.replace('const get = host.slot.get;',
-            'const set = host.slot.set, get = host.slot.get;').replace(
-            'get(17) === 17 && get(-3) === -3',
-            'set(17) === 17 && get() === 17 && set(-3) === -3 && get() === -3').replace(
-            'const answer = get(value);', 'const answer = set(value) === value ? get() : NaN;')
-        recreate = '''const outer = seen[0][0], saved = seen[0][2];
+         saved.get('value') === 47;"""
+        if reused
+        else ""
+    )
+    if row["separate"]:
+        observed = (
+            observed.replace(
+                "const get = host.slot.get;", "const set = host.slot.set, get = host.slot.get;"
+            )
+            .replace(
+                "get(17) === 17 && get(-3) === -3",
+                "set(17) === 17 && get() === 17 && set(-3) === -3 && get() === -3",
+            )
+            .replace(
+                "const answer = get(value);", "const answer = set(value) === value ? get() : NaN;"
+            )
+        )
+        recreate = """const outer = seen[0][0], saved = seen[0][2];
     outer.clear(); saved.set('value', 47);
     ok = ok && get() === 0 && set(19) === 19 && get() === 19 && outer.size === 1 &&
-         outer.get(1) !== saved && saved.get('value') === 47;'''
-    if row.get('nullable'):
-        observed = observed.replace('const set = host.slot.set, get = host.slot.get;',
-            'const set = host.slot.set, get = host.slot.get, poison = host.slot.poison;')
-        recreate = '''const poisoned = seen[0][0].get(1);
+         outer.get(1) !== saved && saved.get('value') === 47;"""
+    if row.get("nullable"):
+        observed = observed.replace(
+            "const set = host.slot.set, get = host.slot.get;",
+            "const set = host.slot.set, get = host.slot.get, poison = host.slot.poison;",
+        )
+        recreate = """const poisoned = seen[0][0].get(1);
     poison();
     ok = ok && get() === undefined && seen[0][0].size === 1 &&
          (seen[0][0].get(1) !== poisoned) === REPLACEMENT &&
          poisoned.get('value') === POISONED_VALUE;
     set(29);
-    ''' + recreate
-        recreate = recreate.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
-            'POISONED_VALUE', '127.5' if row['replacement'] else 'undefined')
-    if row['previous']:
-        observed = observed.replace('get(17) === 17 && get(-3) === -3',
-            'get(17) === 41 && get(-3) === 17').replace(
-            'for (let i = 0; i < 128; ++i)',
-            'let previous = -3;\n    for (let i = 0; i < 128; ++i)').replace(
-            "answer !== value) { ok = false; }", "answer !== previous) { ok = false; }\n"
-            '        previous = value;')
-        recreate = recreate.replace('    outer.clear();', '''    saved.clear();
+    """ + recreate
+        recreate = recreate.replace("REPLACEMENT", str(row["replacement"]).lower()).replace(
+            "POISONED_VALUE", "127.5" if row["replacement"] else "undefined"
+        )
+    if row["previous"]:
+        observed = (
+            observed.replace("get(17) === 17 && get(-3) === -3", "get(17) === 41 && get(-3) === 17")
+            .replace(
+                "for (let i = 0; i < 128; ++i)",
+                "let previous = -3;\n    for (let i = 0; i < 128; ++i)",
+            )
+            .replace(
+                "answer !== value) { ok = false; }",
+                "answer !== previous) { ok = false; }\n" "        previous = value;",
+            )
+        )
+        recreate = recreate.replace(
+            "    outer.clear();",
+            """    saved.clear();
     ok = ok && get(13) === 13 && outer.get(1) === saved && saved.get('value') === 13;
-    outer.clear();''')
-    if row['dynamic']:
-        observed = observed.replace('const set = host.slot.set, get = host.slot.get;',
-            "const write = host.slot.set, read = host.slot.get, remove = host.slot.remove;\n"
-            "    const set = value => write(value, 'value'), get = () => read('value');").replace(
-            "typeof answer !== 'number' || answer !== value", 'answer !== (value || null)').replace(
-            '        REUSE_CHECK', '''        REUSE_CHECK
+    outer.clear();""",
+        )
+    if row["dynamic"]:
+        observed = (
+            observed.replace(
+                "const set = host.slot.set, get = host.slot.get;",
+                "const write = host.slot.set, read = host.slot.get, remove = host.slot.remove;\n"
+                "    const set = value => write(value, 'value'), get = () => read('value');",
+            )
+            .replace("typeof answer !== 'number' || answer !== value", "answer !== (value || null)")
+            .replace(
+                "        REUSE_CHECK",
+                """        REUSE_CHECK
         const key = 'caller-' + i;
         if (write(value, key) !== value || read(key) !== (value || null) ||
-            remove(key) !== 0 || read(key) !== null) { ok = false; }''').replace(
-            '    RECREATE', '''    const outer = seen[0][0], saved = seen[0][2];
+            remove(key) !== 0 || read(key) !== null) { ok = false; }""",
+            )
+            .replace(
+                "    RECREATE",
+                """    const outer = seen[0][0], saved = seen[0][2];
     ok = ok && read('missing') === null && write(7, 'other') === 7 && read('other') === 7;
     remove('value');
     ok = ok && get() === null && read('other') === 7 && outer.size === 1;
@@ -308,23 +541,37 @@ def nested_map_observer(source, row):
     ok = ok && outer.size === 0;
     saved.set('value', 47);
     ok = ok && set(19) === 19 && get() === 19 && outer.size === 1 &&
-         outer.get(1) !== saved && saved.get('value') === 47;''')
-    if row.get('alias'):
-        recreate = recreate.replace('outer.size === 1', 'outer.size === 2')
-    stride = 2 if row['repeated'] or row['dynamic'] or row.get('alias') else 1 if row['children'] == 1 else 3
-    return observed.replace('STRIDE', str(stride)).replace(
-        'OUTER_SIZE', '2' if row.get('alias') else '1' if row['retained'] else '0').replace('DISTINCT', distinct).replace(
-        'METHOD', 'get' if reused else 'set').replace('ITEM', 'result' if reused else 'value').replace(
-        'IDENTITY', '===' if reused else '!==').replace('FIRST_VALUE', '-3' if reused else '17').replace(
-        'REUSE_CHECK', "if (seen[0][2].get('value') !== value) { ok = false; }" if reused else '').replace(
-        'RECREATE', recreate)
+         outer.get(1) !== saved && saved.get('value') === 47;""",
+            )
+        )
+    if row.get("alias"):
+        recreate = recreate.replace("outer.size === 1", "outer.size === 2")
+    stride = (
+        2
+        if row["repeated"] or row["dynamic"] or row.get("alias")
+        else 1 if row["children"] == 1 else 3
+    )
+    return (
+        observed.replace("STRIDE", str(stride))
+        .replace("OUTER_SIZE", "2" if row.get("alias") else "1" if row["retained"] else "0")
+        .replace("DISTINCT", distinct)
+        .replace("METHOD", "get" if reused else "set")
+        .replace("ITEM", "result" if reused else "value")
+        .replace("IDENTITY", "===" if reused else "!==")
+        .replace("FIRST_VALUE", "-3" if reused else "17")
+        .replace(
+            "REUSE_CHECK",
+            "if (seen[0][2].get('value') !== value) { ok = false; }" if reused else "",
+        )
+        .replace("RECREATE", recreate)
+    )
 
 
 def nested_map_lifetime_cpp(cpp, row):
     # Reuse the existing weak allocation observer; generated ownership is unchanged.
-    if row.get('nullable'):
+    if row.get("nullable"):
         return nested_map_mutation_lifetime_cpp(cpp, row)
-    changed = instrument_leaf_objects(cpp, allocations=0) + r'''
+    changed = instrument_leaf_objects(cpp, allocations=0) + r"""
 int main() {
     using Child = ctnative::number_map<std::string>;
     using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
@@ -390,75 +637,121 @@ int main() {
     }
     return 0;
 }
-'''
-    if row['separate']:
-        changed = changed.replace('auto get = table->m_get;',
-            'auto get = table->m_get;\n    auto set = table->m_set;').replace(
-            'static_assert(std::is_same_v<decltype(get), std::function<js_num(js_num)>>);',
-            'static_assert(std::is_same_v<decltype(get), std::function<js_num()>>);\n'
-            '    static_assert(std::is_same_v<decltype(set), std::function<js_num(js_num)>>);').replace(
-            'get(value) != value', 'set(value) != value || get() != value').replace(
-            'const auto cleared = ctn_test_maps.size();',
-            'if (get() != 0) { return 285; }\n    const auto cleared = ctn_test_maps.size();').replace(
-            'get(19) != 19', 'set(19) != 19 || get() != 19').replace(
-            'get(23) != 23', 'set(23) != 23 || get() != 23').replace(
-            'get = {};', 'get = {};\n    if (ctn_test_maps[0].expired() || set(29) != 29) '
-            '{ return 286; }\n    set = {};')
-    if row['previous']:
-        changed = changed.replace('for (int call = 0; call < 128; ++call)',
-            'js_num previous = 41;\n    for (int call = 0; call < 128; ++call)').replace(
-            'get(value) != value', 'get(value) != previous').replace(
-            '        for (std::size_t index = before;',
-            '        previous = value;\n        for (std::size_t index = before;').replace(
-            'get(23) != 23', 'get(23) != 19').replace(
-            '    ctnative::map_clear(outer);', '''    ctnative::map_clear(saved);
+"""
+    if row["separate"]:
+        changed = (
+            changed.replace(
+                "auto get = table->m_get;", "auto get = table->m_get;\n    auto set = table->m_set;"
+            )
+            .replace(
+                "static_assert(std::is_same_v<decltype(get), std::function<js_num(js_num)>>);",
+                "static_assert(std::is_same_v<decltype(get), std::function<js_num()>>);\n"
+                "    static_assert(std::is_same_v<decltype(set), std::function<js_num(js_num)>>);",
+            )
+            .replace("get(value) != value", "set(value) != value || get() != value")
+            .replace(
+                "const auto cleared = ctn_test_maps.size();",
+                "if (get() != 0) { return 285; }\n    const auto cleared = ctn_test_maps.size();",
+            )
+            .replace("get(19) != 19", "set(19) != 19 || get() != 19")
+            .replace("get(23) != 23", "set(23) != 23 || get() != 23")
+            .replace(
+                "get = {};",
+                "get = {};\n    if (ctn_test_maps[0].expired() || set(29) != 29) "
+                "{ return 286; }\n    set = {};",
+            )
+        )
+    if row["previous"]:
+        changed = (
+            changed.replace(
+                "for (int call = 0; call < 128; ++call)",
+                "js_num previous = 41;\n    for (int call = 0; call < 128; ++call)",
+            )
+            .replace("get(value) != value", "get(value) != previous")
+            .replace(
+                "        for (std::size_t index = before;",
+                "        previous = value;\n        for (std::size_t index = before;",
+            )
+            .replace("get(23) != 23", "get(23) != 19")
+            .replace(
+                "    ctnative::map_clear(outer);",
+                """    ctnative::map_clear(saved);
     if (get(13) != 13 || outer->at(js_num{1}) != saved || saved->at("value") != 13) { return 293; }
-    ctnative::map_clear(outer);''')
-    if row.get('alias'):
-        changed = changed.replace('(retained ? 1U : 0U)', '2U').replace(
-            'child != ctn_test_maps.back().lock()',
-            '(child != ctn_test_maps[1].lock() || outer->at(js_num{2}) != ctn_test_maps[2].lock() || '
-            'outer->at(js_num{2})->size() != 0U)').replace(
-            '    ctnative::map_clear(outer);', '    ctnative::map_clear(outer);\n'
-            '    if (!ctn_test_maps[2].expired()) { return 294; }').replace(
-            'get(19) != 19', 'get(19) != 19 || outer->size() != 2U || '
-            'outer->at(js_num{1}) == outer->at(js_num{2})')
-    if row['previous'] or row.get('alias'):
-        changed = changed.replace('std::function<js_num(js_num)>',
-            'std::function<ctnative::nullable_scalar(js_num)>')
-        changed = re.sub(r'\bget\((value|13|19|23)\)',
-                         r'ctnative::global_number(get(\1))', changed)
-        if row['expected_trace'] is not True:
-            changed = changed.replace('    auto owner = g_host;',
-                '    static_assert(std::is_same_v<decltype(g_trace), ctnative::nullable_scalar>);\n'
-                '    if (ctnative::global_number(g_trace) != 41) { return 310; }\n'
-                '    auto owner = g_host;')
-    if row['dynamic']:
-        changed = changed.replace('auto set = table->m_set;', '''auto set = table->m_set;
+    ctnative::map_clear(outer);""",
+            )
+        )
+    if row.get("alias"):
+        changed = (
+            changed.replace("(retained ? 1U : 0U)", "2U")
+            .replace(
+                "child != ctn_test_maps.back().lock()",
+                "(child != ctn_test_maps[1].lock() || outer->at(js_num{2}) != ctn_test_maps[2].lock() || "
+                "outer->at(js_num{2})->size() != 0U)",
+            )
+            .replace(
+                "    ctnative::map_clear(outer);",
+                "    ctnative::map_clear(outer);\n"
+                "    if (!ctn_test_maps[2].expired()) { return 294; }",
+            )
+            .replace(
+                "get(19) != 19",
+                "get(19) != 19 || outer->size() != 2U || "
+                "outer->at(js_num{1}) == outer->at(js_num{2})",
+            )
+        )
+    if row["previous"] or row.get("alias"):
+        changed = changed.replace(
+            "std::function<js_num(js_num)>", "std::function<ctnative::nullable_scalar(js_num)>"
+        )
+        changed = re.sub(r"\bget\((value|13|19|23)\)", r"ctnative::global_number(get(\1))", changed)
+        if row["expected_trace"] is not True:
+            changed = changed.replace(
+                "    auto owner = g_host;",
+                "    static_assert(std::is_same_v<decltype(g_trace), ctnative::nullable_scalar>);\n"
+                "    if (ctnative::global_number(g_trace) != 41) { return 310; }\n"
+                "    auto owner = g_host;",
+            )
+    if row["dynamic"]:
+        changed = (
+            changed.replace(
+                "auto set = table->m_set;",
+                """auto set = table->m_set;
     auto remove = table->m_remove;
     using Result = ctnative::nullable_scalar;
     const auto matches = [](Result result, js_num value) {
         return value == 0 ? result.tag == Result::kind::null
             : result.tag == Result::kind::number && result.value == value;
-    };''').replace('std::function<js_num()>',
-            'std::function<Result(std::string)>').replace('std::function<js_num(js_num)>',
-            'std::function<js_num(js_num, std::string)>').replace(
-            'set(value) != value || get() != value',
-            'set(value, "value") != value || !matches(get("value"), value)').replace(
-            'get() != 0', 'get("value").tag != Result::kind::null').replace(
-            'set(19) != 19 || get() != 19',
-            'set(19, "value") != 19 || !matches(get("value"), 19)').replace(
-            'set(23) != 23 || get() != 23',
-            'set(23, "value") != 23 || !matches(get("value"), 23)').replace(
-            'set(29) != 29', 'set(29, "value") != 29').replace(
-            '        for (std::size_t index = before;', '''        const std::string spelling = "caller-" + std::to_string(call);
+    };""",
+            )
+            .replace("std::function<js_num()>", "std::function<Result(std::string)>")
+            .replace("std::function<js_num(js_num)>", "std::function<js_num(js_num, std::string)>")
+            .replace(
+                "set(value) != value || get() != value",
+                'set(value, "value") != value || !matches(get("value"), value)',
+            )
+            .replace("get() != 0", 'get("value").tag != Result::kind::null')
+            .replace(
+                "set(19) != 19 || get() != 19",
+                'set(19, "value") != 19 || !matches(get("value"), 19)',
+            )
+            .replace(
+                "set(23) != 23 || get() != 23",
+                'set(23, "value") != 23 || !matches(get("value"), 23)',
+            )
+            .replace("set(29) != 29", 'set(29, "value") != 29')
+            .replace(
+                "        for (std::size_t index = before;",
+                """        const std::string spelling = "caller-" + std::to_string(call);
         std::string key = spelling;
         if (set(value, key) != value) { return 291; }
         key.assign(key.size(), 'x');
         if (!matches(get(spelling), value) || remove(spelling) != 0 ||
             get(spelling).tag != Result::kind::null) { return 292; }
-        for (std::size_t index = before;''').replace(
-            '    ctnative::map_clear(outer);', '''    if (get("missing").tag != Result::kind::null || set(7, "other") != 7 ||
+        for (std::size_t index = before;""",
+            )
+            .replace(
+                "    ctnative::map_clear(outer);",
+                """    if (get("missing").tag != Result::kind::null || set(7, "other") != 7 ||
         !matches(get("other"), 7) || remove("value") != 0 ||
         get("value").tag != Result::kind::null || !matches(get("other"), 7) ||
         outer->size() != 1U) { return 287; }
@@ -466,16 +759,24 @@ int main() {
         saved->size() != 0U || outer->size() != 0U || saved_lifetime.expired()) { return 288; }
     if (set(0, "empty") != 0 || get("empty").tag != Result::kind::null ||
         remove("empty") != 0 || outer->size() != 0U) { return 289; }
-    ctnative::map_clear(outer);''').replace('    set = {};',
-            '    set = {};\n    if (ctn_test_maps[0].expired()) { return 290; }\n    remove = {};')
-    return changed.replace('CHILDREN', str(row['children'])).replace(
-        'RETAINED', str(row['retained']).lower()).replace('REUSED', str(row['reused']).lower())
+    ctnative::map_clear(outer);""",
+            )
+            .replace(
+                "    set = {};",
+                "    set = {};\n    if (ctn_test_maps[0].expired()) { return 290; }\n    remove = {};",
+            )
+        )
+    return (
+        changed.replace("CHILDREN", str(row["children"]))
+        .replace("RETAINED", str(row["retained"]).lower())
+        .replace("REUSED", str(row["reused"]).lower())
+    )
 
 
 def nested_map_mutation_lifetime_cpp(cpp, row):
     # Call the real sibling after publication; neither its tag nor its child
     # lifetime can be inferred from the initial Number observation.
-    changed = instrument_leaf_objects(cpp, allocations=0) + r'''
+    changed = instrument_leaf_objects(cpp, allocations=0) + r"""
 int main() {
     using Child = ctnative::number_map<std::string>;
     using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
@@ -545,61 +846,94 @@ int main() {
     }
     return 0;
 }
-'''
-    initial_maps = 2 + row['replacement'] * (1 + (row['expected_trace'] == 'undefined'))
-    return changed.replace('REPLACEMENT', str(row['replacement']).lower()).replace(
-        'INITIAL_MAPS', str(initial_maps)).replace(
-        'INITIAL_TAG', 'undefined' if row['expected_trace'] == 'undefined' else 'number')
+"""
+    initial_maps = 2 + row["replacement"] * (1 + (row["expected_trace"] == "undefined"))
+    return (
+        changed.replace("REPLACEMENT", str(row["replacement"]).lower())
+        .replace("INITIAL_MAPS", str(initial_maps))
+        .replace("INITIAL_TAG", "undefined" if row["expected_trace"] == "undefined" else "number")
+    )
 
 
 def nested_map_census(args, ir, name, row):
-    raw = (args.work / f'{name}.raw.mlir').read_text()
+    raw = (args.work / f"{name}.raw.mlir").read_text()
     prepared = ir.read_text()
-    if len(boundary.FUNCTION.findall(raw)) != row['functions']:
-        raise RuntimeError(f'{name}: changed source function census')
+    if len(boundary.FUNCTION.findall(raw)) != row["functions"]:
+        raise RuntimeError(f"{name}: changed source function census")
     for text in (raw, prepared):
-        if len(source_calls(text)) != row['calls']:
-            raise RuntimeError(f'{name}: changed source call census')
-    for operation in ('create_object', 'construct', 'get_property', 'set_property',
-                      'load_global', 'store_global'):
+        if len(source_calls(text)) != row["calls"]:
+            raise RuntimeError(f"{name}: changed source call census")
+    for operation in (
+        "create_object",
+        "construct",
+        "get_property",
+        "set_property",
+        "load_global",
+        "store_global",
+    ):
         if raw.count(operation) != prepared.count(operation):
-            raise RuntimeError(f'{name}: preparation changed {operation} census')
+            raise RuntimeError(f"{name}: preparation changed {operation} census")
 
 
 def nested_map_preserved(original, output, name, prepared=False):
     if prepared:
         # Successful ownership lifts the environment into each direct call. Check
         # that actual receiver/callee/capture edges and every source effect survive.
-        calls = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) '
-                           r'\{ctnative\.stored_call = 1 : i32\}', output, re.M)
-        targets = (["fn$3", "fn$4", "fn$5"] if 'before' in name else
-                   ["fn$5", "fn$3", "fn$4"]) if 'cross_' in name else ["fn$3"]
-        arities = [4, 5, 4] if 'cross_' in name else [5]
+        calls = re.findall(
+            r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+            r"\{ctnative\.stored_call = 1 : i32\}",
+            output,
+            re.M,
+        )
+        targets = (
+            (["fn$3", "fn$4", "fn$5"] if "before" in name else ["fn$5", "fn$3", "fn$4"])
+            if "cross_" in name
+            else ["fn$3"]
+        )
+        arities = [4, 5, 4] if "cross_" in name else [5]
         entry = output.split("\n  }", 1)[0]
-        reads = dict(re.findall(r'(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', entry))
-        captures = dict(re.findall(r'(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', entry))
-        actuals = [args.split(', ') for _, _, args in calls]
-        if (len(source_calls(original)) != len(source_calls(output)) or
-                [target for _, target, _ in calls] != targets or
-                [len(args) for args in actuals] != arities or
-                any(reads.get(args[2]) != args[0] or captures.get(args[3]) != args[2]
-                    for args in actuals) or
-                f'ctjs.store_global "trace", {calls[-1][0]}' not in output):
-            raise RuntimeError(f'{name}: nullable refusal lost a prepared source call edge')
-        for op in ('ctjs.create_object', 'ctjs.construct', 'ctjs.get_property',
-                   'ctjs.set_property', 'ctjs.load_global', 'ctjs.store_global', 'ctjs.compare',
-                   'ctjs.unary', 'ctjs.binary', 'ctjs.truthy', 'scf.if', 'scf.yield'):
-            pattern = r'^\s*(?:%[-\w.$]+(?::\d+)? = )?' + re.escape(op) + r'\b'
+        reads = dict(re.findall(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[", entry))
+        captures = dict(re.findall(r"(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]", entry))
+        actuals = [args.split(", ") for _, _, args in calls]
+        if (
+            len(source_calls(original)) != len(source_calls(output))
+            or [target for _, target, _ in calls] != targets
+            or [len(args) for args in actuals] != arities
+            or any(
+                reads.get(args[2]) != args[0] or captures.get(args[3]) != args[2]
+                for args in actuals
+            )
+            or f'ctjs.store_global "trace", {calls[-1][0]}' not in output
+        ):
+            raise RuntimeError(f"{name}: nullable refusal lost a prepared source call edge")
+        for op in (
+            "ctjs.create_object",
+            "ctjs.construct",
+            "ctjs.get_property",
+            "ctjs.set_property",
+            "ctjs.load_global",
+            "ctjs.store_global",
+            "ctjs.compare",
+            "ctjs.unary",
+            "ctjs.binary",
+            "ctjs.truthy",
+            "scf.if",
+            "scf.yield",
+        ):
+            pattern = r"^\s*(?:%[-\w.$]+(?::\d+)? = )?" + re.escape(op) + r"\b"
             if len(re.findall(pattern, original, re.M)) != len(re.findall(pattern, output, re.M)):
-                raise RuntimeError(f'{name}: nullable refusal changed source {op} census')
+                raise RuntimeError(f"{name}: nullable refusal changed source {op} census")
         return
     check_call_preservation(original, output, name)
-    pattern = (r'^\s*((?:%[-\w.$]+(?::\d+)? = )?(?:ctjs\.(?:create_object|construct|'
-               r'get_property|set_property|load_global|store_global|compare|unary|binary|truthy)|'
-               r'scf\.(?:if|yield))\b[^\n{]*)')
-    if ([line.strip() for line in re.findall(pattern, original, re.M)]
-            != [line.strip() for line in re.findall(pattern, output, re.M)]):
-        raise RuntimeError(f'{name}: refusal changed original nested Map or branch edges')
+    pattern = (
+        r"^\s*((?:%[-\w.$]+(?::\d+)? = )?(?:ctjs\.(?:create_object|construct|"
+        r"get_property|set_property|load_global|store_global|compare|unary|binary|truthy)|"
+        r"scf\.(?:if|yield))\b[^\n{]*)"
+    )
+    if [line.strip() for line in re.findall(pattern, original, re.M)] != [
+        line.strip() for line in re.findall(pattern, output, re.M)
+    ]:
+        raise RuntimeError(f"{name}: refusal changed original nested Map or branch edges")
 
 
 def check_nested_maps(args, node, reference, compilers, nm):
@@ -607,168 +941,249 @@ def check_nested_maps(args, node, reference, compilers, nm):
     observations = mutations = 0
 
     def observe(name, source, expected):
-        js = args.work / f'{name}-observed.js'
+        js = args.work / f"{name}-observed.js"
         js.write_text(source)
         result = host.run([str(reference), str(js)]) if reference else None
         expected_text = str(expected).lower() if isinstance(expected, bool) else str(expected)
-        kind = ('boolean' if isinstance(expected, bool) else expected
-                if expected in ('null', 'undefined') else 'number')
-        types = '(' + ', '.join(f'{int(tag == kind)} {tag}' for tag in
-                               ('number', 'boolean', 'string', 'null', 'undefined')) + ')'
-        if (host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != f'trace={expected_text}\n'
-                or result and (result.stdout != f'trace={expected_text}\n' or types not in result.stderr)):
-            raise RuntimeError(f'{name}: typed source observation changed')
+        kind = (
+            "boolean"
+            if isinstance(expected, bool)
+            else expected if expected in ("null", "undefined") else "number"
+        )
+        types = (
+            "("
+            + ", ".join(
+                f"{int(tag == kind)} {tag}"
+                for tag in ("number", "boolean", "string", "null", "undefined")
+            )
+            + ")"
+        )
+        if (
+            host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout
+            != f"trace={expected_text}\n"
+            or result
+            and (result.stdout != f"trace={expected_text}\n" or types not in result.stderr)
+        ):
+            raise RuntimeError(f"{name}: typed source observation changed")
 
     for name, row in cases.items():
-        observe(name, row['source'], row['expected_trace'])
+        observe(name, row["source"], row["expected_trace"])
         observations += 1
-        if 'poison' in row:
-            mutation, expected = row['poison']
-            assert row['source'].count(mutation) == 1, (name, mutation)
-            observer = ('\nhost.slot.set(73); host.slot.poison();\n'
-                        'trace = host.slot.get() === ' + expected + ' ? 1 : 0;\n')
-            observe(name + '-poisoned', row['source'] + observer, 1)
-            observe(name + '-mutation-removed', row['source'].replace(mutation, '') + observer, 0)
+        if "poison" in row:
+            mutation, expected = row["poison"]
+            assert row["source"].count(mutation) == 1, (name, mutation)
+            observer = (
+                "\nhost.slot.set(73); host.slot.poison();\n"
+                "trace = host.slot.get() === " + expected + " ? 1 : 0;\n"
+            )
+            observe(name + "-poisoned", row["source"] + observer, 1)
+            observe(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
             observations += 2
             mutations += 1
-        if 'previous_poison' in row:
-            mutation, expected = row['previous_poison']
-            assert row['source'].count(mutation) == 1, (name, mutation)
-            observer = '\ntrace = host.slot.get(73) === ' + expected + ' ? 1 : 0;\n'
-            observe(name + '-poisoned', row['source'] + observer, 1)
-            observe(name + '-mutation-removed', row['source'].replace(mutation, '') + observer, 0)
+        if "previous_poison" in row:
+            mutation, expected = row["previous_poison"]
+            assert row["source"].count(mutation) == 1, (name, mutation)
+            observer = "\ntrace = host.slot.get(73) === " + expected + " ? 1 : 0;\n"
+            observe(name + "-poisoned", row["source"] + observer, 1)
+            observe(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
             observations += 2
             mutations += 1
-        if not row['admitted'] and not row['previous'] and not row['dynamic']:
+        if not row["admitted"] and not row["previous"] and not row["dynamic"]:
             continue
-        observed = nested_map_observer(row['source'], row)
-        observe(name + '-future', observed, 1)
+        observed = nested_map_observer(row["source"], row)
+        observe(name + "-future", observed, 1)
         observations += 1
-        readback = "again.get('value')" if row['repeated'] else "saved.get('value')"
-        replacements = [("t.get(1).get('value')" if row['separate'] else readback, '41'),
-                        (".set('value', value);", ".set('value', 0);")]
-        if row.get('alias'):
-            replacements.append(('t.set(2, new Map);', 't.set(2, t.get(1));'))
-        elif row['children'] == 2:
-            replacements.append(('second = new Map;', 'second = first;'))
-        if row['retained']:
-            replacements.append(('t.set(1, child);', 't.set(1, child); t.clear();') if row['separate']
-                                else ('return ' + readback, 't.clear(); return ' + readback))
-        if row['separate']:
-            replacements.append(('return value;', 'return 0;'))
-        if row['reused']:
-            replacements.append(('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);'))
-        if row['repeated']:
-            replacements.append(('const again = t.get(1);',
-                                 't.set(1, new Map); const again = t.get(1);'))
-        if row['previous']:
+        readback = "again.get('value')" if row["repeated"] else "saved.get('value')"
+        replacements = [
+            ("t.get(1).get('value')" if row["separate"] else readback, "41"),
+            (".set('value', value);", ".set('value', 0);"),
+        ]
+        if row.get("alias"):
+            replacements.append(("t.set(2, new Map);", "t.set(2, t.get(1));"))
+        elif row["children"] == 2:
+            replacements.append(("second = new Map;", "second = first;"))
+        if row["retained"]:
+            replacements.append(
+                ("t.set(1, child);", "t.set(1, child); t.clear();")
+                if row["separate"]
+                else ("return " + readback, "t.clear(); return " + readback)
+            )
+        if row["separate"]:
+            replacements.append(("return value;", "return 0;"))
+        if row["reused"]:
+            replacements.append(("t.has(1) || t.set(1, new Map);", "t.set(1, new Map);"))
+        if row["repeated"]:
+            replacements.append(
+                ("const again = t.get(1);", "t.set(1, new Map); const again = t.get(1);")
+            )
+        if row["previous"]:
             readback = "return prior === void 0 ? saved.get('value') : prior;"
-            replacements = [(readback, 'return value;'), (readback, 'return prior;'),
-                ("const prior = saved.get('value');", 'const prior = void 0;'),
+            replacements = [
+                (readback, "return value;"),
+                (readback, "return prior;"),
+                ("const prior = saved.get('value');", "const prior = void 0;"),
                 ("saved.set('value', value);", "saved.set('value', 0);"),
-                (readback, 't.clear(); ' + readback),
-                ('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);')]
-        if row['dynamic']:
-            readback = 'return t.get(1).get(key) || null;'
-            replacements = [(readback, 'return 41;'),
-                (readback, 'return t.get(1).get(key);'),
-                ('t.get(1).set(key, value);', 't.get(1).set(key, 0);'),
-                ('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);'),
-                ('saved.delete(key);', 'saved.has(key);'),
-                ('if (!saved.size) { t.delete(1); }', '')]
+                (readback, "t.clear(); " + readback),
+                ("t.has(1) || t.set(1, new Map);", "t.set(1, new Map);"),
+            ]
+        if row["dynamic"]:
+            readback = "return t.get(1).get(key) || null;"
+            replacements = [
+                (readback, "return 41;"),
+                (readback, "return t.get(1).get(key);"),
+                ("t.get(1).set(key, value);", "t.get(1).set(key, 0);"),
+                ("t.has(1) || t.set(1, new Map);", "t.set(1, new Map);"),
+                ("saved.delete(key);", "saved.has(key);"),
+                ("if (!saved.size) { t.delete(1); }", ""),
+            ]
         for index, (old, replacement) in enumerate(replacements):
-            assert row['source'].count(old) == 1, (name, old)
-            blinded = args.work / f'{name}-blinded-{index}.js'
-            blinded.write_text(nested_map_observer(row['source'].replace(old, replacement), row))
-            result = subprocess.run([node, '-e', boundary.NODE, str(blinded)],
-                                    capture_output=True, text=True, timeout=30)
-            if not result.returncode and result.stdout == 'trace=1\n':
-                raise RuntimeError(f'{name}: observer cannot distinguish {replacement}')
+            assert row["source"].count(old) == 1, (name, old)
+            blinded = args.work / f"{name}-blinded-{index}.js"
+            blinded.write_text(nested_map_observer(row["source"].replace(old, replacement), row))
+            result = subprocess.run(
+                [node, "-e", boundary.NODE, str(blinded)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if not result.returncode and result.stdout == "trace=1\n":
+                raise RuntimeError(f"{name}: observer cannot distinguish {replacement}")
             mutations += 1
 
     def check_case(item):
         name, row = item
-        _, ir, functions = boundary.prepare(args, name, row['source'])
-        assert functions == row['functions']
+        _, ir, functions = boundary.prepare(args, name, row["source"])
+        assert functions == row["functions"]
         nested_map_census(args, ir, name, row)
         config = contract(args, ir, name)
-        for policy, options in (('default', ''), ('disabled', 'optimize=false')):
-            label = name + '-' + policy
-            if not row['admitted']:
+        for policy, options in (("default", ""), ("disabled", "optimize=false")):
+            label = name + "-" + policy
+            if not row["admitted"]:
                 output = owned.lower(args, ir, label, config, options=options, cleanup=False)
                 methods.census(output, functions, label, admitted=0)
-                nested_map_preserved(ir.read_text(), output.read_text(), label, row['owner'])
-                if ('ctnative.host_owner_proved = true' in output.read_text()) != row['owner']:
-                    raise RuntimeError(f'{label}: nullable ownership outcome changed')
+                nested_map_preserved(ir.read_text(), output.read_text(), label, row["owner"])
+                if ("ctnative.host_owner_proved = true" in output.read_text()) != row["owner"]:
+                    raise RuntimeError(f"{label}: nullable ownership outcome changed")
             else:
                 output = owned.lower(args, ir, label, config, options=options)
                 text = methods.census(output, functions, label, admitted=functions)
-                if 'ctnative.host_owner_proved = true' not in text:
-                    raise RuntimeError(f'{label}: lost captured child ownership')
-                if policy == 'default':
+                if "ctnative.host_owner_proved = true" not in text:
+                    raise RuntimeError(f"{label}: lost captured child ownership")
+                if policy == "default":
                     default = output
                 elif output.read_text() != default.read_text():
-                    raise RuntimeError(f'{label}: child proof depends on optimization policy')
-            forged = args.work / f'{label}-forged.mlir'
+                    raise RuntimeError(f"{label}: child proof depends on optimization policy")
+            forged = args.work / f"{label}-forged.mlir"
             forged.write_text(forge_leaf_evidence(ir.read_text()))
-            stale = methods.refused(args, forged, label + '-stale', config,
-                options=options, reason='fingerprint mismatch', admitted=0)
+            stale = methods.refused(
+                args,
+                forged,
+                label + "-stale",
+                config,
+                options=options,
+                reason="fingerprint mismatch",
+                admitted=0,
+            )
             nested_map_preserved(forged.read_text(), stale.read_text(), label)
-            fresh = contract(args, forged, label + '-forged')
-            checked = owned.lower(args, forged, label + '-fresh', fresh,
-                                  options=options, cleanup=row['admitted'])
-            methods.census(checked, functions, label, admitted=functions if row['admitted'] else 0)
-            if not row['admitted']:
-                nested_map_preserved(forged.read_text(), checked.read_text(), label, row['owner'])
-                if ('ctnative.host_owner_proved = true' in checked.read_text()) != row['owner']:
-                    raise RuntimeError(f'{label}: forged presence changed nullable ownership')
-            elif comparable_provenance(host.run([args.translate, '--mlir-to-cpp', str(checked)]).stdout,
-                                       forged) != comparable_provenance(
-                    host.run([args.translate, '--mlir-to-cpp', str(output)]).stdout, ir):
-                raise RuntimeError(f'{label}: forged leaf/presence facts changed nested C++')
-        if not row['admitted']:
+            fresh = contract(args, forged, label + "-forged")
+            checked = owned.lower(
+                args, forged, label + "-fresh", fresh, options=options, cleanup=row["admitted"]
+            )
+            methods.census(checked, functions, label, admitted=functions if row["admitted"] else 0)
+            if not row["admitted"]:
+                nested_map_preserved(forged.read_text(), checked.read_text(), label, row["owner"])
+                if ("ctnative.host_owner_proved = true" in checked.read_text()) != row["owner"]:
+                    raise RuntimeError(f"{label}: forged presence changed nullable ownership")
+            elif comparable_provenance(
+                host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout, forged
+            ) != comparable_provenance(
+                host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
+            ):
+                raise RuntimeError(f"{label}: forged leaf/presence facts changed nested C++")
+        if not row["admitted"]:
             return
-        expected_text = str(row['expected_trace']).lower()
-        expected_output = f'trace={expected_text}\n' * 2
-        deduced = args.work / f'{name}.deduced.mlir'
-        host.run([args.opt, str(default), '--ctnative-print-deduced', '-o', str(deduced)])
-        for mode, native in (('explicit', default), ('deduced', deduced)):
-            cpp = host.run([args.translate, '--mlir-to-cpp', str(native)]).stdout
-            signature = ('std::function<js_num(js_num, std::string)>' if row['dynamic'] else
-                         'std::function<ctnative::nullable_scalar()>' if row.get('nullable') else
-                         'std::function<ctnative::nullable_scalar(js_num)>' if row['previous'] or row.get('alias') else
-                         'std::function<js_num(js_num)>')
+        expected_text = str(row["expected_trace"]).lower()
+        expected_output = f"trace={expected_text}\n" * 2
+        deduced = args.work / f"{name}.deduced.mlir"
+        host.run([args.opt, str(default), "--ctnative-print-deduced", "-o", str(deduced)])
+        for mode, native in (("explicit", default), ("deduced", deduced)):
+            cpp = host.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+            signature = (
+                "std::function<js_num(js_num, std::string)>"
+                if row["dynamic"]
+                else (
+                    "std::function<ctnative::nullable_scalar()>"
+                    if row.get("nullable")
+                    else (
+                        "std::function<ctnative::nullable_scalar(js_num)>"
+                        if row["previous"] or row.get("alias")
+                        else "std::function<js_num(js_num)>"
+                    )
+                )
+            )
             if owned.VM.search(cpp) or signature not in cpp:
-                raise RuntimeError(f'{name}/{mode}: lost typed standalone nested Map output')
-            generated = args.work / f'{name}.{mode}.cpp'
+                raise RuntimeError(f"{name}/{mode}: lost typed standalone nested Map output")
+            generated = args.work / f"{name}.{mode}.cpp"
             generated.write_text(cpp)
-            source = args.work / f'{name}.{mode}.lifetime.cpp'
+            source = args.work / f"{name}.{mode}.lifetime.cpp"
             source.write_text(nested_map_lifetime_cpp(cpp, row))
             for index, compiler in enumerate(compilers):
-                binary = source.with_suffix(f'.{index}').resolve()
-                host.run([compiler, *owned.FLAGS, str(source), '-o', str(binary)])
-                if (owned.VM.search(host.run([nm, '-C', str(binary)]).stdout)
-                        or host.run([str(binary)]).stdout != expected_output):
-                    raise RuntimeError(f'{name}/{mode}: standalone child lifetime mismatch')
-            binary = source.with_suffix('.sanitized').resolve()
-            host.run([compilers[1], *owned.FLAGS, '-O1', '-g', '-fno-omit-frame-pointer',
-                '-fsanitize=address,undefined', '-fsanitize-address-use-after-scope',
-                str(source), '-o', str(binary)])
-            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-                env={**os.environ, 'ASAN_OPTIONS': 'detect_stack_use_after_return=1:detect_leaks=1',
-                     'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1'})
+                binary = source.with_suffix(f".{index}").resolve()
+                host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
+                if (
+                    owned.VM.search(host.run([nm, "-C", str(binary)]).stdout)
+                    or host.run([str(binary)]).stdout != expected_output
+                ):
+                    raise RuntimeError(f"{name}/{mode}: standalone child lifetime mismatch")
+            binary = source.with_suffix(".sanitized").resolve()
+            host.run(
+                [
+                    compilers[1],
+                    *owned.FLAGS,
+                    "-O1",
+                    "-g",
+                    "-fno-omit-frame-pointer",
+                    "-fsanitize=address,undefined",
+                    "-fsanitize-address-use-after-scope",
+                    str(source),
+                    "-o",
+                    str(binary),
+                ]
+            )
+            result = subprocess.run(
+                [str(binary)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={
+                    **os.environ,
+                    "ASAN_OPTIONS": "detect_stack_use_after_return=1:detect_leaks=1",
+                    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1",
+                },
+            )
             if result.returncode or result.stdout != expected_output or result.stderr:
-                raise RuntimeError(f'{name}/{mode}: sanitized child lifetime failed\n'
-                                   f'{result.returncode}: {result.stdout}{result.stderr}')
-        if name in {'nested_map_retained', 'nested_map_distinct_saved',
-                    'nested_map_conditional_initialize', 'nested_map_cross_invocation',
-                    'nested_map_repeated_lookup', 'nested_map_cross_inverted_guard',
-                    'nested_map_conditional_unknown_contents', 'nested_map_dynamic_nullable',
-                    'nested_map_previous_observed', 'nested_map_dynamic_nullable_observed'}:
+                raise RuntimeError(
+                    f"{name}/{mode}: sanitized child lifetime failed\n"
+                    f"{result.returncode}: {result.stdout}{result.stderr}"
+                )
+        if name in {
+            "nested_map_retained",
+            "nested_map_distinct_saved",
+            "nested_map_conditional_initialize",
+            "nested_map_cross_invocation",
+            "nested_map_repeated_lookup",
+            "nested_map_cross_inverted_guard",
+            "nested_map_conditional_unknown_contents",
+            "nested_map_dynamic_nullable",
+            "nested_map_previous_observed",
+            "nested_map_dynamic_nullable_observed",
+        }:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         list(executor.map(check_case, cases.items()))
-    positives = sum(row['admitted'] for row in cases.values())
-    print(f'nested Maps: {positives} native programs, {len(cases) - positives} refusals, '
-          f'{observations} typed observations, {mutations} distinguishing mutations')
+    positives = sum(row["admitted"] for row in cases.values())
+    print(
+        f"nested Maps: {positives} native programs, {len(cases) - positives} refusals, "
+        f"{observations} typed observations, {mutations} distinguishing mutations"
+    )

@@ -55,18 +55,29 @@ def write_bmp(path: Path, w: int, h: int, pixels):
     """pixels: list of rows (top-down) of (a, r, g, b)."""
     row_size = w * 4
     data_size = row_size * h
-    header = struct.pack(
-        "<2sIHHI", b"BM", 14 + 108 + data_size, 0, 0, 14 + 108
-    )
+    header = struct.pack("<2sIHHI", b"BM", 14 + 108 + data_size, 0, 0, 14 + 108)
     # BITMAPV4HEADER for a well-defined 32bpp BGRA layout
     dib = struct.pack(
         "<IiiHHIIiiII4II36x3I",
-        108, w, -h, 1, 32,  # negative height = top-down
+        108,
+        w,
+        -h,
+        1,
+        32,  # negative height = top-down
         3,  # BI_BITFIELDS
-        data_size, 2835, 2835, 0, 0,
-        0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000,  # BGRA masks
+        data_size,
+        2835,
+        2835,
+        0,
+        0,
+        0x00FF0000,
+        0x0000FF00,
+        0x000000FF,
+        0xFF000000,  # BGRA masks
         0x73524742,  # CSType 'sRGB'
-        0, 0, 0,     # gamma r/g/b (unused for sRGB)
+        0,
+        0,
+        0,  # gamma r/g/b (unused for sRGB)
     )
     out = bytearray(header + dib)
     for row in pixels:
@@ -99,8 +110,19 @@ def blip():
         samples += struct.pack("<h", v)
     hdr = struct.pack(
         "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", 36 + len(samples), b"WAVE", b"fmt ", 16,
-        1, 1, rate, rate * 2, 2, 16, b"data", len(samples),
+        b"RIFF",
+        36 + len(samples),
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        1,
+        rate,
+        rate * 2,
+        2,
+        16,
+        b"data",
+        len(samples),
     )
     (ASSETS / "blip.wav").write_bytes(hdr + samples)
 
@@ -121,15 +143,23 @@ def png(path, w, h, rows):
     import zlib
 
     def chunk(kind, data):
-        return (struct.pack(">I", len(data)) + kind + data +
-                struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
 
     # Filter type 0 (none) in front of every scanline. Filtering exists to make
     # the deflate smaller and buys nothing on an image this size.
     raw = b"".join(b"\x00" + bytes(row) for row in rows)
     header = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8-bit truecolour
-    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
-                     chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw, 9))
+        + chunk(b"IEND", b"")
+    )
 
 
 def badge():
@@ -140,13 +170,13 @@ def badge():
         for x in range(16):
             top, left = y < 8, x < 8
             if top and left:
-                row += [220, 60, 60]      # red
+                row += [220, 60, 60]  # red
             elif top:
-                row += [60, 170, 90]      # green
+                row += [60, 170, 90]  # green
             elif left:
-                row += [70, 110, 210]     # blue
+                row += [70, 110, 210]  # blue
             else:
-                row += [240, 200, 70]     # yellow
+                row += [240, 200, 70]  # yellow
         rows.append(row)
     png(ASSETS / "badge.png", 16, 16, rows)
 

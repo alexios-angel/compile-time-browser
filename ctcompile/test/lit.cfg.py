@@ -44,8 +44,7 @@ llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
 # holding a positive program and three negative ones needs to be four files;
 # split-file cuts one file at its `//--- name` markers and drops the preamble
 # where the RUN and CHECK lines live.
-llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"],
-                                   [config.llvm_tools_dir])
+llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"], [config.llvm_tools_dir])
 
 # %cxx COMPILES THE EMITTED TRANSLATION UNIT AGAINST THE REAL ABI HEADERS.
 #
@@ -67,8 +66,9 @@ llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"],
 # `<compiler> -fsyntax-only ... _exe file.cpp`, which fails with a message about
 # a file called "_exe" rather than about the order of this list.
 config.substitutions.append(
-    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}"))
+    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}")
+)
 
 config.substitutions.append(
-    ("%cxx",
-     f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}"))
+    ("%cxx", f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}")
+)

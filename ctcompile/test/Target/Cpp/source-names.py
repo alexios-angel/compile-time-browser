@@ -16,8 +16,11 @@ def run(command):
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise SystemExit(
-            "source names failed: " + " ".join(map(str, command)) + "\n"
-            + result.stdout + result.stderr
+            "source names failed: "
+            + " ".join(map(str, command))
+            + "\n"
+            + result.stdout
+            + result.stderr
         )
     return result.stdout
 
@@ -73,11 +76,23 @@ def main():
             raise SystemExit("source name test requires " + " or ".join(candidates))
         compilers.append(compiler)
     args.work.mkdir(parents=True, exist_ok=True)
-    flags = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic",
-             "-Wconversion", "-ffp-contract=off"]
-    for name, harness in [("named", NAMED_MAIN), ("loops", LOOP_MAIN),
-                          ("loops-top", LOOP_MAIN), ("standard-headers", HEADER_MAIN),
-                          ("opaque-types", OPAQUE_MAIN)]:
+    flags = [
+        "-std=c++23",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pedantic",
+        "-Wconversion",
+        "-ffp-contract=off",
+    ]
+    for name, harness in [
+        ("named", NAMED_MAIN),
+        ("loops", LOOP_MAIN),
+        ("loops-top", LOOP_MAIN),
+        ("standard-headers", HEADER_MAIN),
+        ("opaque-types", OPAQUE_MAIN),
+    ]:
         emitted = (args.fixtures / f"{name}.cpp").read_text()
         if not emitted.strip():
             raise SystemExit(f"source name test received empty {name}.cpp")
@@ -85,8 +100,17 @@ def main():
         source.write_text(emitted + harness)
         for index, compiler in enumerate(compilers):
             executable = (args.work / f"{name}-{index}").resolve()
-            run([compiler, *flags, "-I", str(args.fixtures.resolve()),
-                 str(source), "-o", str(executable)])
+            run(
+                [
+                    compiler,
+                    *flags,
+                    "-I",
+                    str(args.fixtures.resolve()),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ]
+            )
             run([str(executable)])
             print(f"source names: {Path(compiler).name} preserved {name} bindings")
 

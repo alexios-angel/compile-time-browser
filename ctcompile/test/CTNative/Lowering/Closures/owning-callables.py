@@ -10,8 +10,7 @@ import subprocess
 
 
 def run(command, *, environment=None):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120,
-                            env=environment)
+    result = subprocess.run(command, text=True, capture_output=True, timeout=120, env=environment)
     if result.returncode:
         raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
     return result.stdout
@@ -40,12 +39,29 @@ def main():
     emitted = []
     for fixture, expected in fixtures.items():
         module = args.work / f"{fixture}.mlir"
-        run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
-             f"-DSOURCE={args.fixtures / (fixture + '.js')}", f"-DOUTPUT={module}",
-             "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/pipeline.cmake")])
+        run(
+            [
+                "cmake",
+                f"-DTRANSLATE={args.translate}",
+                f"-DOPT={args.opt}",
+                f"-DSOURCE={args.fixtures / (fixture + '.js')}",
+                f"-DOUTPUT={module}",
+                "-DOPTIMIZE=OFF",
+                "-P",
+                str(tests / "CTNative/Checks/pipeline.cmake"),
+            ]
+        )
         deduced = args.work / f"{fixture}-deduced.mlir"
-        run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(module),
-             "-o", str(deduced)])
+        run(
+            [
+                args.opt,
+                "--ctnative-print-deduced",
+                "--mlir-print-debuginfo",
+                str(module),
+                "-o",
+                str(deduced),
+            ]
+        )
         decisions = []
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
@@ -59,7 +75,8 @@ def main():
             assert "ctnative::invoke_callable(" in cpp, cpp
             lambdas = re.findall(
                 r"ctnative::ctn_env_\w+ const ([A-Za-z_]\w*) = \[([^\]]*)\]\(([^\n]*)\) -> ([^\n]+) \{",
-                cpp)
+                cpp,
+            )
             assert lambdas, cpp
             assert "ctn_bind_" not in cpp, cpp
             assert any(name == "ctn_lambda" for name, *_ in lambdas), cpp
@@ -87,22 +104,55 @@ def main():
             emitted.append((source, expected))
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{fixture}-{label}-{index}").resolve()
-                run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
-                     "-Wconversion", "-pedantic", "-ffp-contract=off", str(source), "-o", str(binary)])
+                run(
+                    [
+                        compiler,
+                        "-std=c++23",
+                        "-O2",
+                        "-Wall",
+                        "-Wextra",
+                        "-Werror",
+                        "-Wconversion",
+                        "-pedantic",
+                        "-ffp-contract=off",
+                        str(source),
+                        "-o",
+                        str(binary),
+                    ]
+                )
                 assert run([str(binary)]) == expected
         assert decisions[0] == decisions[1], decisions
 
     # Clang's address sanitizer catches a borrowed factory frame even when the
     # unsanitized stack happens to keep its old bytes. Long strings additionally
     # exercise heap ownership; leak checks cover std::function/shared_ptr cleanup.
-    environment = dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                       UBSAN_OPTIONS="halt_on_error=1")
+    environment = dict(
+        os.environ,
+        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+        UBSAN_OPTIONS="halt_on_error=1",
+    )
     for source, expected in emitted:
         binary = source.with_suffix(".sanitized").resolve()
-        run([compilers[1], "-std=c++23", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-             "-Wconversion", "-pedantic", "-ffp-contract=off", "-fno-omit-frame-pointer",
-             "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-             str(source), "-o", str(binary)])
+        run(
+            [
+                compilers[1],
+                "-std=c++23",
+                "-O1",
+                "-g",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wconversion",
+                "-pedantic",
+                "-ffp-contract=off",
+                "-fno-omit-frame-pointer",
+                "-fsanitize=address,undefined",
+                "-fsanitize-address-use-after-scope",
+                str(source),
+                "-o",
+                str(binary),
+            ]
+        )
         assert run([str(binary)], environment=environment) == expected
     print("owning callables: 9 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
 

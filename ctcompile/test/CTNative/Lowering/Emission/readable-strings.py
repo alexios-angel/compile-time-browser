@@ -76,8 +76,21 @@ int main() {
         if compiler is None:
             raise RuntimeError(f"literal regression requires {name}")
         executable = args.work / name
-        run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
-             "-Wconversion", "-pedantic", str(source), "-o", str(executable)])
+        run(
+            [
+                compiler,
+                "-std=c++23",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wconversion",
+                "-pedantic",
+                str(source),
+                "-o",
+                str(executable),
+            ]
+        )
         run([str(executable)])
     print(f"{len(cases)} native literal cases preserve every byte under GCC and Clang")
 

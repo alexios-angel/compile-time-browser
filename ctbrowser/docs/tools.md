@@ -1,6 +1,8 @@
 # The tools
 
-Everything in `tools/`, by job. `format.sh`, `remote-build.sh` and
+Everything in `tools/`, by job. `format.sh` (clang-format for the C++, black
+for the Python - `pyproject.toml` at the root is black's whole configuration,
+`tools/Brewfile` pins it), `remote-build.sh` and
 `fetch-angle.sh` stay at the top level because they are the everyday entry
 points; the rest are foldered:
 

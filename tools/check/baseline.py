@@ -17,6 +17,7 @@ MEASURED ON THE DEVBOX, like every other build here. The small WSL box has 7.5
 GiB and a different CPU, so a number from it would be a different baseline
 wearing this one's name.
 """
+
 import argparse
 import json
 import shlex
@@ -54,7 +55,7 @@ def machine(host: str) -> dict:
         "nproc ; "
         "free -m | awk '/^Mem:/ {print $2}' ; "
         f"{REMOTE_DIR}/tools/clang-std-embed/bin/clang++ --version | head -1 ; "
-        ". /etc/os-release && echo \"$PRETTY_NAME\""
+        '. /etc/os-release && echo "$PRETTY_NAME"'
     )
     cpu, cores, ram_mb, compiler, os_name = [
         line.strip() for line in on_box(probe, host).splitlines()[:5]
@@ -75,20 +76,30 @@ def machine(host: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default="devbox", help="the build box (default: devbox)")
-    ap.add_argument("--record", action="store_true",
-                    help=f"write {OUT.relative_to(ROOT)} as well as printing it")
+    ap.add_argument(
+        "--record",
+        action="store_true",
+        help=f"write {OUT.relative_to(ROOT)} as well as printing it",
+    )
     args = ap.parse_args()
 
     # Built EXCLUDE_FROM_ALL, so it has to be asked for by name.
-    on_box(f"cd {REMOTE_DIR}/ctbrowser && cmake --build --preset default "
-           "--target ctcompile-tool-ctbaseline", args.host)
+    on_box(
+        f"cd {REMOTE_DIR}/ctbrowser && cmake --build --preset default "
+        "--target ctcompile-tool-ctbaseline",
+        args.host,
+    )
 
     corpora = " ".join(shlex.quote(f"{name}={path}") for name, path in CORPORA)
-    measured = json.loads(on_box(
-        f"cd {REMOTE_DIR} && build/ctcompile/tools/ctbaseline/ctbaseline {corpora}", args.host))
+    measured = json.loads(
+        on_box(
+            f"cd {REMOTE_DIR} && build/ctcompile/tools/ctbaseline/ctbaseline {corpora}", args.host
+        )
+    )
 
-    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
-                            capture_output=True, text=True).stdout.strip()
+    commit = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
     report = {
         "what": "startup cost per stage, before any of it is compiled ahead of time",
         "measured_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

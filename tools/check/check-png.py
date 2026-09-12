@@ -24,10 +24,10 @@ def chunks(data):
         sys.exit("check-png: not a PNG signature")
     at = 8
     while at < len(data):
-        (length,) = struct.unpack(">I", data[at:at + 4])
-        kind = data[at + 4:at + 8]
-        body = data[at + 8:at + 8 + length]
-        (crc,) = struct.unpack(">I", data[at + 8 + length:at + 12 + length])
+        (length,) = struct.unpack(">I", data[at : at + 4])
+        kind = data[at + 4 : at + 8]
+        body = data[at + 8 : at + 8 + length]
+        (crc,) = struct.unpack(">I", data[at + 8 + length : at + 12 + length])
         want = zlib.crc32(kind + body) & 0xFFFFFFFF
         if crc != want:
             sys.exit(f"check-png: {kind.decode()} CRC is {crc:08x}, should be {want:08x}")
@@ -36,8 +36,9 @@ def chunks(data):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("path")
     ap.add_argument("--expect", help="the colour every pixel should be, as AARRGGBB")
     args = ap.parse_args()
@@ -69,15 +70,17 @@ def main():
 
     pixels = []
     for y in range(height):
-        row = raw[y * stride:(y + 1) * stride]
+        row = raw[y * stride : (y + 1) * stride]
         if row[0] != 0:
             sys.exit(f"check-png: row {y} uses filter {row[0]}, only 0 is written")
         for x in range(width):
-            r, g, b, a = row[1 + x * 4:5 + x * 4]
+            r, g, b, a = row[1 + x * 4 : 5 + x * 4]
             pixels.append((a << 24) | (r << 16) | (g << 8) | b)
 
-    print(f"check-png: {args.path} is {width}x{height} RGBA, {len(data)} bytes, "
-          f"{len(pixels)} pixels decoded")
+    print(
+        f"check-png: {args.path} is {width}x{height} RGBA, {len(data)} bytes, "
+        f"{len(pixels)} pixels decoded"
+    )
     print(f"           first pixel {pixels[0]:08X}, last {pixels[-1]:08X}")
     if args.expect:
         want = int(args.expect, 16)

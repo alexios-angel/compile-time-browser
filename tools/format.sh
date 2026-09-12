@@ -56,6 +56,19 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# THE PYTHON HALF: black (tools/Brewfile pins it, pyproject.toml configures it)
+# over the same tracked-or-untracked list, for the same reason there is one
+# script - a second gate is a second one to forget. Missing black is an error
+# rather than a skip: a formatter that silently does nothing when it is not
+# installed is the tracked-only hole above in a different coat.
+black=$(command -v black || true)
+if [[ -z $black ]]; then
+    echo "format.sh: no black found - brew install black (tools/Brewfile)" >&2
+    exit 127
+fi
+mapfile -t pyfiles < <({ git ls-files '*.py'
+                         git ls-files --others --exclude-standard '*.py'; }                        | grep -v '^third-party/' | grep -v '^build')
+
 if [[ ${1:-} == "--check" ]]; then
     # One invocation; clang-format skips what .clang-format-ignore names and
     # reports each unformatted line as an error.
@@ -64,9 +77,15 @@ if [[ ${1:-} == "--check" ]]; then
         echo "format.sh: the files above are not formatted. Run tools/format.sh" >&2
         exit 1
     fi
-    echo "format.sh: ${#files[@]} files are formatted"
+    if ! "$black" --check --quiet "${pyfiles[@]}"; then
+        echo >&2
+        echo "format.sh: the python files above are not formatted. Run tools/format.sh" >&2
+        exit 1
+    fi
+    echo "format.sh: ${#files[@]} files and ${#pyfiles[@]} python files are formatted"
     exit 0
 fi
 
 "$format" -i "${files[@]}"
-echo "format.sh: formatted ${#files[@]} files"
+"$black" --quiet "${pyfiles[@]}"
+echo "format.sh: formatted ${#files[@]} files and ${#pyfiles[@]} python files"

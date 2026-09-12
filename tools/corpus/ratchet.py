@@ -41,36 +41,102 @@ ENGINE = ROOT / "ctbrowser"
 # corpus -> (test/corpus subdirectory, vendored bundle or None, rung names,
 #            coverage kind, the doc the `unscoped` probe module points at)
 CORPORA = {
-    "p5": ("p5", "ctbrowser/vendor/p5/p5.js",
-           ["unread", "read", "lexed", "parsed", "compiled", "fits the bytecode",
-            "top level ran", "defines p5", "loads as a page", "constructs", "setup ran",
-            "draw ran", "paints what the sketch drew"],
-           "functions", None),
-    "phaser": ("phaser", "ctbrowser/vendor/phaser/phaser.js",
-               ["unread", "read", "lexed", "parsed", "compiled", "runs as a page",
-                "defines Phaser", "constructs a Game", "runs create()", "runs update()",
-                "paints what the scene drew"],
-               "namespaces", None),
-    "babylon": ("babylon", "ctbrowser/vendor/babylon/babylon.js",
-                ["nothing", "a scene renders", "a texture samples",
-                 "two meshes with two materials", "an animation moves the picture",
-                 "a directional light shades", "specular highlights", "alpha blending",
-                 "a post-process runs", "a shadow lands", "a PBR material renders",
-                 "glTF import", "the GUI draws"],
-                "modules", "ctbrowser/docs/plans/babylon.md"),
-    "webgl2": ("webgl2", None,
-               ["nothing", "makes a webgl2 context", "has the WebGL 2 constants",
-                "compiles #version 300 es", "vertex array objects work",
-                "accepts instanced drawing", "an instanced draw reaches the pixels",
-                "the WebGL 1 extensions expose the same thing",
-                "Phaser's WebGL renderer paints on it"],
-               "modules", "ctbrowser/docs/history/webgl2.md"),
-    "module": ("modules", None,
-               ["nothing", "import/export parse", "one module runs in its own scope",
-                "an importer sees an export", "imported bindings are live", "a cycle resolves",
-                "<script type=module> runs on a page", "relative specifiers resolve",
-                "dynamic import() works", "Babylon's ES build boots"],
-               None, None),
+    "p5": (
+        "p5",
+        "ctbrowser/vendor/p5/p5.js",
+        [
+            "unread",
+            "read",
+            "lexed",
+            "parsed",
+            "compiled",
+            "fits the bytecode",
+            "top level ran",
+            "defines p5",
+            "loads as a page",
+            "constructs",
+            "setup ran",
+            "draw ran",
+            "paints what the sketch drew",
+        ],
+        "functions",
+        None,
+    ),
+    "phaser": (
+        "phaser",
+        "ctbrowser/vendor/phaser/phaser.js",
+        [
+            "unread",
+            "read",
+            "lexed",
+            "parsed",
+            "compiled",
+            "runs as a page",
+            "defines Phaser",
+            "constructs a Game",
+            "runs create()",
+            "runs update()",
+            "paints what the scene drew",
+        ],
+        "namespaces",
+        None,
+    ),
+    "babylon": (
+        "babylon",
+        "ctbrowser/vendor/babylon/babylon.js",
+        [
+            "nothing",
+            "a scene renders",
+            "a texture samples",
+            "two meshes with two materials",
+            "an animation moves the picture",
+            "a directional light shades",
+            "specular highlights",
+            "alpha blending",
+            "a post-process runs",
+            "a shadow lands",
+            "a PBR material renders",
+            "glTF import",
+            "the GUI draws",
+        ],
+        "modules",
+        "ctbrowser/docs/plans/babylon.md",
+    ),
+    "webgl2": (
+        "webgl2",
+        None,
+        [
+            "nothing",
+            "makes a webgl2 context",
+            "has the WebGL 2 constants",
+            "compiles #version 300 es",
+            "vertex array objects work",
+            "accepts instanced drawing",
+            "an instanced draw reaches the pixels",
+            "the WebGL 1 extensions expose the same thing",
+            "Phaser's WebGL renderer paints on it",
+        ],
+        "modules",
+        "ctbrowser/docs/history/webgl2.md",
+    ),
+    "module": (
+        "modules",
+        None,
+        [
+            "nothing",
+            "import/export parse",
+            "one module runs in its own scope",
+            "an importer sees an export",
+            "imported bindings are live",
+            "a cycle resolves",
+            "<script type=module> runs on a page",
+            "relative specifiers resolve",
+            "dynamic import() works",
+            "Babylon's ES build boots",
+        ],
+        None,
+        None,
+    ),
 }
 
 # `  function color$1(p5, fn, lifecycles){` - rollup's module wrappers, at the
@@ -99,8 +165,12 @@ class Corpus:
 
     def build(self):
         """Build just the one test, so the inner loop is seconds rather than a minute."""
-        r = subprocess.run(["cmake", "--build", "--preset", "default", "--target", self.target],
-                           cwd=ENGINE, capture_output=True, text=True)
+        r = subprocess.run(
+            ["cmake", "--build", "--preset", "default", "--target", self.target],
+            cwd=ENGINE,
+            capture_output=True,
+            text=True,
+        )
         if r.returncode != 0:
             sys.stderr.write(r.stdout + r.stderr)
             sys.exit(f"{self.tag}: build failed")
@@ -115,6 +185,7 @@ class Corpus:
 
 
 # --- ratchet: how FAR ---------------------------------------------------------
+
 
 def parse_ratchet(out):
     """(level, blocker, full_level, full_blocker) from the test's own report.
@@ -131,7 +202,7 @@ def parse_ratchet(out):
             else:
                 level = int(hit.group(2))
         elif line.startswith("FULL BLOCKER "):
-            full_blocker = line[len("FULL BLOCKER "):]
+            full_blocker = line[len("FULL BLOCKER ") :]
         elif hit := re.match(r"(?:BLOCKER|blocked by:)\s*(.*)$", line):
             blocker = hit.group(1)
     return level, blocker, full, full_blocker
@@ -204,8 +275,10 @@ def do_bisect(c, name):
     fragment = carve(c, text, name, found[name])
     start, end, start_line = found[name]
     body = text[start:end]
-    print(f"{c.tag}: {name} is {c.bundle.name}:{start_line}, {len(body)} bytes, "
-          f"{body.count(chr(10)) + 1} lines -> {fragment.relative_to(ROOT)}\n")
+    print(
+        f"{c.tag}: {name} is {c.bundle.name}:{start_line}, {len(body)} bytes, "
+        f"{body.count(chr(10)) + 1} lines -> {fragment.relative_to(ROOT)}\n"
+    )
     c.build()
     out, _ = c.run([str(fragment)])
     print(out)
@@ -246,8 +319,10 @@ def do_survey(c):
         print(f"  {len(hits):>3} modules  {kind}")
         for name, line, level, blocker in hits:
             position = re.search(r"[\w.$-]+:\d+:\d+", blocker)
-            print(f"        level {level}  {name:<22} {c.bundle.name}:{line}"
-                  f"{'  -> ' + position.group(0) if position else ''}")
+            print(
+                f"        level {level}  {name:<22} {c.bundle.name}:{line}"
+                f"{'  -> ' + position.group(0) if position else ''}"
+            )
         print()
 
 
@@ -262,9 +337,11 @@ def advance_ratchet(c):
         """Refuse to move a recorded number backwards. The pawl turns one way."""
         was = re.search(rf"^{key}=(\d+)$", old, re.M)
         if was and measured is not None and int(was.group(1)) > measured:
-            sys.exit(f"{c.tag}: refusing to advance {key} BACKWARDS, "
-                     f"{was.group(1)} -> {measured}.\nThe pawl only turns one way. "
-                     f"Fix the regression.")
+            sys.exit(
+                f"{c.tag}: refusing to advance {key} BACKWARDS, "
+                f"{was.group(1)} -> {measured}.\nThe pawl only turns one way. "
+                f"Fix the regression."
+            )
 
     forward("level", level)
     forward("full-level", full)
@@ -274,8 +351,9 @@ def advance_ratchet(c):
         # Added rather than replaced when the file predates the second mode.
         if re.search(r"^full-level=", text, re.M):
             text = re.sub(r"^full-level=.*$", f"full-level={full}", text, flags=re.M)
-            text = re.sub(r"^full-blocker=.*$", f"full-blocker={full_blocker or ''}", text,
-                          flags=re.M)
+            text = re.sub(
+                r"^full-blocker=.*$", f"full-blocker={full_blocker or ''}", text, flags=re.M
+            )
         else:
             text = text.rstrip() + f"\nfull-level={full}\nfull-blocker={full_blocker or ''}\n"
     c.record.write_text(text)
@@ -290,6 +368,7 @@ def advance_ratchet(c):
 
 
 # --- api: how WIDE ------------------------------------------------------------
+
 
 def advance_api(c):
     out, _ = c.run()
@@ -332,11 +411,13 @@ def do_coverage(c):
         public = [n for n in declared if not n.startswith("_")]
         covered = [n for n in public if re.search(rf"\b{re.escape(n)}\b", probes)]
         missing = [n for n in public if n not in covered]
-        print(f"\n  {c.name} declares {len(public)} public functions; "
-              f"probes mention {len(covered)}.\n")
+        print(
+            f"\n  {c.name} declares {len(public)} public functions; "
+            f"probes mention {len(covered)}.\n"
+        )
         print(f"  {len(missing)} with no probe:\n")
         for i in range(0, len(missing), 6):
-            print("    " + "  ".join(f"{n:<22}" for n in missing[i:i + 6]).rstrip())
+            print("    " + "  ".join(f"{n:<22}" for n in missing[i : i + 6]).rstrip())
         print()
     elif c.coverage == "namespaces":
         root = ROOT_EXPORT.search(c.bundle.read_text(errors="replace"))
@@ -346,17 +427,27 @@ def do_coverage(c):
         # Where a probe's module tag does not match the namespace name. Written
         # out rather than matched fuzzily: a coverage tool that overstates
         # itself is worse than one that understates.
-        aliases = {"Animations": ["anims"], "GameObjects": ["add", "gameobject", "displaylist"],
-                   "Scenes": ["scene"]}
-        missing = [n for n in namespaces
-                   if f"Phaser.{n}" not in probes
-                   and not any(f"['{t}'," in probes for t in aliases.get(n, [n.lower()]))]
-        print(f"\n  {len(namespaces) - len(missing)}/{len(namespaces)} Phaser namespaces "
-              f"have at least one probe\n")
+        aliases = {
+            "Animations": ["anims"],
+            "GameObjects": ["add", "gameobject", "displaylist"],
+            "Scenes": ["scene"],
+        }
+        missing = [
+            n
+            for n in namespaces
+            if f"Phaser.{n}" not in probes
+            and not any(f"['{t}'," in probes for t in aliases.get(n, [n.lower()]))
+        ]
+        print(
+            f"\n  {len(namespaces) - len(missing)}/{len(namespaces)} Phaser namespaces "
+            f"have at least one probe\n"
+        )
         for name in missing:
             print(f"    no probe mentions  Phaser.{name}")
-        print("\n  A namespace with one probe is not a namespace that works - this is a\n"
-              "  list of what has NOTHING pointed at it, not a coverage percentage.\n")
+        print(
+            "\n  A namespace with one probe is not a namespace that works - this is a\n"
+            "  list of what has NOTHING pointed at it, not a coverage percentage.\n"
+        )
     else:
         # No bundle to count against: the shape of the probe set itself, and in
         # particular how much of it is `unscoped` - what the doc has
@@ -366,26 +457,38 @@ def do_coverage(c):
             counts[tag] = counts.get(tag, 0) + 1
         print(f"\n  {sum(counts.values())} probes across {len(counts)} modules\n")
         for tag in sorted(counts, key=lambda t: -counts[t]):
-            note = f"  <- deliberately not implemented; see {c.unscoped_doc}" \
-                if tag == "unscoped" else ""
+            note = (
+                f"  <- deliberately not implemented; see {c.unscoped_doc}"
+                if tag == "unscoped"
+                else ""
+            )
             print(f"    {counts[tag]:>3}  {tag}{note}")
         print()
 
 
 # --- main ---------------------------------------------------------------------
 
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("corpus", choices=sorted(CORPORA))
     ap.add_argument("mode", choices=["ratchet", "api"])
     ap.add_argument("--advance", action="store_true", help="record what was just measured")
-    ap.add_argument("--bisect", metavar="MODULE",
-                    help="ratchet, p5 only: measure one rollup module instead of the bundle")
-    ap.add_argument("--survey", action="store_true",
-                    help="ratchet, p5 only: measure every module and rank the blockers")
-    ap.add_argument("--coverage", action="store_true",
-                    help="api: list what no probe mentions - the work queue")
+    ap.add_argument(
+        "--bisect",
+        metavar="MODULE",
+        help="ratchet, p5 only: measure one rollup module instead of the bundle",
+    )
+    ap.add_argument(
+        "--survey",
+        action="store_true",
+        help="ratchet, p5 only: measure every module and rank the blockers",
+    )
+    ap.add_argument(
+        "--coverage", action="store_true", help="api: list what no probe mentions - the work queue"
+    )
     ap.add_argument("--only", metavar="MODULE", help="api: show only one module's results")
     args = ap.parse_args(argv)
     c = Corpus(args.corpus, args.mode)
@@ -406,8 +509,10 @@ def main(argv=None):
         print(out)
         show_context(parse_ratchet(out)[1], c.bundle)
         if code != 0:
-            print("The ratchet is not satisfied. If this is progress, "
-                  f"run tools/corpus/{c.tag}.py --advance")
+            print(
+                "The ratchet is not satisfied. If this is progress, "
+                f"run tools/corpus/{c.tag}.py --advance"
+            )
         return code
 
     if args.coverage:
@@ -425,8 +530,10 @@ def main(argv=None):
     else:
         print(out)
     if code != 0:
-        print("The recorded surface is not satisfied. If this is progress, "
-              f"run tools/corpus/{c.tag}.py --advance")
+        print(
+            "The recorded surface is not satisfied. If this is progress, "
+            f"run tools/corpus/{c.tag}.py --advance"
+        )
     return code
 
 

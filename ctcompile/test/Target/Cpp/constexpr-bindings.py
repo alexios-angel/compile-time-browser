@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 
-
 MAIN = """
 int main() {
     if (static_chain() != 10.0 || integer_chain() != 85) { return 1; }
@@ -62,8 +61,18 @@ def main():
         if not compiler:
             raise RuntimeError("constexpr binding test requires " + " or ".join(candidates))
         compilers.append(compiler)
-    flags = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic",
-             "-Wconversion", "-ffp-contract=off", "-I", str(args.fixtures.resolve())]
+    flags = [
+        "-std=c++23",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pedantic",
+        "-Wconversion",
+        "-ffp-contract=off",
+        "-I",
+        str(args.fixtures.resolve()),
+    ]
 
     def compile_and_run(label, text, harness="", *, defines=(), expected=""):
         source = args.work / f"{label}.cpp"
@@ -103,21 +112,41 @@ def main():
     source = args.work / "wrong-pin.cpp"
     source.write_text(mutated + MAIN)
     for compiler in compilers:
-        run([compiler, *flags, "-fsyntax-only", str(source)],
-            failure_site="constexpr-bindings.js:1:1")
+        run(
+            [compiler, *flags, "-fsyntax-only", str(source)],
+            failure_site="constexpr-bindings.js:1:1",
+        )
     compile_and_run("wrong-pin-disabled", mutated, MAIN, defines=("-DCTCOMPILE_NO_TYPE_PINS",))
 
     # Keep two different call-site inputs and disable optional precomputation:
     # the emitted function parameter stays dynamic while its local seed is static.
     tests = Path(__file__).resolve().parents[2]
     native = args.work / "native.mlir"
-    run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
-         f"-DSOURCE={args.fixtures / 'constexpr-source.js'}", f"-DOUTPUT={native}",
-         "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/pipeline.cmake")])
+    run(
+        [
+            "cmake",
+            f"-DTRANSLATE={args.translate}",
+            f"-DOPT={args.opt}",
+            f"-DSOURCE={args.fixtures / 'constexpr-source.js'}",
+            f"-DOUTPUT={native}",
+            "-DOPTIMIZE=OFF",
+            "-P",
+            str(tests / "CTNative/Checks/pipeline.cmake"),
+        ]
+    )
     if "ctnative.constexpr_bindings" not in native.read_text():
         raise RuntimeError("native lowering omitted the constexpr policy marker")
     deduced = args.work / "native-deduced.mlir"
-    run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(native), "-o", str(deduced)])
+    run(
+        [
+            args.opt,
+            "--ctnative-print-deduced",
+            "--mlir-print-debuginfo",
+            str(native),
+            "-o",
+            str(deduced),
+        ]
+    )
     decisions = []
     for label, module in [("native", native), ("native-deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(module)])
@@ -129,7 +158,9 @@ def main():
             raise RuntimeError(f"source literal did not become constexpr:\n{body}")
         if not re.search(r"(?:js_num|auto) const dynamicSum = input \+ staticSeed;", body):
             raise RuntimeError(f"runtime computation lost its source name/type:\n{body}")
-        decisions.append(re.findall(r"\b(constexpr )?(?:js_num|auto)( const)? (staticSeed|dynamicSum)\b", body))
+        decisions.append(
+            re.findall(r"\b(constexpr )?(?:js_num|auto)( const)? (staticSeed|dynamicSum)\b", body)
+        )
         compile_and_run(label, cpp, expected="first=11\nsecond=17\n")
     if decisions[0] != decisions[1]:
         raise RuntimeError(f"deduction changed constexpr/const decisions: {decisions}")

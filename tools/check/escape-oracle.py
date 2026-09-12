@@ -215,7 +215,9 @@ def read_recording(path: str) -> Recording:
                 function = None
             elif tag == "fn":
                 assert program is not None, "an `fn` line before any `program` line"
-                function = Function(int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7]), parts[9])
+                function = Function(
+                    int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7]), parts[9]
+                )
                 program.functions[function.index] = function
             elif tag == "r":
                 assert function is not None, "an `r` line before any `fn` line"
@@ -229,8 +231,15 @@ def read_recording(path: str) -> Recording:
                 assert function is not None, "a `site` line before any `fn` line"
                 # site <pc> kind <k> made <m> confined <c> escaped <e> unresolved <u>
                 #      unchecked <x> routes <label>:<n>[,...]|-
-                site = Site(parse_pc(parts[1]), parts[3], int(parts[5]), int(parts[7]), int(parts[9]),
-                            int(parts[11]), int(parts[13]))
+                site = Site(
+                    parse_pc(parts[1]),
+                    parts[3],
+                    int(parts[5]),
+                    int(parts[7]),
+                    int(parts[9]),
+                    int(parts[11]),
+                    int(parts[13]),
+                )
                 if site.kind not in KINDS:
                     raise SystemExit(f"{path}: unknown kind `{site.kind}` in a site line")
                 if parts[14] != "routes":
@@ -239,13 +248,19 @@ def read_recording(path: str) -> Recording:
                     for item in parts[15].split(","):
                         label, count = item.split(":")
                         if label not in ROOT_LABELS:
-                            raise SystemExit(f"{path}: unknown root label `{label}` - GCRoots.def moved?")
+                            raise SystemExit(
+                                f"{path}: unknown root label `{label}` - GCRoots.def moved?"
+                            )
                         site.routes[label] = int(count)
                 # THE LINE MUST ACCOUNT FOR ITSELF.
                 if site.made != site.confined + site.escaped + site.unresolved + site.unchecked:
-                    raise SystemExit(f"{path}: site {site.pc} {site.kind} of {function.name}: made != sum")
+                    raise SystemExit(
+                        f"{path}: site {site.pc} {site.kind} of {function.name}: made != sum"
+                    )
                 if sum(site.routes.values()) != site.escaped:
-                    raise SystemExit(f"{path}: site {site.pc} {site.kind} of {function.name}: routes != escaped")
+                    raise SystemExit(
+                        f"{path}: site {site.pc} {site.kind} of {function.name}: routes != escaped"
+                    )
                 if site.made == 0:
                     raise SystemExit(f"{path}: a site line with made 0 (they are not written)")
                 function.sites[(site.pc, site.kind)] = site
@@ -306,7 +321,9 @@ def read_claims(path: str):
                 flags[(parts[1], int(parts[2]))] = parts[3]
                 continue
             if len(parts) != 6 or parts[0] != "escape":
-                raise SystemExit(f"{path}:{number}: expected `escape <hash> <fn> <pc> <kind> <verdict>`")
+                raise SystemExit(
+                    f"{path}:{number}: expected `escape <hash> <fn> <pc> <kind> <verdict>`"
+                )
             kind, verdict = parts[4], parts[5]
             if kind not in KINDS:
                 raise SystemExit(f"{path}:{number}: unknown kind `{kind}`")
@@ -320,14 +337,27 @@ def read_claims(path: str):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--recording", required=True)
     ap.add_argument("--infer", choices=sorted(STUBS), help="use a built-in stub inference")
     ap.add_argument("--claims", help="a claims file from a real inference")
     ap.add_argument("--name", default="", help="what to call this corpus in the report")
     ap.add_argument("--max-report", type=int, default=10, help="violations to name (0 = all)")
-    for what in ("violations", "observed", "unobserved", "sound", "partial", "pending",
-                 "imprecise", "exact", "unclaimed", "inconclusive", "claimed"):
+    for what in (
+        "violations",
+        "observed",
+        "unobserved",
+        "sound",
+        "partial",
+        "pending",
+        "imprecise",
+        "exact",
+        "unclaimed",
+        "inconclusive",
+        "claimed",
+    ):
         ap.add_argument(f"--expect-{what}", type=int, help="fail unless the count is exactly this")
     args = ap.parse_args()
 
@@ -348,8 +378,21 @@ def main() -> int:
         claims, flags, uncheckable = read_claims(args.claims)
 
     observed = sum(len(fn.sites) for p in rec.programs.values() for fn in p.functions.values())
-    counts = {k: 0 for k in ("unobserved", "violations", "sound", "partial", "pending",
-                             "imprecise", "exact", "unclaimed", "inconclusive", "mismatch")}
+    counts = {
+        k: 0
+        for k in (
+            "unobserved",
+            "violations",
+            "sound",
+            "partial",
+            "pending",
+            "imprecise",
+            "exact",
+            "unclaimed",
+            "inconclusive",
+            "mismatch",
+        )
+    }
     reasons: dict[str, int] = {}
     violations = []
     mismatches = []
@@ -381,7 +424,7 @@ def main() -> int:
             else:
                 counts["pending"] += 1
         else:
-            reason = verdict[len("escapes:"):]
+            reason = verdict[len("escapes:") :]
             if site.escaped > 0:
                 counts["exact"] += 1
             elif site.confined > 0 and site.clean():
@@ -392,24 +435,34 @@ def main() -> int:
 
     for phash, prog in rec.programs.items():
         for index, fn in prog.functions.items():
-            for (pc, kind) in fn.sites:
+            for pc, kind in fn.sites:
                 if (phash, index, pc, kind) not in seen_keys:
                     counts["unclaimed"] += 1
 
     label = args.name or args.recording
     which = args.infer or args.claims
     print(f"== escape oracle: {label} vs `{which}`")
-    print(f"   programs {len(rec.programs)}  functions "
-          f"{sum(len(p.functions) for p in rec.programs.values())}")
-    print(f"   budget {rec.budget}  pops {rec.pops}  unwinds {rec.unwinds}  checks {rec.checks}  "
-          f"unframed {rec.unframed}  unresolved {rec.unresolved}")
-    print(f"   claims {len(claims)}   observed sites {observed}   unobserved claims {counts['unobserved']}")
+    print(
+        f"   programs {len(rec.programs)}  functions "
+        f"{sum(len(p.functions) for p in rec.programs.values())}"
+    )
+    print(
+        f"   budget {rec.budget}  pops {rec.pops}  unwinds {rec.unwinds}  checks {rec.checks}  "
+        f"unframed {rec.unframed}  unresolved {rec.unresolved}"
+    )
+    print(
+        f"   claims {len(claims)}   observed sites {observed}   unobserved claims {counts['unobserved']}"
+    )
     if flags:
         print(f"   function flags {len(flags)}: " + ", ".join(sorted(set(flags.values()))))
-    print(f"   SOUNDNESS violations {counts['violations']}   sound {counts['sound']}   "
-          f"partial {counts['partial']}   pending {counts['pending']}")
-    print(f"   escapes claims: exact {counts['exact']}   imprecise {counts['imprecise']}   "
-          f"inconclusive {counts['inconclusive']}")
+    print(
+        f"   SOUNDNESS violations {counts['violations']}   sound {counts['sound']}   "
+        f"partial {counts['partial']}   pending {counts['pending']}"
+    )
+    print(
+        f"   escapes claims: exact {counts['exact']}   imprecise {counts['imprecise']}   "
+        f"inconclusive {counts['inconclusive']}"
+    )
     print(f"   UNCLAIMED observed sites {counts['unclaimed']}")
     denominator = counts["sound"] + counts["imprecise"]
     pct = (100.0 * counts["sound"] / denominator) if denominator else 0.0
@@ -419,21 +472,32 @@ def main() -> int:
     shown = violations if args.max_report == 0 else violations[: args.max_report]
     for phash, fn, site in shown:
         pc = "prologue" if site.pc == PROLOGUE else str(site.pc)
-        print(f"   VIOLATION program {phash} function {fn.index} ({fn.name}) pc {pc} kind {site.kind}: "
-              f"claimed confined, observed escaped {site.escaped}/made {site.made} via {site.via()}")
+        print(
+            f"   VIOLATION program {phash} function {fn.index} ({fn.name}) pc {pc} kind {site.kind}: "
+            f"claimed confined, observed escaped {site.escaped}/made {site.made} via {site.via()}"
+        )
     if len(violations) > len(shown):
         print(f"   ... and {len(violations) - len(shown)} more")
 
     failed = False
     for phash, fn, pc, kind in mismatches[: args.max_report or None]:
-        print(f"   KIND MISMATCH program {phash} function {fn.index} ({fn.name}) pc {pc}: claimed {kind}, "
-              f"observed " + ",".join(k for (p, k) in fn.sites if p == pc), file=sys.stderr)
+        print(
+            f"   KIND MISMATCH program {phash} function {fn.index} ({fn.name}) pc {pc}: claimed {kind}, "
+            f"observed " + ",".join(k for (p, k) in fn.sites if p == pc),
+            file=sys.stderr,
+        )
     if counts["mismatch"]:
-        print(f"   FAIL {counts['mismatch']} kind mismatch(es) - the coordinate is wrong", file=sys.stderr)
+        print(
+            f"   FAIL {counts['mismatch']} kind mismatch(es) - the coordinate is wrong",
+            file=sys.stderr,
+        )
         failed = True
     if uncheckable:
-        print(f"   FAIL {uncheckable} UNCHECKABLE claim(s) of owned/shared - no recording carries "
-              "reference counts yet", file=sys.stderr)
+        print(
+            f"   FAIL {uncheckable} UNCHECKABLE claim(s) of owned/shared - no recording carries "
+            "reference counts yet",
+            file=sys.stderr,
+        )
         failed = True
 
     # --- the asserted counters -------------------------------------------

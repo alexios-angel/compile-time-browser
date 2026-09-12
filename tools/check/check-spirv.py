@@ -93,8 +93,10 @@ def main() -> int:
 
     if failures:
         sys.exit(f"\ncheck-spirv: {failures} file(s) failed")
-    print(f"\ncheck-spirv: {len(paths)} file(s) checked"
-          f"{'' if validator else ' - STRUCTURE ONLY, see above'}")
+    print(
+        f"\ncheck-spirv: {len(paths)} file(s) checked"
+        f"{'' if validator else ' - STRUCTURE ONLY, see above'}"
+    )
     return 0
 
 

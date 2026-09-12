@@ -40,8 +40,12 @@ def leaf_absence_observer_source(source, name):
     trace = 0;
 """
     writes = 2 if reseeded else 1
-    checks = [f"seen.length === {4 * writes}", "results.every(value => value === 1)",
-              f"size() === {3 if reseeded else 0}", "seen.every(value => value.value === 1)"]
+    checks = [
+        f"seen.length === {4 * writes}",
+        "results.every(value => value === 1)",
+        f"size() === {3 if reseeded else 0}",
+        "seen.every(value => value.value === 1)",
+    ]
     for left in range(4):
         if reseeded:
             checks.append(f"seen[{2 * left}] === seen[{2 * left + 1}]")
@@ -55,7 +59,7 @@ def leaf_absence_observer_source(source, name):
 def leaf_absence_lifetime_cpp(cpp, name):
     reseeded = name == "local_absence_saved_undefined"
     changed = instrument_leaf_objects(cpp)
-    changed += r'''
+    changed += r"""
 int main() {
     constexpr bool reseeded = CTN_RESEEDED;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -107,10 +111,12 @@ int main() {
     }
     return 0;
 }
-'''
-    return changed.replace("CTN_RESEEDED", "true" if reseeded else "false").replace(
-        "CTN_PARAMS", "std::string" if reseeded else "std::string, bool").replace(
-        "CTN_FLAG", "" if reseeded else ", call % 2 != 0")
+"""
+    return (
+        changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
+        .replace("CTN_PARAMS", "std::string" if reseeded else "std::string, bool")
+        .replace("CTN_FLAG", "" if reseeded else ", call % 2 != 0")
+    )
 
 
 def leaf_absence_lifetime(args, cpp, name, mode, compiler):
@@ -118,27 +124,52 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
     build = leaf_clear_lifetime_cpp if name in LEAF_CLEAR_LIFETIMES else leaf_absence_lifetime_cpp
     source.write_text(build(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(f"{name}/{mode}: absence lifetime failure (exit {result.returncode})\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: absence lifetime failure (exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def check_leaf_absence_calls(cpp, name, mode):
     source = {**leaf_absence_sources(), **leaf_clear_sources()}[name][0]
-    params = ("std::string, bool" if "set(key, flag)" in source else
-              "std::string, std::string" if "set(key, other)" in source else "std::string")
+    params = (
+        "std::string, bool"
+        if "set(key, flag)" in source
+        else "std::string, std::string" if "set(key, other)" in source else "std::string"
+    )
     if f"std::function<js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
     allocations = source.count("{value:") + source.count("const item = {};")
-    if (cpp.count("std::make_shared<ctnative::identity_object>()") != allocations
-            or (allocations and "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>"
-                not in cpp)):
+    if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations or (
+        allocations
+        and "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
+    ):
         raise RuntimeError(f"{name}/{mode}: absence erased an object allocation or owning Map")
     if len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != source.count("value:"):
         raise RuntimeError(f"{name}/{mode}: absence erased an original numeric field write")
@@ -151,12 +182,15 @@ def check_leaf_absence_calls(cpp, name, mode):
                 original -= 1
         lowered = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
         if lowered != original:
-            raise RuntimeError(f"{name}/{mode}: changed {original} prepared Map.{method} calls to {lowered}")
+            raise RuntimeError(
+                f"{name}/{mode}: changed {original} prepared Map.{method} calls to {lowered}"
+            )
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing native absence entry")
-    methods_by_value = dict(re.findall(
-        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
     calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     if [methods_by_value.get(callee) for callee, _ in calls] != ["size", "set"]:
         raise RuntimeError(f"{name}/{mode}: absence changed published method call order")
@@ -183,7 +217,7 @@ def primitive_absence_cpp(cpp):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("primitive absence observer needs exactly one entry")
-    return changed + r'''
+    return changed + r"""
 int main() {
     if (ctnative_test_entry() != 0) { return 160; }
     const auto get = g_host->slot->m_get;
@@ -196,11 +230,13 @@ int main() {
         get().tag != text::kind::undefined || size() != 2) { return 161; }
     return 0;
 }
-'''
+"""
 
 
 LEAF_CLEAR_LIFETIMES = (
-    "local_clear_saved_field", "local_clear_saved_undefined", "local_clear_both_branches_false",
+    "local_clear_saved_field",
+    "local_clear_saved_undefined",
+    "local_clear_both_branches_false",
 )
 
 
@@ -229,9 +265,14 @@ def leaf_clear_observer_source(source, name):
     trace = 0;
 """
     writes = 2 if reseeded else 1
-    checks = [f"seen.length === {4 * writes}", "results.every(value => value === 1)",
-              f"size() === {int(reseeded)}", "seen.every(value => value.value === 1)",
-              "sizes.length === 4", "sizes.every(value => value === 0)"]
+    checks = [
+        f"seen.length === {4 * writes}",
+        "results.every(value => value === 1)",
+        f"size() === {int(reseeded)}",
+        "seen.every(value => value.value === 1)",
+        "sizes.length === 4",
+        "sizes.every(value => value === 0)",
+    ]
     for left in range(4):
         if reseeded:
             checks.append(f"seen[{2 * left}] === seen[{2 * left + 1}]")
@@ -253,13 +294,15 @@ def leaf_clear_lifetime_cpp(cpp, name):
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
         "static std::shared_ptr<const void> ctn_test_retained;\n"
-        "static bool ctn_test_keep_leaf = false;")
+        "static bool ctn_test_keep_leaf = false;",
+    )
     changed = changed.replace(
         "ctn_test_objects.emplace_back(made); return made;",
         "ctn_test_objects.emplace_back(made);\n"
         "    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n"
-        "    return made;")
-    changed += r'''
+        "    return made;",
+    )
+    changed += r"""
 int main() {
     constexpr bool reseeded = CTN_RESEEDED;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -317,34 +360,64 @@ int main() {
     if (!ctn_test_objects[retained_index].expired()) { return 171; }
     return 0;
 }
-'''
-    return changed.replace("CTN_RESEEDED", "true" if reseeded else "false").replace(
-        "CTN_PARAMS", "std::string, bool" if branch else "std::string").replace(
-        "CTN_FLAG", ", call % 2 != 0" if branch else "")
+"""
+    return (
+        changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
+        .replace("CTN_PARAMS", "std::string, bool" if branch else "std::string")
+        .replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
+    )
 
 
-NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
-                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime",
-                           "constant_branch_lifetime", "constant_boolean_branch_lifetime",
-                           "constant_string_branch_lifetime")
+NUMERIC_ENTRY_LIFETIMES = (
+    "local_numeric_saved_lifetime",
+    "local_numeric_branch_lifetime",
+    "scalar_saved_branch_lifetime",
+    "scalar_alias_branch_lifetime",
+    "constant_branch_lifetime",
+    "constant_boolean_branch_lifetime",
+    "constant_string_branch_lifetime",
+)
 
 
 def check_numeric_entry_calls(cpp, name, mode):
-    source = {**numeric_entry_sources(), **scalar_global_sources(), **constant_global_sources()}[name][0]
+    source = {**numeric_entry_sources(), **scalar_global_sources(), **constant_global_sources()}[
+        name
+    ][0]
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
-    params = ("std::string, js_num, bool" if "set(key, value, flag)" in source else
-              "std::string, js_num" if "set(key, value)" in source else
-              "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
-                                    "local_numeric_nan_key", "local_clear_zero_literal_repair", "local_clear_zero_size_key", "scalar_result_key"}
-              else "std::string")
+    params = (
+        "std::string, js_num, bool"
+        if "set(key, value, flag)" in source
+        else (
+            "std::string, js_num"
+            if "set(key, value)" in source
+            else (
+                "js_num"
+                if name
+                in {
+                    "local_add_result_key",
+                    "local_numeric_nested_key",
+                    "local_numeric_nan_key",
+                    "local_clear_zero_literal_repair",
+                    "local_clear_zero_size_key",
+                    "scalar_result_key",
+                }
+                else "std::string"
+            )
+        )
+    )
     result = "bool" if name == "constant_boolean_saved_result" else "js_num"
     if f"std::function<{result}({params})>" not in cpp:
-        raise RuntimeError(f"{name}/{mode}: arithmetic changed the independently typed callable ABI")
+        raise RuntimeError(
+            f"{name}/{mode}: arithmetic changed the independently typed callable ABI"
+        )
     if name == "scalar_result_key" and (
-            "std::shared_ptr<ctnative::map_storage<double, ctnative::object_value>>" not in cpp):
-        raise RuntimeError(f"{name}/{mode}: scalar argument carrier changed the independently Number Map key")
+        "std::shared_ptr<ctnative::map_storage<double, ctnative::object_value>>" not in cpp
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: scalar argument carrier changed the independently Number Map key"
+        )
     allocations = source.count("const item = {};") + source.count("{value:")
     if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations:
         raise RuntimeError(f"{name}/{mode}: arithmetic erased a real leaf allocation")
@@ -352,9 +425,12 @@ def check_numeric_entry_calls(cpp, name, mode):
         original = len(re.findall(rf"\bstate\.{method}\(", source))
         lowered = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
         if original != lowered:
-            raise RuntimeError(f"{name}/{mode}: changed {original} evaluated Map.{method} calls to {lowered}")
-    methods_by_value = dict(re.findall(
-        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+            raise RuntimeError(
+                f"{name}/{mode}: changed {original} evaluated Map.{method} calls to {lowered}"
+            )
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
     calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     expected = re.findall(r"host\.slot\.(size|set)\(", source)
     if name == "local_numeric_nan_key":
@@ -370,14 +446,21 @@ def check_numeric_entry_calls(cpp, name, mode):
     for symbol in ("+", "-", "*", "/"):
         if cpp_ops.count(symbol) < expected_ops.count(symbol):
             raise RuntimeError(f"{name}/{mode}: erased a source numeric {symbol} operand")
-    if (entry[1].count("std::fmod(") < expected_ops.count("%")
-            or entry[1].count("std::pow(") < expected_ops.count("**")):
+    if entry[1].count("std::fmod(") < expected_ops.count("%") or entry[1].count(
+        "std::pow("
+    ) < expected_ops.count("**"):
         raise RuntimeError(f"{name}/{mode}: erased evaluated remainder or power operands")
 
 
 def numeric_entry_observer_source(source, name):
-    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}
+    branch = name in {
+        "local_numeric_branch_lifetime",
+        "scalar_saved_branch_lifetime",
+        "scalar_alias_branch_lifetime",
+        "constant_branch_lifetime",
+        "constant_boolean_branch_lifetime",
+        "constant_string_branch_lifetime",
+    }
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -395,32 +478,47 @@ def numeric_entry_observer_source(source, name):
     Map.prototype.set = originalSet;
     trace = 0;
 """.replace(" CTN_FLAG", ", call % 2 !== 0" if branch else "")
-    checks = ["seen.length === 4", "sizes.every(value => value === 0)",
-              "results.every((value, index) => value === values[index])",
-              "seen.every((value, index) => value.value === values[index])"]
-    checks += [f"seen[{left}] !== seen[{right}]" for left in range(4) for right in range(left + 1, 4)]
+    checks = [
+        "seen.length === 4",
+        "sizes.every(value => value === 0)",
+        "results.every((value, index) => value === values[index])",
+        "seen.every((value, index) => value.value === values[index])",
+    ]
+    checks += [
+        f"seen[{left}] !== seen[{right}]" for left in range(4) for right in range(left + 1, 4)
+    ]
     for check in checks:
         observed += f"    if ({check}) {{ trace += 1; }}\n"
     observed += "    for (const item of seen) { item.value = 99; }\n"
-    observed += "    if (results.every((value, index) => value === values[index])) { trace += 1; }\n"
+    observed += (
+        "    if (results.every((value, index) => value === values[index])) { trace += 1; }\n"
+    )
     return observed + "})();\n", len(checks) + 1
 
 
 def numeric_entry_lifetime_cpp(cpp, name):
-    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}
+    branch = name in {
+        "local_numeric_branch_lifetime",
+        "scalar_saved_branch_lifetime",
+        "scalar_alias_branch_lifetime",
+        "constant_branch_lifetime",
+        "constant_boolean_branch_lifetime",
+        "constant_string_branch_lifetime",
+    }
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
         "static std::shared_ptr<const void> ctn_test_retained;\n"
-        "static bool ctn_test_keep_leaf = false;")
+        "static bool ctn_test_keep_leaf = false;",
+    )
     changed = changed.replace(
         "ctn_test_objects.emplace_back(made); return made;",
         "ctn_test_objects.emplace_back(made);\n"
         "    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n"
-        "    return made;")
-    changed += r'''
+        "    return made;",
+    )
+    changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
         ctn_test_objects.size() != 3) { return 180; }
@@ -487,10 +585,17 @@ int main() {
     if (!ctn_test_objects[retained_index].expired()) { return 193; }
     return 0;
 }
-'''
-    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime",
-                "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
-        changed = changed.replace("    auto owner = g_host;", """
+"""
+    if name in {
+        "scalar_saved_branch_lifetime",
+        "scalar_alias_branch_lifetime",
+        "constant_branch_lifetime",
+        "constant_boolean_branch_lifetime",
+        "constant_string_branch_lifetime",
+    }:
+        changed = changed.replace(
+            "    auto owner = g_host;",
+            """
     const auto first_snapshot = ctnative::global_number(g_first);
     const auto second_snapshot = ctnative::global_number(g_second);
     const auto third_snapshot = ctnative::global_number(g_third);
@@ -499,8 +604,11 @@ int main() {
         ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
         return 194;
     }
-    auto owner = g_host;""")
-        changed = changed.replace("    ctn_test_retained.reset();", """
+    auto owner = g_host;""",
+        )
+        changed = changed.replace(
+            "    ctn_test_retained.reset();",
+            """
     if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
         ctnative::global_number(g_first) != first_snapshot ||
         ctnative::global_number(g_second) != second_snapshot ||
@@ -515,25 +623,39 @@ int main() {
         if (saved.back() != 15.75 || first_snapshot != 2 || second_snapshot != 3 ||
             third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
     }
-    ctn_test_retained.reset();""")
-    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
-        changed = changed.replace("    auto owner = g_host;", """
+    ctn_test_retained.reset();""",
+        )
+    if name in {
+        "scalar_alias_branch_lifetime",
+        "constant_branch_lifetime",
+        "constant_boolean_branch_lifetime",
+        "constant_string_branch_lifetime",
+    }:
+        changed = changed.replace(
+            "    auto owner = g_host;",
+            """
     const auto left_snapshot = ctnative::global_number(g_left);
     const auto middle_snapshot = ctnative::global_number(g_middle);
     const auto right_snapshot = ctnative::global_number(g_right);
     static_assert(std::is_same_v<decltype(left_snapshot), const js_num>);
     if (left_snapshot != first_snapshot || middle_snapshot != second_snapshot ||
         right_snapshot != third_snapshot) { return 197; }
-    auto owner = g_host;""")
-        changed = changed.replace("    ctn_test_keep_leaf = false;", """
+    auto owner = g_host;""",
+        )
+        changed = changed.replace(
+            "    ctn_test_keep_leaf = false;",
+            """
     if (ctnative::global_number(g_left) != left_snapshot ||
         ctnative::global_number(g_middle) != middle_snapshot ||
         ctnative::global_number(g_right) != right_snapshot ||
         ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
         return 199;
     }
-    ctn_test_keep_leaf = false;""")
-        changed = changed.replace("    ctn_test_retained.reset();", """
+    ctn_test_keep_leaf = false;""",
+        )
+        changed = changed.replace(
+            "    ctn_test_retained.reset();",
+            """
     if (left_snapshot != 2 || middle_snapshot != 3 || right_snapshot != 4 ||
         ctnative::global_number(g_left) != left_snapshot ||
         ctnative::global_number(g_middle) != middle_snapshot ||
@@ -541,9 +663,16 @@ int main() {
         ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
         return 198;
     }
-    ctn_test_retained.reset();""")
-    if name in {"constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
-        changed = changed.replace("    auto owner = g_host;", """
+    ctn_test_retained.reset();""",
+        )
+    if name in {
+        "constant_branch_lifetime",
+        "constant_boolean_branch_lifetime",
+        "constant_string_branch_lifetime",
+    }:
+        changed = changed.replace(
+            "    auto owner = g_host;",
+            """
     const auto fixed_snapshot = ctnative::global_number(g_fixed);
     const auto offset_snapshot = ctnative::global_number(g_offset);
     const auto copy_snapshot = ctnative::global_number(g_copy);
@@ -551,7 +680,8 @@ int main() {
     if (fixed_snapshot != 7 || offset_snapshot != fixed_snapshot || copy_snapshot != offset_snapshot) {
         return 200;
     }
-    auto owner = g_host;""")
+    auto owner = g_host;""",
+        )
         checks = """
     if (fixed_snapshot != 7 || offset_snapshot != 7 || copy_snapshot != 7 ||
         ctnative::global_number(g_fixed) != fixed_snapshot ||
@@ -564,12 +694,16 @@ int main() {
 """
         # Check once after 128 calls and owner destruction, before reentry can
         # overwrite globals, then again after both Maps and the retained leaf die.
-        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
+        changed = changed.replace(
+            "    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;"
+        )
         released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
     if name == "constant_boolean_branch_lifetime":
-        changed = changed.replace("    auto owner = g_host;", """
+        changed = changed.replace(
+            "    auto owner = g_host;",
+            """
     const auto fixed_flag_snapshot = ctnative::global_boolean(g_fixed_flag);
     const auto enabled_snapshot = ctnative::global_boolean(g_enabled);
     const auto copy_flag_snapshot = ctnative::global_boolean(g_copy_flag);
@@ -578,7 +712,8 @@ int main() {
     if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot) {
         return 202;
     }
-    auto owner = g_host;""")
+    auto owner = g_host;""",
+        )
         checks = """
     if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot ||
         ctnative::global_boolean(g_fixed_flag) != fixed_flag_snapshot ||
@@ -588,14 +723,18 @@ int main() {
         return 203;
     }
 """
-        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
+        changed = changed.replace(
+            "    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;"
+        )
         released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
     if name == "constant_string_branch_lifetime":
         raw = str(STRING_GLOBAL_LONG).encode("utf-8")
         literal = 'std::string("' + "".join(f"\\{byte:03o}" for byte in raw) + f'", {len(raw)})'
-        changed = changed.replace("    auto owner = g_host;", """
+        changed = changed.replace(
+            "    auto owner = g_host;",
+            """
     const std::string expected_text = CTN_EXPECTED_TEXT;
     const auto owned_snapshot = ctnative::global_string(g_owned_text);
     const auto alias_snapshot = ctnative::global_string(g_text_alias);
@@ -604,7 +743,8 @@ int main() {
     static_assert(std::is_same_v<decltype(saved_snapshot), const std::string>);
     if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
         saved_snapshot != expected_text || !empty_snapshot.empty()) { return 204; }
-    auto owner = g_host;""".replace("CTN_EXPECTED_TEXT", literal))
+    auto owner = g_host;""".replace("CTN_EXPECTED_TEXT", literal),
+        )
         checks = """
     if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
         saved_snapshot != expected_text || !empty_snapshot.empty() ||
@@ -613,7 +753,9 @@ int main() {
         ctnative::global_string(g_saved_text) != expected_text ||
         !ctnative::global_string(g_empty_text).empty()) { return 205; }
 """
-        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + """
+        changed = changed.replace(
+            "    ctn_test_keep_leaf = false;",
+            checks + """
     g_owned_text.value.assign(2048, 'm');
     g_text_alias = {};
     g_saved_text = {};
@@ -621,24 +763,47 @@ int main() {
     std::vector<std::string> text_churn(128, std::string(2048, 'c'));
     if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
         saved_snapshot != expected_text || !empty_snapshot.empty()) { return 206; }
-    ctn_test_keep_leaf = false;""")
+    ctn_test_keep_leaf = false;""",
+        )
         released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
-    return changed.replace("CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num").replace(
-        "CTN_FLAG", ", call % 2 != 0" if branch else "")
+    return changed.replace(
+        "CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num"
+    ).replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
 
 
 def numeric_entry_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(numeric_entry_lifetime_cpp(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
-              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
-              str(source), "-o", str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != scalar_global_output(name, 14) * 2:
-        raise RuntimeError(f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"
-                           f"{result.stdout}{result.stderr}")
+        raise RuntimeError(
+            f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )

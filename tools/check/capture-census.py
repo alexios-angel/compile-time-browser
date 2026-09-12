@@ -84,8 +84,18 @@ LOAD_UPVALUE = re.compile(r"\bctjs\.load_upvalue\b")
 
 
 def census(lines, scoped=True):
-    counts = dict(closures=0, with_list=0, operands=0, cells=0, block_args=0,
-                  placeholder=0, other=0, indexed=0, load_upvalue=0, functions=0)
+    counts = dict(
+        closures=0,
+        with_list=0,
+        operands=0,
+        cells=0,
+        block_args=0,
+        placeholder=0,
+        other=0,
+        indexed=0,
+        load_upvalue=0,
+        functions=0,
+    )
     disagreements = []
     kind = {}  # SSA name -> shape, RESET at every ctjs.func
 
@@ -113,8 +123,7 @@ def census(lines, scoped=True):
                 counts["with_list"] += 1
                 operands = [o.strip() for o in captured.group(1).split(",")]
                 raw = INDICES.search(line)
-                indices = ([int(x) for x in raw.group(1).replace(",", " ").split()]
-                           if raw else [])
+                indices = [int(x) for x in raw.group(1).replace(",", " ").split()] if raw else []
                 for i, operand in enumerate(operands):
                     counts["operands"] += 1
                     shape = kind.get(operand, "other")
@@ -131,9 +140,11 @@ def census(lines, scoped=True):
 
         matched = DEF.match(line)
         if matched:
-            kind[matched.group(1)] = ("placeholder" if UNDEF.match(line)
-                                      else "cells" if matched.group(2) == "ctjs.create_cell"
-                                      else "other")
+            kind[matched.group(1)] = (
+                "placeholder"
+                if UNDEF.match(line)
+                else "cells" if matched.group(2) == "ctjs.create_cell" else "other"
+            )
     return counts, disagreements
 
 
@@ -143,8 +154,11 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--expect-indexed", type=int)
     ap.add_argument("--expect-operands", type=int)
-    ap.add_argument("--flat", action="store_true",
-                    help="share one SSA table across every function (the wrong reading)")
+    ap.add_argument(
+        "--flat",
+        action="store_true",
+        help="share one SSA table across every function (the wrong reading)",
+    )
     args = ap.parse_args()
 
     text = sys.stdin.read() if args.module == "-" else open(args.module).read()
@@ -154,8 +168,10 @@ def main():
     for key, value in counts.items():
         print(f"  {key:<{width}}  {value}")
     for number, operand, shape, k in disagreements:
-        print(f"  line {number}: {operand} is a {shape} and enclosing_indices says {k}",
-              file=sys.stderr)
+        print(
+            f"  line {number}: {operand} is a {shape} and enclosing_indices says {k}",
+            file=sys.stderr,
+        )
 
     if args.json:
         with open(args.json, "w") as out:
@@ -165,22 +181,25 @@ def main():
     # stage that failed upstream and left nothing on the pipe, would otherwise
     # print zeros and satisfy any floor written as ">=".
     if counts["closures"] == 0:
-        print("capture-census: no ctjs.create_closure in the module - "
-              "nothing was measured", file=sys.stderr)
+        print(
+            "capture-census: no ctjs.create_closure in the module - " "nothing was measured",
+            file=sys.stderr,
+        )
         return 2
     failed = False
     # EXACT, NOT A FLOOR, on both: the figure the comments cite is a
     # measurement of one corpus at one commit, and a census that drifts either
     # way is a census that no longer says what the comment says.
-    for name, expected in (("indexed", args.expect_indexed),
-                           ("operands", args.expect_operands)):
+    for name, expected in (("indexed", args.expect_indexed), ("operands", args.expect_operands)):
         if expected is not None and counts[name] != expected:
-            print(f"capture-census: {name} is {counts[name]}, expected {expected}",
-                  file=sys.stderr)
+            print(f"capture-census: {name} is {counts[name]}, expected {expected}", file=sys.stderr)
             failed = True
     if disagreements:
-        print("capture-census: a slot names an enclosing upvalue AND carries a real "
-              "operand - ctjs.create_closure's verifier refuses that shape", file=sys.stderr)
+        print(
+            "capture-census: a slot names an enclosing upvalue AND carries a real "
+            "operand - ctjs.create_closure's verifier refuses that shape",
+            file=sys.stderr,
+        )
         failed = True
     return 1 if failed else 0
 

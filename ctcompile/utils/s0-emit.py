@@ -15,6 +15,7 @@ open-coded against the NaN-boxed representation, and the slow path is a call the
 optimiser must not be able to see through. It includes the REAL runtime header,
 because per-translation-unit header cost is most of what a partition trades away.
 """
+
 import argparse
 import pathlib
 import random
@@ -73,7 +74,7 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    rng = random.Random(1)          # deterministic: the same corpus every run
+    rng = random.Random(1)  # deterministic: the same corpus every run
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("s0_*.cpp"):
@@ -86,8 +87,14 @@ def main() -> int:
             body.append(FUNCTION_HEAD % (fn, args.regs))
             for _ in range(args.ops):
                 shape = rng.choice(OPS)
-                body.append(shape.format(d=rng.randrange(args.regs), x=rng.randrange(args.regs),
-                                         y=rng.randrange(args.regs), k=rng.randrange(100)))
+                body.append(
+                    shape.format(
+                        d=rng.randrange(args.regs),
+                        x=rng.randrange(args.regs),
+                        y=rng.randrange(args.regs),
+                        k=rng.randrange(100),
+                    )
+                )
             body.append("    return r[0];\n}\n\n} // namespace\n")
             fn += 1
         (out / f"s0_{tus:04d}.cpp").write_text("\n".join(body))

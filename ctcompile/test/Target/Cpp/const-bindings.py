@@ -6,7 +6,6 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
 MAIN = """
 int main() {
     if (scalar(5.0) != 7.0 || scalar(-2.0) != 0.0) { return 1; }
@@ -45,7 +44,9 @@ def run(command, *, failure_site=None):
     diagnostic = result.stdout + result.stderr
     if failure_site is not None:
         if result.returncode == 0 or failure_site not in diagnostic:
-            raise RuntimeError(f"expected a pin failure at {failure_site}: {command!r}\n{diagnostic}")
+            raise RuntimeError(
+                f"expected a pin failure at {failure_site}: {command!r}\n{diagnostic}"
+            )
     elif result.returncode:
         raise RuntimeError(f"const binding test failed: {command!r}\n{diagnostic}")
 
@@ -62,8 +63,18 @@ def main():
         if not compiler:
             raise RuntimeError("const binding test requires " + " or ".join(candidates))
         compilers.append(compiler)
-    flags = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic",
-             "-Wconversion", "-ffp-contract=off", "-I", str(args.fixtures.resolve())]
+    flags = [
+        "-std=c++23",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pedantic",
+        "-Wconversion",
+        "-ffp-contract=off",
+        "-I",
+        str(args.fixtures.resolve()),
+    ]
     emitted = {}
     for label, harness in [("bindings", MAIN), ("hoisted", MAIN), ("isolation", ISOLATION_MAIN)]:
         text = (args.fixtures / f"{label}.cpp").read_text()
@@ -82,10 +93,18 @@ def main():
     # One rejects dropping binding const; the other rejects moving const from
     # the pointer binding to its pointee. Disabling pins restores the same run.
     mutations = [
-        ("scalar-pin", '"const-bindings.js:2:1", double const);',
-         '"const-bindings.js:2:1", double);', "const-bindings.js:2:1"),
-        ("pointer-pin", '"const-bindings.js:3:1", int32_t* const);',
-         '"const-bindings.js:3:1", int32_t const*);', "const-bindings.js:3:1"),
+        (
+            "scalar-pin",
+            '"const-bindings.js:2:1", double const);',
+            '"const-bindings.js:2:1", double);',
+            "const-bindings.js:2:1",
+        ),
+        (
+            "pointer-pin",
+            '"const-bindings.js:3:1", int32_t* const);',
+            '"const-bindings.js:3:1", int32_t const*);',
+            "const-bindings.js:3:1",
+        ),
     ]
     for label, before, after, site in mutations:
         if emitted["bindings"].count(before) != 1:

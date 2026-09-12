@@ -19,53 +19,73 @@ from .harness_scalar_maps import (
     zero_size_cases,
 )
 
+
 def string_field_cpp_value(value):
-    data = value.encode('utf-8')
-    return 'std::string("' + ''.join(f'\\x{byte:02x}' for byte in data) + '", ' + str(len(data)) + ')'
+    data = value.encode("utf-8")
+    return (
+        'std::string("' + "".join(f"\\x{byte:02x}" for byte in data) + '", ' + str(len(data)) + ")"
+    )
 
 
 def check_string_field_calls(cpp, name, mode):
     row = string_field_cases()[name]
-    source, value = row['source'], row['expected_trace']
-    result = 'std::string' if isinstance(value, StringValue) else 'js_num'
-    params = 'std::string, std::string, bool' if name == 'field_string_lifetime' else 'std::string'
-    if (f'std::function<{result}({params})>' not in cpp
-            or 'nullable_string field_76616c7565;' not in cpp
-            or 'nullable_scalar field_76616c7565;' in cpp
-            or 'std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>' not in cpp
-            or cpp.count('std::make_shared<ctnative::identity_object>()') != source.count('{value:')):
-        raise RuntimeError(f'{name}/{mode}: lost the independently typed String field/Map/callable owners')
-    if name == 'field_string_separate_members' and (
-            'nullable_scalar field_636f756e74;' not in cpp or 'nullable_scalar field_666c6167;' not in cpp):
-        raise RuntimeError(f'{name}/{mode}: widened independent Number/Boolean members to String storage')
-    for method in ('set', 'get', 'has', 'delete', 'clear'):
-        before = len(re.findall(rf'\bstate\.{method}\(', source))
-        after = len(re.findall(rf'ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
+    source, value = row["source"], row["expected_trace"]
+    result = "std::string" if isinstance(value, StringValue) else "js_num"
+    params = "std::string, std::string, bool" if name == "field_string_lifetime" else "std::string"
+    if (
+        f"std::function<{result}({params})>" not in cpp
+        or "nullable_string field_76616c7565;" not in cpp
+        or "nullable_scalar field_76616c7565;" in cpp
+        or "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
+        or cpp.count("std::make_shared<ctnative::identity_object>()") != source.count("{value:")
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: lost the independently typed String field/Map/callable owners"
+        )
+    if name == "field_string_separate_members" and (
+        "nullable_scalar field_636f756e74;" not in cpp
+        or "nullable_scalar field_666c6167;" not in cpp
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: widened independent Number/Boolean members to String storage"
+        )
+    for method in ("set", "get", "has", "delete", "clear"):
+        before = len(re.findall(rf"\bstate\.{method}\(", source))
+        after = len(re.findall(rf"ctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
         if before != after:
-            raise RuntimeError(f'{name}/{mode}: changed {before} live Map.{method} operations to {after}')
+            raise RuntimeError(
+                f"{name}/{mode}: changed {before} live Map.{method} operations to {after}"
+            )
     # Ignore quoted source bytes before counting the original field accesses.
-    body = source.split('set(key', 1)[1].split('\n', 1)[0]
+    body = source.split("set(key", 1)[1].split("\n", 1)[0]
     body = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', '""', body)
-    accesses = list(re.finditer(r'\b(?:item|alias)\.(?:value|count|flag)\b', body))
-    reads = sum(not re.match(r'\s*=(?!=)', body[match.end():]) for match in accesses)
-    writes = len(accesses) - reads + len(re.findall(r'\b(?:value|count|flag):', body))
-    if (len(re.findall(r'ctnative::object_get_field_[0-9a-f]+\(', cpp)) != reads
-            or len(re.findall(r'ctnative::object_set_field_[0-9a-f]+\(', cpp)) != writes):
-        raise RuntimeError(f'{name}/{mode}: changed the {reads} read-time field values or {writes} stores')
-    entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
+    accesses = list(re.finditer(r"\b(?:item|alias)\.(?:value|count|flag)\b", body))
+    reads = sum(not re.match(r"\s*=(?!=)", body[match.end() :]) for match in accesses)
+    writes = len(accesses) - reads + len(re.findall(r"\b(?:value|count|flag):", body))
+    if (
+        len(re.findall(r"ctnative::object_get_field_[0-9a-f]+\(", cpp)) != reads
+        or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes
+    ):
+        raise RuntimeError(
+            f"{name}/{mode}: changed the {reads} read-time field values or {writes} stores"
+        )
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
-        raise RuntimeError(f'{name}/{mode}: lost entry')
-    methods_by_value = dict(re.findall(
-        r'(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(', entry[1]))
-    calls = re.findall(r'ctnative::invoke_callable\((\w+)([^;\n]*)\);', entry[1])
-    if [methods_by_value.get(callee) for callee, _ in calls] != re.findall(r'host\.slot\.(size|set)\(', source):
-        raise RuntimeError(f'{name}/{mode}: changed the live published-call order')
-    if isinstance(value, StringValue) and entry[1].count('ctnative::global_string(') != 1:
-        raise RuntimeError(f'{name}/{mode}: lost the exact String output tag check')
+        raise RuntimeError(f"{name}/{mode}: lost entry")
+    methods_by_value = dict(
+        re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
+    )
+    calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    if [methods_by_value.get(callee) for callee, _ in calls] != re.findall(
+        r"host\.slot\.(size|set)\(", source
+    ):
+        raise RuntimeError(f"{name}/{mode}: changed the live published-call order")
+    if isinstance(value, StringValue) and entry[1].count("ctnative::global_string(") != 1:
+        raise RuntimeError(f"{name}/{mode}: lost the exact String output tag check")
 
 
 def string_field_observer_source(source, name):
-    observed = source + r'''
+    observed = source + r"""
 (function() {
     const seen = [];
     const original = Map.prototype.set;
@@ -73,44 +93,66 @@ def string_field_observer_source(source, name):
         seen.push(value); return original.call(this, key, value);
     };
     const before = host.slot.size();
-'''
-    if name == 'field_string_lifetime':
-        observed += ('    const first = host.slot.set("future", ' + json.dumps(STRING_FIELD_BYTES) + ', false);\n'
-                     '    const second = host.slot.set("future", ' + json.dumps(STRING_FIELD_LONG) + ', true);\n')
-        checks = ['seen.length === 2', 'seen[0] !== seen[1]', 'host.slot.size() === 0',
-                  'typeof first === "string" && first === ' + json.dumps(STRING_FIELD_BYTES),
-                  'typeof second === "string" && second === ' + json.dumps(STRING_FIELD_LONG),
-                  'seen[0].value === "right"', 'seen[1].value === "left"']
+"""
+    if name == "field_string_lifetime":
+        observed += (
+            '    const first = host.slot.set("future", '
+            + json.dumps(STRING_FIELD_BYTES)
+            + ", false);\n"
+            '    const second = host.slot.set("future", '
+            + json.dumps(STRING_FIELD_LONG)
+            + ", true);\n"
+        )
+        checks = [
+            "seen.length === 2",
+            "seen[0] !== seen[1]",
+            "host.slot.size() === 0",
+            'typeof first === "string" && first === ' + json.dumps(STRING_FIELD_BYTES),
+            'typeof second === "string" && second === ' + json.dumps(STRING_FIELD_LONG),
+            'seen[0].value === "right"',
+            'seen[1].value === "left"',
+        ]
     else:
-        observed += ('    const first = host.slot.set("future");\n'
-                     '    const second = host.slot.set("future");\n')
-        count = 4 if name == 'field_string_saved_overwrite' else 2
+        observed += (
+            '    const first = host.slot.set("future");\n'
+            '    const second = host.slot.set("future");\n'
+        )
+        count = 4 if name == "field_string_saved_overwrite" else 2
         second = 2 if count == 4 else 1
-        deleted = name in {'field_string_saved', 'field_string_saved_overwrite'}
-        checks = [f'seen.length === {count}', f'seen[0] !== seen[{second}]',
-                  'host.slot.size() === ' + ('0' if deleted else 'before + 1')]
-        expected = string_field_cases()[name]['expected_trace']
-        if name == 'leaf_object_string_field':
-            checks += ['first === before + 1', 'second === before + 1',
-                       'seen[0].value === "instance"', 'seen[1].value === "instance"']
+        deleted = name in {"field_string_saved", "field_string_saved_overwrite"}
+        checks = [
+            f"seen.length === {count}",
+            f"seen[0] !== seen[{second}]",
+            "host.slot.size() === " + ("0" if deleted else "before + 1"),
+        ]
+        expected = string_field_cases()[name]["expected_trace"]
+        if name == "leaf_object_string_field":
+            checks += [
+                "first === before + 1",
+                "second === before + 1",
+                'seen[0].value === "instance"',
+                'seen[1].value === "instance"',
+            ]
         else:
-            checks += ['typeof first === "string" && first === ' + json.dumps(expected),
-                       'typeof second === "string" && second === ' + json.dumps(expected)]
+            checks += [
+                'typeof first === "string" && first === ' + json.dumps(expected),
+                'typeof second === "string" && second === ' + json.dumps(expected),
+            ]
             if deleted:
                 checks += ['seen[0].value === "changed"', f'seen[{second}].value === "changed"']
                 if count == 4:
                     checks += ['seen[1].value === "replacement"', 'seen[3].value === "replacement"']
             else:
                 checks += ['seen[0].value === "changed"', 'seen[1].value === "changed"']
-    observed += '    Map.prototype.set = original;\n    trace = 0;\n'
+    observed += "    Map.prototype.set = original;\n    trace = 0;\n"
     for index, check in enumerate(checks):
-        observed += f'    if ({check}) {{ trace = trace + {1 << index}; }}\n'
-    return observed + '})();\n', (1 << len(checks)) - 1
+        observed += f"    if ({check}) {{ trace = trace + {1 << index}; }}\n"
+    return observed + "})();\n", (1 << len(checks)) - 1
 
 
 def string_field_identity_cpp(cpp):
     changed = instrument_leaf_objects(cpp)
-    return changed + r'''
+    return changed + r"""
 int main() {
     ctnative::identity_object empty;
     if (empty.field_76616c7565.tag != ctnative::nullable_string::kind::undefined) { return 120; }
@@ -137,20 +179,24 @@ int main() {
     for (const auto & object : ctn_test_objects) { if (!object.expired()) { return 125; } }
     return 0;
 }
-'''
+"""
 
 
 def string_field_lifetime_cpp(cpp):
     changed = instrument_leaf_objects(cpp)
-    changed = changed.replace('template <class T> std::shared_ptr<T> ctn_test_make_leaf() {',
-        'static bool ctn_test_capture_next = false;\n'
-        'static std::shared_ptr<void> ctn_test_retained;\n'
-        'template <class T> std::shared_ptr<T> ctn_test_make_leaf() {')
-    changed = changed.replace('ctn_test_objects.emplace_back(made); return made;',
-        'ctn_test_objects.emplace_back(made); '
-        'if (ctn_test_capture_next) { ctn_test_capture_next = false; ctn_test_retained = made; } '
-        'return made;')
-    changed += r'''
+    changed = changed.replace(
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+        "static bool ctn_test_capture_next = false;\n"
+        "static std::shared_ptr<void> ctn_test_retained;\n"
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+    )
+    changed = changed.replace(
+        "ctn_test_objects.emplace_back(made); return made;",
+        "ctn_test_objects.emplace_back(made); "
+        "if (ctn_test_capture_next) { ctn_test_capture_next = false; ctn_test_retained = made; } "
+        "return made;",
+    )
+    changed += r"""
 int main() {
     const auto original = ORIGINAL;
     const auto bytes = BYTES;
@@ -213,24 +259,46 @@ int main() {
     for (const auto & object : ctn_test_objects) { if (!object.expired()) { return 143; } }
     return 0;
 }
-'''
-    return changed.replace('ORIGINAL', string_field_cpp_value(STRING_FIELD_LONG)).replace(
-        'BYTES', string_field_cpp_value(STRING_FIELD_BYTES))
+"""
+    return changed.replace("ORIGINAL", string_field_cpp_value(STRING_FIELD_LONG)).replace(
+        "BYTES", string_field_cpp_value(STRING_FIELD_BYTES)
+    )
 
 
 def string_field_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(string_field_lifetime_cpp(cpp))
-    binary = (args.work / f'{name}.{mode}.sanitized').resolve()
-    host.run([compiler, *owned.FLAGS, '-O1', '-g', '-fno-omit-frame-pointer',
-        '-fsanitize=address,undefined', '-fsanitize-address-use-after-scope', str(source), '-o', str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
-        env=dict(os.environ, ASAN_OPTIONS='detect_stack_use_after_return=1:detect_leaks=1',
-                 UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'))
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
     if result.returncode or result.stdout != scalar_global_output(name, STRING_FIELD_LONG) * 2:
-        raise RuntimeError(f'{name}/{mode}: owning String field lifetime failed ({result.returncode})\n'
-                           f'{result.stdout}{result.stderr}')
-
+        raise RuntimeError(
+            f"{name}/{mode}: owning String field lifetime failed ({result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def check_zero_size_calls(cpp, name, mode):
@@ -242,35 +310,49 @@ def check_one_size_calls(cpp, name, mode):
 
 
 def check_exact_size_calls(cpp, name, mode, row):
-    source = row['source']
-    params = 'js_num, bool' if 'set(key, flag)' in source else 'js_num'
-    result = 'ctnative::nullable_scalar' if name == 'size_one_present_field_entry_repair' else 'js_num'
-    if (f'std::function<{result}({params})>' not in cpp
-            or cpp.count('std::make_shared<ctnative::identity_object>()') != 1):
-        raise RuntimeError(f'{name}/{mode}: lost the typed size callable or live leaf allocation')
-    if (name in ('size_one_present_field_entry_repair', 'size_one_present_field_checked_repair',
-                 'size_deleted_zero_present_field', 'size_deleted_one_present_field')
-            or (name in {**join_size_sources(), **mutation_size_sources()}
-                and 'state.get(saved).value' in source)):
-        present = re.search(r'\b(\w+)\s*=\s*ctnative::map_get_present_identity\([^;]+;', cpp)
-        if (not present or len(re.findall(r'\bctnative::map_get_present_identity\(', cpp)) != 1
-                or f'ctnative::object_get_field_76616c7565({present[1]})' not in cpp):
-            raise RuntimeError(f'{name}/{mode}: exact saved one lost its present object field read')
-    for method in ('set', 'get', 'has', 'delete', 'clear'):
-        original = len(re.findall(rf'\b(?:state|alias)\.{method}\(', source))
+    source = row["source"]
+    params = "js_num, bool" if "set(key, flag)" in source else "js_num"
+    result = (
+        "ctnative::nullable_scalar" if name == "size_one_present_field_entry_repair" else "js_num"
+    )
+    if (
+        f"std::function<{result}({params})>" not in cpp
+        or cpp.count("std::make_shared<ctnative::identity_object>()") != 1
+    ):
+        raise RuntimeError(f"{name}/{mode}: lost the typed size callable or live leaf allocation")
+    if name in (
+        "size_one_present_field_entry_repair",
+        "size_one_present_field_checked_repair",
+        "size_deleted_zero_present_field",
+        "size_deleted_one_present_field",
+    ) or (
+        name in {**join_size_sources(), **mutation_size_sources()}
+        and "state.get(saved).value" in source
+    ):
+        present = re.search(r"\b(\w+)\s*=\s*ctnative::map_get_present_identity\([^;]+;", cpp)
+        if (
+            not present
+            or len(re.findall(r"\bctnative::map_get_present_identity\(", cpp)) != 1
+            or f"ctnative::object_get_field_76616c7565({present[1]})" not in cpp
+        ):
+            raise RuntimeError(f"{name}/{mode}: exact saved one lost its present object field read")
+    for method in ("set", "get", "has", "delete", "clear"):
+        original = len(re.findall(rf"\b(?:state|alias)\.{method}\(", source))
         # Existing preparation coalesces the historical identical set arms.
         # Its immutable nine-call source has eight prepared/runtime call sites.
-        if method == 'set':
-            original -= row['raw_calls'] - row['prepared_calls']
-        emitted = len(re.findall(rf'\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
+        if method == "set":
+            original -= row["raw_calls"] - row["prepared_calls"]
+        emitted = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
         if original != emitted:
-            raise RuntimeError(f'{name}/{mode}: changed {original} live Map.{method} calls to {emitted}')
-    size_reads = len(re.findall(r'\b(?:state|alias)\.size\b', source))
-    if len(re.findall(r'\bctnative::map_size\(', cpp)) != size_reads:
-        raise RuntimeError(f'{name}/{mode}: exact proof erased an evaluated size read')
-    entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
-    if not entry or entry[1].count('ctnative::invoke_callable(') != 2:
-        raise RuntimeError(f'{name}/{mode}: lost original published size/set calls')
+            raise RuntimeError(
+                f"{name}/{mode}: changed {original} live Map.{method} calls to {emitted}"
+            )
+    size_reads = len(re.findall(r"\b(?:state|alias)\.size\b", source))
+    if len(re.findall(r"\bctnative::map_size\(", cpp)) != size_reads:
+        raise RuntimeError(f"{name}/{mode}: exact proof erased an evaluated size read")
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    if not entry or entry[1].count("ctnative::invoke_callable(") != 2:
+        raise RuntimeError(f"{name}/{mode}: lost original published size/set calls")
 
 
 def zero_size_observer_source(source):
@@ -298,13 +380,17 @@ def zero_size_observer_source(source):
 
 def zero_size_lifetime_cpp(cpp):
     changed = instrument_leaf_objects(cpp)
-    changed = changed.replace('static std::vector<std::weak_ptr<const void>> ctn_test_objects;',
-        'static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n'
-        'static std::shared_ptr<const void> ctn_test_retained;\n'
-        'static bool ctn_test_keep_leaf = false;')
-    changed = changed.replace('ctn_test_objects.emplace_back(made); return made;',
-        'ctn_test_objects.emplace_back(made);\n'
-        '    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n    return made;')
+    changed = changed.replace(
+        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
+        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
+        "static std::shared_ptr<const void> ctn_test_retained;\n"
+        "static bool ctn_test_keep_leaf = false;",
+    )
+    changed = changed.replace(
+        "ctn_test_objects.emplace_back(made); return made;",
+        "ctn_test_objects.emplace_back(made);\n"
+        "    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n    return made;",
+    )
     return changed + r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -362,17 +448,36 @@ int main() {
 
 
 def zero_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(zero_size_lifetime_cpp(cpp))
-    binary = source.with_suffix('.sanitized').resolve()
-    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
-              str(source), '-o', str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
-             'UBSAN_OPTIONS': 'halt_on_error=1'})
-    if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
-        raise RuntimeError(f'{name}/{mode}: saved zero/leaf lifetime failed\n'
-                           f'{result.returncode}: {result.stdout}{result.stderr}')
+    binary = source.with_suffix(".sanitized").resolve()
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "halt_on_error=1",
+        },
+    )
+    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
+        raise RuntimeError(
+            f"{name}/{mode}: saved zero/leaf lifetime failed\n"
+            f"{result.returncode}: {result.stdout}{result.stderr}"
+        )
 
 
 def one_size_observer_source(source):
@@ -386,17 +491,36 @@ def one_size_lifetime_cpp(cpp):
 
 
 def one_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(one_size_lifetime_cpp(cpp))
-    binary = source.with_suffix('.sanitized').resolve()
-    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
-              str(source), '-o', str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
-             'UBSAN_OPTIONS': 'halt_on_error=1'})
-    if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
-        raise RuntimeError(f'{name}/{mode}: saved one/leaf lifetime failed\n'
-                           f'{result.returncode}: {result.stdout}{result.stderr}')
+    binary = source.with_suffix(".sanitized").resolve()
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "halt_on_error=1",
+        },
+    )
+    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
+        raise RuntimeError(
+            f"{name}/{mode}: saved one/leaf lifetime failed\n"
+            f"{result.returncode}: {result.stdout}{result.stderr}"
+        )
 
 
 def delete_size_observer_source(source):
@@ -408,14 +532,33 @@ def delete_size_lifetime_cpp(cpp):
 
 
 def delete_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(delete_size_lifetime_cpp(cpp))
-    binary = source.with_suffix('.sanitized').resolve()
-    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
-              str(source), '-o', str(binary)])
-    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
-             'UBSAN_OPTIONS': 'halt_on_error=1'})
-    if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
-        raise RuntimeError(f'{name}/{mode}: saved deletion size/leaf lifetime failed\n'
-                           f'{result.returncode}: {result.stdout}{result.stderr}')
+    binary = source.with_suffix(".sanitized").resolve()
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "halt_on_error=1",
+        },
+    )
+    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
+        raise RuntimeError(
+            f"{name}/{mode}: saved deletion size/leaf lifetime failed\n"
+            f"{result.returncode}: {result.stdout}{result.stderr}"
+        )

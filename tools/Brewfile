@@ -95,3 +95,9 @@ brew "llvm"   # 23.1.0: clang, LLVM, MLIR, mlir-tblgen, FileCheck
 #
 # ctcompile/test/CMakeLists.txt finds it there or reports that check-ctcompile
 # is unavailable, rather than silently running no tests.
+
+# THE PYTHON FORMATTER, the second half of tools/format.sh: every tracked .py
+# (the WPT and test262 runners, the corpus tools, ctcompile's test drivers) is
+# black-formatted at the 100 columns the C++ style already uses - pyproject.toml
+# at the repository root is the whole configuration.
+brew "black"

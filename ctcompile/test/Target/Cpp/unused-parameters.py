@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 
-
 MAIN = """
 int main() {
     if (used(42) != 42 || unused(999, 35) != 42) { return 1; }
@@ -62,16 +61,46 @@ def main():
         source.write_text(cpp + harness)
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{label}-{index}").resolve()
-            run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
-                 "-Wconversion", "-pedantic", "-ffp-contract=off", "-I", str(args.fixtures),
-                 str(source), "-o", str(binary)])
+            run(
+                [
+                    compiler,
+                    "-std=c++23",
+                    "-O2",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-Wconversion",
+                    "-pedantic",
+                    "-ffp-contract=off",
+                    "-I",
+                    str(args.fixtures),
+                    str(source),
+                    "-o",
+                    str(binary),
+                ]
+            )
             assert run([str(binary)]) == expected
 
     for label in ["parameters", "hoisted"]:
         cpp = (args.fixtures / f"{label}.cpp").read_text()
-        for name in ["used", "other_callee", "verbatim_use", "opaque_use", "captured_use", "loop_use"]:
+        for name in [
+            "used",
+            "other_callee",
+            "verbatim_use",
+            "opaque_use",
+            "captured_use",
+            "loop_use",
+        ]:
             assert "static_cast<void>" not in function_body(cpp, name), (label, name, cpp)
-        for name in ["unused", "explicit_void", "wrong_marker", "non_parameter", "opaque_parameter", "unused_capture", "omitted_argument"]:
+        for name in [
+            "unused",
+            "explicit_void",
+            "wrong_marker",
+            "non_parameter",
+            "opaque_parameter",
+            "unused_capture",
+            "omitted_argument",
+        ]:
             assert function_body(cpp, name).count("static_cast<void>") == 1, (label, name, cpp)
         assert "static_cast<void>(input)" not in function_body(cpp, "unused"), cpp
         assert "static_cast<void>(ignored)" in function_body(cpp, "unused"), cpp
@@ -83,16 +112,36 @@ def main():
     cleaned = (args.fixtures / "cleanup.cpp").read_text()
     body = function_body(cleaned, "after_cleanup")
     assert body.count("static_cast<void>") == 1 and "int64_t" not in body, body
-    compile_and_run("cleanup", cleaned, "\nint main() { return after_cleanup(99) == 42 ? 0 : 1; }\n")
+    compile_and_run(
+        "cleanup", cleaned, "\nint main() { return after_cleanup(99) == 42 ? 0 : 1; }\n"
+    )
 
     tests = Path(__file__).resolve().parents[2]
     native = args.work / "native.mlir"
-    run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
-         f"-DSOURCE={args.fixtures / 'native-source.js'}", f"-DOUTPUT={native}",
-         "-DOPTIMIZE=OFF", "-P", str(tests / "CTNative/Checks/pipeline.cmake")])
+    run(
+        [
+            "cmake",
+            f"-DTRANSLATE={args.translate}",
+            f"-DOPT={args.opt}",
+            f"-DSOURCE={args.fixtures / 'native-source.js'}",
+            f"-DOUTPUT={native}",
+            "-DOPTIMIZE=OFF",
+            "-P",
+            str(tests / "CTNative/Checks/pipeline.cmake"),
+        ]
+    )
     assert "ctnative.parameter_suppression" in native.read_text()
     deduced = args.work / "native-deduced.mlir"
-    run([args.opt, "--ctnative-print-deduced", "--mlir-print-debuginfo", str(native), "-o", str(deduced)])
+    run(
+        [
+            args.opt,
+            "--ctnative-print-deduced",
+            "--mlir-print-debuginfo",
+            str(native),
+            "-o",
+            str(deduced),
+        ]
+    )
     decisions = []
     for label, ir in [("native", native), ("native-deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
@@ -103,9 +152,15 @@ def main():
             counts[name] = body.count("static_cast<void>")
             assert counts[name] == expected, (label, name, body)
         decisions.append(counts)
-        compile_and_run(label, cpp, expected="addResult=42\nerasedResult=42\nignoredResult=42\nretainedResult=42\n")
+        compile_and_run(
+            label,
+            cpp,
+            expected="addResult=42\nerasedResult=42\nignoredResult=42\nretainedResult=42\n",
+        )
     assert decisions[0] == decisions[1], decisions
-    print("unused parameters: exact suppressions retained, GCC/Clang clean, hoisted and deduced behavior agrees")
+    print(
+        "unused parameters: exact suppressions retained, GCC/Clang clean, hoisted and deduced behavior agrees"
+    )
 
 
 if __name__ == "__main__":

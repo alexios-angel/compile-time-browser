@@ -26,6 +26,7 @@ no detach - or when the suite itself says to skip (intl402 without ECMA-402,
 implemented is a FAILURE, not a skip: skipping those is how a conformance
 number becomes a decoration. `--list-skips` prints the list and its reasons.
 """
+
 import argparse
 import concurrent.futures
 import json
@@ -136,7 +137,7 @@ def as_list(block):
     first = block[0]
     if first.startswith("["):
         inside = " ".join(block)
-        inside = inside[inside.find("[") + 1: inside.rfind("]")]
+        inside = inside[inside.find("[") + 1 : inside.rfind("]")]
         return [item.strip() for item in inside.split(",") if item.strip()]
     items = []
     for line in block:
@@ -248,8 +249,9 @@ def run_mode(test, mode, args):
         # default strict decode raises inside subprocess, the worker dies, and
         # the whole run ends part-way through with a decode error and no
         # numbers. Measured, on test/language.
-        done = subprocess.run(command, capture_output=True, text=True, errors="replace",
-                              timeout=args.timeout)
+        done = subprocess.run(
+            command, capture_output=True, text=True, errors="replace", timeout=args.timeout
+        )
     except subprocess.TimeoutExpired:
         return TIMEOUT, f"timeout after {args.timeout}s"
     except OSError as problem:
@@ -280,11 +282,17 @@ def run_mode(test, mode, args):
         # named in docs/test262.md; the alternative is failing 40 runtime
         # negatives for a prototype-wiring detail unrelated to what they test.
         if error["phase"] != want_phase:
-            return FAIL, f"negative {want_phase}/{want_type}: got {error['phase']} " \
-                         f"{error['ctor'] or error['name']}"
+            return (
+                FAIL,
+                f"negative {want_phase}/{want_type}: got {error['phase']} "
+                f"{error['ctor'] or error['name']}",
+            )
         if want_type not in (error["ctor"], error["name"]):
-            return FAIL, f"negative {want_phase}/{want_type}: got " \
-                         f"{error['ctor'] or error['name'] or '?'}"
+            return (
+                FAIL,
+                f"negative {want_phase}/{want_type}: got "
+                f"{error['ctor'] or error['name'] or '?'}",
+            )
         return PASS, None
 
     if error is not None:
@@ -301,7 +309,7 @@ def run_mode(test, mode, args):
             return PASS, None
         failure = [ln for ln in out.splitlines() if ln.startswith("Test262:AsyncTestFailure")]
         if failure:
-            return FAIL, "async: " + failure[0][len("Test262:AsyncTestFailure:"):].strip()
+            return FAIL, "async: " + failure[0][len("Test262:AsyncTestFailure:") :].strip()
         return FAIL, "async: $DONE was never called"
     return PASS, None
 
@@ -392,8 +400,10 @@ def report(rows, args):
     print(f"{'TOTAL'.ljust(width)}  {total:>6} {cells}")
     ran = total - counts[SKIP]
     rate = (100.0 * counts[PASS] / ran) if ran else 0.0
-    print(f"\n{counts[PASS]}/{ran} of the tests that RAN passed ({rate:.1f}%); "
-          f"{counts[SKIP]} skipped, {total} in the directory. {date.today().isoformat()}")
+    print(
+        f"\n{counts[PASS]}/{ran} of the tests that RAN passed ({rate:.1f}%); "
+        f"{counts[SKIP]} skipped, {total} in the directory. {date.today().isoformat()}"
+    )
 
     causes = Counter(normalise_cause(row["cause"]) for row in rows if row["status"] == FAIL)
     if causes:
@@ -437,11 +447,15 @@ def gate(rows, args):
     for name, was, now, cause in regressions:
         print(f"REGRESSED  {name}: expected {was}, got {now} - {cause}")
     for name, was in unexpected:
-        print(f"NOW PASSES {name}: recorded as {was}. Re-record with --update-expectations "
-              f"- an expectations file nobody prunes is a list of excuses.")
+        print(
+            f"NOW PASSES {name}: recorded as {was}. Re-record with --update-expectations "
+            f"- an expectations file nobody prunes is a list of excuses."
+        )
     if regressions or unexpected:
-        print(f"\ntest262 gate FAILED: {len(regressions)} regressed, "
-              f"{len(unexpected)} newly passing")
+        print(
+            f"\ntest262 gate FAILED: {len(regressions)} regressed, "
+            f"{len(unexpected)} newly passing"
+        )
         return 1
     print(f"test262 gate ok: {len(rows)} tests match ctbrowser/test/test262/expectations.txt")
     return 0
@@ -483,16 +497,36 @@ def write_expectations(rows):
 SELF_TEST = [
     ("must-pass", PASS, "", "assert.sameValue(1, 1);\n"),
     ("must-fail", FAIL, "", "assert.sameValue(1, 2);\n"),
-    ("negative-parse-correct", PASS, "negative:\n  phase: parse\n  type: SyntaxError\n",
-     "$DONOTEVALUATE();\nvar a = ;\n"),
-    ("negative-parse-wrong-type", FAIL, "negative:\n  phase: parse\n  type: TypeError\n",
-     "$DONOTEVALUATE();\nvar a = ;\n"),
-    ("negative-parse-nothing-thrown", FAIL, "negative:\n  phase: parse\n  type: SyntaxError\n",
-     "var a = 1;\n"),
-    ("negative-runtime-correct", PASS, "negative:\n  phase: runtime\n  type: Test262Error\n",
-     "throw new Test262Error('planted');\n"),
-    ("negative-runtime-wrong-phase", FAIL, "negative:\n  phase: runtime\n  type: SyntaxError\n",
-     "var a = ;\n"),
+    (
+        "negative-parse-correct",
+        PASS,
+        "negative:\n  phase: parse\n  type: SyntaxError\n",
+        "$DONOTEVALUATE();\nvar a = ;\n",
+    ),
+    (
+        "negative-parse-wrong-type",
+        FAIL,
+        "negative:\n  phase: parse\n  type: TypeError\n",
+        "$DONOTEVALUATE();\nvar a = ;\n",
+    ),
+    (
+        "negative-parse-nothing-thrown",
+        FAIL,
+        "negative:\n  phase: parse\n  type: SyntaxError\n",
+        "var a = 1;\n",
+    ),
+    (
+        "negative-runtime-correct",
+        PASS,
+        "negative:\n  phase: runtime\n  type: Test262Error\n",
+        "throw new Test262Error('planted');\n",
+    ),
+    (
+        "negative-runtime-wrong-phase",
+        FAIL,
+        "negative:\n  phase: runtime\n  type: SyntaxError\n",
+        "var a = ;\n",
+    ),
     ("async-complete", PASS, "flags: [async]\n", "$DONE();\n"),
     ("async-silent", FAIL, "flags: [async]\n", "var never = 1;\n"),
     ("skipped-feature", SKIP, "features: [cross-realm]\n", "$262.createRealm();\n"),
@@ -502,6 +536,7 @@ SELF_TEST = [
 
 def self_test(args):
     import tempfile
+
     with tempfile.TemporaryDirectory(prefix="ct262-selftest-") as scratch:
         root = Path(scratch)
         planted = []
@@ -518,8 +553,10 @@ def self_test(args):
             mark = "ok  " if got["status"] == want else "WRONG"
             if got["status"] != want:
                 wrong += 1
-            print(f"{mark} {test.rel:34s} want {want:7s} got {got['status']:7s} "
-                  f"{(got['cause'] or '')[:60]}")
+            print(
+                f"{mark} {test.rel:34s} want {want:7s} got {got['status']:7s} "
+                f"{(got['cause'] or '')[:60]}"
+            )
         print(f"\n{len(planted) - wrong}/{len(planted)} planted answers classified correctly")
         if wrong:
             print("test262 self-test FAILED: the runner does not classify what it is told to")
@@ -527,23 +564,33 @@ def self_test(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dir", default=None,
-                        help="a directory under the corpus root, e.g. test/language/types")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--dir", default=None, help="a directory under the corpus root, e.g. test/language/types"
+    )
     parser.add_argument("--gate", action="store_true", help="run the ctest subset")
-    parser.add_argument("--self-test", action="store_true",
-                        help="plant answers this runner must get right, and assert it does")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="plant answers this runner must get right, and assert it does",
+    )
     parser.add_argument("--update-expectations", action="store_true")
     parser.add_argument("--list-skips", action="store_true")
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
-    parser.add_argument("--jobs", type=int, default=4,
-                        help="capped at 4: the devbox is shared and builds run on it")
+    parser.add_argument(
+        "--jobs", type=int, default=4, help="capped at 4: the devbox is shared and builds run on it"
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--memory-mb", type=int, default=2048)
-    parser.add_argument("--group-depth", type=int, default=0,
-                        help="path components per table row; 0 = one level below --dir")
+    parser.add_argument(
+        "--group-depth",
+        type=int,
+        default=0,
+        help="path components per table row; 0 = one level below --dir",
+    )
     parser.add_argument("--top", type=int, default=15)
     parser.add_argument("--json", type=Path, default=None)
     parser.add_argument("--tsv", type=Path, default=None)
@@ -564,8 +611,10 @@ def main():
     args.jobs = max(1, min(args.jobs, 4))
     cap_address_space(args.memory_mb)
     if not args.binary.exists():
-        sys.exit(f"test262.py: no ct262 at {args.binary} - build it on the devbox "
-                 f"(`DEVBOX_DIR=... tools/remote-build.sh ctbrowser-tool-ct262`)")
+        sys.exit(
+            f"test262.py: no ct262 at {args.binary} - build it on the devbox "
+            f"(`DEVBOX_DIR=... tools/remote-build.sh ctbrowser-tool-ct262`)"
+        )
     if not (args.corpus / "harness" / "assert.js").exists():
         sys.exit(f"test262.py: no corpus at {args.corpus} - run tools/fetch-test262.sh")
 
@@ -595,8 +644,9 @@ def main():
     if args.json:
         args.json.write_text(json.dumps(rows, indent=1))
     if args.tsv:
-        args.tsv.write_text("".join(
-            f"{row['status']}\t{row['test']}\t{row['cause'] or ''}\n" for row in rows))
+        args.tsv.write_text(
+            "".join(f"{row['status']}\t{row['test']}\t{row['cause'] or ''}\n" for row in rows)
+        )
 
     if args.update_expectations:
         # ONLY FROM THE GATE'S OWN SUBSET. `--dir test/built-ins/Array
@@ -604,15 +654,18 @@ def main():
         # directory's, and the gate would then pass over a file that describes
         # something it does not run.
         if not args.gate:
-            sys.exit("test262.py: --update-expectations records the GATE's subset, "
-                     "so it needs --gate")
+            sys.exit(
+                "test262.py: --update-expectations records the GATE's subset, " "so it needs --gate"
+            )
         write_expectations(rows)
         return 0
     if args.gate:
         return gate(rows, args)
     report(rows, args)
-    print(f"{time.monotonic() - started:.1f}s on {args.jobs} workers, "
-          f"{args.timeout:g}s timeout, {args.memory_mb} MB address-space cap")
+    print(
+        f"{time.monotonic() - started:.1f}s on {args.jobs} workers, "
+        f"{args.timeout:g}s timeout, {args.memory_mb} MB address-space cap"
+    )
     return 0
 
 

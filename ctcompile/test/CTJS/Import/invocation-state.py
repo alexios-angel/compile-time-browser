@@ -7,9 +7,9 @@ from pathlib import Path
 import re
 import struct
 
-
 spec = importlib.util.spec_from_file_location(
-    "exceptions", Path(__file__).parents[2] / "CTNative/Lowering/Exceptions/exceptions.py")
+    "exceptions", Path(__file__).parents[2] / "CTNative/Lowering/Exceptions/exceptions.py"
+)
 exceptions = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(exceptions)
 run = exceptions.run
@@ -19,9 +19,17 @@ CASES = {
     "assignment": (3, {"caught42": 42, "normal20": 20}, [10]),
     "sequential": (3, {"caught52": 52, "normal20": 20}, [0, ("call", 0)]),
     "argument": (3, {"caught28": 28, "normal20": 20}, [14]),
-    "receiver": (7, {"caught42": 42, "normal20": 20, "order": 12345,
-                     "throwingOrder12345": 12345, "normalOrder12345": 12345},
-                 [10, 10, 10, 10]),
+    "receiver": (
+        7,
+        {
+            "caught42": 42,
+            "normal20": 20,
+            "order": 12345,
+            "throwingOrder12345": 12345,
+            "normalOrder12345": 12345,
+        },
+        [10, 10, 10, 10],
+    ),
 }
 
 
@@ -32,8 +40,9 @@ def require(condition, message):
 
 def guarded_body(text):
     functions = re.split(r"(?=^  ctjs\.func\b)", text, flags=re.M)
-    found = [body for body in functions if re.match(
-        r"  ctjs\.func (?:private )?@guarded\$\d+\(", body)]
+    found = [
+        body for body in functions if re.match(r"  ctjs\.func (?:private )?@guarded\$\d+\(", body)
+    ]
     require(len(found) == 1, "source guarded function was lost")
     return found[0]
 
@@ -51,8 +60,9 @@ def snapshots(text):
         elif line.startswith("    "):
             block[1].append(line.strip())
     width = int(re.search(r"ctjs\.frame_enter (\d+)", body)[1])
-    landings = [entry for entry in blocks.values()
-                if any("ctjs.catch_land" in line for line in entry[1])]
+    landings = [
+        entry for entry in blocks.values() if any("ctjs.catch_land" in line for line in entry[1])
+    ]
     require(len(landings) == 1, "expected one catch landing")
     landing_args, landing_ops = landings[0]
     caught_add = next(line for line in landing_ops if "ctjs.binary add" in line)
@@ -60,8 +70,9 @@ def snapshots(text):
     require(mark in landing_args, "catch lost its saved mark register")
     mark_slot = landing_args.index(mark)
     signature = re.search(r"@guarded\$\d+\(([^)]*)\)", body)[1]
-    values = {argument: ("parameter", index)
-              for index, argument in enumerate(SSA.findall(signature))}
+    values = {
+        argument: ("parameter", index) for index, argument in enumerate(SSA.findall(signature))
+    }
     calls, events = [], []
     current, incoming, seen = "entry", [], set()
     while True:
@@ -102,8 +113,13 @@ def snapshots(text):
                     require(call is None, "multiple calls share one status edge")
                     index = len(calls)
                     values[result] = ("call", index)
-                    call = {"result": result, "callee": callee, "receiver": receiver,
-                            "args": args, "index": index}
+                    call = {
+                        "result": result,
+                        "callee": callee,
+                        "receiver": receiver,
+                        "args": args,
+                        "index": index,
+                    }
                     calls.append(call)
                     events.append("call:" + (callee[1] if callee[0] == "global" else "property"))
                 elif not op.startswith("ctjs.frame_enter "):
@@ -121,8 +137,10 @@ def snapshots(text):
                     require(normal.count(call["result"]) == 1, "normal edge lost call result")
                     call["before"] = values[unwind[mark_slot]]
                     call["normal_mark"] = values[normal[mark_slot]]
-                    require(call["normal_mark"] == call["before"],
-                            "call published its assignment before normal continuation")
+                    require(
+                        call["normal_mark"] == call["before"],
+                        "call published its assignment before normal continuation",
+                    )
             if line.startswith(("ctjs.check ", "ctjs.push_handler ", "cf.br ")):
                 edge = EDGE.search(line)
                 require(edge is not None, "fixture edge lost its registers")
@@ -131,8 +149,10 @@ def snapshots(text):
                 break
             if line.startswith("ctjs.return "):
                 returned = values[SSA.findall(line)[0]]
-                require(returned == ("call", len(calls) - 1),
-                        "completed assignment did not publish the last normal result")
+                require(
+                    returned == ("call", len(calls) - 1),
+                    "completed assignment did not publish the last normal result",
+                )
                 return calls, events
         else:
             raise RuntimeError("fixture normal path has no successor")
@@ -142,21 +162,44 @@ def check_state(text, name, before):
     calls, events = snapshots(text)
     require([call["before"] for call in calls] == before, name + ": wrong pre-call mark")
     if name == "receiver":
-        require(events == ["call:methodReceiver", "call:methodKey", "get_property",
-                           "call:methodArgument", "call:property"],
-                "receiver/key/getter/argument/call evaluation order changed")
-        require(calls[-1]["callee"] == ("property", ("call", 0), ("call", 1)) and
-                calls[-1]["receiver"] == ("call", 0) and
-                calls[-1]["args"] == [("call", 2)], "method call lost its receiver or arguments")
+        require(
+            events
+            == [
+                "call:methodReceiver",
+                "call:methodKey",
+                "get_property",
+                "call:methodArgument",
+                "call:property",
+            ],
+            "receiver/key/getter/argument/call evaluation order changed",
+        )
+        require(
+            calls[-1]["callee"] == ("property", ("call", 0), ("call", 1))
+            and calls[-1]["receiver"] == ("call", 0)
+            and calls[-1]["args"] == [("call", 2)],
+            "method call lost its receiver or arguments",
+        )
     else:
-        require(all(call["callee"] == ("global", "choose") and
-                    call["receiver"] == ("undefined",) for call in calls),
-                name + ": direct call boundary changed")
-        expected_args = [[("parameter", 3), 14]] if name == "argument" else (
-            [[("boolean", "false")], [("parameter", 3)]] if name == "sequential"
-            else [[("parameter", 3)]])
-        require([call["args"] for call in calls] == expected_args,
-                name + ": argument evaluation changed")
+        require(
+            all(
+                call["callee"] == ("global", "choose") and call["receiver"] == ("undefined",)
+                for call in calls
+            ),
+            name + ": direct call boundary changed",
+        )
+        expected_args = (
+            [[("parameter", 3), 14]]
+            if name == "argument"
+            else (
+                [[("boolean", "false")], [("parameter", 3)]]
+                if name == "sequential"
+                else [[("parameter", 3)]]
+            )
+        )
+        require(
+            [call["args"] for call in calls] == expected_args,
+            name + ": argument evaluation changed",
+        )
     return calls
 
 
@@ -174,14 +217,21 @@ def main():
     for name, (denominator, expected, before) in CASES.items():
         source = args.fixtures / (name + ".js")
         exceptions.node_oracle(node, source.read_text(), expected, name + "/Node")
-        exceptions.compare(run([str(reference), str(source)]).stdout,
-                           exceptions.expected_text(expected), name + "/interpreter")
-        raw, resolved, prepared = [args.work / f"{name}.{stage}.mlir"
-                                   for stage in ("raw", "resolved", "prepared")]
+        exceptions.compare(
+            run([str(reference), str(source)]).stdout,
+            exceptions.expected_text(expected),
+            name + "/interpreter",
+        )
+        raw, resolved, prepared = [
+            args.work / f"{name}.{stage}.mlir" for stage in ("raw", "resolved", "prepared")
+        ]
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
-        require(len(exceptions.CTJS_FUNCTION.findall(raw.read_text())) == denominator and
-                "ctjs.skipped" not in raw.read_text() and "is not compiled:" not in imported.stderr,
-                name + ": importer lost a source function")
+        require(
+            len(exceptions.CTJS_FUNCTION.findall(raw.read_text())) == denominator
+            and "ctjs.skipped" not in raw.read_text()
+            and "is not compiled:" not in imported.stderr,
+            name + ": importer lost a source function",
+        )
         run([args.opt, str(raw), "--ctjs-resolve-globals", "-o", str(resolved)])
         for path in (raw, resolved):
             check_state(path.read_text(), name, before)
@@ -191,8 +241,12 @@ def main():
             # Falsify the observation by injecting the unavailable result into
             # the actual imported call's unwind edge. This mutation is never run.
             original = calls[0]["check"]
-            corrupted = re.sub(r"( caught \^\w+\()(%[\w.$-]+)",
-                               lambda match: match[1] + calls[0]["result"], original, count=1)
+            corrupted = re.sub(
+                r"( caught \^\w+\()(%[\w.$-]+)",
+                lambda match: match[1] + calls[0]["result"],
+                original,
+                count=1,
+            )
             require(corrupted != original, "snapshot mutation did not change the call edge")
             broken = prepared.read_text().replace(original, corrupted, 1)
             try:
@@ -209,12 +263,17 @@ def main():
                 run([args.opt, str(previous), option, "-o", str(output)])
                 exceptions.refused(previous, output, denominator, name)
                 if name != "receiver":
-                    require("native try/catch needs an explicit throw in its active handler"
-                            in output.read_text(), name + ": throwing-call guard changed")
+                    require(
+                        "native try/catch needs an explicit throw in its active handler"
+                        in output.read_text(),
+                        name + ": throwing-call guard changed",
+                    )
                     check_state(output.read_text(), name, before)
                 previous = output
-        print(f"{name}: {denominator} source functions, {len(expected)} reference observations; "
-              "call snapshots and native refusal retained")
+        print(
+            f"{name}: {denominator} source functions, {len(expected)} reference observations; "
+            "call snapshots and native refusal retained"
+        )
 
 
 if __name__ == "__main__":

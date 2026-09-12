@@ -227,14 +227,11 @@ def font_conf(path: Path) -> Path:
         ("Courier New", "Cousine"),
         ("Courier", "Cousine"),
     ]
-    rules = "".join(
-        f"""  <match target="pattern">
+    rules = "".join(f"""  <match target="pattern">
     <test qual="any" name="family"><string>{asked}</string></test>
     <edit name="family" mode="assign" binding="strong"><string>{real}</string></edit>
   </match>
-"""
-        for asked, real in families
-    )
+""" for asked, real in families)
     path.write_text(
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
@@ -259,8 +256,11 @@ class Ctbrowse:
 
     def __init__(self, page: Path, size: tuple[int, int], headed: bool, remote: str = ""):
         self.remote = remote
-        self.proc = (self._spawn_remote(page, size, remote) if remote
-                     else self._spawn_local(page, size, headed))
+        self.proc = (
+            self._spawn_remote(page, size, remote)
+            if remote
+            else self._spawn_local(page, size, headed)
+        )
         # It prints the port it got before doing anything else; asking for 0
         # means the OS chose one and this is the only way to learn it.
         assert self.proc.stdout is not None
@@ -279,14 +279,17 @@ class Ctbrowse:
         # because a build directory configured before a reorg still has the
         # layout of its day, and "not built" is a much worse thing to say to
         # someone whose binary is sitting right there.
-        candidates = [ROOT / "build" / "tools" / "ctdrive",
-                      ROOT / "build" / "examples" / "ctdrive",
-                      ROOT / "build" / "src" / "examples" / "ctdrive"]
+        candidates = [
+            ROOT / "build" / "tools" / "ctdrive",
+            ROOT / "build" / "examples" / "ctdrive",
+            ROOT / "build" / "src" / "examples" / "ctdrive",
+        ]
         exe = next((p for p in candidates if p.exists()), None)
         if exe is None:
             raise FileNotFoundError(
                 f"{candidates[0]} not built; cmake --build --preset default --target ctdrive"
-                " - or pass --remote to drive the one on the build box")
+                " - or pass --remote to drive the one on the build box"
+            )
         env = dict(os.environ)
         env.setdefault("CTBROWSER_FONT_PATH", str(ROOT / "ctbrowser" / "resources" / "fonts"))
         if not headed:
@@ -326,10 +329,18 @@ class Ctbrowse:
         rel = page.resolve().relative_to(ROOT)
         remote_cmd = (
             f"cd {REMOTE_DIR} && exec ./build/tools/ctdrive {shlex.quote(str(rel))}"
-            f" --port {self.port} --size {size[0]} {size[1]}")
+            f" --port {self.port} --size {size[0]} {size[1]}"
+        )
         return subprocess.Popen(
-            ["ssh", "-o", "BatchMode=yes", "-L",
-             f"127.0.0.1:{self.port}:127.0.0.1:{self.port}", host, remote_cmd],
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-L",
+                f"127.0.0.1:{self.port}:127.0.0.1:{self.port}",
+                host,
+                remote_cmd,
+            ],
             stdout=subprocess.PIPE,
             text=True,
         )
@@ -388,9 +399,16 @@ class Ctbrowse:
             if answer.get("ok"):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 fetched = subprocess.run(
-                    ["ssh", "-o", "BatchMode=yes", self.remote,
-                     f"cd {REMOTE_DIR} && cat {shlex.quote(there)} && rm -f {shlex.quote(there)}"],
-                    stdout=subprocess.PIPE, check=False)
+                    [
+                        "ssh",
+                        "-o",
+                        "BatchMode=yes",
+                        self.remote,
+                        f"cd {REMOTE_DIR} && cat {shlex.quote(there)} && rm -f {shlex.quote(there)}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    check=False,
+                )
                 if fetched.returncode != 0 or not fetched.stdout:
                     return {"ok": False, "error": f"could not fetch {there} from {self.remote}"}
                 ppm.write_bytes(fetched.stdout)
@@ -439,10 +457,12 @@ def serve_repo() -> str:
     # encoding as well; this makes the server right regardless.
     http.server.SimpleHTTPRequestHandler.extensions_map = dict(
         http.server.SimpleHTTPRequestHandler.extensions_map,
-        **{".js": "text/javascript; charset=utf-8",
-           ".html": "text/html; charset=utf-8",
-           ".css": "text/css; charset=utf-8",
-           ".json": "application/json; charset=utf-8"},
+        **{
+            ".js": "text/javascript; charset=utf-8",
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+        },
     )
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT))
     # Quiet: one request line per asset is noise in a tool whose whole output is
@@ -564,8 +584,9 @@ class Session:
 
         wanted = args.engines
         if "ctbrowse" in wanted:
-            self.engines.append(Ctbrowse(page, size, args.headed,
-                                         getattr(args, "remote", "") or ""))
+            self.engines.append(
+                Ctbrowse(page, size, args.headed, getattr(args, "remote", "") or "")
+            )
         real = [e for e in wanted if e != "ctbrowse"]
         if real:
             from playwright.sync_api import sync_playwright
@@ -752,7 +773,10 @@ def reexec_in_venv() -> None:
     """Re-run under the venv when a real browser is wanted and Playwright is not here."""
     python = VENV / "bin" / "python3"
     if not python.exists():
-        print("compare.py: playwright not installed; run `tools/check/compare.py setup`", file=sys.stderr)
+        print(
+            "compare.py: playwright not installed; run `tools/check/compare.py setup`",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
@@ -779,10 +803,15 @@ def main() -> int:
     start.add_argument("page")
     start.add_argument("--engine", action="append", dest="engine_values", metavar="NAME")
     start.add_argument("--headed", action="store_true", help="real windows, so a human can watch")
-    start.add_argument("--remote", nargs="?", const="devbox", default="",
-                       metavar="HOST",
-                       help="run ctdrive on HOST (default devbox) over an ssh-forwarded "
-                            "port, because this machine cannot build the engine")
+    start.add_argument(
+        "--remote",
+        nargs="?",
+        const="devbox",
+        default="",
+        metavar="HOST",
+        help="run ctdrive on HOST (default devbox) over an ssh-forwarded "
+        "port, because this machine cannot build the engine",
+    )
     start.add_argument("--delay", type=float, default=0, metavar="MS", help="pause before an input")
     start.add_argument("--size", type=int, nargs=2, default=[800, 600], metavar=("W", "H"))
     start.add_argument("--system-fonts", action="store_true", help="do not force ctbrowser's faces")

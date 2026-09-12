@@ -11,7 +11,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Ownership"))
 from native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE, boundary, host, owned
 
-
 SOURCE = r"""function scalar(which) {
     return which === 0 ? void 0 : which === 1 ? null : which === 2 ? -0 :
         which === 3 ? 0 / 0 : which === 4 ? false : true;
@@ -59,13 +58,27 @@ var presentField = field(true);
 var earlierField = savedField();
 """
 EXPECTED = {
-    "undefinedValue": "undefined", "nullValue": "null", "negativeZero": "-0",
-    "nanValue": "nan", "falseValue": "false", "trueValue": "true",
-    "missingString": "undefined", "nullString": "null", "emptyString": '""',
-    "ownedString": '"nan%3B%3D%25%00"', "changedNumber": "-0", "changedString": "null",
-    "uninitialized": "undefined", "before": "undefined", "keptNull": "null",
-    "fixedUndefined": "41", "wrongUndefined": "undefined", "fixedNull": "41",
-    "missingField": "undefined", "presentField": "7", "earlierField": "undefined",
+    "undefinedValue": "undefined",
+    "nullValue": "null",
+    "negativeZero": "-0",
+    "nanValue": "nan",
+    "falseValue": "false",
+    "trueValue": "true",
+    "missingString": "undefined",
+    "nullString": "null",
+    "emptyString": '""',
+    "ownedString": '"nan%3B%3D%25%00"',
+    "changedNumber": "-0",
+    "changedString": "null",
+    "uninitialized": "undefined",
+    "before": "undefined",
+    "keptNull": "null",
+    "fixedUndefined": "41",
+    "wrongUndefined": "undefined",
+    "fixedNull": "41",
+    "missingField": "undefined",
+    "presentField": "7",
+    "earlierField": "undefined",
 }
 
 
@@ -81,25 +94,34 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = [next((shutil.which(c) for c in choices if shutil.which(c)), None)
-                 for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))]
+    compilers = [
+        next((shutil.which(c) for c in choices if shutil.which(c)), None)
+        for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))
+    ]
     reference, node = boundary.reference_tool(args.opt), boundary.node_executable(args)
     nm = shutil.which("nm")
     assert all(compilers) and nm and owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
     js, prepared, count = boundary.prepare(args, "nullable-global-output", SOURCE)
     assert count == 9
     expected = "".join(f"{name}={EXPECTED[name]}\n" for name in sorted(EXPECTED))
-    assert host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(EXPECTED))]).stdout == expected
+    assert (
+        host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(EXPECTED))]).stdout
+        == expected
+    )
     oracle = host.run([str(reference), str(js)])
     assert normalized(oracle.stdout) == expected
-    assert "21 globals printed (6 number, 2 boolean, 2 string, 4 null, 7 undefined)" in oracle.stderr
+    assert (
+        "21 globals printed (6 number, 2 boolean, 2 string, 4 null, 7 undefined)" in oracle.stderr
+    )
 
     forged = args.work / "forged-scalar-reports.mlir"
     text, reports = re.subn(
-        r'^(\s*ctjs\.store_global [^\n{}]+)$',
+        r"^(\s*ctjs\.store_global [^\n{}]+)$",
         r'\1 {ctnative.scalar_global = "number", ctnative.inferred_result = "number", '
-        r'ctnative.host_proved = true, ctnative.host_owner_proved = true}',
-        prepared.read_text(), flags=re.M)
+        r"ctnative.host_proved = true, ctnative.host_owner_proved = true}",
+        prepared.read_text(),
+        flags=re.M,
+    )
     assert reports >= len(EXPECTED)
     forged.write_text(text)
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
@@ -112,8 +134,9 @@ def main():
             assert not boundary.FUNCTION.search(output.read_text())
             assert not boundary.REFUSAL.search(output.read_text())
             cpp = host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout
-            outputs.append("\n".join(line for line in cpp.splitlines()
-                                     if not line.startswith("// ctcompile:")))
+            outputs.append(
+                "\n".join(line for line in cpp.splitlines() if not line.startswith("// ctcompile:"))
+            )
             if name == "plain":
                 native = output
         assert outputs[0] == outputs[1], "forged report changed independently typed native output"
@@ -130,8 +153,10 @@ def main():
                 host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
                 assert not owned.VM.search(host.run([nm, "-C", str(binary)]).stdout)
                 assert normalized(host.run([str(binary)]).stdout) == expected
-    print("nullable globals: 21 typed observations, Null/Undefined guards, mixed stores, "
-          "forged reports, default/disabled, explicit/deduced, GCC/Clang and no VM")
+    print(
+        "nullable globals: 21 typed observations, Null/Undefined guards, mixed stores, "
+        "forged reports, default/disabled, explicit/deduced, GCC/Clang and no VM"
+    )
 
 
 if __name__ == "__main__":
