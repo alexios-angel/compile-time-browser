@@ -1262,6 +1262,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                if (binary.getKind() == ctjs::BinaryKind::UShr &&
+                    bigIntOrigin(lhs, state.bigIntOrigins) &&
+                    bigIntOrigin(rhs, state.bigIntOrigins)) {
+                    // bigint_binary throws an independent TypeError before any
+                    // conversion. Its Undefined carrier has no operand/local
+                    // edge and no BigInt category. Keep all continuations and
+                    // whole-frame exclusions; normal completion is unproved.
+                    state.origins[binary.getResult()] = binary.getResult();
+                    continue;
+                }
                 if (bigIntOrigin(lhs, state.bigIntOrigins) &&
                     bigIntOrigin(rhs, state.bigIntOrigins) &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||
@@ -1279,8 +1289,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // that early exit from retaining unpublished local objects.
                     // Keep the normal result's separate per-path category; this
                     // proves neither allocation success nor normal completion
-                    // or no-throw/native effects. Unsigned shifts and mixed
-                    // operands remain refused, even on an observed success.
+                    // or no-throw/native effects. Mixed operands remain refused,
+                    // even on an observed success.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     state.bigIntOrigins.insert(binary.getResult());
                     state.origins[binary.getResult()] = binary.getResult();

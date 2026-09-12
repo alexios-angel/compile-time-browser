@@ -139,7 +139,8 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                                     operation == "div" || operation == "mod" || operation == "pow"
                               : operation == "add" || operation == "bitand" ||
                                     operation == "bitor" || operation == "bitxor" ||
-                                    operation == "shl" || operation == "shr"));
+                                    operation == "shl" || operation == "shr" ||
+                                    operation == "ushr"));
                     run({.contents = {
                              .what =
                                  "computed BigInt requires an independent binary category proof",
@@ -498,7 +499,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                         ? operation == "add" || operation == "sub" || operation == "mul" ||
                               operation == "div" || operation == "mod" || operation == "pow"
                         : operation == "add" || operation == "bitand" || operation == "bitor" ||
-                              operation == "bitxor" || operation == "shl" || operation == "shr";
+                              operation == "bitxor" || operation == "shl" || operation == "shr" ||
+                              operation == "ushr";
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %rhs"}) {
                     run({.contents = {
@@ -795,7 +797,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 setKind(other);
                 inspect(
                     (isStatic &&
-                     (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)) ||
+                     (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr ||
+                      other == ctjs::BinaryKind::UShr)) ||
                             (!isStatic &&
                              (other == ctjs::BinaryKind::Div || other == ctjs::BinaryKind::Mod ||
                               other == ctjs::BinaryKind::Pow || other == ctjs::BinaryKind::Concat))

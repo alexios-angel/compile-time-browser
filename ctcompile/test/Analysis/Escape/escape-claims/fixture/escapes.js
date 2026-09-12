@@ -400,3 +400,48 @@ function neverCalled() { var o = { z: 1 }; return o; }
 // --- SUSPENDED: the importer refuses the whole function -------------------
 async function suspended() { var o = { s: 1 }; await 0; return o; }
 suspended();
+
+// --- BIGINT UNSIGNED SHIFT: independent TypeError, dense array retention ---
+function primitiveUShrEarly(choice) {
+    var child = {}, items = [child], value, shift;
+    if (choice) { value = 8n; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value >>> shift;
+    items[0] = result;
+    return items;
+}
+function primitiveUShrRetained(choice) {
+    var child = {}, items = [child], saved = items[0], value, shift;
+    if (choice) { value = 8n; shift = 1n; }
+    else { value = 8; shift = 1; }
+    var result = value >>> shift;
+    items[0] = result;
+    return saved;
+}
+function primitiveUShrOpaque(value, shift) {
+    var child = {}, items = [child];
+    var result = value >>> shift;
+    items[0] = result;
+    return items;
+}
+function primitiveUShrCatch(fn, input, shift) {
+    try { return fn(input, shift); }
+    catch (error) { H.push(error); return error; }
+}
+var primitiveUShrNormal = primitiveUShrEarly(false);
+var primitiveUShrSaved = primitiveUShrRetained(false);
+var primitiveUShrUnknown = primitiveUShrOpaque(8, 1);
+H.push(primitiveUShrNormal); H.push(primitiveUShrSaved); H.push(primitiveUShrUnknown);
+var primitiveUShrError = primitiveUShrCatch(primitiveUShrEarly, true);
+var primitiveUShrSavedError = primitiveUShrCatch(primitiveUShrRetained, true);
+var primitiveUShrUnknownError = primitiveUShrCatch(primitiveUShrOpaque, 8n, 1n);
+if (primitiveUShrNormal[0] !== 4 || typeof primitiveUShrNormal[0] !== "number" ||
+    typeof primitiveUShrSaved !== "object" || Array.isArray(primitiveUShrSaved) ||
+    primitiveUShrUnknown[0] !== 4 || typeof primitiveUShrUnknown[0] !== "number" ||
+    !(primitiveUShrError instanceof TypeError) || primitiveUShrError.name !== "TypeError" ||
+    !(primitiveUShrSavedError instanceof TypeError) ||
+    !(primitiveUShrUnknownError instanceof TypeError) ||
+    primitiveUShrError === primitiveUShrSavedError || primitiveUShrError === primitiveUShrUnknownError ||
+    primitiveUShrSavedError === primitiveUShrUnknownError ||
+    typeof primitiveUShrError.message !== "string" ||
+    typeof primitiveUShrSavedError.stack !== "string") throw "BigInt unsigned shift independent TypeError witness";
