@@ -53,19 +53,18 @@ void install_symbol(context & cx) {
     well_known("hasInstance", "@@hasInstance");
     well_known("toPrimitive", "@@toPrimitive");
     well_known("toStringTag", "@@toStringTag");
-    // `Symbol.match` IS CONSULTED, which is why it is here and its four
-    // siblings are not. IsRegExp (7.2.8) reads it to decide whether
-    // `includes`, `startsWith` and `endsWith` must refuse their argument, so
-    // defining it gives a page the documented way to say "this object is a
-    // pattern" or "this RegExp is not one" - and test262's
-    // `return-abrupt-from-searchstring-regexp-test.js` asserts exactly that.
-    //
-    // @@replace, @@search, @@split and @@matchAll are DELIBERATELY ABSENT.
-    // Nothing here dispatches through them - the string methods drive a
-    // pattern's `exec` directly - and a well-known symbol that no operation
-    // reads is a promise the engine does not keep: a page would install a
-    // custom @@replace, see it ignored, and have nothing to say why.
+    // EVERY ONE OF THESE FIVE IS CONSULTED, which is the bar for being here:
+    // a well-known symbol that no operation reads is a promise the engine does
+    // not keep. IsRegExp (7.2.8) reads @@match to decide whether `includes`,
+    // `startsWith` and `endsWith` must refuse their argument, and since
+    // 2026-09-12 String.prototype's match, matchAll, replace, replaceAll,
+    // search and split each ask their argument for its own method first
+    // (string.cpp, symbol_dispatch). A real RegExp still carries none.
     well_known("match", "@@match");
+    well_known("matchAll", "@@matchAll");
+    well_known("replace", "@@replace");
+    well_known("search", "@@search");
+    well_known("split", "@@split");
     // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to
