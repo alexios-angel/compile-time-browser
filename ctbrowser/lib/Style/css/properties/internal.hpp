@@ -60,6 +60,7 @@ struct scan {
     case k::number_length_percentage:
     case k::position:
     case k::freeform:
+    case k::color:
     case k::keyword_only: return true;
     case k::length:
     case k::number:
@@ -87,5 +88,8 @@ struct scan {
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
+// Defined in color.cpp.
+[[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
+                               std::string_view normalized, std::string & out);
 
 } // namespace ctbrowser::style::css::detail

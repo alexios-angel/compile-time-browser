@@ -483,6 +483,7 @@ namespace detail {
     // in one answers with a length exactly as `length_percentage` does.
     case k::position: return length;
     case k::freeform:
+    case k::color:
     case k::keyword_only: return true;
     }
     return true;

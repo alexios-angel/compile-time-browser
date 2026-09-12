@@ -124,6 +124,7 @@ std::string dom_bindings::author_style_text() {
 }
 
 void dom_bindings::style_sheets_changed() {
+    ++style_generation_;
     if (on_author_styles_) { on_author_styles_(author_style_text()); }
     // MARKED DIRTY EITHER WAY. With no hook the cascade does not observe the
     // change and the frame is identical, which costs one recomposite on an
@@ -238,6 +239,10 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         std::string title;
         std::string media;
         std::string text;
+        // The <style>'s child nodes, as ids: HTML §4.2.6 re-creates the sheet
+        // on ANY child change, and css-style-reparse asks that an appended
+        // empty text node drop the rules insertRule added, text or no text.
+        std::string children;
     };
     std::vector<found_sheet> found;
     {
@@ -271,6 +276,7 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                     if (is_style) {
                         for (const node_id child : txn.children(at)) {
                             made.text += txn.text(child);
+                            made.children += std::to_string(pack(child)) + ',';
                         }
                     }
                     found.push_back(std::move(made));
@@ -342,9 +348,13 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 // constructed sheet are the document's own - and the origin
                 // is the URL's tuple, compared the way `location.origin`
                 // reports it.
-                record.origin_clean =
-                    !parse_absolute(record.href).valid ||
-                    location_parts(record.href).origin == location_parts(location_href_).origin;
+                // An http(s) href that does not even parse is not this
+                // document's origin either.
+                const bool remote = ascii_istarts_with(record.href, "http://") ||
+                                    ascii_istarts_with(record.href, "https://");
+                record.origin_clean = !remote || (parse_absolute(record.href).valid &&
+                                                  location_parts(record.href).origin ==
+                                                      location_parts(location_href_).origin);
                 std::string text;
                 if (assets_ != nullptr) {
                     const std::vector<std::byte> bytes = assets_->load(record.href);
@@ -353,11 +363,12 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 record.source = std::move(text);
                 parse_sheet_rules(at, record.source);
             }
-        } else if (fresh || record.source != each.text) {
+        } else if (fresh || record.source != each.text || record.children != each.children) {
             // EDITING A `<style>` REPLACES ITS SHEET, which is what the source
-            // comparison is for. An insertRule does NOT change the element's
-            // text, so the CSSOM's own mutations survive this.
+            // and child-list comparisons are for. An insertRule does NOT change
+            // the element's children, so the CSSOM's own mutations survive this.
             record.source = each.text;
+            record.children = each.children;
             parse_sheet_rules(at, record.source);
         }
         if (order != nullptr) { order->push_back(at); }
@@ -382,31 +393,77 @@ void dom_bindings::install_style_sheets(context & cx) {
                                                              return style_sheet_list(c);
                                                          })),
         value::undefined(), script::attr_configurable);
-    doc->define_accessor("adoptedStyleSheets",
-                         value::object(cx.allocate<script::native_object>(
-                             "get adoptedStyleSheets",
-                             [this](context & c, std::span<value>) {
-                                 script::object_object * internals = cssom_internals(c);
-                                 if (internals == nullptr) { return value::undefined(); }
-                                 if (const value * held = internals->find("adopted")) {
-                                     return *held;
-                                 }
-                                 const value made = c.make_array();
-                                 internals->set("adopted", made);
-                                 return made;
-                             })),
-                         value::object(cx.allocate<script::native_object>(
-                             "set adoptedStyleSheets",
-                             [this](context & c, std::span<value> a) {
-                                 script::object_object * internals = cssom_internals(c);
-                                 if (internals == nullptr) { return value::undefined(); }
-                                 const value made = adopted_sheets_array(c, a);
-                                 if (made.is_undefined()) { return value::undefined(); }
-                                 internals->set("adopted", made);
-                                 style_sheets_changed();
-                                 return value::undefined();
-                             })),
-                         script::attr_configurable);
+    // AN OBSERVABLE ARRAY, CSSOM §6.2 through Web IDL's ObservableArray: the
+    // page sees a proxy over the array `author_style_text` walks, so an
+    // in-place `push`, `pop`, `splice` or `reverse` is checked the way the
+    // setter checks - only a constructed sheet may be adopted - and restyles.
+    // The array keeps its identity across `= [...]`, which REPLACES its
+    // contents rather than the object.
+    doc->define_accessor(
+        "adoptedStyleSheets",
+        value::object(cx.allocate<script::native_object>(
+            "get adoptedStyleSheets",
+            [this](context & c, std::span<value>) {
+                script::object_object * internals = cssom_internals(c);
+                if (internals == nullptr) { return value::undefined(); }
+                if (const value * held = internals->find("adopted_view")) { return *held; }
+                const value target = c.make_array();
+                internals->set("adopted", target);
+                auto * handler = static_cast<script::object_object *>(c.make_object().as_heap());
+                const auto trap = [&](const char * name, script::native_fn fn) {
+                    handler->set(name, value::object(
+                                           c.allocate<script::native_object>(name, std::move(fn))));
+                };
+                trap("set", [this](context & cx2, std::span<value> args) {
+                    if (args.size() < 3) { return value::boolean(false); }
+                    const std::string key = cx2.to_string(args[1]);
+                    const bool index =
+                        !key.empty() && key.find_first_not_of("0123456789") == std::string::npos;
+                    if (index) {
+                        const std::size_t at = slot_index(as_object(args[2]), sheet_key);
+                        if (!args[2].is_object() || at == no_index) {
+                            cx2.throw_error("TypeError", "adoptedStyleSheets takes CSSStyleSheets");
+                            return value::boolean(false);
+                        }
+                        if (at >= css_sheets_.size() || !css_sheets_[at]->constructed) {
+                            throw_dom_exception(cx2, "NotAllowedError",
+                                                "only a constructed CSSStyleSheet may be adopted");
+                            return value::boolean(false);
+                        }
+                    }
+                    cx2.store_property(args[0], key, args[2]);
+                    style_sheets_changed();
+                    return value::boolean(true);
+                });
+                trap("deleteProperty", [this](context & cx2, std::span<value> args) {
+                    if (args.size() < 2) { return value::boolean(false); }
+                    const bool gone = cx2.delete_own_property(args[0], cx2.to_string(args[1]));
+                    style_sheets_changed();
+                    return value::boolean(gone);
+                });
+                const value view =
+                    value::object(c.allocate<script::proxy_object>(target, value::object(handler)));
+                internals->set("adopted_view", view);
+                return view;
+            })),
+        value::object(cx.allocate<script::native_object>(
+            "set adoptedStyleSheets",
+            [this](context & c, std::span<value> a) {
+                script::object_object * internals = cssom_internals(c);
+                if (internals == nullptr) { return value::undefined(); }
+                const value made = adopted_sheets_array(c, a);
+                if (made.is_undefined()) { return value::undefined(); }
+                // Through the getter, so the array and its view exist, then the
+                // contents are replaced in place.
+                (void)c.lookup_property(value::object(document_object()), "adoptedStyleSheets");
+                const value * held = internals->find("adopted");
+                if (held == nullptr || !held->is_array()) { return value::undefined(); }
+                static_cast<script::array_object *>(held->as_heap())->items =
+                    static_cast<script::array_object *>(made.as_heap())->items;
+                style_sheets_changed();
+                return value::undefined();
+            })),
+        script::attr_configurable);
 }
 
 // The array `adoptedStyleSheets = [...]` stores, on the document or on a
@@ -415,8 +472,13 @@ void dom_bindings::install_style_sheets(context & cx) {
 value dom_bindings::adopted_sheets_array(context & cx, std::span<value> args) {
     const value made = cx.make_array();
     auto * items = static_cast<script::array_object *>(made.as_heap());
-    if (!args.empty() && args[0].is_array()) {
-        auto * given = static_cast<script::array_object *>(args[0].as_heap());
+    // `= document.adoptedStyleSheets` hands back the observable view itself.
+    value from = args.empty() ? value::undefined() : args[0];
+    if (from.is_kind(script::heap_kind::proxy)) {
+        from = static_cast<script::proxy_object *>(from.as_heap())->target;
+    }
+    if (from.is_array()) {
+        auto * given = static_cast<script::array_object *>(from.as_heap());
         for (const value each : given->items) {
             const std::size_t at = slot_index(as_object(each), sheet_key);
             // "Only sheets constructed in this document may be adopted", which

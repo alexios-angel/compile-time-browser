@@ -1,6 +1,13 @@
 // dom_bindings - the inline-style declaration store behind `element.style`:
-// what counts as a declaration, how one is written through the value grammar,
-// and how the store serialises back to the `style` attribute and to `cssText`.
+// what counts as a declaration, how one is written, and how the store
+// serialises back to the `style` attribute and to `cssText`.
+//
+// THE STORE IS A JS OBJECT of name to value and THE ALGORITHMS ARE
+// style/css/properties.hpp's: every operation loads the object into a
+// `declaration_block`, runs the CSSOM §6.6 step there - which is where a
+// shorthand becomes its longhands and folds back - and writes the object out
+// again in the block's order. `rule.style` runs the same functions over its
+// own vector, so the two blocks cannot disagree about one property.
 
 #include "internal.hpp"
 
@@ -10,37 +17,38 @@ using namespace detail;
 
 namespace {
 
-// `backgroundColor` -> `background-color`. The IDL name and the CSS name are
-// different spellings of the same property, and the attribute the style engine
-// parses wants the CSS one.
-//
-// THE CONVERSION MOVED to style/css/properties.hpp, where the property table
-// is: it had a second copy inside `computed_style.cpp`'s `getPropertyValue`,
-// and both of them got `-webkit-transform` wrong in the same way - the IDL name
-// drops the prefix's leading dash, so a plain camel-to-hyphen loop produces
-// `webkit-transform` and finds nothing.
-using style::css::css_name_of;
+using style::css::declaration_block;
 
-// ONE WRITE THROUGH THE VALUE GRAMMAR. Every path into the declaration store -
-// `el.style.color = x`, `setProperty`, `cssText`, and the seed from the
-// element's own `style` attribute - goes through here, so there is exactly one
-// answer to "is this valid" and exactly one canonical form.
-//
-// An INVALID value is a NO-OP, which is what CSSOM §6.7.2 says and what
-// `test_invalid_value` measures: the test clears the property, sets the bad
-// value, and asserts the read is `""`. Refusing the write is the whole test.
-// Before this, `el.style` recorded whatever it was given and handed it back
-// unchanged - `expected "" but got "round()"`, ~600 subtests of `css-values`.
 // THE PRIORITY RIDES IN THE STORED STRING, and every read strips it. There is
-// nowhere else for it to go: the store IS the declaration list, a JS object of
-// name to value, and a parallel table keyed on the element would be a second
-// thing to keep in step with the first. `important_suffix` is what the two ends
-// agree on, `declared_value` takes it off and `declared_priority` reads it.
-//
-// It has to be kept at all. `style="width: 100px !important"` is ordinary CSS,
-// and refusing the value would DROP the declaration - the inline width simply
-// stops applying - which is a great deal worse than mis-reporting a priority.
+// nowhere else for it to go: the store IS the declaration list, and a parallel
+// table keyed on the element would be a second thing to keep in step.
 constexpr std::string_view important_suffix = " !important";
+
+[[nodiscard]] declaration_block load(script::object_object & held, context & cx) {
+    declaration_block block;
+    for (const auto & [name, v] : held.props) {
+        if (!is_declaration(v)) { continue; }
+        const std::string stored = cx.to_string(v);
+        block.push_back(style::css::declaration{name, std::string{declared_value(stored)},
+                                                !declared_priority(stored).empty()});
+    }
+    return block;
+}
+
+// The METHODS stay: `setProperty` and its siblings live on the same object,
+// so only the declarations are replaced, in the block's order.
+void save(script::object_object & held, context & cx, const declaration_block & block) {
+    std::vector<std::string> declared;
+    for (const auto & [key, v] : held.props) {
+        if (is_declaration(v)) { declared.push_back(key); }
+    }
+    for (const std::string & key : declared) { held.erase(key); }
+    for (const style::css::declaration & d : block) {
+        std::string stored = d.value;
+        if (d.important) { stored += important_suffix; }
+        held.set(d.name, cx.string(stored));
+    }
+}
 
 } // namespace
 
@@ -57,28 +65,14 @@ namespace detail {
 
 // The declarations an object holds, as a `style` attribute. CSSOM's "update
 // style attribute for" (6.7.1) writes the SERIALISED block, which is the same
-// string `cssText` answers: `el.style.cssText = 'background:red'` leaves the
-// attribute reading `background: red;` (cssstyledeclaration-csstext-setter),
-// and the trailing space this used to append was a third serialisation.
+// string `cssText` answers.
 std::string style_attribute(script::object_object & held, context & cx) {
     return css_text_of(held, cx);
 }
 
-// `cssText`: 6.7.2 serialize a CSS declaration block - `name: value;` joined
-// by a single space.
+// `cssText`: 6.6 "serialize a CSS declaration block".
 std::string css_text_of(script::object_object & held, context & cx) {
-    std::string out;
-    for (const auto & [name, v] : held.props) {
-        if (!is_declaration(v)) { continue; }
-        const std::string text = cx.to_string(v);
-        if (text.empty()) { continue; }
-        if (!out.empty()) { out += ' '; }
-        out += css_name_of(name);
-        out += ": ";
-        out += text;
-        out += ';';
-    }
-    return out;
+    return style::css::serialize_declaration_block(load(held, cx));
 }
 
 [[nodiscard]] std::string_view declared_value(std::string_view stored) {
@@ -91,46 +85,45 @@ std::string css_text_of(script::object_object & held, context & cx) {
     return stored.ends_with(important_suffix) ? std::string_view{"important"} : std::string_view{};
 }
 
+// `getPropertyValue` and `getPropertyPriority`: a shorthand answers from its
+// longhands.
+std::string read_declaration(script::object_object & held, context & cx, std::string_view name) {
+    return style::css::declaration_value(load(held, cx), name);
+}
+
+std::string read_priority(script::object_object & held, context & cx, std::string_view name) {
+    return style::css::declaration_priority(load(held, cx), name);
+}
+
+// `setProperty` and the IDL setter: "set a CSS declaration", with a shorthand
+// landing as its longhands. An invalid value is a NO-OP, which is what CSSOM
+// §6.7.2 says and what `test_invalid_value` measures; an empty one removes.
+// Answers whether the block changed, which is when the attribute is rewritten.
 bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
-                       std::string_view text, bool allow_important, bool force_important) {
-    const style::css::value_check checked =
-        style::css::check_declaration(css_name, text, allow_important);
-    if (!checked.valid) {
-        // An empty value REMOVES the declaration; anything else that fails to
-        // parse leaves the old one exactly where it was.
-        if (trim(text, html_whitespace).empty()) {
-            held.erase(css_name);
-            return true;
-        }
-        return false;
-    }
-    std::string stored = checked.serialized;
-    if (checked.important || force_important) { stored += important_suffix; }
-    held.set(css_name, cx.string(stored));
+                       std::string_view text, bool important) {
+    declaration_block block = load(held, cx);
+    if (!style::css::set_declaration(block, css_name, text, important)) { return false; }
+    save(held, cx, block);
     return true;
 }
 
-// The declarations already in a `style` attribute, so a write through
-// `el.style` extends what the author wrote rather than replacing it. The whole
-// object is re-serialised on every write, so anything not read back here is
-// LOST on the first assignment - which silently deleted the width and height an
-// element was sized by.
+// `removeProperty`: the value it removed, and whether anything left.
+std::string remove_stored_declaration(script::object_object & held, context & cx,
+                                      std::string_view name, bool & removed) {
+    declaration_block block = load(held, cx);
+    std::string was = style::css::remove_declaration(block, name, removed);
+    if (removed) { save(held, cx, block); }
+    return was;
+}
+
+// The declarations in a `style` attribute or a `cssText` write, through the
+// same declaration-list parser the cascade uses - so a `;` inside a string
+// cannot end a declaration here either, and an invalid declaration in the
+// markup is dropped here rather than surviving as a value nothing computes.
 void seed_declarations(script::object_object & held, context & cx, std::string_view text) {
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const std::size_t colon = text.find(':', i);
-        if (colon == std::string_view::npos) { break; }
-        std::size_t end = text.find(';', colon);
-        if (end == std::string_view::npos) { end = text.size(); }
-        const std::string_view name = trim(text.substr(i, colon - i), html_whitespace);
-        const std::string_view v = trim(text.substr(colon + 1, end - colon - 1), html_whitespace);
-        // THROUGH THE SAME GRAMMAR as a write from script, so the object a page
-        // reads back cannot disagree with the attribute it was built from - and
-        // so an invalid declaration in the markup is dropped here rather than
-        // surviving as a value no engine would compute.
-        if (!name.empty()) { store_declaration(held, cx, ascii_lower_copy(name), v, true, false); }
-        i = end + 1;
-    }
+    declaration_block block = load(held, cx);
+    style::css::parse_declaration_block(block, text);
+    save(held, cx, block);
 }
 
 } // namespace detail

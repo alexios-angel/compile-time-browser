@@ -499,13 +499,17 @@ private:
                 return false;
             }
             if (body.empty()) { return false; }
+            // A LANGUAGE RANGE IS KEPT AS WRITTEN: it is matched ASCII
+            // case-insensitively (Selectors 4 §7.2) but `selectorText` answers
+            // `:lang(zh-CN)`. A direction keyword is compared as-is and folds.
+            const std::string piece = single ? ascii_lower_copy(body) : std::string{body};
             if (want_argument) {
-                out.push_back(ascii_lower_copy(body));
+                out.push_back(piece);
                 want_argument = false;
             } else if (spaced) {
                 return false; // two arguments with no comma
             } else {
-                out.back() += ascii_lower_copy(body);
+                out.back() += piece;
             }
             spaced = false;
         }
@@ -715,10 +719,6 @@ private:
                     continue;
                 }
                 building & b = compounds.back();
-                // A NAMESPACED attribute is matched and not serialised: the CSSOM
-                // has no field for the prefix, so `selectorText` falls back to the
-                // author's bytes for the compound that holds one.
-                if (match.ns != ns_prefix::unset) { b.part.dropped = true; }
                 b.part.attributes.push_back(std::move(match));
                 ++b.classes; // an attribute selector is class-level for specificity
                 continue;

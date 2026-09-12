@@ -141,8 +141,9 @@ void test_a_style_rule() {
     CHECK_EQ(logged(page, "css="), std::string{"css=input[type=\"checkbox\"]:checked ~ label "
                                                "{ color: red; margin: 10px; }"});
     CHECK_EQ(logged(page, "parent="), std::string{"parent=null,true"});
-    // An INDEX names a property, not a value - CSSOM 6.7.1.
-    CHECK_EQ(logged(page, "style="), std::string{"style=red,10px,2,color,margin"});
+    // An INDEX names a property, not a value - CSSOM 6.7.1 - and a shorthand
+    // is stored as its longhands, so `margin` is four of the five.
+    CHECK_EQ(logged(page, "style="), std::string{"style=red,10px,5,color,margin-top"});
     CHECK_EQ(logged(page, "same="), std::string{"same=true"});
     CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
     CHECK_EQ(logged(page, "after="), std::string{"after=input[type=\"checkbox\"]:checked ~ label "

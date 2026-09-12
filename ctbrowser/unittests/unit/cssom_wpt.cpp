@@ -124,7 +124,7 @@ void test_declaration_blocks() {
     CHECK_EQ(logged(page, "keyframe="), std::string{"keyframe=1,0px"});
     // The later declaration wins, unless the earlier was important.
     CHECK_EQ(logged(page, "dup="), std::string{"dup=color: blue; padding: 1px !important;"});
-    CHECK_EQ(logged(page, "nulled="), std::string{"nulled=|1"});
+    CHECK_EQ(logged(page, "nulled="), std::string{"nulled=|4"});
     CHECK_EQ(logged(page, "undef="), std::string{"undef=green|"});
 }
 

@@ -192,6 +192,22 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     for (const style::attribute_match & attribute : part.attributes) {
         out += '[';
+        // The attribute's prefix, CSSOM §6.7: written when it maps to a
+        // namespace that is not the null one - so `[|lang]` is `[lang]` - and
+        // `*|` for any. A named prefix is found back from the URI it bound.
+        switch (attribute.ns) {
+        case style::ns_prefix::unset:
+        case style::ns_prefix::none: break;
+        case style::ns_prefix::any: out += "*|"; break;
+        case style::ns_prefix::named:
+            for (const style::css::namespace_declaration & each : scope) {
+                if (each.prefix.empty() || each.uri != atoms.text(attribute.ns_uri)) { continue; }
+                out += ident(each.prefix);
+                out += '|';
+                break;
+            }
+            break;
+        }
         out += ident(atoms.text(attribute.name));
         switch (attribute.op) {
         case style::attr_op::present: break;

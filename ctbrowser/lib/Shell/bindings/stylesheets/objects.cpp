@@ -182,6 +182,8 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSNamespaceRule.prototype";
         } else if (record.type == counter_style_rule) {
             interface = "CSSCounterStyleRule.prototype";
+        } else if (record.type == font_feature_values_rule) {
+            interface = "CSSFontFeatureValuesRule.prototype";
         } else if (record.at_name == "container") {
             interface = "CSSContainerRule.prototype";
         }

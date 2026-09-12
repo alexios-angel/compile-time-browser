@@ -330,24 +330,6 @@ void set_indexed(script::object_object & obj, std::span<const value> items) {
     return held == nullptr ? value::null() : *held;
 }
 
-// --- the declaration block, serialised -------------------------------------
-//
-// CSSOM 6.7.2: each declaration is `name: value;`, with ` !important` before the
-// semicolon, and the block joins them with a single space.
-[[nodiscard]] std::string serialize_block(
-    const std::vector<dom_bindings::css_declaration> & block) {
-    std::string out;
-    for (const dom_bindings::css_declaration & declared : block) {
-        if (!out.empty()) { out += ' '; }
-        out += declared.name;
-        out += ": ";
-        out += declared.value;
-        if (declared.important) { out += " !important"; }
-        out += ';';
-    }
-    return out;
-}
-
 bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string_view name) {
     if (name.starts_with("--")) { return true; }
     if (rule.type == keyframe_rule) { return !name.starts_with("animation"); }
@@ -374,60 +356,80 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return false;
 }
 
-// ONE WRITE THROUGH THE VALUE GRAMMAR, the same rule `el.style` follows: an
-// invalid value is a NO-OP and an empty one REMOVES the declaration.
-bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
-                       std::string_view text, bool allow_important, bool force_important) {
-    std::vector<dom_bindings::css_declaration> & block = rule.declarations;
-    const style::css::value_check checked = check_declaration(css_name, text, allow_important);
-    const auto found =
-        std::find_if(block.begin(), block.end(), [&](const dom_bindings::css_declaration & each) {
-            return each.name == css_name;
-        });
-    if (!checked.valid) {
-        if (trim(text, html_whitespace).empty()) {
-            if (found != block.end()) { block.erase(found); }
-            return true;
+// ONE WRITE THROUGH THE DECLARATION BLOCK, the same functions `el.style`
+// writes through: an invalid value is a no-op, an empty one removes, and a
+// shorthand lands as its longhands. Answers whether the block changed.
+// THE TWO `@page` DESCRIPTORS WITH A GRAMMAR OF THEIR OWN, CSS Paged Media 3
+// §7.1-7.2: `size` is `<length>{1,2} | auto | [ <page-size> || [ portrait |
+// landscape ] ]` and `page-orientation` is three keywords. They are not
+// properties, so the property table does not know them and a value is
+// checked here: the canonical form (keywords lowercased) or nothing.
+[[nodiscard]] std::string page_descriptor_value(std::string_view name, std::string_view text) {
+    if (name == "page-orientation") {
+        const std::string word = ascii_lower_copy(trim(text, html_whitespace));
+        return word == "upright" || word == "rotate-left" || word == "rotate-right" ? word
+                                                                                    : std::string{};
+    }
+    if (name != "size") { return std::string{text}; }
+    static constexpr std::string_view sizes[] = {"a3",     "a4",     "a5",     "b4",    "b5",
+                                                 "jis-b4", "jis-b5", "letter", "legal", "ledger"};
+    const std::vector<std::string_view> parts = split_top_level(text, " \t\n\r\f");
+    if (parts.empty() || parts.size() > 2) { return {}; }
+    std::string out;
+    int lengths = 0, keywords = 0, orientations = 0;
+    for (const std::string_view part : parts) {
+        const std::string word = ascii_lower_copy(part);
+        if (word == "portrait" || word == "landscape") {
+            ++orientations;
+        } else if (word == "auto" ||
+                   std::find(std::begin(sizes), std::end(sizes), word) != std::end(sizes)) {
+            ++keywords;
+        } else {
+            const style::css::value_check checked =
+                check_declaration("outline-offset", part, false);
+            if (!checked.valid) { return {}; }
+            ++lengths;
+            out += out.empty() ? "" : " ";
+            out += checked.serialized;
+            continue;
         }
-        return false;
+        out += out.empty() ? "" : " ";
+        out += word;
     }
-    if (!declaration_allowed(rule, css_name)) { return false; }
-    const bool important = checked.important || force_important;
-    if (found != block.end()) {
-        found->value = checked.serialized;
-        found->important = important;
-        return true;
-    }
-    block.push_back(dom_bindings::css_declaration{css_name, checked.serialized, important});
-    return true;
+    const bool ok = (lengths == static_cast<int>(parts.size())) ||
+                    (lengths == 0 && keywords <= 1 && orientations <= 1);
+    return ok ? out : std::string{};
 }
 
-// THE DECLARATIONS OF A BLOCK, through the two entry points that exist for
-// exactly this - `parse_declaration_list`, which a `style` attribute uses, and
-// `check_declaration`, which `el.style` writes through. A value the grammar
-// refuses is one the cascade drops, so publishing it would advertise a
-// declaration that does not apply.
-void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body,
-                             atom_table & atoms) {
-    const style::css::stylesheet parsed = style::css::parse_declaration_list(body, atoms);
-    for (const style::css::raw_declaration & d : parsed.declarations) {
-        const std::string property{atoms.text(d.property)};
-        const style::css::value_check checked =
-            check_declaration(property, parsed.text_of(d), false);
-        if (!checked.valid || !declaration_allowed(rule, property)) { continue; }
-        // CSS Cascade 4 §6.1 within one block: the LAST declaration of a
-        // property wins, unless an earlier one was important and it is not.
-        auto found = std::find_if(
-            rule.declarations.begin(), rule.declarations.end(),
-            [&](const dom_bindings::css_declaration & each) { return each.name == property; });
-        if (found == rule.declarations.end()) {
-            rule.declarations.push_back(
-                dom_bindings::css_declaration{property, checked.serialized, d.important});
-        } else if (d.important || !found->important) {
-            found->value = checked.serialized;
-            found->important = d.important;
-        }
+bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
+                       std::string_view text, bool important) {
+    if (!declaration_allowed(rule, css_name)) { return false; }
+    if (rule.type == page_rule && (css_name == "size" || css_name == "page-orientation") &&
+        !trim(text, html_whitespace).empty()) {
+        const std::string canonical = page_descriptor_value(css_name, text);
+        if (canonical.empty()) { return false; }
+        return style::css::set_declaration(rule.declarations, css_name, canonical, important);
     }
+    return style::css::set_declaration(rule.declarations, css_name, text, important);
+}
+
+// THE DECLARATIONS OF A BLOCK, through the same parser a `style` attribute goes
+// through. A value the grammar refuses is one the cascade drops, so publishing
+// it would advertise a declaration that does not apply.
+void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body) {
+    style::css::parse_declaration_block(
+        rule.declarations, body,
+        [](std::string_view name, const void * ctx) {
+            return declaration_allowed(*static_cast<const dom_bindings::css_rule_record *>(ctx),
+                                       name);
+        },
+        &rule);
+    if (rule.type != page_rule) { return; }
+    std::erase_if(rule.declarations, [](style::css::declaration & d) {
+        if (d.name != "size" && d.name != "page-orientation") { return false; }
+        d.value = page_descriptor_value(d.name, d.value);
+        return d.value.empty();
+    });
 }
 
 void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,

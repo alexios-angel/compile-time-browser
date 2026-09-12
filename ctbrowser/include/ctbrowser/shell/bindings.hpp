@@ -857,11 +857,10 @@ public:
     // it buys nothing here, because everything the CSSOM answers with is a
     // SERIALISATION rather than a slice of the source. See the file for what
     // "serialisation" means and why it is not the author's bytes.
-    struct css_declaration {
-        std::string name; // the CSS spelling; a custom property keeps its case
-        std::string value;
-        bool important = false;
-    };
+    // The declaration itself, and the block algorithms over it, are
+    // style/css/properties.hpp's: `el.style` keeps the same list, and the
+    // shorthand expansion both need lives once.
+    using css_declaration = style::css::declaration;
     // One rule. A grouping rule (`@media`) carries `children` and no
     // declarations; a style rule carries declarations and no children.
     struct css_rule_record {
@@ -885,6 +884,15 @@ public:
         std::size_t sheet = static_cast<std::size_t>(-1);
         // An `@import`'s own sheet - `rule.styleSheet` - into css_sheets_.
         std::size_t imported_sheet = static_cast<std::size_t>(-1);
+        // `@font-feature-values`' feature blocks, CSS Fonts 4 §8.9: one entry
+        // per `name: <integer>+` under `@styleset`, `@annotation` and the
+        // rest, which the rule's seven CSSFontFeatureValuesMaps are views of.
+        struct feature_value {
+            std::string type; // "styleset", "annotation", ...
+            std::string name;
+            std::vector<double> numbers;
+        };
+        std::vector<feature_value> features;
     };
     struct css_sheet_record {
         node_id owner; // the <style>/<link>; unset for a constructed sheet
@@ -900,8 +908,9 @@ public:
         std::size_t owner_rule = static_cast<std::size_t>(-1);
         std::string href;
         std::string title;
-        std::string media;  // the `media` ATTRIBUTE as last seen on the owner
-        std::string source; // what was last parsed, so a <style> edit re-parses
+        std::string media;    // the `media` ATTRIBUTE as last seen on the owner
+        std::string source;   // what was last parsed, so a <style> edit re-parses
+        std::string children; // the <style>'s child ids when last parsed
         bool disabled = false;
         bool constructed = false;
         // CSSOM 6.3 "origin-clean flag": false for a `<link>` fetched from
@@ -1024,6 +1033,15 @@ private:
                                              std::string & error);
     // The CSSOM changed something the cascade would care about.
     void style_sheets_changed();
+
+public:
+    // Counts style_sheets_changed(): a CSSOM edit changes what an element
+    // computes to without touching the document, so a cached computed style
+    // compares this beside the document version.
+    [[nodiscard]] std::uint64_t style_stamp() const noexcept { return style_generation_; }
+
+private:
+    std::uint64_t style_generation_ = 0;
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
     // The media query list `this` is a view of - a sheet's or a media rule's.

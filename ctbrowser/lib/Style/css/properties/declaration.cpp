@@ -118,7 +118,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
 
     const auto yes = [important, &found](std::string serialized) {
-        return value_check{true, std::move(serialized), important, found.unknown_function};
+        return value_check{true, std::move(serialized), important, found.unknown_function,
+                           found.substituted};
     };
     // THE AUTHOR'S BYTES, for every value this file does not model. A
     // re-serialised token stream is not the same string - `random-item(auto
@@ -216,6 +217,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // perfectly good position whose components this reader does not evaluate,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
+    if (p->kind == k::color) {
+        // `invert` is CSS 2.1's outline colour and nothing else's.
+        if (ascii_iequals(property, "outline-color") && ascii_iequals(text, "invert")) {
+            return yes("invert");
+        }
+        std::string serialized;
+        if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
+        return {};
+    }
+
     if (p->kind == k::position) {
         std::string serialized;
         if (match_position(ts, found, serialized)) { return yes(std::move(serialized)); }

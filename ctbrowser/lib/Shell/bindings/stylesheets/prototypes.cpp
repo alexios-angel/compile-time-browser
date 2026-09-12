@@ -939,6 +939,135 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         });
     declaration_accessor(interface("CSSCounterStyleRule", "CSSRule", nullptr));
 
+    // --- CSSFontFeatureValuesRule, CSS Fonts 4 §11.2
+    //
+    // Seven maplike views over one rule's feature list, each object carrying
+    // the rule's slot and its feature type; `set` takes a number or a sequence
+    // of numbers, as the IDL's `(unsigned long or sequence<unsigned long>)`.
+    script::object_object * feature_map_proto =
+        interface("CSSFontFeatureValuesMap", nullptr, nullptr);
+    static constexpr std::string_view feature_key = "__ctbrowser_feature";
+    const auto feature_type = [](context & c) {
+        script::object_object * self = as_object(c.current_this());
+        const value * held = self == nullptr ? nullptr : self->find(feature_key);
+        return held == nullptr ? std::string{} : c.to_string(*held);
+    };
+    const auto feature_entries =
+        [this, feature_type](context & c) -> std::pair<css_rule_record *, std::string> {
+        return {receiver_rule(c), feature_type(c)};
+    };
+    getter(feature_map_proto, "size", [feature_entries](context & c, std::span<value>) {
+        const auto [rule, type] = feature_entries(c);
+        double n = 0;
+        if (rule != nullptr) {
+            for (const css_rule_record::feature_value & f : rule->features) {
+                if (f.type == type) { n += 1; }
+            }
+        }
+        return value::number(n);
+    });
+    const auto find_feature = [](css_rule_record & rule, const std::string & type,
+                                 const std::string & name) {
+        return std::find_if(rule.features.begin(), rule.features.end(),
+                            [&](const css_rule_record::feature_value & f) {
+                                return f.type == type && f.name == name;
+                            });
+    };
+    method(feature_map_proto, "get",
+           [feature_entries, find_feature](context & c, std::span<value> a) {
+               const auto [rule, type] = feature_entries(c);
+               if (rule == nullptr) { return value::undefined(); }
+               const auto it = find_feature(*rule, type, arg_string(c, a, 0));
+               if (it == rule->features.end()) { return value::undefined(); }
+               const value made = c.make_array();
+               auto * items = static_cast<script::array_object *>(made.as_heap());
+               for (const double n : it->numbers) { items->items.push_back(value::number(n)); }
+               return made;
+           });
+    method(feature_map_proto, "has",
+           [feature_entries, find_feature](context & c, std::span<value> a) {
+               const auto [rule, type] = feature_entries(c);
+               return value::boolean(rule != nullptr &&
+                                     find_feature(*rule, type, arg_string(c, a, 0)) !=
+                                         rule->features.end());
+           });
+    method(feature_map_proto, "set",
+           [this, feature_entries, find_feature](context & c, std::span<value> a) {
+               const auto [rule, type] = feature_entries(c);
+               if (rule == nullptr || a.size() < 2) { return c.current_this(); }
+               css_rule_record::feature_value entry;
+               entry.type = type;
+               entry.name = arg_string(c, a, 0);
+               if (a[1].is_array()) {
+                   for (const value each :
+                        static_cast<script::array_object *>(a[1].as_heap())->items) {
+                       entry.numbers.push_back(context::to_number(each));
+                   }
+               } else {
+                   entry.numbers.push_back(context::to_number(a[1]));
+               }
+               const auto it = find_feature(*rule, type, entry.name);
+               if (it == rule->features.end()) {
+                   rule->features.push_back(std::move(entry));
+               } else {
+                   it->numbers = std::move(entry.numbers);
+               }
+               style_sheets_changed();
+               return c.current_this();
+           });
+    method(feature_map_proto, "delete",
+           [this, feature_entries, find_feature](context & c, std::span<value> a) {
+               const auto [rule, type] = feature_entries(c);
+               if (rule == nullptr) { return value::boolean(false); }
+               const auto it = find_feature(*rule, type, arg_string(c, a, 0));
+               if (it == rule->features.end()) { return value::boolean(false); }
+               rule->features.erase(it);
+               style_sheets_changed();
+               return value::boolean(true);
+           });
+    method(feature_map_proto, "clear", [this, feature_entries](context & c, std::span<value>) {
+        const auto [rule, type] = feature_entries(c);
+        if (rule == nullptr) { return value::undefined(); }
+        std::erase_if(rule->features,
+                      [&](const css_rule_record::feature_value & f) { return f.type == type; });
+        style_sheets_changed();
+        return value::undefined();
+    });
+    script::object_object * feature_values_proto =
+        interface("CSSFontFeatureValuesRule", "CSSRule", nullptr);
+    accessor(
+        feature_values_proto, "fontFamily",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        },
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            rule->prelude = style::css::serialize_font_family(arg_string(c, a, 0));
+            style_sheets_changed();
+            return value::undefined();
+        });
+    for (const auto & [idl, type] :
+         {std::pair{"annotation", "annotation"}, std::pair{"characterVariant", "character-variant"},
+          std::pair{"historicalForms", "historical-forms"}, std::pair{"ornaments", "ornaments"},
+          std::pair{"styleset", "styleset"}, std::pair{"stylistic", "stylistic"},
+          std::pair{"swash", "swash"}}) {
+        const std::string type_name{type};
+        getter(feature_values_proto, idl,
+               [type_name, feature_map_proto](context & c, std::span<value>) {
+                   script::object_object * self = as_object(c.current_this());
+                   const std::size_t at = slot_index(self, rule_key);
+                   const value made = c.make_object();
+                   script::object_object * obj = as_object(made);
+                   if (obj == nullptr) { return made; }
+                   obj->prototype = value::object(feature_map_proto);
+                   obj->define(rule_key, value::number(static_cast<double>(at)), script::attr_none);
+                   obj->define(feature_key, c.string(type_name), script::attr_none);
+                   return made;
+               });
+    }
+
     // --- CSSStyleDeclaration, and the three blocks that inherit it
     //
     // ONE PROTOTYPE PER KIND OF BLOCK FOR THE WHOLE PAGE, carrying an accessor
@@ -959,30 +1088,27 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     iterable(declaration_proto);
     const auto property_accessor = [&](script::object_object * on, const std::string & idl,
                                        const std::string & css) {
-        on->define_accessor(
-            idl,
-            value::object(cx.allocate<script::native_object>(
-                "get " + idl,
-                [this, css](context & c, std::span<value>) {
-                    const css_rule_record * rule = receiver_rule(c);
-                    if (rule == nullptr) { return c.string(""); }
-                    for (const css_declaration & declared : rule->declarations) {
-                        if (declared.name == css) { return c.string(declared.value); }
-                    }
-                    return c.string("");
-                })),
-            value::object(cx.allocate<script::native_object>(
-                "set " + idl,
-                [this, css](context & c, std::span<value> a) {
-                    css_rule_record * rule = receiver_rule(c);
-                    if (rule == nullptr) { return value::undefined(); }
-                    if (store_declaration(*rule, css, arg_string(c, a, 0), false, false)) {
-                        refresh_declaration_object(c, c.current_this());
-                        style_sheets_changed();
-                    }
-                    return value::undefined();
-                })),
-            script::attr_enumerable | script::attr_configurable);
+        on->define_accessor(idl,
+                            value::object(cx.allocate<script::native_object>(
+                                "get " + idl,
+                                [this, css](context & c, std::span<value>) {
+                                    const css_rule_record * rule = receiver_rule(c);
+                                    if (rule == nullptr) { return c.string(""); }
+                                    return c.string(
+                                        style::css::declaration_value(rule->declarations, css));
+                                })),
+                            value::object(cx.allocate<script::native_object>(
+                                "set " + idl,
+                                [this, css](context & c, std::span<value> a) {
+                                    css_rule_record * rule = receiver_rule(c);
+                                    if (rule == nullptr) { return value::undefined(); }
+                                    if (store_declaration(*rule, css, arg_string(c, a, 0), false)) {
+                                        refresh_declaration_object(c, c.current_this());
+                                        style_sheets_changed();
+                                    }
+                                    return value::undefined();
+                                })),
+                            script::attr_enumerable | script::attr_configurable);
     };
     const auto both_spellings = [&](script::object_object * on, std::string_view name) {
         const std::string css{name};
@@ -1029,7 +1155,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         declaration_proto, "cssText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
-            return c.string(rule == nullptr ? std::string{} : serialize_block(rule->declarations));
+            return c.string(rule == nullptr
+                                ? std::string{}
+                                : style::css::serialize_declaration_block(rule->declarations));
         },
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
@@ -1038,7 +1166,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // declaration-list parser a `style` attribute goes through - so a
             // `;` inside a string cannot end a declaration here either.
             rule->declarations.clear();
-            parse_declarations_into(*rule, arg_string(c, a, 0), *atoms_);
+            parse_declarations_into(*rule, arg_string(c, a, 0));
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
@@ -1052,20 +1180,12 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "getPropertyValue", [this](context & c, std::span<value> a) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        for (const css_declaration & declared : rule->declarations) {
-            if (declared.name == name) { return c.string(declared.value); }
-        }
-        return c.string("");
+        return c.string(style::css::declaration_value(rule->declarations, asked_name(c, a)));
     });
     method(declaration_proto, "getPropertyPriority", [this](context & c, std::span<value> a) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        for (const css_declaration & declared : rule->declarations) {
-            if (declared.name == name) { return c.string(declared.important ? "important" : ""); }
-        }
-        return c.string("");
+        return c.string(style::css::declaration_priority(rule->declarations, asked_name(c, a)));
     });
     method(declaration_proto, "setProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
@@ -1084,7 +1204,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (!priority.empty() && !ascii_iequals(priority, "important")) {
             return value::undefined();
         }
-        if (store_declaration(*rule, asked_name(c, a), text(1), false, !priority.empty())) {
+        if (store_declaration(*rule, asked_name(c, a), text(1), !priority.empty())) {
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
         }
@@ -1093,16 +1213,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "removeProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        std::string was;
-        for (std::size_t i = 0; i < rule->declarations.size(); ++i) {
-            if (rule->declarations[i].name != name) { continue; }
-            was = rule->declarations[i].value;
-            rule->declarations.erase(rule->declarations.begin() + static_cast<std::ptrdiff_t>(i));
-            break;
+        bool removed = false;
+        const std::string was =
+            style::css::remove_declaration(rule->declarations, asked_name(c, a), removed);
+        if (removed) {
+            refresh_declaration_object(c, c.current_this());
+            style_sheets_changed();
         }
-        refresh_declaration_object(c, c.current_this());
-        style_sheets_changed();
         return c.string(was);
     });
 }
