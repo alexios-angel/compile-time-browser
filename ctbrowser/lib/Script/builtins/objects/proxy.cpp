@@ -180,6 +180,18 @@ void install_proxy(context & cx) {
         }
         return prototype_of(c, of);
     });
+    method(cx, reflect, "setPrototypeOf", 2, [](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_object_like()) {
+            c.throw_error("TypeError", "Reflect.setPrototypeOf called on non-object");
+            return value::boolean(false);
+        }
+        const value proto = arg_at(a, 1);
+        if (!proto.is_object_like() && !proto.is_null()) {
+            c.throw_error("TypeError", "Object prototype may only be an Object or null");
+            return value::boolean(false);
+        }
+        return value::boolean(detail::set_prototype_of(c, a[0], proto));
+    });
     cx.define_global("Reflect", value::object(reflect));
 }
 

@@ -16,6 +16,7 @@ using detail::descriptor_object;
 using detail::key_filter;
 using detail::own_property_names;
 using detail::prototype_of;
+using detail::set_prototype_of;
 using detail::valid_descriptor;
 
 namespace {
@@ -40,19 +41,6 @@ namespace {
         walk = prototype_of(cx, walk);
     }
     return false;
-}
-
-// [[SetPrototypeOf]] over the three tables that carry a link - shared by
-// Object.setPrototypeOf and the `__proto__` setter. A primitive receiver is a
-// no-op that succeeds.
-void set_prototype_of(value of, value proto) {
-    if (of.is_object()) {
-        static_cast<object_object *>(of.as_heap())->prototype = proto;
-    } else if (of.is_kind(heap_kind::function)) {
-        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
-    } else if (of.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(of.as_heap())->proto_link = proto;
-    }
 }
 
 // 7.3.7 ObjectDefineProperties, shared by `Object.defineProperties` and the
@@ -144,6 +132,30 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         // accessor is the one case that has to be a call.
         visit(key, found.is_accessor() ? cx.lookup_property(of, key) : found.held);
     }
+}
+
+// [[PreventExtensions]] with the proxy's trap consulted (10.5.4): a trap that
+// answers false makes Object.freeze, seal and preventExtensions throw
+// (20.1.2.6 step 2), where context::prevent_extensions goes straight to the
+// target. FALSE means the TypeError is in flight.
+[[nodiscard]] bool prevent_extensions_or_throw(context & cx, value target, const char * called) {
+    if (target.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = cx.proxy_trap(target, "preventExtensions");
+        if (trap.is_callable()) {
+            const value args[1] = {p->target};
+            const bool ok = context::truthy(cx.call(trap, args, p->handler));
+            if (cx.throw_pending()) { return false; }
+            if (!ok) {
+                cx.throw_error("TypeError", std::string{called} +
+                                                ": 'preventExtensions' on proxy returned false");
+                return false;
+            }
+            return true;
+        }
+    }
+    cx.prevent_extensions(target);
+    return true;
 }
 
 // 7.3.15 SetIntegrityLevel. `frozen` false is "sealed": configurable off
@@ -466,7 +478,12 @@ void install_object(context & cx) {
                 // Object.setPrototypeOf raises - and an object literal's
                 // `__proto__: 5` relies on the first.
                 const value proto = arg_at(a, 0);
-                if (proto.is_object_like() || proto.is_null()) { set_prototype_of(self, proto); }
+                if (!proto.is_object_like() && !proto.is_null()) { return value::undefined(); }
+                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
+                if (!set_prototype_of(c, self, proto)) {
+                    c.throw_error("TypeError",
+                                  "Cyclic __proto__ value or object is not extensible");
+                }
                 return value::undefined();
             })),
         attr_configurable);
@@ -608,7 +625,11 @@ void install_object(context & cx) {
             c.throw_error("TypeError", "Object prototype may only be an Object or null");
             return value::undefined();
         }
-        set_prototype_of(of, proto);
+        if (!set_prototype_of(c, of, proto)) {
+            c.throw_error("TypeError",
+                          "Object.setPrototypeOf: cyclic prototype or object is not extensible");
+            return value::undefined();
+        }
         return of;
     });
     // NAMES, so string keys only - Reflect.ownKeys is the one that reports
@@ -711,15 +732,23 @@ void install_object(context & cx) {
     // own property and [[Extensible]] on the object; freeze clears
     // [[Writable]] as well, except on an accessor, which has none.
     method(cx, object_ctor, "freeze", 1, [](context & c, std::span<value> a) {
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.freeze")) {
+            return value::undefined();
+        }
         set_integrity(c, arg_at(a, 0), true);
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "seal", 1, [](context & c, std::span<value> a) {
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.seal")) {
+            return value::undefined();
+        }
         set_integrity(c, arg_at(a, 0), false);
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "preventExtensions", 1, [](context & c, std::span<value> a) {
-        c.prevent_extensions(arg_at(a, 0));
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.preventExtensions")) {
+            return value::undefined();
+        }
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "isFrozen", 1, [](context & c, std::span<value> a) {
@@ -795,7 +824,7 @@ void install_object(context & cx) {
         // primitive target is returned as itself here: there is no wrapper to
         // hand back and the writes have nowhere to land.
         if (!object_coercible(c, target, "Object.assign")) { return value::undefined(); }
-        if (!target.is_object_like()) { return target; }
+        if (!target.is_object_like()) { return detail::box_primitive(c, target); }
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.
@@ -823,7 +852,14 @@ void install_object(context & cx) {
             held.reserve(entries.size());
             for (const auto & entry : entries) { held.push_back(entry.second); }
             const context::rooted_values keep{c, held};
-            for (const auto & [key, item] : entries) { c.store_property(target, key, item); }
+            // Set(to, key, value, TRUE) - 20.1.2.1 step 4.c.iii: a write the
+            // target refuses is a TypeError, sloppy or not.
+            for (const auto & [key, item] : entries) {
+                c.clear_store_rejected();
+                c.store_property(target, key, item);
+                c.strict_store_check(key);
+                if (c.throw_pending()) { return target; }
+            }
         }
         return target;
     });

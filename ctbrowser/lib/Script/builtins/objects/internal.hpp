@@ -34,6 +34,9 @@ enum class key_filter : std::uint8_t {
 // [[GetPrototypeOf]], FOR EVERY KIND OF VALUE.
 [[nodiscard]] value prototype_of(context & cx, value of);
 
+// [[SetPrototypeOf]], FOR EVERY KIND OF VALUE; false is 10.1.2.1's refusal.
+[[nodiscard]] bool set_prototype_of(context & cx, value of, value proto);
+
 // 6.2.6.6 ToPropertyDescriptor's OWN three refusals.
 [[nodiscard]] bool valid_descriptor(context & cx, const context::property_descriptor & d);
 

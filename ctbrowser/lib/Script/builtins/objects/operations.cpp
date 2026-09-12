@@ -203,6 +203,33 @@ namespace {
     return value::null();
 }
 
+// [[SetPrototypeOf]] over the three tables that carry a link - shared by
+// Object.setPrototypeOf, Reflect.setPrototypeOf and the `__proto__` setter.
+// A primitive receiver is a no-op that succeeds. FALSE is 10.1.2.1's refusal:
+// a non-extensible object keeps the prototype it has, a chain may not be made
+// cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
+[[nodiscard]] bool set_prototype_of(context & cx, value of, value proto) {
+    if (!of.is_object_like()) { return true; }
+    if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
+    if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {
+        return false;
+    }
+    if (!cx.is_extensible(of)) { return false; }
+    for (value walk = proto; walk.is_heap();) {
+        if (walk.as_heap() == of.as_heap()) { return false; }
+        if (walk.is_kind(heap_kind::proxy)) { break; } // step 8.c.i: a proxy ends the walk
+        walk = prototype_of(cx, walk);
+    }
+    if (of.is_object()) {
+        static_cast<object_object *>(of.as_heap())->prototype = proto;
+    } else if (of.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
+    } else if (of.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(of.as_heap())->proto_link = proto;
+    }
+    return true;
+}
+
 // 6.2.6.6 ToPropertyDescriptor's OWN three refusals, which nothing here made.
 //
 // ValidateAndApplyPropertyDescriptor - context::define_own_property - is a

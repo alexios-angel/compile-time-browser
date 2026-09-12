@@ -32,6 +32,23 @@ int main() {
     js_expect("({__proto__:5}).hasOwnProperty('__proto__')", "false");
     js_expect("(function(){var o={};o.__proto__=5;return o.__proto__===Object.prototype;})()",
               "true");
+    // 10.1.2.1's three refusals, which the setter (B.2.2.1.2 step 5) and
+    // Object.setPrototypeOf turn into a TypeError and Reflect answers false to:
+    // a cycle, a non-extensible target, and Object.prototype's own immutable
+    // [[Prototype]] (10.4.7). Setting the prototype an object already has is
+    // never a refusal.
+    js_expect("(function(){var a={};var b=Object.create(a);a.__proto__=b;})()", "THREW");
+    js_expect("(function(){var a={};var b=Object.create(a);Object.setPrototypeOf(a,b);})()",
+              "THREW");
+    js_expect("(function(){var a={};var b=Object.create(a);return Reflect.setPrototypeOf(a,b);})()",
+              "false");
+    js_expect("(function(){var o=Object.preventExtensions({});o.__proto__={};})()", "THREW");
+    js_expect("(function(){var o=Object.preventExtensions({});"
+              "return Reflect.setPrototypeOf(o,Object.prototype);})()",
+              "true");
+    js_expect("Reflect.setPrototypeOf(Object.prototype,{})", "false");
+    js_expect("(function(){Object.prototype.__proto__={};})()", "THREW");
+    js_expect("Reflect.setPrototypeOf(Object.prototype,null)", "true");
     // An OWN `__proto__` shadows the accessor, as any own property shadows an
     // inherited one.
     js_expect("(function(){var o={};Object.defineProperty(o,'__proto__',{value:7});"
