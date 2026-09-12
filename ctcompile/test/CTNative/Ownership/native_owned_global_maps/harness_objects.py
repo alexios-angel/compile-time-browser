@@ -487,7 +487,7 @@ int main() {
                            f"{result.stdout}{result.stderr}")
 
 
-def object_argument_observer_source(source, global_key=False, global_alias=False):
+def object_argument_observer_source(source, global_key=False, global_alias=False, global_chain=()):
     # Capture the actual Map in a separate interpreter observer. The native
     # source and its standard intrinsic contract remain untouched.
     observed = source + '''
@@ -546,6 +546,13 @@ def object_argument_observer_source(source, global_key=False, global_alias=False
             'key !== first && get(first) === 1',
             'key !== first && get(globalAlias) === 1 && get(first) === 1').replace(
             '})();', '})(alias);')
+        if global_chain:
+            parameters = ', '.join('chain_' + binding for binding in global_chain)
+            observed = observed.replace('(function(globalAlias)',
+                '(function(globalAlias, ' + parameters + ')').replace(
+                'first === globalAlias;', 'first === globalAlias' + ''.join(
+                    ' && first === chain_' + binding for binding in global_chain) + ';').replace(
+                '})(alias);', '})(alias, ' + ', '.join(global_chain) + ');')
     return observed, 2047
 
 
@@ -581,25 +588,34 @@ def check_object_argument_calls(cpp, name, mode):
                 or len(loads) != source.count('host.slot.get(key)') or actuals != loads):
             raise RuntimeError(f'{name}/{mode}: lost the sole global allocation/store/load/call identity')
     if object_argument_cases()[name].get('global_alias'):
+        row = object_argument_cases()[name]
+        bindings = '|'.join(('key', 'alias', *row.get('global_chain', ()), 'other'))
+        initializers = re.findall(r'\b(' + bindings + r') = (\{\}|\w+)(?=[,;])', source)
+        predecessors = [value for _, value in initializers if value != '{}']
         created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
-        loads = re.findall(r'\b(\w+) = g_(key|alias|other);', entry[1])
-        stores = re.findall(r'\bg_(key|alias|other) = (\w+);', entry[1])
+        loads = re.findall(r'\b(\w+) = g_(' + bindings + r');', entry[1])
+        stores = re.findall(r'\bg_(' + bindings + r') = (\w+);', entry[1])
         actuals = re.findall(r'ctnative::invoke_callable\(\w+, (\w+)(?:, \w+)?\);', entry[1])
-        arguments = re.findall(r'host\.slot\.\w+\((key|alias|other)[,)]', source)
-        bindings = ['key', 'alias'] + (['other'] if len(created) == 2 else [])
-        expected_stores = [('key', created[0]), ('alias', loads[0][0])]
-        if len(created) == 2:
-            expected_stores.append(('other', created[1]))
-        if (stores != expected_stores or [binding for _, binding in loads] != ['key', *arguments]
-                or actuals != [value for value, _ in loads[1:]]
+        arguments = re.findall(r'host\.slot\.\w+\((' + bindings + r')[,)]', source)
+        allocations, reads = iter(created), iter(value for value, _ in loads)
+        expected_stores = [(binding, next(allocations) if value == '{}' else next(reads))
+                           for binding, value in initializers]
+        if (stores != expected_stores
+                or [binding for _, binding in loads] != [*predecessors, *arguments]
+                or actuals != [value for value, _ in loads[len(predecessors):]]
                 or any(not re.search(r'std::shared_ptr<ctnative::identity_object>\s+g_'
-                                     + binding + r'\s*;', cpp) for binding in bindings)
-                or not (entry[1].index('g_key = ') < entry[1].index(' = g_key;')
-                        < entry[1].index('g_alias = ') < entry[1].index('ctnative::invoke_callable('))):
+                                     + binding + r'\s*;', cpp) for binding, _ in initializers)):
             raise RuntimeError(f'{name}/{mode}: lost the original global alias/store/load/call edges')
+        for (binding, predecessor), (value, _) in zip(
+                ((binding, value) for binding, value in initializers if value != '{}'), loads):
+            if not (entry[1].index('g_' + predecessor + ' = ')
+                    < entry[1].index(value + ' = g_' + predecessor + ';')
+                    < entry[1].index('g_' + binding + ' = ')
+                    < entry[1].index('ctnative::invoke_callable(')):
+                raise RuntimeError(f'{name}/{mode}: reordered a global alias initializer')
 
 
-def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False):
+def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False, global_chain=()):
     changed = instrument_leaf_objects(cpp) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
@@ -680,6 +696,22 @@ int main() {
             'g_key != ctn_test_objects[1].lock() || g_alias != g_key').replace(
             '    g_key.reset();\n    if (!ctn_test_objects[1].expired())',
             '    g_alias.reset();\n    g_key.reset();\n    if (!ctn_test_objects[1].expired())')
+        if global_chain:
+            assert global_chain == ('copy',)
+            changed = changed.replace('g_alias != g_key',
+                'g_alias != g_key || g_copy != g_key').replace(
+                '    g_key = g_alias;', '''    g_alias.reset();
+    if (original_key.expired() || !g_copy || g_copy != original_key.lock()) { return 249; }
+    g_alias = g_copy;
+    g_key = g_alias;''').replace(
+                '    g_alias.reset();\n    if (original_key.expired() || get(g_key)',
+                '    g_alias.reset(); g_copy.reset();\n    if (original_key.expired() || get(g_key)').replace(
+                '    g_key.reset();\n    if (!ctn_test_objects[1].expired())',
+                '''    g_key.reset();
+    if (ctn_test_objects[1].expired() || !g_copy ||
+        g_copy != ctn_test_objects[1].lock()) { return 250; }
+    g_copy.reset();
+    if (!ctn_test_objects[1].expired())''')
     return changed
 
 
@@ -687,12 +719,16 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f'{name}.{mode}.lifetime.cpp'
     observer = (retained_key_lifetime_cpp if name in {
                     'object_argument_siblings', 'object_argument_siblings_named',
-                    'object_argument_siblings_global'}
+                    'object_argument_siblings_global', 'object_argument_siblings_global_chain'}
                 else parameter_object_lifetime_cpp if name == 'parameter_object'
                 else object_argument_lifetime_cpp)
     source.write_text(observer(cpp, global_key=True) if name == 'object_argument_global'
                       else observer(cpp, global_alias=True) if name == 'object_argument_global_alias'
+                      else observer(cpp, global_alias=True, global_chain=('copy',))
+                          if name == 'object_argument_global_alias_chain'
                       else observer(cpp, 2, 0, global_alias=True) if name == 'object_argument_siblings_global'
+                      else observer(cpp, 2, 0, global_alias=True, global_chain=('copy', 'tail', 'branch'))
+                          if name == 'object_argument_siblings_global_chain'
                       else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
                       else observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
@@ -707,7 +743,7 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
                            f'{result.returncode}: {result.stdout}{result.stderr}')
 
 
-def retained_key_observer_source(source, global_alias=False):
+def retained_key_observer_source(source, global_alias=False, global_chain=()):
     observed = source + '''
 (function() {
     const get = host.slot.get, set = host.slot.set;
@@ -736,14 +772,22 @@ def retained_key_observer_source(source, global_alias=False):
 '''
     if not global_alias:
         return observed, 63
-    return observed.replace('(function() {', '(function(first, alias, other) {').replace(
+    observed = observed.replace('(function() {', '(function(first, alias, other) {').replace(
         'const first = {}, alias = first, other = {};',
         'const startup = first === alias && first !== other;').replace(
         '(future ? 32 : 0);', '(future ? 32 : 0) | (startup ? 64 : 0);').replace(
-        '})();', '})(key, alias, other);'), 127
+        '})();', '})(key, alias, other);')
+    if global_chain:
+        parameters = ', '.join('chain_' + binding for binding in global_chain)
+        observed = observed.replace('(function(first, alias, other)',
+            '(function(first, alias, other, ' + parameters + ')').replace(
+            'first !== other;', 'first !== other' + ''.join(
+                ' && first === chain_' + binding for binding in global_chain) + ';').replace(
+            '})(key, alias, other);', '})(key, alias, other, ' + ', '.join(global_chain) + ');')
+    return observed, 127
 
 
-def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False):
+def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False, global_chain=()):
     changed = (instrument_leaf_objects(cpp, allocations=allocations) + r'''
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
@@ -812,7 +856,7 @@ int main() {
     if not global_alias:
         return changed
     assert (allocations, retained) == (2, 0)
-    return changed.replace('    for (std::size_t index = 0; index < 2; ++index)', '''    if (!g_key || g_key != g_alias || g_key != ctn_test_objects[0].lock() ||
+    changed = changed.replace('    for (std::size_t index = 0; index < 2; ++index)', '''    if (!g_key || g_key != g_alias || g_key != ctn_test_objects[0].lock() ||
         !g_other || g_other != ctn_test_objects[1].lock() || g_key == g_other) { return 244; }
     g_key.reset();
     if (ctn_test_objects[0].expired() || !g_alias) { return 245; }
@@ -827,6 +871,13 @@ int main() {
     if (ctn_test_objects[2].expired() || !ctn_test_objects[3].expired()) { return 248; }
     other.reset();
     set = {};''')
+    if global_chain:
+        changed = changed.replace('g_key != g_alias', 'g_key != g_alias' + ''.join(
+            ' || g_key != g_' + binding for binding in global_chain)).replace(
+            'g_alias.reset(); g_other.reset();',
+            'g_alias.reset(); g_other.reset(); ' + ' '.join(
+                'g_' + binding + '.reset();' for binding in global_chain))
+    return changed
 
 
 def parameter_object_lifetime_cpp(cpp):
