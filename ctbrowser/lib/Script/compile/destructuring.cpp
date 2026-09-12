@@ -69,7 +69,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         // into the source register before the target ever sees it.
         const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
         const std::uint32_t mark = reg_mark();
-        compile_expr(n.b, src);
+        compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
         release_to(mark);
         patch_here(skip);
         compile_pattern(n.a, src);
@@ -182,7 +182,7 @@ void compiler_impl::compile_literal_target(std::int32_t target, std::uint16_t sr
     if (t.kind == vp::nk::assign) { // `[a = 1] = xs`
         const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
         const std::uint32_t mark = reg_mark();
-        compile_expr(t.b, src);
+        compile_named_expr(t.b, src, at(t.a).kind == vp::nk::ident ? at(t.a).text : "");
         release_to(mark);
         patch_here(skip);
         compile_literal_target(t.a, src);

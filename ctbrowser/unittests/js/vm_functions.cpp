@@ -737,6 +737,36 @@ void test_named_function_expressions() {
                   "function,function");
 }
 
+// NamedEvaluation (8.4.5): an anonymous function, arrow or class takes the
+// name of what it initialises - a binding, a property, a default, a field.
+// Every one of these read "" before 2026-09-12; test262 has 1,056 files that
+// ask, and a stack trace through `var handler = function () {}` said
+// "<anonymous>" for the same reason.
+void test_anonymous_functions_take_the_binding_name() {
+    expect_result("var f = function () {}; return f.name;", "f");
+    expect_result("let g = () => 1; return g.name;", "g");
+    expect_result("var c = class {}; return c.name;", "c");
+    expect_result("var h; h = function () {}; return h.name;", "h");
+    expect_result("var o = { m: function () {}, a: () => 1, k: class {} };"
+                  "return o.m.name + ',' + o.a.name + ',' + o.k.name;",
+                  "m,a,k");
+    expect_result("var [d = function () {}] = []; return d.name;", "d");
+    expect_result("var { e = () => 0 } = {}; return e.name;", "e");
+    expect_result("function f(p = function () {}) { return p.name; } return f();", "p");
+    expect_result("class C { x = function () {}; static y = () => 1; }"
+                  "return new C().x.name + ',' + C.y.name;",
+                  "x,y");
+    expect_result("var z; z ?\?= function () {}; return z.name;", "z");
+    // A function with its own name keeps it; a parenthesised anonymous one
+    // is still anonymous and still takes the binding's.
+    expect_result("var f = function own() {}; var g = (function () {});"
+                  "return f.name + ',' + g.name;",
+                  "own,g");
+    // `__proto__: fn` is a prototype assignment, not a property named __proto__.
+    expect_result("var o = { __proto__: function () {} }; return Object.getPrototypeOf(o).name;",
+                  "");
+}
+
 } // namespace
 
 int main() {
@@ -765,5 +795,6 @@ int main() {
     test_computed_calls_pass_their_arguments();
     test_arguments();
     test_named_function_expressions();
+    test_anonymous_functions_take_the_binding_name();
     REPORT("vm_functions");
 }

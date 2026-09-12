@@ -222,6 +222,24 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
     proto().emit(instruction::with_bx(op::get_global, dst, name));
 }
 
+void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name) {
+    if (idx >= 0 && !name.empty()) {
+        const vp::node & n = at(idx);
+        // A parenthesised function is still anonymous - the parser keeps no
+        // paren node, so `(function () {})` arrives as the function itself.
+        if ((n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow) && n.text.empty()) {
+            const std::uint32_t index = compile_function_body(idx, std::string{name});
+            proto().emit(instruction::with_bx(op::closure, dst, index));
+            return;
+        }
+        if (n.kind == vp::nk::class_decl && n.text.empty()) {
+            compile_class(n, dst, false, name);
+            return;
+        }
+    }
+    compile_expr(idx, dst);
+}
+
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const vp::node & target = at(n.a);
@@ -476,7 +494,11 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     const reference ref = prepare_reference(target);
 
     if (n.text == "=") {
-        compile_expr(n.b, dst);
+        if (target.kind == vp::nk::ident) {
+            compile_named_expr(n.b, dst, target.text);
+        } else {
+            compile_expr(n.b, dst);
+        }
         emit_store(ref, dst);
         release_to(mark);
         return;
@@ -490,7 +512,11 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
                         : n.text == "?\?=" ? op::jump_if_not_nullish
                                            : op::jump_if_true;
         const std::size_t skip = proto().emit(instruction{test, dst});
-        compile_expr(n.b, dst);
+        if (target.kind == vp::nk::ident) {
+            compile_named_expr(n.b, dst, target.text);
+        } else {
+            compile_expr(n.b, dst);
+        }
         emit_store(ref, dst);
         patch_here(skip);
         release_to(mark);
@@ -949,10 +975,14 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             continue;
         }
         const std::uint16_t v = alloc_reg();
-        if (prop.b >= 0) {
-            compile_expr(prop.b, v);
-        } else {
+        if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
+        } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {
+            // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
+            // is a prototype assignment and names nothing.
+            compile_named_expr(prop.b, v, decode_string_literal(prop.text));
+        } else {
+            compile_expr(prop.b, v);
         }
         // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
         // which the parser routes the same way so quotes and escapes get

@@ -369,12 +369,12 @@ void compiler_impl::compile_parameter_prologue(
             const std::uint16_t current = alloc_reg();
             proto().emit(instruction{op::cell_get, current, slot});
             const std::size_t skip = proto().emit(instruction{op::jump_if_defined, current});
-            compile_expr(p.a, current);
+            compile_named_expr(p.a, current, p.b >= 0 ? "" : p.text);
             proto().emit(instruction{op::cell_set, slot, current});
             patch_here(skip);
         } else {
             const std::size_t skip = proto().emit(instruction{op::jump_if_defined, slot});
-            compile_expr(p.a, slot);
+            compile_named_expr(p.a, slot, p.b >= 0 ? "" : p.text);
             patch_here(skip);
         }
         release_to(mark);

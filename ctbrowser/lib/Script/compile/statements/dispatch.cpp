@@ -121,7 +121,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
-                    compile_expr(decl.a, r);
+                    compile_named_expr(decl.a, r, decl.b >= 0 ? "" : decl.text);
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
@@ -175,7 +175,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 if (decl.a >= 0) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
-                    compile_expr(decl.a, tmp);
+                    compile_named_expr(decl.a, tmp, decl.text);
                     emit_write(decl.text, tmp);
                     release_to(mark);
                 }
@@ -183,7 +183,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
             if (decl.a >= 0) {
-                compile_expr(decl.a, r);
+                compile_named_expr(decl.a, r, decl.text);
             } else {
                 proto().emit(instruction{op::load_undef, r});
             }

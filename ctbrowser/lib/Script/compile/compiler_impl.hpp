@@ -871,7 +871,13 @@ public:
     // A named class EXPRESSION binds its name inside its own body and NOWHERE
     // ELSE, exactly like a named function expression: `let p5$2 = class p5 {}`
     // must not give the module scope a local named `p5`.
-    void compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration = false);
+    void compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration = false,
+                       std::string_view inferred_name = {});
+    // NamedEvaluation (8.4.5, 13.15.2, 14.3.1.2...): an ANONYMOUS function,
+    // arrow or class expression takes the name of the binding, property,
+    // parameter or pattern element it initialises. Anything else is
+    // compile_expr.
+    void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
 
     // `/ab+c/gi`. The lexer hands the literal over whole, delimiters and all,
     // so the source is between the first `/` and the last one and the flags are

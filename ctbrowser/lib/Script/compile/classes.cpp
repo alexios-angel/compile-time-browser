@@ -37,7 +37,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
         // `class A { x; }` declares x and gives it undefined - a field
         // without an initialiser is still a field.
         if (m.b >= 0) {
-            compile_expr(m.b, v);
+            compile_named_expr(m.b, v, (m.d & 2) != 0 ? "" : m.text);
         } else {
             proto().emit(instruction{op::load_undef, v});
         }
@@ -68,7 +68,8 @@ void compiler_impl::declare_class_name(std::string name, bool force) {
     }
 }
 
-void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration) {
+void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration,
+                                  std::string_view inferred_name) {
     // The name is DECLARED first, before any method body is compiled, so a
     // method that mentions it resolves to this binding rather than to an
     // outer one - capture is decided when the nested function is compiled,
@@ -129,7 +130,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // starts with; an explicit constructor kept its own member span.
     if (!proto().code.empty() && proto().code.back().code == op::closure) {
         function_proto & ctor = out_.functions[proto().code.back().bx()];
-        ctor.name = std::string{n.text};
+        ctor.name = std::string{n.text.empty() ? inferred_name : n.text};
         if (n.end > n.begin) {
             ctor.source_begin = n.begin;
             ctor.source_end = n.end;
@@ -243,7 +244,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const vp::node & m = at(member);
         if (m.c != 0 || (m.d & 1) == 0) { continue; } // a static field
         if (m.b >= 0) {
-            compile_expr(m.b, slot);
+            compile_named_expr(m.b, slot, (m.d & 2) != 0 ? "" : m.text);
         } else {
             proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
         }
