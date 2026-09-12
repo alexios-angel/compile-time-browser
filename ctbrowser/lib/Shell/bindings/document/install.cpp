@@ -318,29 +318,53 @@ void dom_bindings::install_document(context & cx) {
             std::string_view spelling;
             std::string_view interface_name;
         };
-        // The DOM's own table, lowercased, minus every entry this engine has no
-        // interface object for - those fall through to Event, which is what
-        // they would get anyway.
-        static constexpr alias aliases[] = {
-            {"customevent", "CustomEvent"}, {"uievent", "UIEvent"},
-            {"uievents", "UIEvent"},        {"mouseevent", "MouseEvent"},
-            {"mouseevents", "MouseEvent"},  {"keyboardevent", "KeyboardEvent"},
-            {"focusevent", "FocusEvent"},   {"compositionevent", "CompositionEvent"},
-            {"wheelevent", "WheelEvent"}};
+        // The DOM's own table (4.5 createEvent), lowercased. An entry this
+        // engine has no interface object for is a plain Event, which is what
+        // it would get anyway; a name OUTSIDE the table is a NotSupportedError
+        // - and `touchevent` is outside it while the legacy touch APIs are
+        // not exposed (`'ontouchstart' in document` is false), which
+        // Document-createEvent-touchevent.window.js checks.
+        static constexpr alias aliases[] = {{"beforeunloadevent", "BeforeUnloadEvent"},
+                                            {"compositionevent", "CompositionEvent"},
+                                            {"customevent", "CustomEvent"},
+                                            {"devicemotionevent", "DeviceMotionEvent"},
+                                            {"deviceorientationevent", "DeviceOrientationEvent"},
+                                            {"dragevent", "DragEvent"},
+                                            {"event", "Event"},
+                                            {"events", "Event"},
+                                            {"focusevent", "FocusEvent"},
+                                            {"hashchangeevent", "HashChangeEvent"},
+                                            {"htmlevents", "Event"},
+                                            {"keyboardevent", "KeyboardEvent"},
+                                            {"messageevent", "MessageEvent"},
+                                            {"mouseevent", "MouseEvent"},
+                                            {"mouseevents", "MouseEvent"},
+                                            {"storageevent", "StorageEvent"},
+                                            {"svgevents", "Event"},
+                                            {"textevent", "TextEvent"},
+                                            {"uievent", "UIEvent"},
+                                            {"uievents", "UIEvent"},
+                                            {"wheelevent", "WheelEvent"}};
+        const alias * found = nullptr;
+        for (const alias & entry : aliases) {
+            if (entry.spelling == want) { found = &entry; }
+        }
+        if (found == nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "createEvent: '" + arg_string(c, args, 0) +
+                                    "' is not an event interface");
+            return value::undefined();
+        }
         value made = make_event_object(c, "", false, false);
         auto * object = static_cast<script::object_object *>(made.as_heap());
-        for (const alias & entry : aliases) {
-            if (entry.spelling != want) { continue; }
-            const value interface_object = c.global(entry.interface_name);
-            if (!interface_object.is_undefined()) {
-                const value proto = c.lookup_property(interface_object, "prototype");
-                if (proto.is_object()) { object->prototype = proto; }
-            }
-            // `detail` is the one member a CustomEvent has that an Event does
-            // not, and it reads null until `initCustomEvent` gives it one.
-            if (want == "customevent") { object->set("detail", value::null()); }
-            break;
+        const value interface_object = c.global(found->interface_name);
+        if (!interface_object.is_undefined()) {
+            const value proto = c.lookup_property(interface_object, "prototype");
+            if (proto.is_object()) { object->prototype = proto; }
         }
+        // `detail` is the one member a CustomEvent has that an Event does
+        // not, and it reads null until `initCustomEvent` gives it one.
+        if (want == "customevent") { object->set("detail", value::null()); }
         return made;
     });
     // `document.dispatchEvent`. The document is a stop on every path, so this
