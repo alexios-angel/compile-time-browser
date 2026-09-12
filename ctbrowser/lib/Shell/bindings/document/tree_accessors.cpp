@@ -183,24 +183,30 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             if (!title) {
                 const auto txn = doc_->read();
                 const node_id root = txn.root();
-                const bool svg_root = txn.element_ns(root) == node_ns::svg;
-                // AN SVG ROOT AND A ROOT THAT IS NEITHER BOTH DO NOTHING
-                // HERE, for two different reasons. HTML says a non-HTML,
-                // non-SVG root makes the setter return - an XML document's
-                // title is not settable at all. An SVG root should get a new
-                // SVG `<title>` prepended, and does not yet: this engine can
-                // only be handed an SVG-rooted document by `createDocument`,
-                // which is absent, so there is no way to reach the branch and
-                // no way to test one written blind.
-                if (svg_root || txn.element_ns(root) != node_ns::html) {
+                const bool svg_root =
+                    txn.element_ns(root) == node_ns::svg && txn.local_name(root) == "svg";
+                // HTML 4.2.2: an SVG root gets a new SVG `<title>` as its
+                // FIRST child (document.title-09.html); an HTML document gets
+                // one appended to its head; any other root makes the setter
+                // return - an XML document's title is not settable at all.
+                if (!svg_root && txn.element_ns(root) != node_ns::html) {
                     return value::undefined();
                 }
-                const node_id head = first_html_element("head");
-                if (!head) { return value::undefined(); }
-                const node_id made = doc_->create_element(atoms_->intern_lower("title"));
-                if (!made) { return value::undefined(); }
-                (void)doc_->append_child(head, made);
-                title = made;
+                if (svg_root) {
+                    const node_id made =
+                        doc_->create_element(atoms_->intern("title"), node_ns::svg);
+                    if (!made) { return value::undefined(); }
+                    const std::span<const node_id> kids = txn.children(root);
+                    (void)doc_->insert_before(root, made, kids.empty() ? node_id{} : kids.front());
+                    title = made;
+                } else {
+                    const node_id head = first_html_element("head");
+                    if (!head) { return value::undefined(); }
+                    const node_id made = doc_->create_element(atoms_->intern_lower("title"));
+                    if (!made) { return value::undefined(); }
+                    (void)doc_->append_child(head, made);
+                    title = made;
+                }
             }
             set_text(title, wanted);
             return value::undefined();
