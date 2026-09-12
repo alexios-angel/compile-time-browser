@@ -101,7 +101,6 @@ bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
-bool mayBeUndefined(mlir::Type type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 std::string printed(mlir::Type type);
 using receiverGroups = llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>>;

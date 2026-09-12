@@ -21,14 +21,6 @@ bool admission::numeric(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// A value used as a BOOLEAN.
-bool admission::boolean(mlir::Value v, llvm::StringRef where) {
-    if (carrierOf(typeOf(v)) != carrier::boolean) {
-        return refuse((where + " operand is " + printed(typeOf(v)) + ", not a boolean").str());
-    }
-    return true;
-}
-
 // An observation preserves the alternatives of a proved scalar carrier.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     const auto stored = carrierOf(typeOf(v));

@@ -28,8 +28,6 @@ struct admission {
 
     bool numeric(mlir::Value v, llvm::StringRef where);
 
-    bool boolean(mlir::Value v, llvm::StringRef where);
-
     bool printable(mlir::Value v, llvm::StringRef where);
     bool identityField(mlir::Operation * op);
     bool ownedTableField(ctjs::SetPropertyOp store);

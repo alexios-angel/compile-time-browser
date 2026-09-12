@@ -236,11 +236,6 @@ mlir::Type methodTableCarrierType(MethodTableType type) {
                                                       cIdentifier(type.getSite()) + ">");
 }
 
-// Opt includes null or undefined, retained by the tagged scalar carrier.
-bool mayBeUndefined(mlir::Type type) {
-    return llvm::isa<OptType>(type);
-}
-
 mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // `none` HAS NO REPRESENTATION, and returning f64 for it was a silent
     // guess at the one thing this tier exists not to guess at. A value with no

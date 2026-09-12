@@ -62,10 +62,6 @@ mlir::Type lowering::receiverType(const siteShape & site) {
     return ec::PointerType::get(ec::OpaqueType::get(context, spelling(site)));
 }
 
-mlir::Type lowering::receiverLocalType(const siteShape & site) {
-    return ec::LValueType::get(receiverType(site));
-}
-
 // THE MEMBER NAME OF ONE ACCESS, and a named fatal rather than
 // `accessKey.at(o)`. `at` on a key that is not there THROWS, and this
 // process cannot catch it: an access whose object never went through the

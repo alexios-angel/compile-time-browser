@@ -168,8 +168,6 @@ struct lowering {
 
     mlir::Type receiverType(const siteShape & site);
 
-    mlir::Type receiverLocalType(const siteShape & site);
-
     [[nodiscard]] llvm::StringRef memberName(mlir::Operation * access) const;
 
     [[nodiscard]] const siteShape & shapeAt(mlir::Value object) const;
