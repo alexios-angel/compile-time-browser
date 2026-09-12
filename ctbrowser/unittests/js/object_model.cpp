@@ -108,5 +108,19 @@ int main() {
               "return t.z;})()",
               "9");
 
+    // ================================================================
+    // 9. Object.groupBy (20.1.2.9): first-seen key order, ToPropertyKey of
+    //    the callback's answer, every value visited with its index
+    // ================================================================
+    js_expect("JSON.stringify(Object.groupBy([1,2,3,4],function(n){return n%2?'odd':'even';}))",
+              "{\"odd\":[1,3],\"even\":[2,4]}");
+    js_expect("Object.keys(Object.groupBy('ab',function(){return null;})).join()", "null");
+    js_expect("(function(){var seen=[];Object.groupBy([5,6],function(v,i){seen.push(v+':'+i);"
+              "return 0;});return seen.join();})()",
+              "5:0,6:1");
+    js_expect("Object.groupBy([1], 1)", "THREW");
+    js_expect("Object.groupBy(null, function(){})", "THREW");
+    js_expect("Object.groupBy.length", "2");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

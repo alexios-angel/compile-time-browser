@@ -863,6 +863,41 @@ void install_object(context & cx) {
         }
         return target;
     });
+    // 20.1.2.9 Object.groupBy - GroupBy with property keys: every value of
+    // the iterable goes to the callback with its index, and the answer is an
+    // object of arrays keyed by ToPropertyKey of what it returned, in first-
+    // seen order. (The specification gives it a null prototype; this engine
+    // cannot make one - see prototype_of.)
+    method(cx, object_ctor, "groupBy", 2, [](context & c, std::span<value> a) {
+        if (!object_coercible(c, arg_at(a, 0), "Object.groupBy")) { return value::undefined(); }
+        const value callback = arg_at(a, 1);
+        if (!callback.is_callable()) {
+            c.throw_error("TypeError", "Object.groupBy: callback is not a function");
+            return value::undefined();
+        }
+        const value items = c.iterable_values(a[0]);
+        if (c.throw_pending() || !items.is_array()) { return value::undefined(); }
+        const context::rooted keep_items{c, items};
+        object_object * out = new_table(c);
+        const value made = value::object(out);
+        const context::rooted keep{c, made};
+        // A COPY, ROOTED: the callback may empty the very array `items` is.
+        const std::vector<value> snapshot = static_cast<array_object *>(items.as_heap())->items;
+        const context::rooted_values keep_snapshot{c, snapshot};
+        for (std::size_t i = 0; i < snapshot.size(); ++i) {
+            const value args[2] = {snapshot[i], value::number(static_cast<double>(i))};
+            const value key = c.call(callback, args);
+            if (c.throw_pending()) { return value::undefined(); }
+            const std::string name = c.to_string(key);
+            value * group = out->find(name);
+            if (group == nullptr) {
+                out->set(name, c.make_array());
+                group = out->find(name);
+            }
+            static_cast<array_object *>(group->as_heap())->items.push_back(snapshot[i]);
+        }
+        return made;
+    });
     cx.define_global("Object", value::object(object_ctor));
 }
 
