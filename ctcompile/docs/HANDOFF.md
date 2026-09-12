@@ -61,9 +61,14 @@ call counts and source effects; stale/forged fingerprints still reject. Original
 source **0205c78a** remains **0/6** without ownership: its parameterized removal has no
 current call. These sources were preserved separately from the execution controls.
 
-**Checkpoint: the standard full gate is running on 1,367 frozen inputs.** All code is
-committed. Full Bootstrap's last full-gate measurement remains **19/574**, Data
-**0/7 CommonJS, 0/7 browser, 0/8 AMD**; no new full-gate result is claimed yet.
+The standard devbox gate passes **534/534 CTests in 1022.85s**, including
+**162 browser tests** and **168/168 lit cases in 677.51s**. All **1,367 frozen
+code/test/parser inputs** match locally and remotely, including the committed changes.
+Fresh full Bootstrap measures **19/574 native** by default and
+**19/574** with optimization disabled. Fresh Data remains
+**0/7 CommonJS,
+0/7 browser,
+0/8 AMD**. Full native Bootstrap is unfinished.
 
 Next: carry the original nullable result through an independently proved native
 result/output boundary, then exact Data's mixed/field-bearing payloads, object
@@ -73,12 +78,14 @@ indices: runtime **aca7091c** already fixed them, but `ownArrayIndex` still reje
 "0" with a stale disagreement comment. Details: `/tmp/ctcompile-nullable-next.md`
 and `/tmp/ctcompile-nullable-escape-next.md`.
 
-Evidence: `/tmp/ctcompile-nullable-boolean-focused.log` and
-`/tmp/ctcompile-nullable-boolean-probe.log`; focused ownership/escape evidence remains
-in the earlier nullable logs. Pending full workflow: `/tmp/ctcompile-nullable-full.log`.
-Parser remains **8eb3375**. Claude's pending **08:00:13 / 08:28:55 / 09:42:23 UTC**
-runtime/ABI journals must be reread after integration, including the pending shared
-`CTJS/Lowering/EmitC/Status.cpp` block-order fix. Nothing was pushed.
+Evidence: `/tmp/ctcompile-nullable-full-summary.json`,
+`/tmp/ctcompile-nullable-full-measured/summary.json`,
+`/tmp/ctcompile-nullable-boolean-focused.log` and
+`/tmp/ctcompile-nullable-boolean-probe.log`; earlier focused logs preserve the test
+corrections. Parser remains **8eb3375**. Claude's pending **08:00:13 / 08:28:55 /
+09:42:23 / 10:48:07 UTC** runtime/ABI journals must be reread after integration,
+including the shared `CTJS/Lowering/EmitC/Status.cpp` block-order fix, declaration
+hoisting and wrapper/proxy/array changes. Nothing was pushed.
 
 ## Recovered inverted Map guards and mixed static BigInt retention, 2026-09-12
 
