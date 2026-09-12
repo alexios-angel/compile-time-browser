@@ -781,21 +781,26 @@ private:
         case kind::syntax: {
             // The text is a <declaration-value> with substitutions of its own
             // to perform before it is parsed - `attr(data-x type(*))` may hold
-            // a `var()`, and a cycle through it is a cycle.
-            //
-            // ...BUT NOT AN attr() OF ITS OWN. An attribute's value cannot
-            // reach another attribute: `attr(data-foo type(*))` holding
-            // `attr(data-bar type(*), 2px)` is invalid, and the outer fallback
-            // is what applies (attr-cycle 3, 8, 12, 17, 28, 29).
-            const token_stream inner_tokens = tokenize(*held);
-            const bool nested_attr =
-                std::ranges::any_of(inner_tokens.tokens, [&](const css_token & t) {
-                    return is_function_named(inner_tokens, t, "attr");
-                });
-            std::string substituted;
-            if (!nested_attr && run(*held, substituted, depth + 1)) {
-                value = match_syntax(substituted, syntax);
+            // a `var()` or another `attr()`, and a cycle through it is a cycle:
+            // an attribute already being substituted makes every attr() in the
+            // ring invalid, fallbacks included, and only the attr() the
+            // declaration itself wrote takes its fallback (attr-cycle 3, 8, 12,
+            // 17, 28, 29; attr-all-types 75-79 read one attribute through
+            // another without a cycle).
+            if (std::ranges::find(attrs_resolving_, name) != attrs_resolving_.end()) {
+                attr_cycle_ = true;
+                return false;
             }
+            attrs_resolving_.push_back(name);
+            std::string substituted;
+            const bool ok = run(*held, substituted, depth + 1);
+            attrs_resolving_.pop_back();
+            if (attr_cycle_) {
+                if (!attrs_resolving_.empty()) { return false; }
+                attr_cycle_ = false;
+                break;
+            }
+            if (ok) { value = match_syntax(substituted, syntax); }
             break;
         }
         }
@@ -1361,6 +1366,10 @@ private:
     // set because it is never more than a handful deep and a linear scan of four
     // integers beats hashing one.
     std::vector<std::uint32_t> resolving_;
+    // The attributes whose values are being substituted, outermost first, and
+    // whether a cycle through them was found (attr-cycle).
+    std::vector<std::string> attrs_resolving_;
+    bool attr_cycle_ = false;
     // The property whose value this is, the properties whose values style
     // queries are computing (innermost last), and the two cycle flags
     // `reached_again` explains.

@@ -295,13 +295,20 @@ namespace detail {
 [[nodiscard]] std::string collapse_keyword(std::string_view text) {
     std::string out;
     bool gap = false;
+    char quote = 0; // inside a string, which keeps its case and its spaces
     for (const char c : trim(text, html_whitespace)) {
+        if (quote != 0) {
+            out += c;
+            if (c == quote && (out.size() < 2 || out[out.size() - 2] != '\\')) { quote = 0; }
+            continue;
+        }
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
             gap = true;
             continue;
         }
         if (gap && !out.empty()) { out += ' '; }
         gap = false;
+        if (c == '"' || c == '\'') { quote = c; }
         out += ascii_lower(c);
     }
     return out;

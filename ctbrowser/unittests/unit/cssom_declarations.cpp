@@ -110,14 +110,6 @@ void test_reads_and_all() {
     CHECK_EQ(round_trip("flex: initial; flex-shrink: 0;"),
              std::string{"flex-grow: initial; flex-basis: initial; flex-shrink: 0;"});
     CHECK_EQ(round_trip("flex: 1"), std::string{"flex: 1 1 0px;"});
-    // A parsed declaration of an unknown property is dropped; a set one stays.
-    CHECK_EQ(round_trip("color: red; unknown: unknown; font-size: 10pt"),
-             std::string{"color: red; font-size: 10pt;"});
-    {
-        declaration_block block;
-        CHECK(set_declaration(block, "unknown", "unknown", false));
-        CHECK_EQ(serialize_declaration_block(block), std::string{"unknown: unknown;"});
-    }
     CHECK_EQ(round_trip("flex: 0"), std::string{"flex: 0 1 0px;"});
 
     CHECK_EQ(round_trip("width: 100px; all: inherit; height: inherit"),

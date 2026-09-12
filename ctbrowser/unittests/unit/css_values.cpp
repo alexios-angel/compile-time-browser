@@ -876,6 +876,15 @@ void test_random_spells_its_key() {
     ok("margin", "random(0px, 1px) random(0px, 1px)",
        "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // ...and the sharing grammar (random-invalid).
+    bad("width", "random(--foo --bar, 1px, 2px)");
+    bad("width", "random(fixed 0.5 auto, 1px, 2px)");
+    bad("width", "random(fixed -1, 1px, 2px)");
+    bad("width", "random(--foo element-scoped element-scoped, 1px, 2px)");
+    bad("width", "random(property-scoped ua-width-1, 1px, 2px)");
+    bad("width", "random(property-scoped property-index-scoped, 1px, 2px)");
+    bad("width", "random(foo, 1px, 2px)");
+    bad("width", "random(1px)");
 }
 
 // urls/url-request-modifiers-*: the modifiers in one order, the unknown ones

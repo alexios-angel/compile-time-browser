@@ -343,7 +343,6 @@ constexpr property_syntax table[] = {
     {"ry", k::length_percentage, "auto", "auto", false, true},
     {"x", k::length_percentage, "", "0px", false, false},
     {"y", k::length_percentage, "", "0px", false, false},
-    {"border-image-slice", k::freeform, "", "100%", false, false},
     {"math-depth", k::freeform, "", "0", true, false},
     {"aspect-ratio", k::freeform, "", "auto", false, false},
     {"animation-timeline", k::freeform, "", "auto", false, false},

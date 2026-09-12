@@ -613,11 +613,6 @@ bool erase_named(declaration_block & block, std::span<const std::string_view> na
 // One declaration into the block, from either path.
 bool put(declaration_block & block, std::string_view name, std::string_view text, bool important,
          bool parsed) {
-    // A PARSED DECLARATION OF A PROPERTY NOBODY KNOWS IS DROPPED, as CSS Syntax
-    // 3 §5.4.6 drops it: `cssText = "color: red; unknown: unknown"` keeps the
-    // colour alone (cssstyledeclaration-csstext). `setProperty` still stores
-    // one - the setter path is the page's own write and it reads it back.
-    if (parsed && !name.starts_with("--") && find_property(name) == nullptr) { return false; }
     const value_check checked = check_declaration(name, text, false);
     if (!checked.valid) { return false; }
     const auto add = parsed ? add_parsed : set_one;
