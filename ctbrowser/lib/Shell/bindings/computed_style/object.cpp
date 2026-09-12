@@ -85,6 +85,9 @@ struct computed_cache {
     const bool legacy =
         name == "before" || name == "after" || name == "first-line" || name == "first-letter";
     if (!doubled && !legacy) { return {}; }
+    // A vendor's pseudo-element has no cascade here, and answers empty
+    // (getComputedStyle-pseudo "::-webkit-file-upload-button").
+    if (name.starts_with('-')) { return {}; }
     return style::css::known_pseudo_element(name) ? name : std::string{};
 }
 
