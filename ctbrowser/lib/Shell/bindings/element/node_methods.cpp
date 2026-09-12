@@ -338,6 +338,14 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
+        // ANOTHER DOCUMENT'S NODE is a Node in another tree: the root check
+        // below, not adoption - a move never adopts (moveBefore/throws-
+        // exception.html).
+        if (!child && owner_of(arg(args, 0)) != nullptr) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "moveBefore: the node belongs to another document");
+            return value::undefined();
+        }
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
         }
