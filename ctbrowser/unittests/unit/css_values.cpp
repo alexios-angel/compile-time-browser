@@ -130,6 +130,7 @@ void test_the_things_that_must_survive() {
     ok("scale", "clamp(-1, 1 / sign(calc(-0)), 1)", "calc(-1)");
     ok("scale", "clamp(-1, 1 / sign(min(-0, 0)), 1)", "calc(-1)");
     ok("scale", "sign(-0)", "calc(0)");
+    ok("width", "min(-0%, 0%)", "min(0%, 0%)"); // ...but a percentage's zero has no sign
     // `decimal` IS THE DEFAULT COUNTER STYLE and CSSOM does not write it.
     ok("content", "counter(par-num, decimal)", "counter(par-num)");
     ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");

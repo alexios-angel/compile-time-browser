@@ -644,7 +644,9 @@ namespace detail {
     // tells the two apart - `signed-zero` reads it back through `scale` - and
     // the arithmetic has not happened yet when this runs. The math function's
     // own serialisation prints what it computed; this only has to not destroy
-    // the input.
+    // the input. A PERCENTAGE IS EXCLUDED: nothing reads the sign of `-0%`
+    // back, and `min(-0%, 0%)` serialises as `min(0%, 0%)` in every engine
+    // (minmax-percentage-serialize).
     int depth = 0;
     int math_from = 0; // the depth at which the outermost math function opened
     const auto number = [&](double value) {
@@ -670,7 +672,7 @@ namespace detail {
         const std::string_view body = ts.text_of(t);
         switch (t.type) {
         case token_type::number: out += number(t.number); break;
-        case token_type::percentage: out += number(t.number) + "%"; break;
+        case token_type::percentage: out += number_text(t.number) + "%"; break;
         case token_type::dimension:
             out += number(t.number) + ascii_lower_copy(ts.unit_of(t));
             break;
