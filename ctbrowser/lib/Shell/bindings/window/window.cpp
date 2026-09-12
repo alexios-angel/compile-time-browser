@@ -827,7 +827,6 @@ void dom_bindings::install_window(context & cx) {
     });
     window_trap("has", [named_element](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
-        auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         // `'x' in window` has to agree with `window.x`, or a page's feature
         // detection and its use of the feature disagree - and with a bare
