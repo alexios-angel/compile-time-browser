@@ -210,6 +210,16 @@ void test_a_named_frame_is_its_window_on_the_window() {
        "true,inner,IFRAME");
 }
 
+void test_the_frames_are_indexed_on_the_window() {
+    // Node-removeChild.html reads `frames[0].document`: `frames` is the
+    // window, `length` counts the child navigables, and an index is one's
+    // WindowProxy - and not a property past the end.
+    is("<iframe src=inner.html></iframe>",
+       "(frames === window) + ',' + window.length + ',' + frames[0].document.title + ','"
+       " + (0 in window) + ',' + (1 in window) + ',' + String(window[1])",
+       "true,1,inner,true,false,undefined");
+}
+
 void test_an_inserted_frame_has_its_window_at_once() {
     // event-global-extra.window.js: `appendChild(iframe).contentWindow` in the
     // same statement, before any tick has reconciled the frames.
@@ -225,6 +235,7 @@ void test_an_inserted_frame_has_its_window_at_once() {
 } // namespace
 
 int main() {
+    test_the_frames_are_indexed_on_the_window();
     test_an_inserted_frame_has_its_window_at_once();
     test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();

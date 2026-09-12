@@ -788,13 +788,28 @@ void dom_bindings::install_window(context & cx) {
         if (cx_ == nullptr) { return value::undefined(); }
         return named_value(*cx_, std::string{name});
     });
-    window_trap("get", [named_value](context & c, std::span<value> args) {
+    // `window[0]`, HTML 7.2.2.2: the child navigables in tree order, each
+    // answered as its WindowProxy - `frames[0].document` is how Node-removeChild
+    // reaches a frame's document. An index at or past `length` is not a
+    // property at all.
+    const auto frame_at = [this](context & c, std::string_view name) -> value {
+        if (name.empty() || name.size() > 9 ||
+            name.find_first_not_of("0123456789") != std::string_view::npos) {
+            return value::undefined();
+        }
+        const std::vector<node_id> frames = all_html_elements("iframe");
+        const std::size_t index = static_cast<std::size_t>(std::stoul(std::string{name}));
+        if (index >= frames.size()) { return value::undefined(); }
+        return c.lookup_property(wrap(c, frames[index]), "contentWindow");
+    };
+    window_trap("get", [named_value, frame_at](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             return c.lookup_property(args[0], name);
         }
+        if (const value frame = frame_at(c, name); !frame.is_undefined()) { return frame; }
         // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
         if (c.has_global(name)) { return c.global(name); }
         // ...then a named element, which comes BEFORE the prototype chain and
@@ -825,7 +840,7 @@ void dom_bindings::install_window(context & cx) {
         }
         return value::boolean(true);
     });
-    window_trap("has", [named_element](context & c, std::span<value> args) {
+    window_trap("has", [named_element, frame_at](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
@@ -833,7 +848,7 @@ void dom_bindings::install_window(context & cx) {
         // detection and its use of the feature disagree.
         return value::boolean(target->find(name) != nullptr ||
                               target->find_accessor(name) != nullptr || c.has_global(name) ||
-                              !named_element(name).empty());
+                              !frame_at(c, name).is_undefined() || !named_element(name).empty());
     });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
@@ -883,6 +898,17 @@ void dom_bindings::install_window(context & cx) {
     window->set("top", window_view);
     window->set("opener", value::null());
     window->set("frameElement", value::null());
+    // `frames` IS the window (HTML 7.2.2.1), and `length` counts its child
+    // navigables - the frame_at trap above is how `frames[0]` reaches one.
+    window->set("frames", window_view);
+    window->define_accessor("length",
+                            value::object(cx.allocate<script::native_object>(
+                                "length",
+                                [this](context &, std::span<value>) {
+                                    return value::number(
+                                        static_cast<double>(all_html_elements("iframe").size()));
+                                })),
+                            value::undefined());
     // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
     // origin serialised - "null" for a file: page, as location.origin says.
     window->define_accessor("origin",
