@@ -34,7 +34,7 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 [[nodiscard]] std::string answer(const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
-    (void)page.frame();
+    page.frame();
     const std::string source = "try { console.log(String(" + expression +
                                ")); } catch (e) { console.log('threw:' + e.name); }";
     if (!page.run_script(source)) { return "<did not run: " + page.script_error() + ">"; }

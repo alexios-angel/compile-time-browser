@@ -55,7 +55,6 @@ namespace ctbrowser::shell {
 using ctbrowser::layout::box_node;
 using ctbrowser::layout::fragment;
 using ctbrowser::paint::layer_tree;
-using ctbrowser::raster::renderer;
 
 // How much of the pipeline the next frame has to re-run. Ordered: a later stage
 // implies every earlier one is still valid.
@@ -94,8 +93,7 @@ class browser {
 public:
     explicit browser(browser_options options = {})
         : options_(options), recorder_(atoms_),
-          renderer_(renderer::software(options.width, options.height,
-                                       ctbrowser::raster::default_tile_extent)) {
+          renderer_(options.width, options.height, ctbrowser::raster::default_tile_extent) {
         reset_document();
     }
 
@@ -108,10 +106,9 @@ public:
     browser(browser &&) = delete;
     browser & operator=(browser &&) = delete;
 
-    // Render with something other than the software backend - the GPU one, or
-    // whatever gpu::create_renderer() decided this machine can run.
-    void use_renderer(renderer r);
-    [[nodiscard]] const renderer & rendering_with() const noexcept { return renderer_; }
+    [[nodiscard]] const ctbrowser::raster::software_backend & rendering_with() const noexcept {
+        return renderer_;
+    }
 
     // --- content ---------------------------------------------------------
 
@@ -508,7 +505,7 @@ public:
 
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
     // which is the common case and the point.
-    std::expected<void, ctbrowser::raster::gpu_error> frame(scheduler * pool = nullptr);
+    void frame(scheduler * pool = nullptr);
 
     [[nodiscard]] rect viewport() const noexcept;
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
@@ -516,9 +513,8 @@ public:
     [[nodiscard]] const layer_tree & layers() const noexcept { return layers_; }
 
     // The composited image, for goldens and for headless runs.
-    [[nodiscard]] std::expected<ctbrowser::raster::surface, ctbrowser::raster::gpu_error>
-    read_pixels() {
-        return renderer_.read_target();
+    [[nodiscard]] const ctbrowser::raster::surface & read_pixels() const noexcept {
+        return renderer_.target();
     }
 
 private:
@@ -1558,7 +1554,7 @@ private:
     box_node boxes_;
     fragment fragments_;
     layer_tree layers_;
-    renderer renderer_;
+    ctbrowser::raster::software_backend renderer_;
 
     std::size_t page_layers_ = 0; // how many of layers_ are the page's
     node_id select_open_;         // the <select> whose popup is showing

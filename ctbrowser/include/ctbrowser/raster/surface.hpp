@@ -78,6 +78,13 @@ struct pixel_rect {
     [[nodiscard]] bool empty() const noexcept { return right <= left || bottom <= top; }
 };
 
+// The overlap of two pixel rects, edge by edge. May come back inverted (empty()
+// is true) when they do not meet; every caller tests that or ranges over it.
+[[nodiscard]] constexpr pixel_rect intersect(pixel_rect a, pixel_rect b) noexcept {
+    return pixel_rect{std::max(a.left, b.left), std::max(a.top, b.top), std::min(a.right, b.right),
+                      std::min(a.bottom, b.bottom)};
+}
+
 // THE rounding. Every float-to-pixel conversion in the rasterizer goes through
 // here, and it is not a style preference: static_cast<int>(f + 0.5f) truncates
 // toward zero, so it rounds -27.5 to -27 instead of -28. Negative coordinates

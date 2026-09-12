@@ -256,6 +256,31 @@ void test_base64_leniency() {
     CHECK_EQ(ctbrowser::base64_decode("a@G#V$s%b&G*8"), std::string{"hello"});
 }
 
+// decode_utf8 is the one decoder behind the font walk, dir=auto, XML names and
+// CharacterData's UTF-16 offsets. It checks continuation FORM, not range: a
+// WTF-8 lone surrogate must come back as the surrogate (CharacterData splits
+// pairs), and a truncated sequence is the lead byte, one byte wide.
+void test_decode_utf8() {
+    std::size_t at = 0;
+    const auto next = [&](std::string_view text) {
+        return static_cast<std::uint32_t>(ctbrowser::decode_utf8(text, at));
+    };
+    const std::string_view mixed = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x8C\xA0";
+    CHECK_EQ(next(mixed), 0x61u); // 'a'
+    CHECK_EQ(next(mixed), 0xE9u);
+    CHECK_EQ(next(mixed), 0x20ACu);
+    CHECK_EQ(next(mixed), 0x1F320u);
+    CHECK_EQ(at, std::size_t{10});
+    at = 0;
+    CHECK_EQ(next("\xED\xA0\x80"), 0xD800u); // a lone surrogate passes
+    at = 0;
+    CHECK_EQ(next("\xE2\x82"), 0xE2u); // truncated: the lead byte, one wide
+    CHECK_EQ(at, std::size_t{1});
+    at = 0;
+    CHECK_EQ(next("\xC3\x41"), 0xC3u); // bad continuation: likewise
+    CHECK_EQ(at, std::size_t{1});
+}
+
 void test_allocator_is_mimalloc() {
     // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
     // supported configuration and says "system" honestly rather than being
@@ -272,6 +297,7 @@ void test_allocator_is_mimalloc() {
 
 int main() {
     test_base64_leniency();
+    test_decode_utf8();
     test_allocator_is_mimalloc();
     test_handle();
     test_slab_basics();

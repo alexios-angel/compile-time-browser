@@ -1,10 +1,26 @@
 #include <ctbrowser/raster/draw.hpp>
 
-// draw: the function bodies.
-// The header says what these compute; this says how.
+#include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/raster/text/font8x8.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <vector>
+
+// draw: the fills, the font8x8 glyph walk and the command loop. Only
+// draw_into, font8x8_fonts and font8x8_advance are exported; the rest has no
+// caller outside this file.
 
 namespace ctbrowser::raster {
 
+namespace {
+
+// font8x8 draws each glyph in an 8x8 cell scaled by an integer factor, so its
+// advance is exact and has no font metrics behind it. Layout must measure with
+// THIS if the raster is to place text where layout thought it would.
 int font8x8_scale(float font_size) noexcept {
     const int s = static_cast<int>(font_size / 8.0f + 0.5f);
     return s < 1 ? 1 : s;
@@ -18,21 +34,17 @@ std::size_t utf8_length(std::string_view text) noexcept {
     return n;
 }
 
-bool glyph_pixel(char32_t code, int row, int column) noexcept {
-    return font8x8_data::glyph_pixel(code, row, column);
-}
+} // namespace
 
 float font8x8_advance(std::string_view text, float font_size) noexcept {
     return static_cast<float>(utf8_length(text) * 8u *
                               static_cast<std::size_t>(font8x8_scale(font_size)));
 }
 
+namespace {
+
 void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & into) {
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty()) { return; }
     for (int y = p.top; y < p.bottom; ++y) {
         const std::span<std::uint32_t> row = into.row(y);
@@ -42,12 +54,12 @@ void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & i
     }
 }
 
+// A filled ellipse inscribed in `where`, ANTIALIASED at the edge. A hard-edged
+// circle at 13 pixels across - the size of a radio button - looks like a
+// polygon, and the coverage here is cheap: the distance from the centre in
+// normalised ellipse space, one pixel wide at the boundary.
 void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface & into) {
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
 
     const float cx = where.x + where.width / 2;
@@ -72,8 +84,6 @@ void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface 
         }
     }
 }
-
-namespace {
 
 // The signed distance from a point to a rounded rectangle, in PIXELS: negative
 // inside, zero on the edge. The standard rounded-box field, with the corner
@@ -101,8 +111,20 @@ namespace {
     return std::clamp(0.5f - distance, 0.0f, 1.0f);
 }
 
-} // namespace
-
+// A rounded rectangle, or - with `ring` above zero - the band that thick along
+// its inside edge, which is what a rounded BORDER is.
+//
+// ANTIALIASED by the same means as the ellipse and for the same reason: a hard
+// edge on a 4px corner reads as a staircase, and Bootstrap puts one on every
+// button, badge, card and alert on the page. The coverage comes from a signed
+// distance to the shape, in pixels, so one implementation serves every radius
+// from a 2px input corner to a 20px pill.
+//
+// A RING IS A DIFFERENCE OF TWO COVERAGES rather than a stroked path: the outer
+// shape less the shape inset by `ring`. That antialiases both edges of the band
+// for free and needs no path machinery, and it is exact for the uniform borders
+// this engine models. Per-side widths and dashes are not this function's job -
+// see the note on emit_border.
 void fill_round_rect(const rect & where, const paint::corner_radii & radii, float ring, color c,
                      const pixel_rect & clip, surface & into) {
     // AN ORDINARY RECTANGLE TAKES THE ORDINARY PATH. Every fill on a page with no
@@ -112,11 +134,7 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
         fill_rect(where, c, clip, into);
         return;
     }
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
 
     const bool hollow = ring > 0;
@@ -151,12 +169,11 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
     }
 }
 
+// One horizontal band of `thickness` at `y`, for underline and line-through.
 void fill_band(float x, float y, float width, float thickness, color c, const pixel_rect & clip,
                surface & into) {
     fill_rect(rect{x, y, width, thickness < 1 ? 1.0f : thickness}, c, clip, into);
 }
-
-namespace {
 
 // How far row `gy` of an italic glyph leans right. Two pixels over the cell,
 // top-heavy: one is not visibly slanted at 8x8 and three shears the glyph into
@@ -178,8 +195,8 @@ namespace {
     return at(sx) || (bold && at(sx - 1));
 }
 
-} // namespace
-
+// font8x8: an 8x8 bitmap per code point, scaled by an integer factor. The
+// run's box top is the TOP of the cell, matching how layout positions a line.
 void draw_text(const rect & where, const paint_command & c, const pixel_rect & clip,
                surface & into) {
     const int scale = font8x8_scale(c.font_size);
@@ -195,20 +212,7 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     const int overhang = (bold ? 1 : 0) + (italic ? 2 : 0);
     int cell = 0;
     for (std::size_t i = 0; i < c.text.size();) {
-        const auto byte = static_cast<unsigned char>(c.text[i]);
-        char32_t cp = byte;
-        std::size_t advance = 1;
-        if (byte >= 0xF0u) {
-            advance = 4;
-            cp = 0xFFFDu;
-        } else if (byte >= 0xE0u) {
-            advance = 3;
-            cp = 0xFFFDu;
-        } else if (byte >= 0xC0u) {
-            advance = 2;
-            cp = 0xFFFDu;
-        }
-        i += advance;
+        const char32_t cp = decode_utf8(c.text, i);
         const int left = origin_x + cell * 8 * scale;
         ++cell;
         if (cp > 0x7F) { continue; } // outside font8x8; the cell is still advanced
@@ -233,11 +237,40 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     }
 }
 
-const font_backend & font8x8_fonts() {
-    static const font8x8_backend backend;
-    return backend;
-}
+// font8x8 AS a backend: always present, needs no files, the same pixels on
+// every machine.
+class font8x8_backend final : public font_backend {
+public:
+    [[nodiscard]] float advance(std::string_view text, float font_size, std::string_view, bool,
+                                bool) const override {
+        // The SAME WIDTH whatever the style. font8x8 has one set of bitmaps and
+        // synthesises bold and italic from it (see draw_text) - a smear and a
+        // shear, both of which overhang the cell rather than widening it.
+        //
+        // Deliberately not wider for bold. Layout measures with this exact
+        // function and the rasterizer draws with the other; a style that
+        // advanced differently from the way it is drawn would put every caret
+        // and every wrap in the wrong place, which is worse than a bold that
+        // occupies the same cells as its regular. Monospace bitmap faces have
+        // always done it this way.
+        return font8x8_advance(text, font_size);
+    }
+    void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
+                  surface & into) const override {
+        draw_text(where, c, clip, into);
+    }
+    [[nodiscard]] float ascent(float font_size, std::string_view, bool, bool) const override {
+        // The cell is 8 tall and the glyphs sit on its last row.
+        return static_cast<float>(8 * font8x8_scale(font_size));
+    }
+    [[nodiscard]] float descent(float, std::string_view, bool, bool) const override {
+        return 0; // nothing in font8x8 goes below the cell
+    }
+};
 
+// A run plus whatever line CSS asked to be drawn through or under it. The bands
+// are the rasterizer's job rather than layout's because their thickness and
+// position follow the FONT - a 1px rule under 40px text looks like a mistake.
 void draw_text_run(const rect & where, const paint_command & c, const pixel_rect & clip,
                    surface & into, const font_backend & fonts) {
     fonts.draw_run(where, c, clip, into);
@@ -251,14 +284,12 @@ void draw_text_run(const rect & where, const paint_command & c, const pixel_rect
     fill_band(where.x, y, where.width, thickness, c.fill, clip, into);
 }
 
+// A bitmap into a tile. Nearest-neighbour: a canvas is laid out at its own
+// pixel size, so the common case is 1:1 and any filtering would only blur it.
 void draw_image(const rect & where, const paint_command & c, const pixel_rect & clip,
                 surface & into) {
     if (!c.pixels || c.pixels->empty() || where.width <= 0 || where.height <= 0) { return; }
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty()) { return; }
 
     const float scale_x = static_cast<float>(c.pixels->width) / where.width;
@@ -288,9 +319,7 @@ void draw_commands(const std::vector<paint_command> & commands, const rect & are
         switch (c.op) {
         case paint_op::push_clip: {
             clips.push_back(clip);
-            const pixel_rect next = to_pixels(local, into.width(), into.height());
-            clip = pixel_rect{std::max(clip.left, next.left), std::max(clip.top, next.top),
-                              std::min(clip.right, next.right), std::min(clip.bottom, next.bottom)};
+            clip = intersect(clip, to_pixels(local, into.width(), into.height()));
             break;
         }
         case paint_op::pop_clip:
@@ -310,6 +339,13 @@ void draw_commands(const std::vector<paint_command> & commands, const rect & are
         case paint_op::image: draw_image(local, c, clip, into); break;
         }
     }
+}
+
+} // namespace
+
+const font_backend & font8x8_fonts() {
+    static const font8x8_backend backend;
+    return backend;
 }
 
 void draw_into(surface & into, const display_list & list, const rect & area,

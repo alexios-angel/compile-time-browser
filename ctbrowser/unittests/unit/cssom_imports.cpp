@@ -187,7 +187,7 @@ void test_link_disabled() {
     </script></body></html>)");
     for (int i = 0; i < 3; ++i) {
         (void)page.tick(16.0);
-        CHECK(page.frame().has_value());
+        page.frame();
     }
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "before="), std::string{"before=0|true|rgb(0, 0, 0)"});
@@ -215,7 +215,7 @@ void test_link_disabled() {
     </script></body></html>)");
     for (int i = 0; i < 3; ++i) {
         (void)alternate.tick(16.0);
-        CHECK(alternate.frame().has_value());
+        alternate.frame();
     }
     CHECK(alternate.script_error().empty());
     CHECK_EQ(logged(alternate, "noop="), std::string{"noop=false|rgb(0, 0, 0)|0"});

@@ -41,7 +41,7 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 [[nodiscard]] std::string answer(const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
-    (void)page.frame();
+    page.frame();
     const std::string source = "try { var dump = document.getElementById('dump');"
                                " console.log(String(" +
                                expression + ")); } catch (e) { console.log('threw:' + e.name); }";
@@ -229,7 +229,7 @@ void test_a_mouse_click_takes_the_same_path() {
     // follow. A disabled control hears no click at all.
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
-    (void)page.frame();
+    page.frame();
     CHECK(page.run_script(
         "var log = [];"
         "function wire(id) {"

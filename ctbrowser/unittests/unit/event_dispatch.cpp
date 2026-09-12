@@ -451,7 +451,7 @@ void test_listener_options() {
           function report() { console.log(log + ' counted=' + counted); }
         </script></body></html>)");
     check(page.script_error().empty(), "the script ran: " + page.script_error());
-    (void)page.frame();
+    page.frame();
     for (int i = 0; i < 3; ++i) {
         (void)page.handle(input_event::mouse_down_at(10, 10));
         (void)page.handle(input_event::mouse_up_at(10, 10));
@@ -483,7 +483,7 @@ void test_click_dispatch() {
       console.log('clicked ' + e.type);
     });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(log_of(page).empty(), "nothing fired yet");
 
     // A click is a press and a release on the same element - which is what
@@ -513,7 +513,7 @@ void test_handler_properties() {
     a.onclick = function (e) { console.log('handler ' + e.type + ' ' + (this === a)); };
     a.addEventListener('click', function () { console.log('listener'); });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
@@ -548,7 +548,7 @@ void test_events_bubble_and_can_be_prevented() {
     document.getElementById('outer').addEventListener('click', function () { console.log('outer'); });
     document.addEventListener('click', function () { console.log('document'); });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     (void)page.handle(input_event::mouse_down_at(10, 10));
     (void)page.handle(input_event::mouse_up_at(10, 10));

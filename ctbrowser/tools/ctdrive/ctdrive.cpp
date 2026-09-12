@@ -343,13 +343,10 @@ private:
         if (cmd == "shot") {
             const std::string path = text_of(o, "path");
             if (path.empty()) { return fail("shot needs a path"); }
-            const auto image = page.read_pixels();
-            if (!image) { return fail("read_pixels failed"); }
-            if (!ctbrowser::write_ppm(path, *image)) { return fail("cannot write " + path); }
-            return json::value{{"ok", true},
-                               {"path", path},
-                               {"width", image->width()},
-                               {"height", image->height()}};
+            const ctbrowser::raster::surface & image = page.read_pixels();
+            if (!ctbrowser::write_ppm(path, image)) { return fail("cannot write " + path); }
+            return json::value{
+                {"ok", true}, {"path", path}, {"width", image.width()}, {"height", image.height()}};
         }
         if (cmd == "info") {
             return json::value{{"ok", true},

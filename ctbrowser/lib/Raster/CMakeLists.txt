@@ -1,9 +1,8 @@
 # ctbrowser.raster - display list -> pixels, in tiles across the pool.
 #
 # Turns display lists into pixels. Knows nothing about the DOM, style or
-# layout - only about paint's recorded commands, which is what lets a second
-# backend (SDL3 GPU, stage 6) drop in beside the software one. gl/ is the GL
-# device: an ANGLE branch and a stub branch of one #if, both always compiled.
+# layout - only about paint's recorded commands. gl/ is the GL device: an
+# ANGLE branch and a stub branch of one #if, both always compiled.
 add_library(ctbrowser-raster)
 ctbrowser_subsystem_sources(ctbrowser-raster raster)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)

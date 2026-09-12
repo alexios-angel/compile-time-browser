@@ -52,7 +52,7 @@ void test_a_closed_details_hides_its_content() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><details id=d><summary id=s>more</summary>"
                    "<p id=body>the secret</p></details></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(draws_text(page, "more"), "the summary is visible");
     // The content of a closed <details> is not laid out at all. This cannot be
     // a UA rule - `details > :not(summary)` needs a selector the cascade does
@@ -65,13 +65,13 @@ void test_clicking_a_summary_opens_it() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><details id=d><summary id=s>more</summary>"
                    "<p id=body>the secret</p></details></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect summary = box_of(page, "s");
     check(!summary.empty(), "the summary has a box");
 
     (void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
     (void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
-    check(page.frame().has_value(), "it redraws");
+    page.frame();
     check(draws_text(page, "the secret"), "clicking the summary reveals the content");
 
     // And closes again - it is a toggle, and the state is the `open`
@@ -82,14 +82,14 @@ void test_clicking_a_summary_opens_it() {
     check(!log_of(page).empty() && log_of(page).back() == "true", "the attribute says open");
     (void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
     (void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
-    check(page.frame().has_value(), "it redraws");
+    page.frame();
     check(!draws_text(page, "the secret"), "clicking again hides it");
 }
 
 void test_a_summary_draws_its_triangle() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><details id=d><summary id=s>more</summary><p>x</p></details></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(draws_text(page, ">"), "a closed summary has a right-pointing triangle");
     const rect summary = box_of(page, "s");
 
@@ -115,7 +115,7 @@ void test_a_summary_draws_its_triangle() {
     check(label_x >= summary.x + 18, "and starts AFTER the triangle's gutter, not on top of it");
     (void)page.handle(input_event::mouse_down_at(summary.x + 20, summary.y + 4));
     (void)page.handle(input_event::mouse_up_at(summary.x + 20, summary.y + 4));
-    check(page.frame().has_value(), "it redraws");
+    page.frame();
     check(draws_text(page, "v"), "and an open one points down");
 }
 
@@ -127,7 +127,7 @@ void test_a_space_between_inline_elements_is_rendered() {
     // Dropped outright, every label was glued to its control and the words of
     // two adjacent inline elements ran together.
     page.load_html("<body><label id=l>name</label> <input type=text id=f size=6></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect label = box_of(page, "l");
     const rect field = box_of(page, "f");
     check(!label.empty() && !field.empty(), "both are laid out");
@@ -141,9 +141,9 @@ void test_a_space_between_blocks_is_not_rendered() {
     // paragraphs in every page ever written.
     browser plain{browser_options{600, 300}};
     plain.load_html("<body><p id=a>one</p><p id=b>two</p></body>");
-    check(plain.frame().has_value(), "the tight page renders");
+    plain.frame();
     page.load_html("<body>\n<p id=a>one</p>\n<p id=b>two</p>\n</body>");
-    check(page.frame().has_value(), "the spaced page renders");
+    page.frame();
     check(box_of(page, "a").y == box_of(plain, "a").y, "the newlines in the source change nothing");
     check(box_of(page, "b").y == box_of(plain, "b").y, "for either paragraph");
 }
@@ -151,7 +151,7 @@ void test_a_space_between_blocks_is_not_rendered() {
 void test_a_control_insets_its_text() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=text id=f value=ada></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect field = box_of(page, "f");
     float text_x = -1;
     for (const auto & c : commands(page)) {
@@ -172,7 +172,7 @@ void test_a_table_is_a_grid() {
       <tr><td id=a>a</td><td id=b>bbbbbbbbbbbbbbbb</td></tr>
       <tr><td id=c>c</td><td id=d>d</td></tr>
     </table></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect a = box_of(page, "a");
     const rect b = box_of(page, "b");
@@ -197,7 +197,7 @@ void test_a_table_is_a_grid() {
 void test_a_table_shrinks_to_its_content() {
     browser page{browser_options{600, 200}};
     page.load_html("<body><table id=t><tr><td>x</td><td>y</td></tr></table></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect table = box_of(page, "t");
     check(!table.empty(), "the table has a box");
     // A table is not a block: it is as wide as its columns, not as wide as the
@@ -213,7 +213,7 @@ void test_table_sections_are_transparent() {
       <thead><tr><th id=h>head</th></tr></thead>
       <tbody><tr><td id=x>body</td></tr></tbody>
     </table></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect head = box_of(page, "h");
     const rect body = box_of(page, "x");
     check(!head.empty() && !body.empty(), "cells inside sections are laid out");
@@ -224,7 +224,7 @@ void test_a_stated_table_width_scales_the_columns() {
     browser page{browser_options{600, 200}};
     page.load_html("<body><table id=t width=400><tr><td id=a>a</td><td id=b>b</td></tr></table>"
                    "</body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect table = box_of(page, "t");
     check(table.width > 300, "a stated width is honoured rather than ignored");
     check(box_of(page, "b").x > box_of(page, "a").x, "and the columns are still in order");
@@ -238,7 +238,7 @@ void test_list_markers() {
       <ul><li>alpha</li><li>beta</li></ul>
       <ol><li>one</li><li>two</li><li>three</li></ol>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // An ordered list NUMBERS its items, counted among their siblings.
     check(draws_text(page, "1."), "the first ordered item is numbered");
@@ -264,7 +264,7 @@ void test_disclosure_triangle() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><details open><summary>shown</summary><p>body</p></details>"
                    "<details><summary>hidden</summary><p>body</p></details></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // Open points down, closed points right - the one thing the marker says.
     check(draws_text(page, "v"), "an open details points down");
     check(draws_text(page, ">"), "a closed one points right");
@@ -278,7 +278,7 @@ void test_select_shows_its_option() {
       <select id=plain><option>first</option><option>second</option></select>
       <select id=marked><option>one</option><option selected>two</option></select>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // It drew an EMPTY BOX before: the label was a literal empty string and
     // <option> was never read.
@@ -305,7 +305,7 @@ void test_inline_text_shares_a_baseline() {
     check(page.use_real_fonts(), "the vendored faces load");
     page.load_html("<body><div><small id=s>small</small><span id=m>medium</span>"
                    "<big id=b>big</big></div></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect small = box_of(page, "s");
     const rect medium = box_of(page, "m");
@@ -351,7 +351,7 @@ void test_tables_are_block_level() {
       <table><tr><td id=one>plain</td><td>table</td></tr></table>
       <table border=1><tr><td id=two>bordered</td></tr></table>
     </body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect link = box_of(page, "link");
     const rect first = box_of(page, "one");
@@ -375,7 +375,7 @@ void test_html_whitespace_collapses() {
     // unbreakable word.
     browser page{browser_options{400, 200}};
     page.load_html("<body><p>in\nthe\tmind</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     bool found = false;
     for (const auto & c : commands(page)) {
         if (c.op != paint::paint_op::text_run) { continue; }
@@ -392,7 +392,7 @@ void test_html_whitespace_collapses() {
     // <pre> block looked like. Two lines means two runs, on two rows.
     browser pre{browser_options{400, 200}};
     pre.load_html("<body><pre>first\nsecond</pre></body>");
-    check(pre.frame().has_value(), "the pre page renders");
+    pre.frame();
     float first_y = -1;
     float second_y = -1;
     for (const auto & c : commands(pre)) {
@@ -416,7 +416,7 @@ void test_a_newline_is_a_break_opportunity() {
     // thing is one word.
     page.load_html("<body><p>there's\nthe\nrub\nFor\nin\nthat\nsleep\nof\ndeath\n"
                    "what\ndreams\nmay\ncome</p></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     std::size_t runs = 0;
     for (const auto & c : commands(page)) {
@@ -433,7 +433,7 @@ void test_table_caption_and_border() {
       <caption>a bordered table</caption>
       <tr><td id=cell>op</td></tr>
     </table></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // The caption is a child of the table that is neither a row nor a row
     // group, so a table that only looked for rows never laid it out - it
@@ -456,7 +456,7 @@ void test_table_caption_and_border() {
     // And a table with no border attribute draws none.
     browser plain{browser_options{500, 300}};
     plain.load_html("<body><table><tr><td>op</td></tr></table></body>");
-    check(plain.frame().has_value(), "the plain table renders");
+    plain.frame();
     for (const auto & c : commands(plain)) {
         check(!(c.op == paint::paint_op::fill_rect && c.fill == color{style::ua_table_border}),
               "a table with no border attribute is not framed");

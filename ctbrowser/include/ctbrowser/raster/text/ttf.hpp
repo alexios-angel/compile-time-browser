@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
@@ -162,26 +163,7 @@ private:
     [[nodiscard]] static int pixel_size(float font_size) noexcept;
 
     template <typename Fn> static void for_each_code_point(std::string_view text, Fn && fn) {
-        for (std::size_t i = 0; i < text.size();) {
-            const auto byte = static_cast<unsigned char>(text[i]);
-            char32_t cp = byte;
-            std::size_t length = 1;
-            if (byte >= 0xF0u) {
-                length = 4;
-                cp = static_cast<char32_t>(byte & 0x07u);
-            } else if (byte >= 0xE0u) {
-                length = 3;
-                cp = static_cast<char32_t>(byte & 0x0Fu);
-            } else if (byte >= 0xC0u) {
-                length = 2;
-                cp = static_cast<char32_t>(byte & 0x1Fu);
-            }
-            for (std::size_t k = 1; k < length && i + k < text.size(); ++k) {
-                cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3Fu);
-            }
-            i += length;
-            fn(cp);
-        }
+        for (std::size_t i = 0; i < text.size();) { fn(decode_utf8(text, i)); }
     }
 
     [[nodiscard]] static TTF_Font * open_sized(const std::vector<std::byte> & bytes, int size);

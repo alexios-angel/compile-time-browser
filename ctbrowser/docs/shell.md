@@ -15,9 +15,8 @@ the whole API.** One include, one link target (`ctbrowser::ctbrowser` in-tree,
 `run_app` owns the window, the event loop, the clock (it calls `tick()`, so
 timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.
 `app_options` mirrors the previous engine's: size, `logical_width/height` letterboxing,
-`max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets`,
-`on_native_window` (the escape hatch — hands you the `SDL_Window*` as `void*`)
-and `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
+`max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets` and
+`on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
 is how an example becomes a ctest with no test code in it.
 
 **SDL3 is OPTIONAL AT BUILD TIME.** `ctbrowser-app` always builds;

@@ -60,7 +60,7 @@ void test_paint_entries_are_recorded_by_the_first_frame() {
     </script></body></html>)");
     (void)page.tick(16.0);
     CHECK_EQ(logged(page, "before="), std::string{"before=0,function,function"});
-    CHECK(page.frame().has_value());
+    page.frame();
     (void)page.tick(16.0);
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "after="), std::string{"after=first-paint@paint/0/true/true/true;"
@@ -126,7 +126,7 @@ void test_inserted_sheets_fire_load_once_applied() {
         </script></head><body><div class=target>red</div></body></html>)");
     for (int i = 0; i < 3; ++i) {
         (void)page.tick(16.0);
-        CHECK(page.frame().has_value());
+        page.frame();
     }
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "link="), std::string{"link=rgb(255, 0, 0)"});

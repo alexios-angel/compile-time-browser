@@ -69,7 +69,7 @@ void test_controls_are_sized_by_the_element() {
     browser page{browser_options{600, 300}};
     page.load_html("<html><body><input id=t type=text><input id=c type=checkbox>"
                    "<button id=b>Press</button></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect text_box = box_of(page, "t");
     const rect check_box = box_of(page, "c");
@@ -100,7 +100,7 @@ void test_a_select_is_as_wide_as_its_widest_option() {
                    "<select id=long><option>red</option>"
                    "<option>a considerably longer option</option></select>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect small = box_of(page, "short");
     const rect big = box_of(page, "long");
@@ -124,7 +124,7 @@ void test_a_select_is_as_wide_as_its_widest_option() {
 void test_a_control_reserves_the_room_its_text_is_drawn_in() {
     browser page{browser_options{600, 300}};
     page.load_html("<html><body><input id=t size=10 value=0000000000></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect box = box_of(page, "t");
     const float text = raster::font8x8_advance("0000000000", 16);
@@ -138,7 +138,7 @@ void test_a_control_reserves_the_room_its_text_is_drawn_in() {
 void test_a_seeded_value_is_drawn() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><input id=t type=text value="hello"></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     // The value comes from the ATTRIBUTE until the user edits it.
     check(value_of(page, "t") == "hello", "the value attribute seeds the control");
 
@@ -157,7 +157,7 @@ void test_a_seeded_value_is_drawn() {
 void test_typing_and_editing() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=t type=text></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // Nothing typed goes anywhere until something has focus.
     check(!page.text_input("ignored"), "typing with no focus does nothing");
@@ -194,7 +194,7 @@ void test_tab_moves_focus_between_controls() {
                    "<textarea id=d></textarea>"
                    "<button id=e>Go</button>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     click(page, box_of(page, "a"));
     check(page.focused() == find_id(page, "a"), "clicking the first field focuses it");
@@ -219,7 +219,7 @@ void test_tab_moves_focus_between_controls() {
 void test_tab_with_nothing_focused_starts_at_an_end() {
     browser page{browser_options{400, 300}};
     page.load_html("<html><body><input id=a><input id=b></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     check(!page.focused(), "nothing is focused to begin with");
     check(page.handle(input_event::key_press("Tab")), "Tab is handled");
@@ -227,7 +227,7 @@ void test_tab_with_nothing_focused_starts_at_an_end() {
 
     browser back{browser_options{400, 300}};
     back.load_html("<html><body><input id=a><input id=b></body></html>");
-    check(back.frame().has_value(), "the page renders");
+    back.frame();
     check(back.handle(input_event::key_press("Tab", true)), "Shift+Tab is handled");
     check(back.focused() == find_id(back, "b"), "and Shift+Tab starts at the last");
 }
@@ -238,7 +238,7 @@ void test_tab_does_not_scroll_and_can_be_prevented() {
     browser page{browser_options{200, 100}};
     page.load_html("<html><body><input id=a><input id=b>"
                    "<div style='height:900px'>tall</div></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.max_scroll() > 0, "the page is scrollable, so a stray scroll would show");
 
     click(page, box_of(page, "a"));
@@ -250,7 +250,7 @@ void test_tab_does_not_scroll_and_can_be_prevented() {
                         "<script>document.addEventListener('keydown', function(e) {"
                         "  if (e.code == 'Tab') { e.preventDefault(); }"
                         "}, false);</script></body></html>");
-    check(cancelled.frame().has_value(), "the page renders");
+    cancelled.frame();
     click(cancelled, box_of(cancelled, "a"));
     const node_id before = cancelled.focused();
     check(before == find_id(cancelled, "a"), "the first field is focused");
@@ -264,7 +264,7 @@ void test_tab_does_not_scroll_and_can_be_prevented() {
 void test_typing_a_control_character_inserts_nothing() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=t type=text></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     click(page, box_of(page, "t"));
     check(page.text_input("ab"), "ordinary text is accepted");
@@ -277,7 +277,7 @@ void test_typing_a_control_character_inserts_nothing() {
 void test_backspace_deletes_a_whole_code_point() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=t type=text></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "t"));
     check(page.text_input("a\xc3\xa9"), "a multi-byte character is typed"); // 'a' + U+00E9
     check(value_of(page, "t") == "a\xc3\xa9", "and stored whole");
@@ -291,7 +291,7 @@ void test_editing_keys_do_not_scroll_the_page() {
     browser page{browser_options{300, 120}};
     page.load_html("<html><body><input id=t type=text value=abc>"
                    "<div style='height:600px'>tall</div></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "t"));
     const float before = page.scroll_y();
     (void)page.handle(input_event::key_press("Home"));
@@ -304,7 +304,7 @@ void test_editing_keys_do_not_scroll_the_page() {
 void test_selection_and_replacement() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=t type=text value=hello></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "t"));
     // Ctrl+A, as the platform actually delivers it: the physical key plus the
     // modifier, not a made-up "SelectAll" name no keyboard produces.
@@ -335,7 +335,7 @@ void test_clicking_label_text_activates_the_control() {
                    "<label id=la><input type=radio name=size id=s1 checked> small</label>"
                    "<label id=lb><input type=radio name=size id=s2> large</label>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(checked_of(page, "s1"), "the first radio starts checked");
 
     // The right-hand end of the second label's box is its text, well clear of
@@ -358,7 +358,7 @@ void test_clicking_a_checkbox_inside_a_label_toggles_once() {
     page.load_html("<html><body>"
                    "<label id=l><input type=checkbox id=c> option one</label>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(!checked_of(page, "c"), "it starts unchecked");
 
     const rect box = box_of(page, "c");
@@ -377,7 +377,7 @@ void test_a_label_for_a_field_focuses_it_without_disturbing_it() {
     page.load_html("<html><body>"
                    "<label id=l for=name>name</label> <input type=text id=name value=ada>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // Put the caret somewhere specific first, then click the label.
     click(page, box_of(page, "name"));
@@ -409,7 +409,7 @@ void test_a_label_that_resolves_to_nothing_does_nothing() {
                    "<label id=l for=nosuch><input type=checkbox id=c> nope</label>"
                    "<label id=d><input type=checkbox id=e disabled> off</label>"
                    "</body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const rect dangling = box_of(page, "l");
     click_at(page, dangling.right() - 4, dangling.y + dangling.height / 2);
@@ -424,11 +424,11 @@ void test_a_label_that_resolves_to_nothing_does_nothing() {
 void test_checkbox_toggles_on_click() {
     browser page{browser_options{400, 200}};
     page.load_html("<html><body><input id=c type=checkbox></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(!checked_of(page, "c"), "it starts unchecked");
     click(page, box_of(page, "c"));
     check(checked_of(page, "c"), "clicking checks it");
-    check(page.frame().has_value(), "the frame after renders");
+    page.frame();
     click(page, box_of(page, "c"));
     check(!checked_of(page, "c"), "clicking again unchecks it");
 }
@@ -438,7 +438,7 @@ void test_radios_are_exclusive_within_a_name() {
     page.load_html("<html><body>"
                    "<input id=a type=radio name=g><input id=b type=radio name=g>"
                    "<input id=c type=radio name=other></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "a"));
     click(page, box_of(page, "c"));
     check(checked_of(page, "a") && checked_of(page, "c"), "different groups are independent");
@@ -460,7 +460,7 @@ void test_form_submission_collects_successful_controls() {
     <input name=colour type=radio value=red>
     <button id=go type=submit>Go</button>
     </form></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "go"));
 
     const auto & sent = page.last_submission();
@@ -485,7 +485,7 @@ void test_reset_restores_the_markup() {
     <input id=t name=user type=text value=original>
     <button id=r type=reset>Reset</button>
     </form></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "t"));
     check(page.text_input("!"), "the field is edited");
     check(value_of(page, "t") == "original!", "and shows the edit");
@@ -503,7 +503,7 @@ void test_submit_can_be_cancelled() {
       console.log('submitting'); e.preventDefault();
     });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     click(page, box_of(page, "go"));
     check(page.bindings().console_output().size() == 1, "the submit listener ran");
     // preventDefault on submit is how every client-validated form works.
@@ -522,7 +522,7 @@ void test_script_reads_and_writes_values() {
     t.setValue('written');
     console.log('checked ' + document.getElementById('c').isChecked());
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 2, "two console lines");
     if (log.size() == 2) {
@@ -537,7 +537,7 @@ void test_script_can_focus() {
     page.load_html(R"(<html><body><input id=t type=text><script>
     document.getElementById('t').focus();
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.focused() == find_id(page, "t"), "focus() moves focus");
     check(page.text_input("typed"), "so typing goes to the field");
     check(value_of(page, "t") == "typed", "without the user having clicked it");
@@ -556,7 +556,7 @@ void test_canvas_is_sized_by_its_attributes() {
                    "<canvas id=d></canvas><script>"
                    "document.getElementById('c').getContext('2d');"
                    "document.getElementById('d').getContext('2d');</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const rect box = box_of(page, "c");
     check(box.width == 200 && box.height == 90, "the canvas box is its attribute size");
     // The HTML defaults, which pages rely on when they omit the attributes.
@@ -575,7 +575,7 @@ void test_canvas_width_and_height_are_readable() {
                    "console.log(d.width + 'x' + d.height);"
                    "console.log('half=' + (c.width / 2));"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 3, "three console lines");
     if (log.size() != 3) { return; }
@@ -678,7 +678,7 @@ void test_the_dom_interface_objects() {
                    "try { new HTMLCanvasElement(); console.log('ctor allowed'); }"
                    "catch (e) { console.log('ctor refused'); }"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 7, "seven answers");
     if (log.size() != 7) { return; }
@@ -704,7 +704,7 @@ void test_getcontext_only_answers_for_2d() {
                    "console.log('webgl2 ' + (c.getContext('webgl2') === null));"
                    "console.log('unknown ' + (c.getContext('nonsense') === null));"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 4, "four console lines");
     if (log.size() == 4) {
@@ -742,7 +742,7 @@ void test_measuretext_reads_the_font_just_set() {
                    "ctx.font = '16px sans-serif';"
                    "console.log('second=' + ctx.measureText('AA').width);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 2, "two console lines");
     if (log.size() != 2) { return; }
@@ -788,7 +788,7 @@ void test_the_canvas_state_stack_restores_every_property() {
                    // i.e. the C++ side and the JS side agree after a restore.
                    "console.log('w=' + ctx.measureText('AA').width);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 6, "six console lines");
     if (log.size() != 6) { return; }
@@ -813,7 +813,7 @@ void test_an_unbalanced_canvas_restore_is_harmless() {
                    "ctx.restore();" // nothing was saved
                    "console.log('fill=' + ctx.fillStyle);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const auto & log = page.bindings().console_output();
     check(log.size() == 1, "one console line");
     if (log.size() != 1) { return; }
@@ -827,7 +827,7 @@ void test_canvas_drawing_reaches_the_pixels() {
                    "ctx.fillStyle = '#ff0000';"
                    "ctx.fillRect(10, 10, 30, 20);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const paint::bitmap * pixels = canvas_of(page, "c");
     check(pixels != nullptr, "the canvas has a bitmap");
     if (pixels == nullptr) { return; }
@@ -843,7 +843,7 @@ void test_fill_style_is_read_at_draw_time() {
                    "ctx.fillStyle = '#00ff00'; ctx.fillRect(0, 0, 20, 20);"
                    "ctx.fillStyle = '#0000ff'; ctx.fillRect(30, 0, 20, 20);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const paint::bitmap * pixels = canvas_of(page, "c");
     check(pixels != nullptr, "the canvas has a bitmap");
     if (pixels == nullptr) { return; }
@@ -865,7 +865,7 @@ void test_paths_transforms_and_clear() {
                    "ctx.lineTo(20, 20); ctx.lineTo(0, 20); ctx.closePath(); ctx.fill();"
                    "ctx.resetTransform(); ctx.clearRect(60, 60, 20, 20);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     const paint::bitmap * pixels = canvas_of(page, "c");
     check(pixels != nullptr, "the canvas has a bitmap");
     if (pixels == nullptr) { return; }
@@ -887,7 +887,7 @@ void test_canvas_reaches_the_display_list_and_the_screen() {
                    "var ctx = document.getElementById('c').getContext('2d');"
                    "ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 100, 60);"
                    "</script></body></html>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     std::size_t images = 0;
     for (const auto & layer : page.layers().layers) {
@@ -900,10 +900,7 @@ void test_canvas_reaches_the_display_list_and_the_screen() {
 
     // And it made it all the way to pixels. A canvas that draws into its own
     // bitmap but never reaches the screen is the failure this catches.
-    const auto image = page.read_pixels();
-    check(image.has_value(), "the frame reads back");
-    if (!image) { return; }
-    check(image->row(10)[10] == 0xFFFF0000u, "the canvas is composited into the page");
+    check(page.read_pixels().row(10)[10] == 0xFFFF0000u, "the canvas is composited into the page");
 }
 
 void test_drawing_after_a_frame_redraws() {
@@ -914,17 +911,15 @@ void test_drawing_after_a_frame_redraws() {
                    "ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 100, 60);"
                    "function later() { ctx.fillStyle = '#00ff00'; ctx.fillRect(0, 0, 100, 60); }"
                    "setTimeout(later, 1);</script></body></html>");
-    check(page.frame().has_value(), "the first frame renders");
-    const auto first = page.read_pixels();
-    check(first.has_value() && first->row(10)[10] == 0xFFFF0000u, "and shows red");
+    page.frame();
+    check(page.read_pixels().row(10)[10] == 0xFFFF0000u, "and shows red");
 
     check(page.tick(5) == 1, "the timer runs and draws again");
-    check(page.frame().has_value(), "the next frame renders");
-    const auto second = page.read_pixels();
+    page.frame();
     // A canvas drawn into between frames must invalidate its tiles. Without
     // that the page keeps showing the old contents, which is the bug everyone
     // hits once and then never forgets.
-    check(second.has_value() && second->row(10)[10] == 0xFF00FF00u,
+    check(page.read_pixels().row(10)[10] == 0xFF00FF00u,
           "and the new canvas contents are on screen");
 }
 

@@ -116,10 +116,7 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // A frame, so layout and paint have both run before anything is asked: the
     // geometry comes off the fragment tree and getComputedStyle reads the box
     // tree, and neither exists until one has.
-    if (!page_browser.frame().has_value()) {
-        why = "the page did not render";
-        return {};
-    }
+    page_browser.frame();
     if (!page_browser.run_script(script_tail)) {
         why = "the dump script did not run: " + page_browser.script_error();
         return {};
