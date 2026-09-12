@@ -25,15 +25,6 @@ if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "the type oracle's own self-test failed (exit ${_rc})")
 endif()
 
-# THE SAME SKIP THE EXECUTABLE TAKES. CTBROWSER_SCRIPT_RECORD_TYPES=OFF leaves
-# the interpreter with no recording hook, so there is no recording to compare
-# two implementations over. Matched on the executable's own word rather than
-# re-deriving the build flag here, which would be a second copy of the decision.
-if(_out MATCHES "SKIPPED")
-  message(STATUS "type oracle: skipped - this build has no recording hook")
-  return()
-endif()
-
 # `all-i32 observed A unobserved B violations C beat-boxed D`, as the C++ side
 # printed it. Matched with an anchored expression rather than a substring: this
 # file exists because two numbers that were never compared looked like agreement.

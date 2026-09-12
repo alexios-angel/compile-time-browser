@@ -39,8 +39,7 @@
 // no run took. That asymmetry is the whole value - a counterexample generator
 // costs one run and settles an argument that otherwise costs a phase.
 //
-// OFF unless a recorder is installed (see `set_active_type_recorder`), and
-// compiled out entirely with -DCTBROWSER_SCRIPT_RECORD_TYPES=0.
+// OFF unless a recorder is installed (see `set_active_type_recorder`).
 
 namespace ctbrowser::script {
 
@@ -499,12 +498,6 @@ private:
 // Set it BEFORE the context that should record is constructed.
 void set_active_type_recorder(type_recorder * recorder) noexcept;
 [[nodiscard]] type_recorder * active_type_recorder() noexcept;
-
-// Whether the recording hook was compiled in at all. A build with
-// -DCTBROWSER_SCRIPT_RECORD_TYPES=0 answers false and every recording it
-// produces is empty - which a caller must be able to tell from a program that
-// genuinely ran nothing.
-[[nodiscard]] bool type_recording_enabled() noexcept;
 
 // The program key the recording is written under, and the checker re-derives.
 // FNV-1a over the source text: two programs compiled from the same bytes are

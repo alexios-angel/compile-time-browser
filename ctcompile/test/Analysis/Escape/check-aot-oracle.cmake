@@ -12,10 +12,6 @@ execute_process(COMMAND "${EXE}" --out "${recording}"
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "AOT escape oracle regression failed:\n${out}${err}")
 endif()
-if(out MATCHES "SKIPPED")
-  message(STATUS "${out}")
-  return()
-endif()
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${recording}" --infer all-escapes
           --name ${NAME} --expect-unclaimed ${UNCLAIMED} --expect-violations 0 --expect-sound 0

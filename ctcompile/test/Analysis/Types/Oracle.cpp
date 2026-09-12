@@ -208,21 +208,6 @@ void report(const char * which, const tally & t) {
 // --- the self-test -----------------------------------------------------------
 
 int self_test(const char * out_path) {
-    // THE HOOK MUST BE COMPILED IN, and this asks rather than guessing.
-    //
-    // Without it the recording below is empty and every count is a truthful
-    // zero about a build that measured nothing - which is exactly the vacuous
-    // pass this project keeps finding. So it SKIPS, loudly, on the same terms
-    // as unittests/unit/script_debug does for CTBROWSER_SCRIPT_DEBUG_NAMES: the
-    // option exists for a build that will never record, and turning that build
-    // into a red suite would make the option unusable. A skip that says which
-    // build it is in is not the same thing as a pass.
-    if (!ctbrowser::script::type_recording_enabled()) {
-        std::printf("ok type_oracle (SKIPPED - built with CTBROWSER_SCRIPT_RECORD_TYPES=0, "
-                    "so the interpreter has no recording hook to check)\n");
-        return 0;
-    }
-
     // 68 OF 93, counted from bytecode_opcodes.def's own writes_a column rather
     // than written down. If a new opcode arrives this number changes and the
     // change should be deliberate: a definer the recorder does not know about
@@ -622,11 +607,6 @@ struct probe_run {
 }
 
 int self_test_escape(const char * out_path) {
-    if (!ctbrowser::script::type_recording_enabled()) {
-        std::printf("ok escape_oracle (SKIPPED - built with CTBROWSER_SCRIPT_RECORD_TYPES=0, "
-                    "so the interpreter has no recording hook to check)\n");
-        return 0;
-    }
     static_assert(ctbrowser::script::root_label_count == 19,
                   "GCRoots.def has 19 rows; the route vocabulary must match it row for row");
 

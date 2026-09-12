@@ -2235,11 +2235,8 @@ private:
     value global_this_ = value::undefined();
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
-    // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null. NOT BEHIND THE #if:
-    // `context` is a public type, and a member that exists in one build and
-    // not another compiles this library against one layout and its consumers
-    // against a second. CTBROWSER_SCRIPT_RECORD_TYPES gates the CALL, in
-    // run_loop.cpp.
+    // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the
+    // run_loop instantiation with no hook in it (run_loop.cpp).
     type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;

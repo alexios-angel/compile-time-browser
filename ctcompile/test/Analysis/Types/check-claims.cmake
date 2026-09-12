@@ -28,14 +28,7 @@
 #   -DWORK=    a writable directory
 #   -DNAME=    what to call this corpus in the report
 
-# THE SAME SKIP THE ORACLE'S OWN TEST TAKES. Its self-test says SKIPPED when
-# the interpreter was built without the recording hook, and there is then no
-# recording for a claim to be checked against.
 execute_process(COMMAND "${ORACLE}" OUTPUT_VARIABLE _self ERROR_VARIABLE _selferr RESULT_VARIABLE _rc)
-if(_self MATCHES "SKIPPED")
-  message(STATUS "type claims (${NAME}): skipped - this build has no recording hook")
-  return()
-endif()
 if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "the type oracle's self-test failed before the claims ran:\n${_self}${_selferr}")
 endif()

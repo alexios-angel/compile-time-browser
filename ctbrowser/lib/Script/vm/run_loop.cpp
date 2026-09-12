@@ -42,13 +42,8 @@ namespace ctbrowser::script {
 // callee does. Everything that means - the deferred flush, the interning, the
 // parameter sweep - is in type_record.cpp, out of this translation unit.
 //
-// Compiled out entirely with -DCTBROWSER_SCRIPT_RECORD_TYPES=0, on the same
-// terms as CTBROWSER_SCRIPT_DEBUG_NAMES: a private definition, because
-// `context::recorder_` exists in every build and only this call does not.
-#ifndef CTBROWSER_SCRIPT_RECORD_TYPES
-#define CTBROWSER_SCRIPT_RECORD_TYPES 1
-#endif
-#if CTBROWSER_SCRIPT_RECORD_TYPES
+// Always compiled in: the shipped instantiation (Record = false) carries no
+// trace of it, so there is nothing for a build flag to buy.
 #define VM_RECORD_STEP()                                                                           \
     do {                                                                                           \
         if constexpr (Record) { record_step(in); }                                                 \
@@ -73,10 +68,6 @@ namespace ctbrowser::script {
             frames_.pop_back();                                                                    \
         }                                                                                          \
     } while (0)
-#else
-#define VM_RECORD_STEP() ((void)0)
-#define VM_POP_FRAME(carried_) frames_.pop_back()
-#endif
 
 #if VM_COMPUTED_GOTO
 // GNU extensions, suppressed HERE and nowhere else: the address-of-label and
@@ -1251,9 +1242,7 @@ vm_done:
 // used from this translation unit and nowhere else, so nothing else needs the
 // definition and no explicit instantiation is required.
 value context::run_loop(std::size_t stop_depth) {
-#if CTBROWSER_SCRIPT_RECORD_TYPES
     if (recorder_ != nullptr) { return run_loop_impl<true>(stop_depth); }
-#endif
     return run_loop_impl<false>(stop_depth);
 }
 
