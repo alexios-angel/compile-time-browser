@@ -202,6 +202,11 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         const style::css::property_syntax * known = style::css::find_property(name);
         if (known != nullptr && !known->shorthand) { indexed.push_back(name); }
     }
+    // ...AND THE CUSTOM PROPERTIES AFTER THEM, every one the element has a
+    // value for (cssstyledeclaration-custom-properties, -registered-...).
+    for (const auto & [name, text] : cached->entries) {
+        if (name.starts_with("--")) { indexed.push_back(name); }
+    }
     for (std::size_t i = 0; i < indexed.size(); ++i) {
         held->set(std::to_string(i), cx.string(indexed[i]));
     }

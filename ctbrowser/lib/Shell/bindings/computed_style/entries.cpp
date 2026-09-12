@@ -992,25 +992,31 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     answers.insert(answers.end(), std::make_move_iterator(shorthands.begin()),
                    std::make_move_iterator(shorthands.end()));
 
-    // AND EVERY PROPERTY THE ELEMENT ITSELF DECLARED that the table has never
-    // heard of - a CUSTOM property above all, which no fixed table can enumerate.
-    // Readable, and answering to `in`, but NOT indexed: CSSOM's indexed
-    // properties are the supported longhands and a page's `--brand` is not one.
+    // AND EVERY PROPERTY THE ELEMENT HAS that the table has never heard of -
+    // a CUSTOM property above all, which no fixed table can enumerate: its
+    // own, the ones it inherited, and the registered ones the cascade gave it
+    // an initial value for. Indexed after the longhands (object.cpp), which
+    // is where cssstyledeclaration-custom-properties and
+    // -registered-custom-properties look for them.
     if (styles_ != nullptr) {
         const auto found = styles_->find(style::engine::key_of(id));
         if (found != styles_->end() && found->second) {
-            for (const style::declaration & d : found->second->declarations) {
-                const std::string_view name = atoms_->text(d.property);
-                if (style::css::find_property(name) != nullptr) { continue; }
-                const auto seen =
-                    std::find_if(answers.begin(), answers.end(), [name](const auto & e) {
-                        return std::string_view{e.first} == name;
-                    });
-                if (seen != answers.end()) { continue; }
-                std::string text = value_of(name);
-                if (text.empty()) { continue; }
-                answers.emplace_back(std::string{name}, std::move(text));
-            }
+            const auto add = [&](const style::declaration_list & list) {
+                for (const style::declaration & d : list) {
+                    const std::string_view name = atoms_->text(d.property);
+                    if (style::css::find_property(name) != nullptr) { continue; }
+                    const auto seen =
+                        std::find_if(answers.begin(), answers.end(), [name](const auto & e) {
+                            return std::string_view{e.first} == name;
+                        });
+                    if (seen != answers.end()) { continue; }
+                    std::string text = value_of(name);
+                    if (text.empty()) { continue; }
+                    answers.emplace_back(std::string{name}, std::move(text));
+                }
+            };
+            add(found->second->declarations);
+            if (found->second->inherited) { add(found->second->inherited->declarations); }
         }
     }
     // ...and an ANIMATED custom property nothing declared, which the walk
