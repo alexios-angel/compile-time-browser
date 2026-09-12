@@ -351,7 +351,9 @@ void install_object(context & cx) {
     method(cx, object_proto, "valueOf", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.valueOf")) { return value::undefined(); }
-        return self;
+        // 20.1.3.7: ToObject(this value), so a primitive receiver answers its
+        // WRAPPER - `typeof Object.prototype.valueOf.call(true)` is "object".
+        return detail::box_primitive(c, self);
     });
     // 20.1.3.5: Invoke(O, "toString"), NOT a second copy of the tag logic. A
     // receiver that overrides `toString` must be seen through this too, which

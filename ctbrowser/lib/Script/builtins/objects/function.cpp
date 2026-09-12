@@ -176,9 +176,29 @@ void install_function(context & cx) {
                 }
             }
         }
-        // A native has no source; saying so the way every engine does keeps a
-        // caller that concatenates the result from producing something strange.
-        return c.string("function () { [native code] }");
+        // 20.2.3.5 step 3: anything that is not callable is a TypeError -
+        // `Function.prototype.toString.call({})` does not answer for Object.
+        if (!self.is_callable()) {
+            c.throw_error("TypeError",
+                          "Function.prototype.toString requires that 'this' be a Function");
+            return value::undefined();
+        }
+        // A native has no source; the NativeFunction syntax of 20.2.3.5 with
+        // its `name` as the IdentifierName is what every engine answers, and
+        // what test262's nativeFunctionMatcher parses. A bound function and a
+        // proxy are natives here too (steps 2 and 4).
+        std::string name;
+        if (self.is_kind(heap_kind::native)) {
+            const value own = c.lookup_property(self, "name");
+            if (own.is_string()) { name = c.to_string(own); }
+        }
+        // A symbol-named built-in's name is "[Symbol.x]", which is not an
+        // IdentifierName; the specification permits omitting it (the
+        // IdentifierName is optional), so it is left out.
+        if (!name.empty() && (name.front() == '[' || name.find(' ') != std::string::npos)) {
+            name.clear();
+        }
+        return c.string("function " + name + "() { [native code] }");
     });
     // 20.2.3.6 %Function.prototype[@@hasInstance]%, which did not exist: the
     // key was absent, so `Symbol.hasInstance in Function.prototype` was false
