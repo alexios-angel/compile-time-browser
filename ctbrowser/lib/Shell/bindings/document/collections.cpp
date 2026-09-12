@@ -298,6 +298,9 @@ constexpr std::string_view collection_state_key = "@@sym:ctbrowser:collection";
 }
 
 // `length`, `item` and `namedItem` on a collection interface's prototype, once.
+// ENUMERABLE, as WebIDL 3.7.6-7 has every regular operation and attribute on an
+// interface prototype: `for (p in document.forms)` lists the indices and then
+// item, length and namedItem (document.forms.html); `@@iterator` alone is not.
 void install_collection_prototype(context & cx, script::object_object & proto, bool named) {
     if (proto.find("item") != nullptr) { return; }
     const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
@@ -312,7 +315,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                                                     value::undefined());
                                      return n.is_number() ? n : value::number(0);
                                  }),
-                          value::undefined(), script::attr_configurable);
+                          value::undefined(), script::attr_enumerable | script::attr_configurable);
     proto.define("item",
                  native("item", 1,
                         [](context & c, std::span<value> a) {
@@ -320,7 +323,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                 ask_collection(c, c.current_this(), "item", arg(a, 0));
                             return found.is_undefined() ? value::null() : found;
                         }),
-                 script::attr_builtin);
+                 script::attr_default);
     // THE ITERABLE DECLARATION: `[Symbol.iterator]` on both, and NodeList's
     // forEach/keys/values/entries. Each hands back WebIDL's default iterator
     // object (3.7.10.2): `next` reads `length` and the index off the collection
@@ -394,12 +397,12 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                     ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
                                 return found.is_undefined() ? value::null() : found;
                             }),
-                     script::attr_builtin);
+                     script::attr_default);
         return;
     }
-    proto.define("keys", live_iterator("keys", 0), script::attr_builtin);
-    proto.define("values", live_iterator("values", 1), script::attr_builtin);
-    proto.define("entries", live_iterator("entries", 2), script::attr_builtin);
+    proto.define("keys", live_iterator("keys", 0), script::attr_default);
+    proto.define("values", live_iterator("values", 1), script::attr_default);
+    proto.define("entries", live_iterator("entries", 2), script::attr_default);
     // `forEach` IS %Array.prototype.forEach% - WebIDL says so of an iterable
     // declaration, Node-childNodes.html asserts the identity, and the array's
     // is generic over array-likes. keys/values/entries would be the same
@@ -408,7 +411,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
     if (const value array = cx.global("Array"); array.is_object_like()) {
         const value for_each =
             cx.lookup_property(cx.lookup_property(array, "prototype"), "forEach");
-        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_builtin); }
+        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_default); }
     }
 }
 
