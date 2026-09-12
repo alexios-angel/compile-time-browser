@@ -1798,6 +1798,10 @@ private:
     [[nodiscard]] std::string to_primitive_string(value v);
     // ToPrimitive with the default hint, for `+`.
     [[nodiscard]] value to_primitive(value v);
+    // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the
+    // object's @@toPrimitive, then OrdinaryToPrimitive. False means a
+    // TypeError is in flight. The three walks above are this one.
+    bool to_primitive_hint(value v, const char * hint, value & out);
     // A function's `prototype`, made on first use. See the definition.
     [[nodiscard]] value ensure_prototype(value fn);
     // The fresh object `new` builds, with its prototype taken from the

@@ -143,6 +143,43 @@ std::string context::to_string(value v) {
 // can even decide what it means - `{valueOf: () => 42} + 1` is 43 and
 // `{toString: () => 'x'} + 1` is "x1", and which one it is depends on what the
 // object hands back rather than on the object being an object.
+// ToPrimitive, 7.1.1: the object's @@toPrimitive first, then OrdinaryToPrimitive
+// (7.1.1.1) in the hint's order. FALSE means a TypeError is in flight - an
+// exotic method that is not callable or answers an object, or neither ordinary
+// method answering a primitive. Every ToPrimitive below is this one walk, so
+// `[].join.call({toString: () => ({}), valueOf: () => ({})})` refuses once
+// rather than falling back to "[object Object]" in one place and NaN in another.
+bool context::to_primitive_hint(value v, const char * hint, value & out) {
+    const value exotic = lookup_property(v, "@@toPrimitive");
+    if (throw_pending()) { return false; }
+    if (!exotic.is_nullish()) {
+        if (!exotic.is_callable()) {
+            throw_error("TypeError", "Symbol.toPrimitive is not a function");
+            return false;
+        }
+        const value hint_arg[1] = {string(hint)};
+        out = call(exotic, hint_arg, v);
+        if (throw_pending()) { return false; }
+        if (out.is_object_like()) {
+            throw_error("TypeError", "Cannot convert object to primitive value");
+            return false;
+        }
+        return true;
+    }
+    const bool string_first = hint[0] == 's';
+    for (const char * name :
+         {string_first ? "toString" : "valueOf", string_first ? "valueOf" : "toString"}) {
+        const value fn = lookup_property(v, name);
+        if (throw_pending()) { return false; }
+        if (!fn.is_callable()) { continue; }
+        out = call(fn, std::span<const value>{}, v);
+        if (throw_pending()) { return false; }
+        if (!out.is_object_like()) { return true; }
+    }
+    throw_error("TypeError", "Cannot convert object to primitive value");
+    return false;
+}
+
 value context::to_primitive(value v) {
     const reentry_scope guard{*this};
     if (guard.overflowed()) { return value::undefined(); }
@@ -158,14 +195,18 @@ value context::to_primitive(value v) {
     // "Symbol(x)" rather than the internal key, which is the nearer wrong
     // answer; unittests/js/symbol_basics.cpp pins that and says so.
     if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
-    for (const char * name : {"valueOf", "toString"}) {
-        const value fn = lookup_property(v, name);
-        if (!fn.is_callable()) { continue; }
-        const value produced = call(fn, std::span<const value>{}, v);
-        if (produced.is_heap() && !produced.is_string()) { continue; }
-        return produced;
+    if (v.is_kind(heap_kind::symbol)) {
+        for (const char * name : {"valueOf", "toString"}) {
+            const value fn = lookup_property(v, name);
+            if (!fn.is_callable()) { continue; }
+            const value produced = call(fn, std::span<const value>{}, v);
+            if (produced.is_heap() && !produced.is_string()) { continue; }
+            return produced;
+        }
+        return v;
     }
-    return v;
+    value out = value::undefined();
+    return to_primitive_hint(v, "default", out) ? out : value::undefined();
 }
 
 // The numeric half of the same rule: `valueOf` then `toString`. An object that
@@ -182,15 +223,14 @@ double context::to_number_value(value v) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
-    if (!v.is_heap() || v.is_string()) { return to_number(v); }
-    for (const char * name : {"valueOf", "toString"}) {
-        const value fn = lookup_property(v, name);
-        if (!fn.is_callable()) { continue; }
-        const value produced = call(fn, std::span<const value>{}, v);
-        if (produced.is_heap() && !produced.is_string()) { continue; }
-        return to_number(produced);
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::symbol)) { return to_number(v); }
+    value out = value::undefined();
+    if (!to_primitive_hint(v, "number", out)) { return std::nan(""); }
+    if (out.is_kind(heap_kind::bigint)) {
+        throw_error("TypeError", "Cannot convert a BigInt value to a number");
+        return std::nan("");
     }
-    return to_number(v);
+    return to_number(out);
 }
 
 std::string context::to_primitive_string(value v) {
@@ -199,14 +239,9 @@ std::string context::to_primitive_string(value v) {
     // not be able to reach it uncounted.
     const reentry_scope guard{*this};
     if (guard.overflowed()) { return "[object Object]"; }
-    for (const char * name : {"toString", "valueOf"}) {
-        const value fn = lookup_property(v, name);
-        if (!fn.is_callable()) { continue; }
-        const value produced = call(fn, std::span<const value>{}, v);
-        if (produced.is_heap() && !produced.is_string()) { continue; }
-        return to_string(produced);
-    }
-    return "[object Object]";
+    value out = value::undefined();
+    if (!to_primitive_hint(v, "string", out)) { return "[object Object]"; }
+    return to_string(out);
 }
 
 std::string_view context::type_of(value v) {
