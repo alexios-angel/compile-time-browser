@@ -153,6 +153,7 @@ struct probe {
     rect box_abs{};
     rect containing{};          // the padding box of the nearest positioned ancestor
     std::vector<node_id> chain; // self first, then ancestors
+    bool is_root = false;       // the document element itself
 };
 
 } // namespace
@@ -189,6 +190,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             up = next;
         }
         connected = !at.chain.empty() && at.chain.back() == txn.root();
+        at.is_root = id == txn.root();
         // The containing-block width a percentage resolves against: the parent's
         // CONTENT width, or the viewport at the root. That is the parent's
         // fragment less its padding, which is what content_width_of computes
@@ -310,8 +312,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // size whatever `:root { font-size }` said (rem-unit-root-element). The
     // cascade folded the root's own size to pixels, so the declared text is
     // the answer there too.
-    const bool is_root_element = at.chain.size() == 2; // <html>, then the Document
-    if (at.box == nullptr || is_root_element) {
+    if (at.box == nullptr || at.is_root) {
         const layout::length declared_size = layout::parse_length(declared("font-size"));
         if (!declared_size.is_auto() && declared_size.u != layout::unit::percent &&
             declared_size.u != layout::unit::em) {

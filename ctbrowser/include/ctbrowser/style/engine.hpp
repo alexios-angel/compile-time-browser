@@ -821,23 +821,17 @@ public:
         css::condition_environment conditions;
         conditions.inherited = [&parent,
                                 this](std::string_view name) -> std::optional<std::string> {
-            if (!parent || !parent->inherited) { return std::nullopt; }
-            const atom key = atoms_->intern(name);
-            const declaration * held = nullptr;
-            for (const declaration & d : parent->inherited->declarations) {
-                if (d.property == key) { held = &d; }
-            }
-            if (held == nullptr || held->value == guaranteed_invalid) { return std::nullopt; }
+            if (!parent) { return std::nullopt; }
+            // `get` reads the parent's own half too, where a registered
+            // property that does not inherit lives.
+            const std::string_view held = parent->get(atoms_->intern(name));
+            if (held.empty() || held == guaranteed_invalid) { return std::nullopt; }
             const css::custom_lookup above = [&parent](atom n) -> std::optional<std::string_view> {
-                for (const declaration & d : parent->inherited->declarations) {
-                    if (d.property == n) {
-                        if (d.value == guaranteed_invalid) { return std::nullopt; }
-                        return std::string_view{d.value};
-                    }
-                }
-                return std::nullopt;
+                const std::string_view v = parent->get(n);
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return v;
             };
-            return css::substitute_var(held->value, above, *atoms_);
+            return css::substitute_var(held, above, *atoms_);
         };
         conditions.computed = [&out, &parent,
                                this](std::string_view name) -> std::optional<std::string> {
@@ -1080,8 +1074,9 @@ public:
                                          (registration.inherits && (ascii_iequals(word, "unset") ||
                                                                     ascii_iequals(word, "revert")));
                 if (substituted && from_parent) {
-                    const std::string_view held =
-                        parent && parent->inherited ? parent->inherited->get(name) : "";
+                    // `get` reads the parent's own half too, where a property
+                    // that does not inherit lives.
+                    const std::string_view held = parent ? parent->get(name) : "";
                     if (!held.empty()) { computed = std::string{held}; }
                 } else if (substituted && !ascii_iequals(word, "initial") &&
                            !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
