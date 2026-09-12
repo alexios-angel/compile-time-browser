@@ -119,6 +119,22 @@ void test_an_anchor_reports_the_parts_of_its_url() {
        "http://site.example/b#h");
 }
 
+void test_a_located_document_resolves_its_url_attributes() {
+    // The bulk of reflection-*.html's URL rows: with a location set before
+    // the load, `img.src` and `a.href` resolve against it and read the same,
+    // and the document's three names for its address all say it.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///srv/pages/index.html#top");
+    page.load_html("<!DOCTYPE html><img id=i src=' cat.png '><a id=a href=' cat.png '>"
+                   "<script>console.log([document.URL, document.baseURI, location.href,"
+                   " location.hash, document.getElementById('i').src,"
+                   " document.getElementById('a').href].join('|'));</script>");
+    CHECK_EQ(page.bindings().console_output().back(),
+             "file:///srv/pages/index.html#top|file:///srv/pages/index.html#top|"
+             "file:///srv/pages/index.html#top|#top|file:///srv/pages/%20cat.png|"
+             "file:///srv/pages/%20cat.png");
+}
+
 // --- the translate attribute --------------------------------------------------
 
 void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
@@ -196,6 +212,7 @@ int main() {
     test_nonce_is_a_slot_in_front_of_the_attribute();
     test_the_rows_the_element_tables_name_are_all_there();
     test_an_anchor_reports_the_parts_of_its_url();
+    test_a_located_document_resolves_its_url_attributes();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
     test_inner_text_reads_the_inline_style_it_can_see();

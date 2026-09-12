@@ -449,6 +449,14 @@ public:
     void set_script_prepared_hook(std::function<void(script::program &, std::string_view)> hook) {
         script_prepared_hook_ = std::move(hook);
     }
+    // THE DOCUMENT'S ADDRESS, set BEFORE load_html. The engine is handed bytes,
+    // not a URL, so without this a page has none: `document.URL` is empty and
+    // every URL-reflecting attribute (`a.href`, `img.src`, ...) hands back its
+    // raw text instead of resolving against the document (HTML "reflecting
+    // content attributes in IDL attributes", the USVString URL case). An
+    // embedder that opened a file gives its `file://` URL; a fragment lands in
+    // location_hash().
+    void set_location(std::string href);
     // What the last activated link recorded. A fragment lands in the hash,
     // because scrolling to an anchor IS navigation within a document.
     [[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }

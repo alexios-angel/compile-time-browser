@@ -100,6 +100,13 @@ bool browser::toggle_details(node_id target) {
     return true;
 }
 
+void browser::set_location(std::string href) {
+    const std::size_t hash = href.find('#');
+    location_hash_ = hash == std::string::npos ? std::string{} : href.substr(hash);
+    location_href_ = std::move(href);
+    if (bindings_) { bindings_->observe_location(location_href_, location_hash_); }
+}
+
 bool browser::follow_link(node_id target) {
     std::string href;
     std::string download;
