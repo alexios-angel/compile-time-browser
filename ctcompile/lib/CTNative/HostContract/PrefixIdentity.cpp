@@ -107,7 +107,8 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             // Only the embedding's finite writable own-data slots exclude a
             // callback here. Their values and publication effects stay live.
             if (observedValues.lookup(receiver).kind == prefixValue::Kind::realm &&
-                llvm::is_contained(contract.realmOwnDataProperties, keyOf(propertyKey))) {
+                llvm::is_contained(contract.realmOwnDataProperties,
+                                   ctjs::constantKey(propertyKey))) {
                 continue;
             }
             if (!receiver.getDefiningOp<ctjs::CreateObjectOp>() &&

@@ -293,16 +293,6 @@ bool isUndefinedConstant(mlir::Value v) {
     return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
 }
 
-// The constant string a property key operand carries, or empty. The same
-// reading TypeInference and admission::keyOf make; spelled here because the
-// lift runs before either of them is available.
-llvm::StringRef constantKeyOf(mlir::Value key) {
-    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return str ? str.getValue() : llvm::StringRef{};
-}
-
 // Every value that names the same object as `v`, `v` included. A literal
 // nothing is lifted onto is a group of one, so callers need no special case.
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {

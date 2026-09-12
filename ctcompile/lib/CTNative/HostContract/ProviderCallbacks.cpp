@@ -40,8 +40,8 @@ struct callbackReader {
     }
 
     bool writable(llvm::StringRef name) {
-        if (!text(name) || !ordinaryKey(name) || name == "globalThis" || name == "undefined" ||
-            name == "NaN" || name == "Infinity") {
+        if (!text(name) || !ctjs::ordinaryKey(name) || name == "globalThis" ||
+            name == "undefined" || name == "NaN" || name == "Infinity") {
             return false;
         }
         for (const auto * names :

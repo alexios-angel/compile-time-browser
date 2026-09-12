@@ -6,15 +6,6 @@
 #include "llvm/ADT/STLExtras.h"
 
 namespace ctcompile::ctnative {
-namespace {
-llvm::StringRef keyOf(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    return key ? key.getValue() : llvm::StringRef{};
-}
-} // namespace
-
 void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
                                           const HostContractAnalysis & host, unsigned maxSteps) {
     const auto spend = [&] {
@@ -182,7 +173,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             auto call = child.getDefiningOp<ctjs::CallOp>();
             auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                              : ctjs::GetPropertyOp{};
-            if (!read || keyOf(read.getKey()) != "get" ||
+            if (!read || ctjs::constantKey(read.getKey()) != "get" ||
                 !llvm::is_contained(capture->calls, call) ||
                 !returnedChildren.insert(child).second) {
                 reject("owned returned child Map lacks its distinct checked get call");
@@ -259,7 +250,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 reject("owned child Map call lacks a checked owning receiver");
                 return;
             }
-            const auto action = keyOf(read.getKey());
+            const auto action = ctjs::constantKey(read.getKey());
             const unsigned arity = action == "set" ? 2u : (action == "clear" ? 0u : 1u);
             if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
                  action != "clear") ||
@@ -327,8 +318,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             llvm::DenseMap<mlir::Value, ctjs::CallOp> seeds;
             for (ctjs::CallOp call : capture->calls) {
                 if (!spend()) { return; }
-                const auto action =
-                    keyOf(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+                const auto action = ctjs::constantKey(
+                    call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
                 if (children.contains(call.getReceiver())) {
                     if (action == "delete" || action == "clear") {
                         reject("owned child mutation can remove its required entry");
@@ -378,7 +369,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     call && llvm::is_contained(capture->calls, call) &&
                     (use.getOperandNumber() == 1 ||
                      (use.getOperandNumber() == 3 && outers.contains(call.getReceiver()) &&
-                      method && keyOf(method.getKey()) == "set"));
+                      method && ctjs::constantKey(method.getKey()) == "set"));
                 if (!dominance.dominates(child, user) ||
                     (!llvm::isa<ctjs::RootOp>(user) && !property && !invocation)) {
                     reject("owned child Map has another alias, key or publication use");
@@ -529,7 +520,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         owners.insert(load.getResult());
     }
-    if (!owners.contains(field.getObject()) || keyOf(field.getKey()) != slot.property) {
+    if (!owners.contains(field.getObject()) || ctjs::constantKey(field.getKey()) != slot.property) {
         reject("owned global method publication does not name the checked root field");
         return;
     }

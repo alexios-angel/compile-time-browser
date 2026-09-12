@@ -95,8 +95,8 @@ bool providerObjectState::accepts(unsigned id) {
     // Scalar own contents exclude object/Map/callable backedges and coercion.
     // Missing fields stay absent: no assumed prototype or undefined fallback.
     for (const auto & field : object.fields) {
-        if (!prefix.step() || !textWork(prefix, field.first()) || !ordinaryKey(field.first()) ||
-            !prefixPrimitive(field.second)) {
+        if (!prefix.step() || !textWork(prefix, field.first()) ||
+            !ctjs::ordinaryKey(field.first()) || !prefixPrimitive(field.second)) {
             return false;
         }
     }
@@ -137,9 +137,9 @@ prefixValue providerObjectState::operation(mlir::Operation * operation,
     }
     const auto owner = values.lookup(receiver);
     auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation);
-    const auto name = named ? named.getName() : keyOf(key);
-    if (owner.kind != prefixValue::Kind::object || !ordinaryKey(name) || !textWork(prefix, name) ||
-        !accepts(owner.object)) {
+    const auto name = named ? named.getName() : ctjs::constantKey(key);
+    if (owner.kind != prefixValue::Kind::object || !ctjs::ordinaryKey(name) ||
+        !textWork(prefix, name) || !accepts(owner.object)) {
         return {};
     }
     auto & fields = objects[owner.object].fields;

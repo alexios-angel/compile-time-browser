@@ -133,7 +133,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
                 if (get.getObject() != alias) { continue; }
                 key = get.getKey();
                 auto [at, fresh] =
-                    read.try_emplace(admission::keyOf(key), carried(get.getResult()));
+                    read.try_emplace(ctjs::constantKey(key), carried(get.getResult()));
                 if (!fresh && at->second != carried(get.getResult())) {
                     at->second = carrierType(context, carrier::nullable);
                 }
@@ -141,12 +141,12 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
                 if (set.getObject() != alias) { continue; }
                 key = set.getKey();
                 auto [at, fresh] =
-                    stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
+                    stored.try_emplace(ctjs::constantKey(key), carried(set.getValue()));
                 if (!fresh && at->second != carried(set.getValue())) {
                     at->second = carrierType(context, carrier::nullable);
                 }
             }
-            if (key) { accessKey[user] = admission::keyOf(key).str(); }
+            if (key) { accessKey[user] = ctjs::constantKey(key).str(); }
         }
     }
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
@@ -319,7 +319,7 @@ void lowering::collectVector(mlir::Value array) {
     for (mlir::Operation * user : array.getUsers()) {
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
         if (!get) { continue; }
-        if (admission::keyOf(get.getKey()) == "length") {
+        if (ctjs::constantKey(get.getKey()) == "length") {
             vectorLengthReads.insert(user);
         } else {
             vectorIndexReads.insert(user);

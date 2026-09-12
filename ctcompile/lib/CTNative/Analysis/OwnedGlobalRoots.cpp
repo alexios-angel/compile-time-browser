@@ -6,15 +6,6 @@
 #include <utility>
 
 namespace ctcompile::ctnative {
-namespace {
-llvm::StringRef keyOf(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    return key ? key.getValue() : llvm::StringRef{};
-}
-} // namespace
-
 OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & contract,
                                    unsigned maxSteps) {
     // The complete environment proof is mandatory, even if its diagnostic
@@ -129,16 +120,16 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            if (!aliases.contains(write.getObject()) || keyOf(write.getKey()) != slot.property ||
-                fieldInitialization) {
+            if (!aliases.contains(write.getObject()) ||
+                ctjs::constantKey(write.getKey()) != slot.property || fieldInitialization) {
                 refusal = "owned global field cannot be replaced or accompanied by other fields";
                 return;
             }
             fieldInitialization = write;
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            if (!aliases.contains(read.getObject()) || keyOf(read.getKey()) != slot.property ||
-                !fieldInitialization) {
+            if (!aliases.contains(read.getObject()) ||
+                ctjs::constantKey(read.getKey()) != slot.property || !fieldInitialization) {
                 refusal = "owned global field read lacks its sole definite initialization";
                 return;
             }

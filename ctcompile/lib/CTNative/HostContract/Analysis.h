@@ -67,8 +67,6 @@ struct analyzer {
     HostSlotReport slot(const HostRootRequest & root, llvm::StringRef key);
 };
 
-llvm::StringRef keyOf(mlir::Value value);
-bool ordinaryKey(llvm::StringRef key);
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract);
 
 } // namespace ctcompile::ctnative::host_detail

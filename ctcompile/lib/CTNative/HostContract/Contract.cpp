@@ -45,7 +45,7 @@ std::string realmReceiverProblem(const HostContract & contract) {
     }
     llvm::StringSet<> seen;
     for (const auto & name : contract.realmOwnDataProperties) {
-        if (!host_detail::ordinaryKey(name) || !seen.insert(name).second) {
+        if (!ctjs::ordinaryKey(name) || !seen.insert(name).second) {
             return "realm own-data properties require distinct ordinary property names";
         }
         if (llvm::is_contained(contract.absentBindings, name) ||
@@ -217,7 +217,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 key = write.getKey();
             }
-            const auto name = key ? keyOf(key) : llvm::StringRef{};
+            const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
             if (llvm::isa<ctjs::DefineAccessorOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(
                     operation) ||
                 name == "__proto__" || name == "prototype" || name == "defineProperty" ||
@@ -233,7 +233,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             }
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            if (llvm::is_contained(contract.initialIntrinsics, keyOf(write.getKey()))) {
+            if (llvm::is_contained(contract.initialIntrinsics, ctjs::constantKey(write.getKey()))) {
                 reason = "source property write can replace a declared intrinsic binding";
             }
         }
@@ -250,7 +250,8 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                 }
             } else {
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-                    read && use.getOperandNumber() == 0 && keyOf(read.getKey()) == "from") {
+                    read && use.getOperandNumber() == 0 &&
+                    ctjs::constantKey(read.getKey()) == "from") {
                     bool closed = true;
                     for (mlir::OpOperand & methodUse : read.getResult().getUses()) {
                         if (llvm::isa<ctjs::RootOp>(methodUse.getOwner())) { continue; }
@@ -265,7 +266,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     call && use.getOperandNumber() == 1 && call.getArgs().size() == 1) {
                     auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (read && read.getObject() == load.getResult() &&
-                        keyOf(read.getKey()) == "from") {
+                        ctjs::constantKey(read.getKey()) == "from") {
                         continue;
                     }
                 }

@@ -61,14 +61,15 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
                 literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
             const bool number = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue());
             reflective |=
-                !number && (!text || !ordinaryKey(text.getValue()) || text.getValue() == "caller" ||
-                            text.getValue() == "callee" || text.getValue() == "arguments" ||
-                            text.getValue() == "eval" || text.getValue() == "Function" ||
-                            text.getValue() == "Reflect" || text.getValue() == "Object" ||
-                            text.getValue() == "getOwnPropertyDescriptor" ||
-                            text.getValue() == "getOwnPropertyDescriptors" ||
-                            text.getValue() == "getPrototypeOf" ||
-                            text.getValue() == "setPrototypeOf" || text.getValue() == "ownKeys");
+                !number &&
+                (!text || !ctjs::ordinaryKey(text.getValue()) || text.getValue() == "caller" ||
+                 text.getValue() == "callee" || text.getValue() == "arguments" ||
+                 text.getValue() == "eval" || text.getValue() == "Function" ||
+                 text.getValue() == "Reflect" || text.getValue() == "Object" ||
+                 text.getValue() == "getOwnPropertyDescriptor" ||
+                 text.getValue() == "getOwnPropertyDescriptors" ||
+                 text.getValue() == "getPrototypeOf" || text.getValue() == "setPrototypeOf" ||
+                 text.getValue() == "ownKeys");
         }
         reflective |= operation->hasAttr("ctjs.skipped");
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {

@@ -54,13 +54,13 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || constantKeyOf(get.getKey()).empty()) {
+            if (use.getOperandNumber() != 0 || ctjs::constantKey(get.getKey()).empty()) {
                 return false;
             }
             continue;
         }
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || constantKeyOf(set.getKey()).empty()) {
+            if (use.getOperandNumber() != 0 || ctjs::constantKey(set.getKey()).empty()) {
                 return false;
             }
             continue;
@@ -70,7 +70,8 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
             // constant-key read of that same object: a method call.
             if (use.getOperandNumber() == 1) {
                 auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (!load || load.getObject() != object || constantKeyOf(load.getKey()).empty()) {
+                if (!load || load.getObject() != object ||
+                    ctjs::constantKey(load.getKey()).empty()) {
                     return false;
                 }
                 continue;
@@ -111,7 +112,7 @@ ctjs::FuncOp closureLifter::resolveMethod(ctjs::CallOp call, mlir::Value & recei
     if (!load || !load.getResult().hasOneUse()) { return {}; }
     const mlir::Value receiver = load.getObject();
     if (receiver != call.getReceiver()) { return {}; }
-    const llvm::StringRef key = constantKeyOf(load.getKey());
+    const llvm::StringRef key = ctjs::constantKey(load.getKey());
     if (key.empty()) { return {}; }
     const auto objects = behind.find(receiver);
     if (objects == behind.end() || objects->second.empty()) { return {}; }
@@ -134,7 +135,7 @@ ctjs::FuncOp closureLifter::resolveMethod(ctjs::CallOp call, mlir::Value & recei
 // and only the third is "this is not a method table at all".
 std::string closureLifter::whyNotAMethodField(ctjs::SetPropertyOp set) {
     const mlir::Value object = set.getObject();
-    const llvm::StringRef key = constantKeyOf(set.getKey());
+    const llvm::StringRef key = ctjs::constantKey(set.getKey());
     if (!object.getDefiningOp<ctjs::CreateObjectOp>()) {
         return "it is stored into something that is not an object literal made here - "
                "Phase 59 slice 2";
@@ -174,9 +175,13 @@ bool closureLifter::onlyConstantKeyAccess(mlir::Value v) {
     for (mlir::OpOperand & use : v.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(get.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
+                continue;
+            }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(set.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
+                continue;
+            }
         }
         return false;
     }
@@ -349,9 +354,9 @@ void closureLifter::methodCensus() {
         for (mlir::Operation * user : object.getResult().getUsers()) {
             auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
             if (!set || set.getObject() != object.getResult()) { continue; }
-            ++writes[constantKeyOf(set.getKey())];
+            ++writes[ctjs::constantKey(set.getKey())];
             if (auto made = set.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
-                fields[constantKeyOf(set.getKey())] = methodField{set, made};
+                fields[ctjs::constantKey(set.getKey())] = methodField{set, made};
             }
         }
         llvm::StringMap<methodField> & into = methodsOf[object.getResult()];
@@ -428,11 +433,15 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
     for (mlir::OpOperand & use : entry.getArgument(0).getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(get.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
+                continue;
+            }
             return "it reads `this` through a dynamic key";
         }
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !constantKeyOf(set.getKey()).empty()) { continue; }
+            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
+                continue;
+            }
             if (use.getOperandNumber() == 2) {
                 return "it stores `this` into another object - that needs an owner, and this "
                        "slice introduces none";
@@ -494,7 +503,7 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
         }
         const auto fields = methodsOf.find(set.getObject());
         if (fields == methodsOf.end() ||
-            fields->second.lookup(constantKeyOf(set.getKey())).closure != c) {
+            fields->second.lookup(ctjs::constantKey(set.getKey())).closure != c) {
             return whyNotAMethodField(set);
         }
     }
@@ -513,10 +522,10 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
         for (mlir::OpOperand & use : c.getResult().getUses()) {
             auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
             if (!set) { continue; }
-            const llvm::StringRef key = constantKeyOf(set.getKey());
+            const llvm::StringRef key = ctjs::constantKey(set.getKey());
             for (mlir::Operation * user : set.getObject().getUsers()) {
                 auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
-                if (get && constantKeyOf(get.getKey()) == key) {
+                if (get && ctjs::constantKey(get.getKey()) == key) {
                     return ("its field `" + key +
                             "` is read as a value rather than called - a method used as a "
                             "function value has to carry its receiver, which is a bound "

@@ -1,5 +1,4 @@
 // Closed shapes, receivers, cells and dense vector use proofs.
-#include "PropertyKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 
@@ -14,7 +13,7 @@
 #include <cmath>
 
 namespace ctcompile::ctnative {
-using inference_detail::constantKey;
+using ctjs::constantKey;
 
 // THE RECEIVER IS A PARAMETER, and `%arg0` of a lifted method is the only block
 // argument that names an object. The attribute is written by the lift inside

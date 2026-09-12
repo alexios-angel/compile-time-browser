@@ -66,18 +66,11 @@ bool comparisonObservation(mlir::OpOperand & use) {
     return false;
 }
 
-llvm::StringRef stringKey(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto text =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-    return text ? text.getValue() : llvm::StringRef{};
-}
-
 bool liveMapCall(ctjs::CallOp call) {
     auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
     const auto action = nativeMapAction(call);
     if (!get || get.getObject() != call.getReceiver() || nativeMapGroup(call.getReceiver()) < 0 ||
-        stringKey(get.getKey()) != action) {
+        ctjs::constantKey(get.getKey()) != action) {
         return false;
     }
     if (action == "set") { return call.getArgs().size() == 2; }
@@ -125,7 +118,7 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                    (globals && globals->proved() &&
                     (globals->lookup(get) || globals->lookup(get.getObject().getDefiningOp())));
             if (!safe && nativeMapGroup(get.getObject()) >= 0) {
-                const auto key = stringKey(get.getKey());
+                const auto key = ctjs::constantKey(get.getKey());
                 safe = (key == "size" && nativeMapAction(get) == "size") ||
                        (get->hasAttr(kNativeMapMethod) && !get.getResult().use_empty() &&
                         llvm::all_of(get.getResult().getUses(), [](mlir::OpOperand & use) {

@@ -190,12 +190,12 @@ bool analyzer::transportedCallable(ctjs::FuncOp function) {
 ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned depth) {
     if (depth > 64 || !step()) { return {}; }
     const auto owner = object(read.getObject(), depth + 1);
-    const auto key = keyOf(read.getKey());
-    if (!owner || !ordinaryKey(key)) { return {}; }
+    const auto key = ctjs::constantKey(read.getKey());
+    if (!owner || !ctjs::ordinaryKey(key)) { return {}; }
     ctjs::SetPropertyOp latest;
     bool uncertain = false;
     module.walk([&](ctjs::SetPropertyOp write) {
-        if (!step() || keyOf(write.getKey()) != key ||
+        if (!step() || ctjs::constantKey(write.getKey()) != key ||
             object(write.getObject(), depth + 1) != owner) {
             return;
         }
@@ -499,9 +499,10 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                                : ctjs::CreateObjectOp{};
             if (!write || publication || use.getOperandNumber() != 2 || !owner ||
                 owner->getBlock() != made->getBlock() || write->getBlock() != made->getBlock() ||
-                (table && table != owner) || !ordinaryKey(keyOf(write.getKey())) ||
-                !fields.insert(keyOf(write.getKey())).second || !owner->isBeforeInBlock(write) ||
-                !made->isBeforeInBlock(write)) {
+                (table && table != owner) ||
+                !ctjs::ordinaryKey(ctjs::constantKey(write.getKey())) ||
+                !fields.insert(ctjs::constantKey(write.getKey())).second ||
+                !owner->isBeforeInBlock(write) || !made->isBeforeInBlock(write)) {
                 return {};
             }
             table = owner;
@@ -547,7 +548,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             auto store = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto read = store ? store.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                               : ctjs::GetPropertyOp{};
-            if (!read || keyOf(read.getKey()) != "set" || store.getArgs().size() != 2) {
+            if (!read || ctjs::constantKey(read.getKey()) != "set" || store.getArgs().size() != 2) {
                 return mlir::WalkResult::advance();
             }
             auto payload = llvm::dyn_cast<mlir::BlockArgument>(store.getArgs()[1]);
@@ -620,7 +621,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                                : ctjs::GetPropertyOp{};
             if (!read || read.getObject() != invoke.getReceiver()) { return {}; }
             const auto receiver = self(self, invoke.getReceiver(), depth + 1);
-            const auto action = keyOf(read.getKey());
+            const auto action = ctjs::constantKey(read.getKey());
             if (action == "set" && invoke.getArgs().size() == 2) { return receiver; }
             // This role may be used only as a child receiver, never as evidence
             // that an outer payload is a fresh constructor. The completed write
@@ -635,7 +636,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             if (!step()) { return mlir::WalkResult::interrupt(); }
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!read) { return mlir::WalkResult::advance(); }
-            const auto action = keyOf(read.getKey());
+            const auto action = ctjs::constantKey(read.getKey());
             if (action != "set" && action != "delete" && action != "clear") {
                 return mlir::WalkResult::advance();
             }

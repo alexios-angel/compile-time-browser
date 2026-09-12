@@ -64,8 +64,6 @@ struct admission {
 
     static bool namesASharedCell(mlir::Value v);
 
-    static llvm::StringRef keyOf(mlir::Value key);
-
     static bool isCIdentifier(llvm::StringRef key);
 
     static bool isReservedInCpp(llvm::StringRef key);

@@ -97,7 +97,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
             for (mlir::OpOperand & use : value.getUses()) {
                 auto * user = use.getOwner();
                 if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-                    const auto key = constantKeyOf(set.getKey());
+                    const auto key = ctjs::constantKey(set.getKey());
                     if (use.getOperandNumber() == 2 && (slots.lookup(set) || globalSlot(set))) {
                         boundaries.push_back(user);
                         continue;
@@ -112,7 +112,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     continue;
                 }
                 if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-                    if (use.getOperandNumber() != 0 || !fieldKey(constantKeyOf(get.getKey()))) {
+                    if (use.getOperandNumber() != 0 || !fieldKey(ctjs::constantKey(get.getKey()))) {
                         reject("read needs a supported constant key");
                     }
                     reads.push_back(get);
@@ -173,7 +173,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
             }
         }
         for (ctjs::GetPropertyOp read : reads) {
-            auto field = fields.find(constantKeyOf(read.getKey()));
+            auto field = fields.find(ctjs::constantKey(read.getKey()));
             if (field == fields.end()) {
                 reject("reads a field that was never initialized");
                 continue;
@@ -226,8 +226,8 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
         for (ctjs::GetPropertyOp read : reads) {
             read->setAttr(kNativeMethodTable, name);
             read->setAttr(kNativeTableField,
-                          mlir::StringAttr::get(context, constantKeyOf(read.getKey())));
-            auto made = fields[constantKeyOf(read.getKey())]
+                          mlir::StringAttr::get(context, ctjs::constantKey(read.getKey())));
+            auto made = fields[ctjs::constantKey(read.getKey())]
                             .getValue()
                             .getDefiningOp<ctjs::CreateClosureOp>();
             read->setAttr(kNativeEnvironment,

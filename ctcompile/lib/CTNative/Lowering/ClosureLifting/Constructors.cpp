@@ -99,9 +99,9 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
     for (mlir::Operation * user : c.getResult().getUsers()) {
         llvm::StringRef key;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            key = constantKeyOf(get.getKey());
+            key = ctjs::constantKey(get.getKey());
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            key = constantKeyOf(set.getKey());
+            key = ctjs::constantKey(set.getKey());
         }
         if (key == "prototype") {
             return "its constructor's `prototype` is read or written, which is a prototype "

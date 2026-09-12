@@ -50,13 +50,6 @@ bool isNativeMapSnapshot(mlir::Operation * op) {
 
 namespace {
 
-llvm::StringRef keyOf(mlir::Value key) {
-    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return text ? text.getValue() : llvm::StringRef{};
-}
-
 struct plan {
     llvm::SmallVector<ctjs::ConstructOp> made;
     llvm::SmallVector<mlir::Value> members;
@@ -142,7 +135,9 @@ struct flowGraph {
         });
         module.walk([&](ctjs::CallOp call) {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (get && keyOf(get.getKey()) == "set") { join(call.getReceiver(), call.getResult()); }
+            if (get && ctjs::constantKey(get.getKey()) == "set") {
+                join(call.getReceiver(), call.getResult());
+            }
         });
     }
 
@@ -162,7 +157,7 @@ struct flowGraph {
                 if (!maps.contains(receiver)) { return; }
                 auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!get || get.getObject() != call.getReceiver()) { return; }
-                const auto key = keyOf(get.getKey());
+                const auto key = ctjs::constantKey(get.getKey());
                 mlir::Value value;
                 if (key == "set" && call.getArgs().size() == 2) {
                     value = call.getArgs()[1];
@@ -220,7 +215,8 @@ std::string collect(plan & out, flowGraph & graph,
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallOp>()) {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (!get || (keyOf(get.getKey()) != "set" && keyOf(get.getKey()) != "get")) {
+            if (!get || (ctjs::constantKey(get.getKey()) != "set" &&
+                         ctjs::constantKey(get.getKey()) != "get")) {
                 return "native Map flow contains an unproved call result";
             }
         } else if (auto read = object.getDefiningOp<ctjs::LoadUpvalueOp>();
@@ -262,7 +258,8 @@ std::string collect(plan & out, flowGraph & graph,
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 call && call.getArgs().size() == 2 && use.getOperandNumber() == 3) {
                 auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (get && keyOf(get.getKey()) == "set" && get.getObject() == call.getReceiver()) {
+                if (get && ctjs::constantKey(get.getKey()) == "set" &&
+                    get.getObject() == call.getReceiver()) {
                     continue;
                 }
             }
@@ -272,7 +269,7 @@ std::string collect(plan & out, flowGraph & graph,
                         use.getOwner()->getName().getStringRef() + "`")
                     .str();
             }
-            const llvm::StringRef key = keyOf(get.getKey());
+            const llvm::StringRef key = ctjs::constantKey(get.getKey());
             if (key == "size") {
                 out.sizes.push_back(get);
                 continue;
@@ -308,7 +305,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         for (ctjs::CallOp call : candidate.calls) {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(get.getKey()) != "set") { continue; }
+            if (ctjs::constantKey(get.getKey()) != "set") { continue; }
             const auto child = families.find(graph.find(call.getArgs()[1]));
             if (child != families.end()) { children[index].push_back(child->second); }
         }
@@ -373,7 +370,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
         llvm::DenseSet<mlir::Value> savedReads;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            const auto action = keyOf(method.getKey());
+            const auto action = ctjs::constantKey(method.getKey());
             if (action == "get" || action == "has" || action == "delete") {
                 savedReads.insert(call.getResult());
             }
@@ -407,7 +404,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
         bool nonliteral = false;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(method.getKey()) != "set") { continue; }
+            if (ctjs::constantKey(method.getKey()) != "set") { continue; }
             auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             if (!constant) {
                 nonliteral = true;
@@ -428,7 +425,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
         const bool mixed = primitive && (nonliteral || (boolean && (number != string)));
         for (ctjs::CallOp read : candidate.calls) {
             auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(method.getKey()) != "get") { continue; }
+            if (ctjs::constantKey(method.getKey()) != "get") { continue; }
             if (mixed) { typedReads.push_back(read); }
             if (!children[index].empty()) {
                 reads.push_back(read);
@@ -601,7 +598,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         }
         for (ctjs::CallOp call : candidate.calls) {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            call->setAttr(kNativeMapAction, mlir::StringAttr::get(context, keyOf(get.getKey())));
+            call->setAttr(kNativeMapAction,
+                          mlir::StringAttr::get(context, ctjs::constantKey(get.getKey())));
         }
     }
 }

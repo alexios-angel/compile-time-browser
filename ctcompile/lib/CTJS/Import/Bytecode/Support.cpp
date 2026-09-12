@@ -89,7 +89,7 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
 // body that merely contained the word. The second still refused any
 // op::get_index in a body whose pool held the string, on the grounds that a
 // computed key MIGHT be it - and that was not merely coarse, it was
-// INCONSISTENT: the pass's own `constant_key` does not taint a
+// INCONSISTENT: the pass's own `constantKey` does not taint a
 // ctjs.get_property with a non-constant key either, so a computed `o[k]` is
 // invisible on the IR side. Refusing it here bought no soundness that the
 // other half of the same clause was not already giving away.

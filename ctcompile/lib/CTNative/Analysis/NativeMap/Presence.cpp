@@ -18,11 +18,7 @@ namespace {
 
 llvm::StringRef actionOf(ctjs::CallOp call) {
     auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    if (!get) { return {}; }
-    auto constant = get.getKey().getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
-    return text ? text.getValue() : llvm::StringRef{};
+    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
 }
 
 // This analysis also runs from CTJS-only binding-time and partial-evaluation

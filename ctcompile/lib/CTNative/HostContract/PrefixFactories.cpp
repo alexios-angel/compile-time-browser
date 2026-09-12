@@ -92,9 +92,9 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
             const auto owner = values.lookup(store.getObject());
             const auto value = values.lookup(store.getValue());
-            const auto key = keyOf(store.getKey());
+            const auto key = ctjs::constantKey(store.getKey());
             if (owner.kind != prefixValue::Kind::object || !tables.contains(owner.object) ||
-                !ordinaryKey(key) ||
+                !ctjs::ordinaryKey(key) ||
                 (value.kind != prefixValue::Kind::closure &&
                  value.kind != prefixValue::Kind::primitive)) {
                 return {};
@@ -204,7 +204,7 @@ void prefixAnalysis::publication(ctjs::SetPropertyOp write, prefixValue owner, p
              (owner.kind != prefixValue::Kind::object || binding->second.object != owner.object))) {
             continue;
         }
-        const auto key = keyOf(write.getKey());
+        const auto key = ctjs::constantKey(write.getKey());
         if (llvm::is_contained(root.properties, key)) {
             publications.push_back(
                 {write, factories[factory->second].operation, root.binding, key.str()});
