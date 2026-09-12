@@ -571,7 +571,8 @@ def main():
     check_scalar_global_carriers(args, positives, node, reference)
     check_constant_global_observations(args, node, reference)
     check_constant_global_refusals(args, positives, node, reference)
-    check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
+    check_leaf_readback_carriers(args, positives, node, reference,
+                                 leaf_field_result_refusals(), compilers, nm)
     check_string_field_refusals(args, positives)
     check_zero_size_refusals(args, positives)
     check_leaf_object_forgeries(args, saved, ("local_clear_zero_size_key", "zero_size_saved_lifetime"))
@@ -931,7 +932,7 @@ def main():
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
-          "retain complete host ownership and separate native carrier refusals; "
+          "execute exact native output with complete ownership and independent schema proofs; "
           f"{len(PRIMITIVE_ABSENCE_CARRIERS)} exact absent-result carrier refusals preserve complete owners, "
           "concrete diagnostics and prepared producer/consumer/capture operands; "
           "the unchanged ten-call empty-String deletion source and exact repair preserve nullable "
