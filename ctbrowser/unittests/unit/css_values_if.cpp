@@ -77,7 +77,7 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if( style( --x : 3 ) : true_value )"), std::string{"true_value "});
     CHECK_EQ(s.sub("if(style(--x): a;)"), std::string{"a"});
     CHECK_EQ(s.sub("if(style(--x: 0): a; else: b)"), std::string{"b"});
-    CHECK_EQ(s.sub("if(style(--x: 0): ;)"), std::string{""});
+    CHECK_EQ(s.sub("if(style(--x: 3): ;)"), std::string{""});
     CHECK_EQ(s.sub("if(style(--x: 0): a;)"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; style(--x: 3): v3; else: v4)"), std::string{"v3"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; else: v2; style(--x: 3): v3)"), std::string{"v2"});
@@ -222,7 +222,8 @@ void test_media_conditions() {
     CHECK_EQ(q("(width > 100px) or (unknown-feature)"), std::optional<bool>{true});
     CHECK_EQ(q("(width > 100px) and (height > 100px) or (hover)"), std::optional<bool>{});
     CHECK_EQ(q("width > 100px"), std::optional<bool>{true});
-    CHECK_EQ(q("garbage"), std::optional<bool>{});
+    CHECK_EQ(q("garbage"), std::optional<bool>{false}); // a boolean feature nothing here knows
+    CHECK_EQ(q("garbage garbage garbage"), std::optional<bool>{});
     // ...and a whole query list, as `@media` writes one.
     using ctbrowser::style::css::evaluate;
     using ctbrowser::style::css::parse_media_query_list;

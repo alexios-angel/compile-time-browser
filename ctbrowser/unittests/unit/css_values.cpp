@@ -388,7 +388,7 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // evaluate are all left exactly as written - which is where they were before
     // this rule existed, so nothing that works today can start failing.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
     ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
@@ -469,8 +469,9 @@ void test_the_angle_functions_take_an_angle() {
     ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
     ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
     ok("filter", "hue-rotate(90deg)", "hue-rotate(90deg)");
-    // ...and a function with no answer here is not a function with a wrong type.
-    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    // ...and a function with no answer here is not a function with a wrong type;
+    // `1deg + 1cqw` would be one, the container units resolving now.
+    ok("transform", "rotate(calc(1deg * sibling-index()))", "rotate(calc(1deg * sibling-index()))");
     // Nothing outside the angle-only functions is touched by the rule.
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
 }
