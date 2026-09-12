@@ -6,6 +6,74 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Global key aliases, 2026-09-11
+
+Resumed exact **abbf4b9c**, then **600b8fb6**, from **4d0db5a6** and the
+**2026-09-12 00:35:28 UTC** journal. The checkout was clean; the interrupted
+named-key work was fully gated and committed. Three agents handled the host
+proof, source/lifetime regressions and test parallelism; root integrated the
+independent consumers and serialized all devbox gates. No browser/runtime
+source changed.
+
+**7e829db9** proves one immutable global alias hop for empty object Map keys.
+Every original allocation, store, predecessor load and actual argument remains
+in the source graph. The complete binding/use census publishes checked edges
+only after the whole family succeeds; OwnedGlobalMethods independently
+revalidates each initialization. Existing native identity storage owns both
+globals and retains the same key in the Map, with no new carrier, runtime helper
+or Script symbol. Chains, cycles, unread aliases, early/nonentry reads or
+stores, later stores and foreign consumers remain refusals. Scalar observation
+of any key/alias/other object binding also refuses in both modes.
+
+The unchanged **abbf4b9c** admits **4/4 functions**, preserves **four calls**
+and produces typed **trace=0**. Unchanged **600b8fb6** admits **7/7 functions**,
+preserves **15 calls** and produces typed **trace=11** with aliases and two
+distinct identities. Both optimization modes and explicit/deduced C++ layouts
+pass GCC/Clang execution. Global overwrite, alias-only retention, saved
+set/get/delete/clear callables, **128 future rounds**, entry reexecution and
+final key/Map destruction pass ASan/UBSan/leak checks. Budgets complete at
+**1776 / 31 cutoffs** and **46995 / 30 cutoffs**, respectively.
+All **33 historical source bodies/hashes/call counts** remain unchanged. The
+expanded cohort passes **14 native programs / 28 refusals**, **42 source rows /
+47 typed Node/interpreter observation programs** and **19 distinguishing
+mutations**. Two refusal controls leave undefined globals; the observer now
+checks those names and their exact type counts in both engines. There is no
+oracle discrepancy or skipped check.
+
+**01aad175** adds `--jobs` to the existing ownership driver, defaulting to one,
+and runs its existing full lit workflow with **two workers**. Only independent
+positive-program checks run concurrently; source observations and refusal
+controls keep their order. The same focused group passes in **69.11 seconds
+serially / 41.82 seconds with two workers** (**39.5% lower wall time**), with
+all **1251 generated text artifact hashes identical** after fresh runs in the
+same work directory. The full matrix now has **427 positives / 1708 baseline
+C++ compilations**; the focused group has **56 baseline plus 14 sanitizer
+builds**. Run the existing `--group object-keys` command with `--jobs 2`.
+
+The **320-step rebuild**, final no-op rebuild and **4/4 focused CTests in
+3.01 seconds** pass. Stable clang-format **22.1.8** passes **795 files**;
+the actual bundled-23 check retains the same nine pre-existing differences,
+byte-identical to the prior gate. All **1238 frozen input hashes** match before
+the full run. **The full 530-CTest gate is running; its result is pending.**
+The previous full Bootstrap measurement was **19/574 native functions** in
+both modes; these focused admissions do not establish a new bundle total.
+Evidence: `/tmp/ctcompile-key-alias-focused-fixed.log`,
+`/tmp/ctcompile-key-alias-{full.log,frozen.json,matrix.json}`,
+`/tmp/ctcompile-key-alias-parallel-comparison.json`,
+`/tmp/ctcompile-key-alias-measured/`.
+
+**Next: the second alias hop**, exact **511cca31**
+(`object_argument_global_alias_chain`: four functions/four calls/trace=0),
+measured refused in both optimization modes. Prove the complete bounded,
+acyclic predecessor sequence and census every intermediate binding/use before
+publication; preserve every load/store. Both HostContract's direct-predecessor
+restriction and the independent owner restriction must advance together.
+Reuse the current leaf identity and global lifetime checks for three owning
+bindings. Unread one-hop alias **ddfc4ee9** remains a separate refusal.
+The bounded review is `/tmp/ctcompile-key-alias-next-chain.md`. Full native
+Bootstrap, field/nested-Map ownership, direct browser API integration and the
+independent ordinary-object own-data/prototype escape proof remain unfinished.
+
 ## Named global object keys, 2026-09-11
 
 Continued the exact **7573e89b** boundary left by **2df63e19** and the
