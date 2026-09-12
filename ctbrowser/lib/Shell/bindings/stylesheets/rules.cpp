@@ -80,7 +80,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
     // a style rule's is its selector; neither carries an at-keyword.
     if (rule.type == style_rule || rule.type == keyframe_rule) {
-        const std::string block = serialize_block(rule.declarations);
+        const std::string block = style::css::serialize_declaration_block(rule.declarations);
         if (block.empty()) { return rule.selector + " { }"; }
         return rule.selector + " { " + block + " }";
     }
@@ -111,7 +111,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     if (at_rule_holds_declarations(rule.at_name)) {
         std::string out = "@" + rule.at_name;
         if (!rule.prelude.empty()) { out += " " + rule.prelude; }
-        const std::string block = serialize_block(rule.declarations);
+        const std::string block = style::css::serialize_declaration_block(rule.declarations);
         return block.empty() ? out + " { }" : out + " { " + block + " }";
     }
     // A GROUPING RULE IS THE ONE MULTI-LINE SERIALISATION IN THE CSSOM, and it
@@ -252,8 +252,8 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
 
     // The declarations of a block - see parse_declarations_into, which a
     // `cssText` write shares.
-    const auto collect_into = [this](css_rule_record & into, std::string_view body) {
-        parse_declarations_into(into, body, *atoms_);
+    const auto collect_into = [](css_rule_record & into, std::string_view body) {
+        parse_declarations_into(into, body);
     };
 
     // ONE KEYFRAME. `0%, to { opacity: 0 }` is a qualified rule whose prelude is

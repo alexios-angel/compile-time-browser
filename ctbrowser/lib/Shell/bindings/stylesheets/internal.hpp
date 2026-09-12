@@ -142,9 +142,8 @@ inline constexpr std::uint32_t supports_rule = 12;
 [[nodiscard]] std::size_t slot_index(script::object_object * obj, std::string_view key);
 void set_indexed(script::object_object & obj, std::span<const value> items);
 [[nodiscard]] value collection_item(context & cx, std::span<value> args);
-[[nodiscard]] std::string serialize_block(const std::vector<dom_bindings::css_declaration> & block);
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
-                       std::string_view text, bool allow_important, bool force_important);
+                       std::string_view text, bool important);
 // WHAT A RULE'S BLOCK MAY HOLD. A keyframe refuses the animation properties
 // (CSS Animations 1 §3) and `@page` takes only its descriptors and the
 // page-context properties (CSS Paged Media 3 §7.3 and Appendix A); every
@@ -154,8 +153,7 @@ bool store_declaration(dom_bindings::css_rule_record & rule, const std::string &
 // A declaration list APPENDED to a rule's block - a sheet's `{ ... }` and a
 // `cssText` write go through the same function, so a duplicate resolves one
 // way: the later declaration wins unless the earlier one is `!important`.
-void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body,
-                             atom_table & atoms);
+void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body);
 [[nodiscard]] std::string asked_name(context & cx, std::span<value> args);
 // CSSOM 6.1.1 "remove a CSS rule": the record forgets its sheet and its
 // parent, recursively, so a rule object a page still holds answers null for

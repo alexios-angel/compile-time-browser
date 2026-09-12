@@ -959,30 +959,27 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     iterable(declaration_proto);
     const auto property_accessor = [&](script::object_object * on, const std::string & idl,
                                        const std::string & css) {
-        on->define_accessor(
-            idl,
-            value::object(cx.allocate<script::native_object>(
-                "get " + idl,
-                [this, css](context & c, std::span<value>) {
-                    const css_rule_record * rule = receiver_rule(c);
-                    if (rule == nullptr) { return c.string(""); }
-                    for (const css_declaration & declared : rule->declarations) {
-                        if (declared.name == css) { return c.string(declared.value); }
-                    }
-                    return c.string("");
-                })),
-            value::object(cx.allocate<script::native_object>(
-                "set " + idl,
-                [this, css](context & c, std::span<value> a) {
-                    css_rule_record * rule = receiver_rule(c);
-                    if (rule == nullptr) { return value::undefined(); }
-                    if (store_declaration(*rule, css, arg_string(c, a, 0), false, false)) {
-                        refresh_declaration_object(c, c.current_this());
-                        style_sheets_changed();
-                    }
-                    return value::undefined();
-                })),
-            script::attr_enumerable | script::attr_configurable);
+        on->define_accessor(idl,
+                            value::object(cx.allocate<script::native_object>(
+                                "get " + idl,
+                                [this, css](context & c, std::span<value>) {
+                                    const css_rule_record * rule = receiver_rule(c);
+                                    if (rule == nullptr) { return c.string(""); }
+                                    return c.string(
+                                        style::css::declaration_value(rule->declarations, css));
+                                })),
+                            value::object(cx.allocate<script::native_object>(
+                                "set " + idl,
+                                [this, css](context & c, std::span<value> a) {
+                                    css_rule_record * rule = receiver_rule(c);
+                                    if (rule == nullptr) { return value::undefined(); }
+                                    if (store_declaration(*rule, css, arg_string(c, a, 0), false)) {
+                                        refresh_declaration_object(c, c.current_this());
+                                        style_sheets_changed();
+                                    }
+                                    return value::undefined();
+                                })),
+                            script::attr_enumerable | script::attr_configurable);
     };
     const auto both_spellings = [&](script::object_object * on, std::string_view name) {
         const std::string css{name};
@@ -1029,7 +1026,9 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         declaration_proto, "cssText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
-            return c.string(rule == nullptr ? std::string{} : serialize_block(rule->declarations));
+            return c.string(rule == nullptr
+                                ? std::string{}
+                                : style::css::serialize_declaration_block(rule->declarations));
         },
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
@@ -1038,7 +1037,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // declaration-list parser a `style` attribute goes through - so a
             // `;` inside a string cannot end a declaration here either.
             rule->declarations.clear();
-            parse_declarations_into(*rule, arg_string(c, a, 0), *atoms_);
+            parse_declarations_into(*rule, arg_string(c, a, 0));
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
@@ -1052,20 +1051,12 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "getPropertyValue", [this](context & c, std::span<value> a) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        for (const css_declaration & declared : rule->declarations) {
-            if (declared.name == name) { return c.string(declared.value); }
-        }
-        return c.string("");
+        return c.string(style::css::declaration_value(rule->declarations, asked_name(c, a)));
     });
     method(declaration_proto, "getPropertyPriority", [this](context & c, std::span<value> a) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        for (const css_declaration & declared : rule->declarations) {
-            if (declared.name == name) { return c.string(declared.important ? "important" : ""); }
-        }
-        return c.string("");
+        return c.string(style::css::declaration_priority(rule->declarations, asked_name(c, a)));
     });
     method(declaration_proto, "setProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
@@ -1084,7 +1075,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (!priority.empty() && !ascii_iequals(priority, "important")) {
             return value::undefined();
         }
-        if (store_declaration(*rule, asked_name(c, a), text(1), false, !priority.empty())) {
+        if (store_declaration(*rule, asked_name(c, a), text(1), !priority.empty())) {
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
         }
@@ -1093,16 +1084,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "removeProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        const std::string name = asked_name(c, a);
-        std::string was;
-        for (std::size_t i = 0; i < rule->declarations.size(); ++i) {
-            if (rule->declarations[i].name != name) { continue; }
-            was = rule->declarations[i].value;
-            rule->declarations.erase(rule->declarations.begin() + static_cast<std::ptrdiff_t>(i));
-            break;
+        bool removed = false;
+        const std::string was =
+            style::css::remove_declaration(rule->declarations, asked_name(c, a), removed);
+        if (removed) {
+            refresh_declaration_object(c, c.current_this());
+            style_sheets_changed();
         }
-        refresh_declaration_object(c, c.current_this());
-        style_sheets_changed();
         return c.string(was);
     });
 }

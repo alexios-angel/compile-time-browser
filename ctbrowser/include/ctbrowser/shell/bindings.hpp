@@ -857,11 +857,10 @@ public:
     // it buys nothing here, because everything the CSSOM answers with is a
     // SERIALISATION rather than a slice of the source. See the file for what
     // "serialisation" means and why it is not the author's bytes.
-    struct css_declaration {
-        std::string name; // the CSS spelling; a custom property keeps its case
-        std::string value;
-        bool important = false;
-    };
+    // The declaration itself, and the block algorithms over it, are
+    // style/css/properties.hpp's: `el.style` keeps the same list, and the
+    // shorthand expansion both need lives once.
+    using css_declaration = style::css::declaration;
     // One rule. A grouping rule (`@media`) carries `children` and no
     // declarations; a style rule carries declarations and no children.
     struct css_rule_record {
