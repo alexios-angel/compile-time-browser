@@ -341,8 +341,13 @@ namespace detail {
         }
         if (t.type == token_type::function) {
             const std::string_view fn = function_name(ts, t);
-            if (in_list(substitution_functions, fn)) { out.substituted = true; }
-            if (!in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
+            // A DASHED FUNCTION is a custom function call, CSS Functions and
+            // Mixins 1 §2: an arbitrary substitution function like var(),
+            // performed by css/substitute.cpp against the sheet's @function
+            // rules.
+            const bool custom = fn.starts_with("--");
+            if (custom || in_list(substitution_functions, fn)) { out.substituted = true; }
+            if (!custom && !in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
                 !in_list(value_functions, fn)) {
                 out.unknown_function = true;
             }

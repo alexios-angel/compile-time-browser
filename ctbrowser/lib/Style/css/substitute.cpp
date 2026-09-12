@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -33,6 +34,7 @@ struct call {
     bool is_ident = false;
     bool is_random_item = false;
     bool is_inherit = false; // `inherit(--x, fallback)`: var()'s shape, the parent's value
+    bool is_custom = false;  // `--name(args)`: a custom function, CSS Functions and Mixins 1
     // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
     // which is read only once that function has been substituted.
     bool name_is_call = false;
@@ -64,7 +66,10 @@ struct call {
                                     is_function_named(s, s.tokens[i], "random-item");
         const bool is_inherit = !is_var && !is_attr && !is_if && !is_ident && !is_random_item &&
                                 is_function_named(s, s.tokens[i], "inherit");
-        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item && !is_inherit) {
+        const bool is_custom =
+            s.tokens[i].type == token_type::function && s.text_of(s.tokens[i]).starts_with("--");
+        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item && !is_inherit &&
+            !is_custom) {
             continue;
         }
         out = call{};
@@ -73,6 +78,7 @@ struct call {
         out.is_ident = is_ident;
         out.is_random_item = is_random_item;
         out.is_inherit = is_inherit;
+        out.is_custom = is_custom;
         out.open = i;
         int depth = 1;
         std::size_t j = i + 1;
@@ -101,7 +107,9 @@ struct call {
             }
             if (depth != 1) { continue; }
             if (out.comma_at == 0 && t.type == token_type::comma) { out.comma_at = j; }
-            if (is_attr || is_if || is_ident || is_random_item || out.comma_at != 0) { continue; }
+            if (is_attr || is_if || is_ident || is_random_item || is_custom || out.comma_at != 0) {
+                continue;
+            }
             // `var( <custom-property-name> , <declaration-value>? )`: the name is
             // the FIRST token and nothing but whitespace may follow it before
             // the comma. `var(--foo type(*))` names no property and is invalid,
@@ -121,7 +129,7 @@ struct call {
         out.close = j < s.tokens.size() ? j : s.tokens.size() - 1;
         if (out.comma_at == 0) { out.comma_at = out.close; }
         // The argument list is read after substitution.
-        if (is_attr || is_if || is_ident || is_random_item) { return true; }
+        if (is_attr || is_if || is_ident || is_random_item || is_custom) { return true; }
         if (!have_name || after_name) { return false; } // `var()` with no name is invalid
         return true;
     }
@@ -559,7 +567,8 @@ public:
         // AN attr() WITHOUT AN ELEMENT IS LEFT AS WRITTEN, and so is an if()
         // without an environment: the text survives and whoever reads it
         // decides. Everything after it is still substituted.
-        if ((found.is_attr && !*attributes_) || (found.is_if && conditions_ == nullptr)) {
+        if ((found.is_attr && !*attributes_) || (found.is_if && conditions_ == nullptr) ||
+            (found.is_custom && (conditions_ == nullptr || !conditions_->functions))) {
             std::string result = text_between(s, 0, found.close + 1);
             std::string expanded_tail;
             if (!run(text_between(s, found.close + 1, s.tokens.size()), expanded_tail, depth + 1)) {
@@ -581,6 +590,8 @@ public:
             if (!random_item(s, found, depth, expansion)) { return false; }
         } else if (found.is_inherit) {
             if (!inherited_value(s, found, depth, expansion)) { return false; }
+        } else if (found.is_custom) {
+            if (!custom_call(s, found, depth, expansion)) { return false; }
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
@@ -879,6 +890,139 @@ private:
         // is `\33 abc`, because `3abc` would read back as a dimension
         // (ident-function-computed).
         expansion = serialize_identifier(made);
+        return true;
+    }
+
+    // --- --name(), CSS Functions and Mixins 1 §2 ------------------------------
+    //
+    //   --name( <declaration-value>#? )
+    //
+    // The arguments are substituted in the CALLER's scope and bound to the
+    // parameters: a missing one takes its default, a typed one is computed
+    // like the type it names, and too many or a missing one with no default
+    // makes the call invalid. The body's locals and `result` are then
+    // substituted in the FUNCTION's scope - parameters and locals first, the
+    // calling element's custom properties after - and a typed `result` is
+    // computed like its type on the way out. What comes out replaces the
+    // call, and an untyped result is a token stream the caller reads.
+    //
+    // A `random()` met while computing a typed parameter or result is keyed on
+    // the function and the slot (`--f/result`, `--f/--x`) and on THIS
+    // INVOCATION as its element: `property-index-scoped` there is the same
+    // draw wherever the call sits and `element-scoped` differs per call
+    // (random-in-custom-function). An untyped one escapes as text and is drawn
+    // where it lands.
+    [[nodiscard]] bool custom_call(const token_stream & outer, const call & found, int depth,
+                                   std::string & expansion) {
+        const std::string_view head = outer.text_of(outer.tokens[found.open]);
+        const std::string name{head.substr(0, head.size() - 1)};
+        const custom_function * fn = conditions_->functions(name);
+        if (fn == nullptr) { return false; }
+        const std::uint64_t invocation = ++calls_;
+        std::vector<std::string> args;
+        const std::string inner = text_between(outer, found.open + 1, found.close);
+        if (!trim(inner, html_whitespace).empty()) {
+            for (const std::string_view arg : split_top_level(inner, ",")) {
+                std::string done;
+                if (!run(trim(arg, html_whitespace), done, depth + 1)) { return false; }
+                args.push_back(std::move(done));
+            }
+        }
+        if (args.size() > fn->parameters.size()) { return false; }
+        // The bases a typed slot computes against: the caller's, keyed on the
+        // function's slot and on this invocation - which is the calling
+        // element, the property the call sits in, and which call of that
+        // value this is.
+        std::string slot_name;
+        const std::uint64_t call_key =
+            (conditions_->lengths.element_key ^ (invocation * 0x9E3779B97F4A7C15ull) ^
+             (std::hash<std::string_view>{}(conditions_->property) * 0xBF58476D1CE4E5B9ull)) |
+            1;
+        const auto slot = [&](std::string_view which) {
+            slot_name = name + '/' + std::string{which};
+            length_context ctx = conditions_->lengths;
+            ctx.property = slot_name;
+            ctx.element_key = call_key;
+            return ctx;
+        };
+        std::vector<std::pair<std::string, std::string>> scope;
+        const auto assign = [&scope](std::string_view key, std::string value) {
+            for (auto & [held, text] : scope) {
+                if (held == key) {
+                    text = std::move(value);
+                    return;
+                }
+            }
+            scope.emplace_back(std::string{key}, std::move(value));
+        };
+        const auto unset = [&scope](std::string_view key) {
+            std::erase_if(scope, [key](const auto & entry) { return entry.first == key; });
+        };
+        for (std::size_t i = 0; i < fn->parameters.size(); ++i) {
+            const custom_function::parameter & param = fn->parameters[i];
+            std::string value;
+            if (i < args.size() && !trim(args[i], html_whitespace).empty()) {
+                value = args[i];
+            } else if (param.has_default) {
+                if (!run(param.initial, value, depth + 1)) { return false; }
+            } else {
+                return false;
+            }
+            if (param.syntax != "*") {
+                std::optional<std::string> typed =
+                    compute_registered(value, param.syntax, slot(param.name));
+                if (!typed) { return false; }
+                value = std::move(*typed);
+            }
+            assign(param.name, std::move(value));
+        }
+        // The function's scope: its parameters and locals, then the caller's.
+        const custom_lookup in_scope = [&scope, this](atom key) -> std::optional<std::string_view> {
+            const std::string_view want = atoms_->text(key);
+            for (const auto & [held, text] : scope) {
+                if (held == want) { return std::string_view{text}; }
+            }
+            return (*lookup_)(key);
+        };
+        std::string result;
+        bool have_result = false;
+        for (const auto & [declared, text] : fn->body) {
+            substituter body{in_scope, *atoms_, *attributes_, conditions_};
+            std::string done;
+            const bool ok = body.run(text, done, depth + 1);
+            if (declared == "result") {
+                if (!ok) { return false; }
+                result = std::move(done);
+                have_result = true;
+                continue;
+            }
+            if (!ok) {
+                unset(declared); // guaranteed-invalid: the local is undefined
+                continue;
+            }
+            // A typed parameter set again in the body is computed like the
+            // parameter (random-in-custom-function).
+            for (const custom_function::parameter & param : fn->parameters) {
+                if (param.name != declared || param.syntax == "*") { continue; }
+                std::optional<std::string> typed =
+                    compute_registered(done, param.syntax, slot(param.name));
+                if (!typed) {
+                    unset(declared);
+                    done.clear();
+                    break;
+                }
+                done = std::move(*typed);
+            }
+            if (!done.empty()) { assign(declared, std::move(done)); }
+        }
+        if (!have_result) { return false; }
+        if (fn->returns != "*") {
+            std::optional<std::string> typed =
+                compute_registered(result, fn->returns, slot("result"));
+            if (!typed) { return false; }
+            result = std::move(*typed);
+        }
+        expansion = std::move(result);
         return true;
     }
 
@@ -1394,6 +1538,7 @@ private:
     bool root_cycle_ = false;
     bool cyclic_ = false;
     std::uint32_t randoms_seen_ = 0; // the random() functions math_of has numbered
+    std::uint64_t calls_ = 0;        // the custom function calls made, for their keys
 };
 
 } // namespace
@@ -1419,6 +1564,13 @@ bool may_have_var(std::string_view value) noexcept {
         }
         if (boundary && i + 8 <= value.size() && ascii_iequals(value.substr(i, 8), "inherit(")) {
             return true;
+        }
+        // A DASHED FUNCTION - `--f(` - is a custom function call. `--diff(`
+        // above is one too; what it is not is an `if()`.
+        if (boundary && value.substr(i, 2) == "--") {
+            std::size_t j = i + 2;
+            while (j < value.size() && name_char(value[j])) { ++j; }
+            if (j > i + 2 && j < value.size() && value[j] == '(') { return true; }
         }
     }
     return false;

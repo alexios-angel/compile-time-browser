@@ -182,6 +182,12 @@ public:
         const auto it = registrations_.find(name.id);
         return it == registrations_.end() ? nullptr : &it->second;
     }
+    // A CUSTOM FUNCTION from a sheet's `@function` rule, CSS Functions and
+    // Mixins 1 §2, or null. The first rule for a name stands, like @property.
+    [[nodiscard]] const css::custom_function * function_of(atom name) const {
+        const auto it = functions_.find(name.id);
+        return it == functions_.end() ? nullptr : &it->second.function;
+    }
 
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
     // the shell because a test needs to be able to pin the viewport and
@@ -871,6 +877,9 @@ public:
         };
         conditions.registered = [this](std::string_view name) {
             return registration_of(atoms_->intern(name));
+        };
+        conditions.functions = [this](std::string_view name) {
+            return function_of(atoms_->intern(name));
         };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
@@ -1582,6 +1591,17 @@ private:
     void register_at_property_rules(std::string_view sheet_text);
     // The registered custom properties, by atom id.
     flat_map<std::uint32_t, css::property_registration> registrations_;
+    // The `@function` rules of one sheet's text, likewise; and the functions,
+    // by the atom id of their `--name`.
+    void register_at_function_rules(std::string_view sheet_text, std::uint8_t origin);
+    // ...with the origin of the sheet that declared each, because a function
+    // lives in its sheet: clear_origin drops it with the sheet's rules, where
+    // an @property registration outlives them.
+    struct sheet_function {
+        std::uint8_t origin = 0;
+        css::custom_function function;
+    };
+    flat_map<std::uint32_t, sheet_function> functions_;
 
     // Does this text carry a unit that resolves against the element's own font -
     // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?

@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/style/css/calc.hpp>
@@ -57,6 +58,31 @@ struct property_registration {
     std::string initial;
 };
 
+// A CUSTOM FUNCTION, CSS Functions and Mixins 1 §2: `@function --name(<params>)
+// [returns <type>]? { <locals>; result: <value> }`. A call `--name(args)` is an
+// arbitrary substitution function like `var()`: its arguments are substituted
+// in the caller's scope, bound to the parameters - a typed one computed like
+// the type it names, a missing one taking its default - and the body's
+// locals and `result` are substituted in the function's own scope, which
+// sees the parameters and locals first and the calling element's custom
+// properties after. A typed `result` is computed like its type on the way
+// out; an untyped one is a token stream that means whatever reads it.
+struct custom_function {
+    struct parameter {
+        std::string name;    // `--x`
+        std::string syntax;  // `<number>`, `*` when untyped
+        std::string initial; // the default, when there is one
+        bool has_default = false;
+    };
+    std::string name;
+    std::vector<parameter> parameters;
+    std::string returns = "*"; // the result's syntax, `*` when untyped
+    // The body's declarations in source order: the locals (`--x: ...`) and
+    // `result`, told apart by name. A later declaration of a name wins.
+    std::vector<std::pair<std::string, std::string>> body;
+};
+using function_lookup = std::function<const custom_function *(std::string_view name)>;
+
 // The computed value of `text` for a registration, or nothing when the text
 // does not parse against the syntax. `*` takes anything; a `<length>` or
 // another dimension is folded against `ctx` into its canonical unit; a
@@ -97,6 +123,9 @@ struct condition_environment {
     // Whether a custom property is registered: a query against one compares
     // computed values of its type, and `initial` names its initial value.
     registration_lookup registered;
+    // The custom functions a `--name()` call may reach; without one every
+    // dashed function is left as written.
+    function_lookup functions;
     // A colour in its canonical form, when the caller has a colour parser: a
     // `<color>` registration compares `green` with `rgb(0, 128, 0)` through
     // it. The style engine has none of its own - colours are paint's - and

@@ -37,6 +37,8 @@ void engine::clear_origin(std::uint8_t origin) {
     for (auto & [key, rules] : index_.by_class) { drop(rules); }
     for (auto & [key, rules] : index_.by_tag) { drop(rules); }
     drop(index_.universal);
+    // A sheet's @function rules go with its other rules; a registration does not.
+    erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
     // a resource the browser has already been asked to load, and unloading one
     // because a rule was edited is a different question from unsaying the rule.
@@ -173,6 +175,185 @@ void engine::register_at_property_rules(std::string_view sheet_text) {
     }
 }
 
+// `@function --name(--a <type>: default, --b) returns <type> { --x: ...;
+// result: ... }`, CSS Functions and Mixins 1 §2, read off the token stream
+// the way @property is. A rule whose prelude is not one dashed function
+// token, or whose parameter list does not parse, registers nothing; the
+// first registration of a name stands. Nested rules in the body (`@media`,
+// `@supports`) are skipped, not applied.
+//
+// ponytail: no conditional rules inside a body; add them when a page writes
+// one - the tokens are all here.
+void engine::register_at_function_rules(std::string_view sheet_text, std::uint8_t origin) {
+    if (sheet_text.find("@function") == std::string_view::npos) { return; }
+    const css::token_stream s = css::tokenize(sheet_text);
+    const std::size_t end = s.tokens.size() - 1;
+    const auto is_open = [](css::token_type t) {
+        return t == css::token_type::open_curly || t == css::token_type::function ||
+               t == css::token_type::open_paren || t == css::token_type::open_square;
+    };
+    const auto is_close = [](css::token_type t) {
+        return t == css::token_type::close_curly || t == css::token_type::close_paren ||
+               t == css::token_type::close_square;
+    };
+    const auto text_of = [&](std::size_t from, std::size_t to) {
+        std::string out;
+        for (std::size_t v = from; v < to; ++v) { out += s.text_of(s.tokens[v]); }
+        return out;
+    };
+    // The top-level pieces of [from, to) split at `separator` tokens, each
+    // trimmed of whitespace tokens: the parameters at commas, a parameter or
+    // a declaration at its colon.
+    const auto split_at = [&](std::size_t from, std::size_t to, css::token_type separator,
+                              bool first_only) {
+        std::vector<std::pair<std::size_t, std::size_t>> pieces;
+        std::size_t start = from;
+        int inner = 0;
+        for (std::size_t v = from; v < to; ++v) {
+            const css::token_type t = s.tokens[v].type;
+            if (is_open(t)) { ++inner; }
+            if (is_close(t)) { --inner; }
+            if (inner == 0 && t == separator && !(first_only && !pieces.empty())) {
+                pieces.emplace_back(start, v);
+                start = v + 1;
+            }
+        }
+        pieces.emplace_back(start, to);
+        for (auto & [a, b] : pieces) {
+            while (a < b && s.tokens[a].type == css::token_type::whitespace) { ++a; }
+            while (b > a && s.tokens[b - 1].type == css::token_type::whitespace) { --b; }
+        }
+        return pieces;
+    };
+    // A `<css-type>`: `<number>`, `<length>+`, or `type(<number> | auto)`,
+    // whose wrapper comes off; nothing at all is `*`.
+    const auto syntax_of = [&](std::size_t from, std::size_t to) -> std::string {
+        if (from >= to) { return "*"; }
+        if (to - from >= 1 && s.tokens[from].type == css::token_type::function &&
+            ascii_iequals(s.text_of(s.tokens[from]), "type(")) {
+            const std::size_t close = css::end_of_block(s, from);
+            return std::string{trim(text_of(from + 1, close - 1), html_whitespace)};
+        }
+        return std::string{trim(text_of(from, to), html_whitespace)};
+    };
+    int depth = 0;
+    for (std::size_t i = 0; i < end; ++i) {
+        const css::css_token & t = s.tokens[i];
+        if (is_open(t.type)) {
+            ++depth;
+            continue;
+        }
+        if (is_close(t.type)) {
+            --depth;
+            continue;
+        }
+        if (depth != 0 || t.type != css::token_type::at_keyword ||
+            !ascii_iequals(s.value_of(t), "function")) {
+            continue;
+        }
+        // The prelude: `--name(` ... `)`, then `returns <type>`?, then the block.
+        std::size_t j = i + 1;
+        while (j < end && s.tokens[j].type == css::token_type::whitespace) { ++j; }
+        if (j >= end || s.tokens[j].type != css::token_type::function ||
+            !s.text_of(s.tokens[j]).starts_with("--")) {
+            continue;
+        }
+        css::custom_function made;
+        const std::string_view head = s.text_of(s.tokens[j]);
+        made.name = std::string{head.substr(0, head.size() - 1)};
+        const std::size_t params_end = css::end_of_block(s, j); // one past the `)`
+        if (params_end > end || s.tokens[params_end - 1].type != css::token_type::close_paren) {
+            continue;
+        }
+        bool valid = true;
+        if (params_end - 1 > j + 1) {
+            for (const auto & [a, b] :
+                 split_at(j + 1, params_end - 1, css::token_type::comma, false)) {
+                css::custom_function::parameter param;
+                const auto halves = split_at(a, b, css::token_type::colon, true);
+                const auto [na, nb] = halves.front();
+                if (na >= nb || s.tokens[na].type != css::token_type::ident ||
+                    !s.text_of(s.tokens[na]).starts_with("--")) {
+                    valid = false;
+                    break;
+                }
+                param.name = std::string{s.text_of(s.tokens[na])};
+                std::size_t type_from = na + 1;
+                while (type_from < nb && s.tokens[type_from].type == css::token_type::whitespace) {
+                    ++type_from;
+                }
+                param.syntax = syntax_of(type_from, nb);
+                if (halves.size() > 1) {
+                    param.has_default = true;
+                    param.initial = text_of(halves[1].first, halves[1].second);
+                }
+                made.parameters.push_back(std::move(param));
+            }
+        }
+        if (!valid) { continue; }
+        std::size_t k = params_end;
+        while (k < end && s.tokens[k].type == css::token_type::whitespace) { ++k; }
+        if (k < end && s.tokens[k].type == css::token_type::ident &&
+            ascii_iequals(s.text_of(s.tokens[k]), "returns")) {
+            std::size_t type_from = k + 1;
+            while (type_from < end && s.tokens[type_from].type == css::token_type::whitespace) {
+                ++type_from;
+            }
+            std::size_t type_to = type_from;
+            while (type_to < end && s.tokens[type_to].type != css::token_type::open_curly) {
+                ++type_to;
+            }
+            made.returns = syntax_of(type_from, type_to);
+            k = type_to;
+        }
+        if (k >= end || s.tokens[k].type != css::token_type::open_curly) { continue; }
+        const std::size_t block_end = css::end_of_block(s, k);
+        const std::size_t last =
+            block_end > k + 1 && s.tokens[block_end - 1].type == css::token_type::close_curly
+                ? block_end - 1
+                : block_end;
+        // The body: `name : value ;` at the block's own depth. A nested rule -
+        // anything with a block of its own before its semicolon - is skipped.
+        std::size_t v = k + 1;
+        while (v < last) {
+            while (v < last && (s.tokens[v].type == css::token_type::whitespace ||
+                                s.tokens[v].type == css::token_type::semicolon)) {
+                ++v;
+            }
+            if (v >= last) { break; }
+            std::size_t value_end = v;
+            int inner = 0;
+            bool nested_block = false;
+            for (; value_end < last; ++value_end) {
+                const css::css_token & tok = s.tokens[value_end];
+                if (tok.type == css::token_type::open_curly && inner == 0) {
+                    nested_block = true;
+                    value_end = css::end_of_block(s, value_end);
+                    break;
+                }
+                if (is_open(tok.type)) { ++inner; }
+                if (is_close(tok.type)) { --inner; }
+                if (inner == 0 && tok.type == css::token_type::semicolon) { break; }
+            }
+            const std::size_t declaration_from = v;
+            v = value_end;
+            if (nested_block) { continue; }
+            const auto halves = split_at(declaration_from, value_end, css::token_type::colon, true);
+            if (halves.size() != 2) { continue; }
+            const auto [na, nb] = halves.front();
+            if (na + 1 != nb || s.tokens[na].type != css::token_type::ident) { continue; }
+            const std::string_view name = s.text_of(s.tokens[na]);
+            if (!name.starts_with("--") && !ascii_iequals(name, "result")) { continue; }
+            made.body.emplace_back(name.starts_with("--") ? std::string{name} : "result",
+                                   text_of(halves[1].first, halves[1].second));
+        }
+        i = block_end - 1;
+        const atom key = atoms_->intern(made.name);
+        if (functions_.contains(key.id)) { continue; }
+        functions_.emplace(key.id, sheet_function{origin, std::move(made)});
+    }
+}
+
 void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     const css::stylesheet sheet = css::parse_stylesheet(css, *atoms_);
     for (const css::font_face & face : sheet.font_faces) {
@@ -245,6 +426,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         if (!entry.family.empty() && !entry.source.empty()) { fonts_.push_back(std::move(entry)); }
     }
     register_at_property_rules(css);
+    register_at_function_rules(css, origin);
 
     // THE SHEET'S CONDITIONS, remapped into the engine's table. A sheet numbers its
     // own `@media` blocks from 1; the engine holds every sheet's, so index 0 stays the
