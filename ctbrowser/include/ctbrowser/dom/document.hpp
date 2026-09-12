@@ -78,6 +78,14 @@ public:
     [[nodiscard]] bool contains(node_id id) const noexcept;
     [[nodiscard]] std::expected<node_kind, dom_error> kind(node_id) const noexcept;
     [[nodiscard]] std::expected<atom, dom_error> tag(node_id) const noexcept;
+    // THE NAME OF A NODE THAT HAS ONE: an element's tag, a doctype's name, a
+    // processing instruction's target; the empty atom for the rest. Separate
+    // from `tag()` because "tag().has_value()" is how half the engine asks "is
+    // this an element", and a doctype answering it would be counted as one.
+    [[nodiscard]] atom name(node_id) const noexcept;
+    // A DocumentType's two identifiers; empty for anything else.
+    [[nodiscard]] std::string_view public_id(node_id) const noexcept;
+    [[nodiscard]] std::string_view system_id(node_id) const noexcept;
     // Which vocabulary the tag belongs to. An SVG <title> and an HTML <title>
     // intern to the SAME atom, so this is the only way to tell a tooltip from
     // the window title.
@@ -115,6 +123,7 @@ public:
                                         std::string_view local) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
+    [[nodiscard]] node_id document_node() const noexcept;
     [[nodiscard]] std::uint64_t version() const noexcept;
 
     // self first, then ancestors
@@ -134,7 +143,23 @@ public:
     document & operator=(const document &) = delete;
 
     [[nodiscard]] read_txn read() const { return read_txn{*this}; }
+    // THE DOCUMENT ELEMENT - `<html>` on a parsed page - and not the Document
+    // node above it: every walk in the style, layout and paint engines starts
+    // here, and every one of them expects an element. On a document that has
+    // no element yet (`new Document()`) it is the Document node itself.
     [[nodiscard]] node_id root() const noexcept { return root_; }
+    // THE DOCUMENT NODE, whose children are what `document.childNodes` is: the
+    // doctype, the document element, and any comment or processing instruction
+    // beside them, in document order. THE DOCUMENT ELEMENT IS IN THAT LIST BUT
+    // ITS PARENT IS EMPTY - deliberately. `parent()` is the walk every engine
+    // takes to the top of the tree, and each of them stops at "no parent" and
+    // reads the node it stopped on as the root element; a Document node at the
+    // top would be one more node for every such walk to learn about, for no
+    // pixel drawn differently. The other children DO carry the Document node
+    // as their parent: nothing lays them out, and a doctype has to know it is
+    // connected. So "is this a child of the Document" is asked of the child
+    // LIST, never of a parent pointer - see is_document_child.
+    [[nodiscard]] node_id document_node() const noexcept { return document_node_; }
     [[nodiscard]] atom_table & atoms() const noexcept { return *atoms_; }
     [[nodiscard]] std::uint64_t version() const noexcept {
         return version_.load(std::memory_order_acquire);
@@ -148,9 +173,26 @@ public:
     // A DocumentFragment. Detached like everything else here, and it stays
     // detached: inserting one moves its children, never the fragment.
     [[nodiscard]] node_id create_fragment();
+    // A DocumentType. The name is an atom because `nodeName` compares it and
+    // the HTML parser lowercases it; the two identifiers ride in the node's
+    // text block, read back through read_txn::public_id and system_id.
+    [[nodiscard]] node_id create_document_type(atom name, std::string_view public_id,
+                                               std::string_view system_id);
+    // A ProcessingInstruction: the target is the name, the data is the text.
+    [[nodiscard]] node_id create_processing_instruction(atom target, std::string_view data);
+    // A CDATASection: a text node that remembers it was one.
+    [[nodiscard]] node_id create_cdata_section(std::string_view value);
 
     // --- structural writes (document-wide mutex) ---------------------------
     std::expected<void, dom_error> append_child(node_id parent, node_id child);
+    // MAKE `id` THE DOCUMENT ELEMENT. `root()` becomes it, and the Document
+    // node's child list takes it in the previous element's slot, or - when
+    // there was none - ahead of `before`, or at the end. It is the one way an
+    // element becomes a child of the Document: `append_child(document_node(),
+    // el)` would give it a parent pointer, which the engine's walks must not
+    // see (document_node says why). `root()` stays the Document node itself
+    // while there is no element, which is what `new Document()` is.
+    void set_document_element(node_id id, node_id before = node_id{});
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
 
@@ -208,6 +250,16 @@ public:
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
         [[nodiscard]] node_id create_fragment() { return doc_->create_fragment(); }
+        [[nodiscard]] node_id create_document_type(atom name, std::string_view public_id,
+                                                   std::string_view system_id) {
+            return doc_->create_document_type(name, public_id, system_id);
+        }
+        [[nodiscard]] node_id create_processing_instruction(atom target, std::string_view data) {
+            return doc_->create_processing_instruction(target, data);
+        }
+        [[nodiscard]] node_id create_cdata_section(std::string_view v) {
+            return doc_->create_cdata_section(v);
+        }
         void append(node_id parent, node_id child);
         // Appends, without looking for a duplicate: a start tag's attribute list
         // has already been deduplicated by the tokenizer and this runs once per
@@ -229,18 +281,21 @@ public:
         // table, not after it, and "after" puts it below the whole table on
         // screen.
         void insert_before(node_id parent, node_id child, node_id before);
-        void set_root(node_id id) noexcept { doc_->root_ = id; }
+        // Make `id` the document element. It also takes the previous one's
+        // place in the Document node's child list - see document_node - so a
+        // doctype inserted ahead of it stays ahead of it.
+        void set_root(node_id id) { doc_->set_document_element(id, node_id{}); }
 
     private:
         document * doc_;
     };
     [[nodiscard]] builder build() noexcept { return builder{*this}; }
 
-    // QUIRKS MODE, THE ONE BIT THE DOCTYPE TOKEN LEAVES BEHIND. Nothing here
+    // QUIRKS MODE, THE ONE BIT OF THE DOCTYPE THAT RENDERS. Nothing here
     // renders differently for the doctype's name or its identifiers - the tree
-    // builder drops the token and says so - but `<!DOCTYPE html>` is what puts
-    // the document in STANDARDS mode, and `document.compatMode` is the answer
-    // to that and nothing else.
+    // builder keeps them on a DocumentType node for `document.doctype` and that
+    // is all - but `<!DOCTYPE html>` is what puts the document in STANDARDS
+    // mode, and `document.compatMode` is the answer to that and nothing else.
     //
     // TRUE by default, because a document with no doctype at all never reaches
     // the tree builder's doctype case and is in quirks mode by definition.
@@ -320,7 +375,17 @@ private:
     mutable std::mutex templates_;
     std::vector<std::pair<node_id, node_id>> template_contents_;
     node_id root_{};
+    node_id document_node_{};
     std::atomic<std::uint64_t> version_{1};
 };
+
+// IS THIS NODE A CHILD OF THE DOCUMENT? Asked of the child list rather than a
+// parent pointer, because the document element sits in the list with no
+// parent - see document::document_node for why.
+[[nodiscard]] inline bool is_document_child(const read_txn & txn, node_id id) noexcept {
+    if (!id) { return false; }
+    if (txn.parent(id) == txn.document_node()) { return true; }
+    return id == txn.root() && txn.kind(id).value_or(node_kind::document) == node_kind::element;
+}
 
 } // namespace ctbrowser

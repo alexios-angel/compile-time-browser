@@ -46,8 +46,35 @@ enum class node_kind : std::uint8_t {
     // does not. It never reaches style or layout - insertion flattens it - so
     // nothing downstream has to learn about it; what it buys is the one idiom
     // that makes building a list cheap, `frag.append(a, b, c); ul.append(frag)`.
-    document_fragment
+    document_fragment,
+    // THE THREE KINDS A PAGE CAN HOLD BUT NEVER SEES DRAWN. None of them is
+    // laid out, styled, matched by a selector or counted as an element, so
+    // every switch downstream treats them the way it treats a comment - and
+    // `unittests/unit/dom_special_nodes` is what asserts they got there.
+    //
+    // A DocumentType: `tag` is its name and `text` its public and system
+    // identifiers - see document::create_document_type. It lives under the
+    // Document node, ahead of the document element.
+    document_type,
+    // A ProcessingInstruction, `<?target data?>`: `tag` is the target and
+    // `text` the data. XML syntax that HTML merely tolerates, so the HTML
+    // tokenizer still makes a bogus comment of one and only the XML front end
+    // and `createProcessingInstruction` produce it.
+    processing_instruction,
+    // A CDATASection, `<![CDATA[ data ]]>`: a Text node by inheritance, so
+    // everything that reads text through `text()` reads it too - a `<script>`
+    // written the XML way still runs - and only `nodeType` and the serialiser
+    // tell the two apart. XML documents only; `createCDATASection` on an HTML
+    // document is a NotSupportedError.
+    cdata_section
 };
+
+// Is this kind a Text node in the DOM's sense - Text or its one subclass? The
+// question every "kind == text" decision is really asking, spelled once so a
+// CDATA section cannot be forgotten by half of them.
+[[nodiscard]] constexpr bool is_text_kind(node_kind k) noexcept {
+    return k == node_kind::text || k == node_kind::cdata_section;
+}
 
 // Which language an element is written in. HTML and SVG share a document but
 // not a vocabulary: an SVG <title> is a tooltip and an HTML one is the window
