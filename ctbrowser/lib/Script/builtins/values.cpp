@@ -381,6 +381,7 @@ void install_math(context & cx, std::uint64_t seed) {
         const std::uint64_t bits = x * 0x2545F4914F6CDD1DULL;
         return value::number(static_cast<double>(bits >> 11) / 9007199254740992.0);
     });
+    math->define("@@toStringTag", cx.string("Math"), attr_configurable); // 21.3.1.9
     cx.define_global("Math", value::object(math));
 }
 

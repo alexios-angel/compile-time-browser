@@ -138,6 +138,12 @@ namespace {
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });
+        // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
+        // own order), then strings, then SYMBOLS, each in creation order.
+        if (which == key_filter::all) {
+            std::stable_partition(out.begin(), out.end(),
+                                  [](const std::string & k) { return !k.starts_with("@@"); });
+        }
         return out;
     }
     // Nothing but an object_object can hold a symbol key: the other three

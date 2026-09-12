@@ -871,6 +871,12 @@ int main() {
               "=== s].join();})()",
               "2,symbol,true,true");
     js_expect("Object.getOwnPropertySymbols(Array.prototype)[0] === Symbol.iterator", "true");
+    // 10.1.11.1: integers, then strings, then symbols, each in creation order.
+    js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;o.b=1;o[2]=1;o.a=1;"
+              "return Reflect.ownKeys(o).map(String).join();})()",
+              "2,b,a,Symbol(k)");
+    js_expect("Object.prototype.toString.call(Math) + Object.prototype.toString.call(JSON)",
+              "[object Math][object JSON]");
     js_expect("Object.getOwnPropertyNames(Array.prototype).indexOf('@@iterator')", "-1");
     // 10.5.11: a proxy's ownKeys trap, its list checked and the target's
     // non-configurable keys required.

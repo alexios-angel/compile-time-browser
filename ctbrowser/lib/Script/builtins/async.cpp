@@ -93,6 +93,7 @@ void install_json(context & cx) {
             v.is_object() &&
             static_cast<object_object *>(v.as_heap())->find(detail::raw_json_slot) != nullptr);
     });
+    json->define("@@toStringTag", cx.string("JSON"), attr_configurable); // 25.5.4
     cx.define_global("JSON", value::object(json));
 }
 
