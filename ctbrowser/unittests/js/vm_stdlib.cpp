@@ -25,13 +25,23 @@ namespace {
 // matcher that silently ignores an assertion is worse than one that says no.
 void test_regex() {
     // Invalid FLAGS are an early error - a SyntaxError of the source,
-    // reported as a parse error - not a throw when the line runs. The
-    // pattern is not checked at compile time (see compile_regex_literal).
+    // reported as a parse error - not a throw when the line runs. So is a
+    // body that is provably not a Pattern by inspection - an unclosed group,
+    // nothing to repeat - while anything the scan does not judge is left to
+    // the line (compile/early_errors/regexp.cpp says what it judges).
     CHECK(!compiler::compile("var r = /a/gg;").ok);
     CHECK(compiler::compile("var r = /a/gg;").error.starts_with("parse error:"));
     CHECK(!compiler::compile("var r = /a/q;").ok);
     CHECK(compiler::compile("function f() { return /a(b+)c/gi; }").ok);
-    CHECK(compiler::compile("var r = /(/;").ok);
+    CHECK(!compiler::compile("var r = /(/;").ok);
+    CHECK(!compiler::compile("var r = /?/;").ok);
+    CHECK(!compiler::compile("var r = /a{2,1}/;").ok);
+    CHECK(!compiler::compile("var r = /(?<a>x)(?<a>y)/;").ok);
+    CHECK(compiler::compile("var r = /(?<a>x)|(?<a>y)/;").ok);
+    CHECK(compiler::compile("var r = /a{1/;").ok); // Annex B: a literal brace
+    CHECK(!compiler::compile("var r = /a{1/u;").ok);
+    CHECK(compiler::compile("var r = /[/]/;").ok);
+    CHECK(compiler::compile("var r = / /;").ok);
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
     // .index is the most-used feature of all, at 143 sites in p5.js

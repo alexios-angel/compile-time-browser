@@ -145,6 +145,11 @@ void checker::check_accessor_arity(std::int32_t fn, bool setter) {
     for (std::size_t i = at_word + 7; i < text.size(); ++i) {
         const char c = text[i];
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
+        // A `(` that IS the heritage's own first token - an arrow's parameter
+        // list, `extends () => {}` - is not a parenthesis around it. A function
+        // or arrow node carries its span; nothing else that reaches here does.
+        const vp::node & heritage = at(n.a);
+        if (c == '(' && heritage.begin != 0 && heritage.begin == n.begin + i) { return false; }
         return c == '(';
     }
     return true;
