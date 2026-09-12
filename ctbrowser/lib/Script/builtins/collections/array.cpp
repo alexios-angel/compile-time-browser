@@ -108,7 +108,7 @@ void install_array(context & cx) {
             helper = c.run_nested(c.own_program(std::move(compiled)));
             c.define_global("__ctbrowser_from_async", helper);
         }
-        return c.call(helper, a, value::undefined());
+        return c.call(helper, a, c.current_this()); // `this` may be a constructor
     });
     static_method("from", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
