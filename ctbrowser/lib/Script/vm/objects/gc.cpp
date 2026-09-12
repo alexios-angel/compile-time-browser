@@ -136,6 +136,13 @@ void context::trace_object(heap_object * o) {
         edge(saved->receiver);
         edge(saved->promise);
         push_mark(saved->closure);
+        // An async generator's queued requests - each a promise a caller
+        // holds and the value it sent - and the generator object itself.
+        edge(saved->self);
+        for (const coroutine_object::async_request & waiting : saved->queue) {
+            edge(waiting.sent);
+            edge(waiting.promise);
+        }
         break;
     }
     default: break; // strings and symbols own no values

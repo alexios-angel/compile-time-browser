@@ -848,6 +848,7 @@ public:
         typed_array,
         promise,
         generator,
+        async_generator,
         count_
     };
 
@@ -1406,6 +1407,14 @@ public:
     // The register window is COPIED rather than referenced. It has to be: the
     // stack is truncated the moment the frame leaves, and whatever runs next
     // reuses those slots.
+    // What `.next(v)` / `.throw(e)` / `.return(v)` do to a generator. Declared
+    // ahead of coroutine_object because an async generator queues them.
+    enum class resume_mode {
+        next,
+        thrown,
+        returned
+    };
+
     struct coroutine_object final : heap_object {
         const function_proto * proto = nullptr;
         std::size_t ip = 0;
@@ -1437,6 +1446,25 @@ public:
         // Set while the body is running, so a `.next()` from inside itself is
         // refused rather than corrupting the register stack.
         bool running = false;
+        // --- async generators ------------------------------------------
+        // `async function*`: the SAME frame again, resumed by `.next()` and
+        // suspended by BOTH `yield` and `await`. Each `.next(v)` hands back a
+        // promise of the `{value, done}` record and joins a queue
+        // (AsyncGeneratorEnqueue, 27.6.3.5); requests run one at a time, the
+        // next one starting when the body yields or finishes. `awaiting` is
+        // the body parked on an `await` between two requests - `promise` is
+        // then the request that the eventual yield settles - and `self` is
+        // the generator object, which the drain needs and the frame does not
+        // carry.
+        bool async_gen = false;
+        bool awaiting = false;
+        value self;
+        struct async_request {
+            resume_mode how;
+            value sent;
+            value promise;
+        };
+        std::vector<async_request> queue;
         coroutine_object() : heap_object(heap_kind::coroutine) {}
     };
 
@@ -1446,13 +1474,20 @@ public:
 
     // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
     // yields or finishes, and answers the `{value, done}` record the iterator
-    // protocol is made of.
-    enum class resume_mode {
-        next,
-        thrown,
-        returned
-    };
+    // protocol is made of. For an ASYNC generator the body may also park on an
+    // `await`, in which case the answer is undefined and `awaiting` is set:
+    // resume() finishes that request when the awaited promise settles.
     [[nodiscard]] value generator_resume(value generator, value sent, resume_mode how);
+    // The async generator's `.next(v)` / `.throw(e)` / `.return(v)`: a promise
+    // of the record, queued behind whatever the body is doing.
+    [[nodiscard]] value async_generator_request(value generator, value sent, resume_mode how);
+    // Run queued requests while the body is neither running nor awaiting.
+    void async_generator_drain(coroutine_object * saved);
+    // What one request's outcome does to its promise: a rejected settled
+    // promise rejects it (the body threw - see the compiler's async fence),
+    // anything else fulfils it with `{value, done}`. `raw_return` says the
+    // outcome is the body's return value, still to be wrapped in a done record.
+    void settle_async_generator(coroutine_object * saved, value outcome, bool raw_return);
     // WHERE THE PARENT'S HALF OF AN UPVALUE COMES FROM, and the two tiers
     // genuinely differ - which is why this is a parameter and not an
     // assumption.

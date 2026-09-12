@@ -35,6 +35,10 @@ namespace ctbrowser::script {
 // What a regex LITERAL compiles to. A reserved name rather than `RegExp` so a
 // page that shadows the constructor cannot change what its own literals mean.
 inline constexpr std::string_view regexp_factory_name = "__ctbrowser_regexp";
+// `Promise.reject`, under a name a page cannot shadow: the compiler's async
+// fence returns `__ctbrowser_reject(e)` for a throw an async body did not
+// catch. See compile_function_body.
+inline constexpr std::string_view promise_reject_name = "__ctbrowser_reject";
 
 // Install the standard library into a context.
 //

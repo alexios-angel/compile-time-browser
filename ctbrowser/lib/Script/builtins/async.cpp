@@ -278,6 +278,11 @@ void install_promise(context & cx) {
     cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
         detail::settle(c, promise, with, rejected);
     });
+    // `Promise.reject` under the compiler's name for it: what an async body's
+    // fence returns for a throw it did not catch. See promise_reject_name.
+    cx.define_native(std::string{promise_reject_name}, [](context & c, std::span<value> a) {
+        return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
+    });
     object_object * promise_ctor = new_table(cx);
     method(cx, promise_ctor, "resolve", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);

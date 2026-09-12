@@ -206,6 +206,27 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     fn().is_async = n.c > 0 && (n.c & 1) != 0;
     fn().is_generator = n.c > 0 && (n.c & 2) != 0;
     proto().is_generator = fn().is_generator;
+    proto().is_async = fn().is_async;
+
+    // THE ASYNC FENCE. An async function never throws at its caller: a throw
+    // its body does not catch REJECTS the promise it returned (27.7.5.2,
+    // AsyncBlockStart step 3.f). Before this, `async function f() { throw e }`
+    // threw e synchronously out of `f()`, and after a real suspension the
+    // throw reached nothing at all and was an engine fault. One handler round
+    // the whole body, landing on a return of `Promise.reject(e)` - through the
+    // builtin's hidden global rather than a new opcode, so the compiled tier
+    // sees a call it already knows how to make. An async GENERATOR is fenced
+    // the same way; settle_async_generator reads the rejection back out of
+    // the record. `handler_depth_` counts it so a loop exit inside the body
+    // pops only what it opened.
+    std::uint16_t fence_reg = 0;
+    std::size_t fence_guard = 0;
+    const bool fenced = fn().is_async;
+    if (fenced) {
+        fence_reg = alloc_reg();
+        fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
+        ++handler_depth_;
+    }
 
     const std::int32_t body = n.a;
     if (body >= 0 && at(body).kind == vp::nk::block) {
@@ -228,6 +249,17 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::ret, r});
     } else {
         emit_implicit_return();
+    }
+    if (fenced) {
+        --handler_depth_;
+        patch_here(fence_guard);
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{promise_reject_name})));
+        const std::uint16_t reason = alloc_reg();
+        proto().emit(instruction{op::move, reason, fence_reg});
+        proto().emit(instruction{op::call, callee, 1});
+        proto().emit(instruction{op::ret, callee});
     }
     finish_frame(index, params.size());
     pop_scope();

@@ -814,7 +814,19 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                         vm_frame->async_promise = pending_promise_factory_(*this);
                     }
                     const value promise = vm_frame->async_promise;
-                    auto * saved = allocate<coroutine_object>();
+                    // AN ASYNC GENERATOR'S FRAME IS ALREADY A COROUTINE - the one
+                    // its `.next()` resumes - so the await parks THAT object rather
+                    // than making a second one the generator would never see.
+                    // `awaiting` keeps the request queue from resuming it until
+                    // the awaited promise does.
+                    coroutine_object * saved = vm_frame->generator;
+                    if (saved != nullptr) {
+                        saved->awaiting = true;
+                        saved->running = false;
+                        saved->handlers.clear();
+                    } else {
+                        saved = allocate<coroutine_object>();
+                    }
                     saved->proto = vm_frame->proto;
                     saved->ip = vm_frame->ip;
                     saved->await_reg = in.a;

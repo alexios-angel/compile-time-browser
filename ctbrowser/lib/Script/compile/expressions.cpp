@@ -133,6 +133,10 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         } else {
             proto().emit(instruction{op::load_undef, sent});
         }
+        // AN ASYNC GENERATOR AWAITS WHAT IT YIELDS (27.6.3.8 AsyncGeneratorYield
+        // step 5): `yield promise` hands out the promise's value, and a
+        // rejected one throws at the yield.
+        if (fn().is_async) { proto().emit(instruction{op::await_value, sent, sent}); }
         proto().emit(instruction{op::yield_value, dst, sent});
         break;
     }

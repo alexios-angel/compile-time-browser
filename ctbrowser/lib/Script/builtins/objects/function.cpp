@@ -255,6 +255,23 @@ void install_generator(context & cx) {
     detail::method(cx, table, "@@iterator", 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
     cx.set_prototype(context::proto_kind::generator, table);
+
+    // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
+    // PROMISE of the record and queued behind the body - see
+    // context::async_generator_request. An async generator is its own async
+    // iterator.
+    object_object * async_table = detail::new_table(cx);
+    const auto async_driver = [](context::resume_mode how) {
+        return [how](context & c, std::span<value> a) {
+            return c.async_generator_request(c.current_this(), arg_at(a, 0), how);
+        };
+    };
+    detail::method(cx, async_table, "next", 1, async_driver(context::resume_mode::next));
+    detail::method(cx, async_table, "throw", 1, async_driver(context::resume_mode::thrown));
+    detail::method(cx, async_table, "return", 1, async_driver(context::resume_mode::returned));
+    detail::method(cx, async_table, "@@asyncIterator", 0,
+                   [](context & c, std::span<value>) { return c.current_this(); });
+    cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 
 } // namespace ctbrowser::script::builtins_detail
