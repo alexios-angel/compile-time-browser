@@ -16,7 +16,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
     // primitives, fresh leaf objects and fresh child Maps. Child Maps cannot
-    // retain Maps; no object can escape to a caller or execute an accessor.
+    // retain Maps. Mixed child results may return owning values, without
+    // primitive or field authority; no accessor can execute.
     // The native identity, field and Map analyses still independently prove
     // their carriers.
     auto & body = function.getBody().front();
@@ -863,7 +864,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
             } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (depth != 0 || returned || &operation != &block.back() ||
-                    (frame && !frameExited) || !primitives.contains(ret.getValue())) {
+                    (frame && !frameExited) ||
+                    (!primitives.contains(ret.getValue()) &&
+                     !leafValues.contains(ret.getValue()))) {
                     return false;
                 }
                 returned = ret;

@@ -214,6 +214,44 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
     };
+    const auto checkLeafContents = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query,
+                                       const char * message) {
+        const auto contract = requested(module);
+        HostContractAnalysis host(module, contract);
+        check(host.proved() && query.proved() && !host.exhausted() && !query.exhausted() &&
+                  query.roots().size() == 1 && host.callables().size() == 4 &&
+                  scalarReadsEmpty(module, host) && scalarReadsEmpty(module, query),
+              message);
+        if (!host.proved() || !query.proved() || query.roots().empty()) { return; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(table.methods.size() == 2 && table.calls.size() == 4 && capture.childMapContents &&
+                  capture.childLeafContents && !capture.childMaps.empty() &&
+                  !capture.returnedChildMaps.empty() && capture.childEntries.empty() &&
+                  !capture.childScalarContents.known,
+              "complete child ownership grants neither a scalar category nor required membership");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap && edge.capturedMap->childMapContents &&
+                      edge.capturedMap->childLeafContents &&
+                      !edge.capturedMap->childScalarContents.known &&
+                      edge.capturedMap->childEntries.empty() &&
+                      edge.capturedMap->childMaps == capture.childMaps &&
+                      edge.capturedMap->returnedChildMaps == capture.returnedChildMaps &&
+                      edge.capturedMap->leafObjects == capture.leafObjects &&
+                      edge.capturedMap->reads == capture.reads &&
+                      edge.capturedMap->calls == capture.calls,
+                  "every current call retains the same complete leaf ownership and effects");
+        }
+        check(hostContractFingerprint(module) == contract.moduleSha256,
+              "leaf-only ownership preserves all historical source operations");
+    };
+    const auto leafOwner = [&](const std::string & program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared leaf-only child owner fixture parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        checkLeafContents(*module, query, message);
+    };
     const auto branchOrigins =
         replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
                  R"MLIR(
@@ -272,7 +310,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                         "%childReader = ctjs.get_property %saved[%readKey]");
     unseeded = replaced(unseeded, "%loaded = ctjs.call %childReader(%childWritten, %entryKey)",
                         "%loaded = ctjs.call %childReader(%saved, %entryKey)");
-    refuse(unseeded, "child kind and outer membership cannot grant a prior child's contents");
+    leafOwner(unseeded, "an unseeded child stays owned without scalar or member authority");
     auto priorSeed =
         replaced(unseeded, "      %written = ctjs.call %setter(%state, %entryKey, %value)",
                  R"MLIR(
@@ -355,8 +393,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                   "forged reports never replace independent child-entry ownership proof");
         }
     }
-    refuse(replaced(cross, seed, ""),
-           "a separate getter cannot infer membership from an unseeded publication");
+    leafOwner(replaced(cross, seed, ""),
+              "a separate getter owns an unseeded child without proving its contents");
     auto lateSeed = replaced(cross, seed, "");
     lateSeed = replaced(lateSeed, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
                         "    %written = ctjs.call %setter(%state, %entryKey, %value)\n" + seed);
@@ -368,10 +406,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                              (action == "delete" ? ", %seedKey)\n" : ")\n");
         nullableLegacy.push_back(replaced(cross, seed, seed + erasure));
     }
-    refuse(replaced(cross, seed,
-                    seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
-                           "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
-           "mixed child payload categories revoke the getter's Number authority");
+    leafOwner(replaced(cross, seed,
+                       seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
+                              "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
+              "mixed child payloads retain ownership while revoking the getter's Number authority");
     const auto poison = [&](const std::string & payload) {
         return replaced(conditional, "    %size = ctjs.get_property %state[%key]",
                         R"MLIR(
@@ -406,7 +444,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %different = ctjs.constant #ctjs.boolean<true>
     %otherMutation = ctjs.call %otherSetter(%other, %entryKey, %different)
     %childReader = ctjs.get_property)MLIR");
-    refuse(possibleAlias, "unknown returned children can alias and revoke a saved Number payload");
+    leafOwner(possibleAlias,
+              "possibly aliased children stay owned without a saved Number payload guarantee");
     auto aliasClear =
         replaced(possibleAlias, "    %otherSetter = ctjs.get_property %other[%setKey]",
                  "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
@@ -459,7 +498,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     }
     unsigned nullableRows = 0;
     const auto nullable = [&](const std::string & program, bool expected, const char * label,
-                              bool reverse = false, bool exhaustive = false, int scalarRead = -1) {
+                              bool reverse = false, bool exhaustive = false, int scalarRead = -1,
+                              bool leafOnly = false) {
         ++nullableRows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "source/prepared nullable child fixture parses");
@@ -498,6 +538,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         }
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "nullable child proof preserves every source operation");
+        if (leafOnly) {
+            checkLeafContents(*module, query, label);
+            return;
+        }
         if (!expected || !query.proved() || query.roots().empty()) { return; }
         const auto & table = *query.roots().front().methodTable;
         const auto & capture = *table.capturedMap;
@@ -588,8 +632,9 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             "the original seeded, late and deleted child sources retain only nullable contents",
             false, false, 0);
     }
-    nullable(withoutScalarRead(unseeded), false,
-             "no scalar writes means no prior child scalar category authority");
+    nullable(withoutScalarRead(unseeded), true,
+             "no scalar writes leaves child ownership without a scalar category", false, false, 0,
+             true);
     const auto removal = replaced(prior, "    %childSetter = ctjs.get_property", R"MLIR(
     %deleteKey = ctjs.constant #ctjs.string<"delete">
     %deleter = ctjs.get_property %state[%deleteKey]
@@ -624,10 +669,11 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                                        replaced(sibling, "BAD_VALUE", payload) +
                                            "    %size = ctjs.get_property %state[%key]");
         for (bool reverse : {false, true}) {
-            nullable(poisoned, false,
-                     "an incompatible or opaque sibling write defeats nullable authority in "
-                     "either complete family order",
-                     reverse);
+            const bool closed = llvm::StringRef(payload) != "ctjs.load_global \"external\"";
+            nullable(poisoned, closed,
+                     closed ? "mixed sibling writes retain only leaf ownership in either order"
+                            : "an opaque sibling write defeats complete child ownership",
+                     reverse, false, -1, closed);
         }
     }
     nullable(prior, true, "the homogeneous proof is independent of sibling order", true);

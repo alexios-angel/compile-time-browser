@@ -64,7 +64,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                                   "      %loaded = ctjs.get_property %saved[%field]\n"
                                   "      %matches = ctjs.compare strict_eq %loaded, %expected\n";
     unsigned rows = 0;
-    const auto variant = [&](const std::string & text, bool expected, const char * label) {
+    const auto variant = [&](const std::string & text, bool expected, const char * label,
+                             unsigned expectedCalls = 4) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "source/prepared mixed child readback fixture parses");
@@ -90,12 +91,13 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             auto parameter = setter.getBody().front().getArgument(prepared ? 5 : 4);
             const auto family = llvm::find_if(
                 capture.parameters, [&](const auto & item) { return item.function == setter; });
-            bool complete =
-                owner.roots().size() == 1 && table.methods.size() == 2 && table.calls.size() == 4 &&
-                capture.childMapContents && capture.childLeafContents &&
-                capture.childScalarContents == Alternatives{} && capture.childEntries.empty() &&
-                capture.childMaps.size() == 1 && capture.leafObjects.empty() &&
-                capture.leafWrites.size() == 1 && family != capture.parameters.end();
+            bool complete = owner.roots().size() == 1 && table.methods.size() == 2 &&
+                            table.calls.size() == expectedCalls && capture.childMapContents &&
+                            capture.childLeafContents &&
+                            capture.childScalarContents == Alternatives{} &&
+                            capture.childEntries.empty() && capture.childMaps.size() == 1 &&
+                            capture.leafObjects.empty() && capture.leafWrites.size() == 1 &&
+                            family != capture.parameters.end();
             if (family != capture.parameters.end()) {
                 complete &= family->objectKeys == std::vector{parameter} &&
                             family->alternatives.size() == 2 &&
@@ -180,8 +182,116 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                      "ctjs.set_property %payload[%fieldKey], %payload"),
             false, "a caller object cycle invalidates the complete child family");
     variant(replaced(fixture, "scf.yield %matches : !ctjs.value", "scf.yield %saved : !ctjs.value"),
-            false, "child contents alone do not authorize a mixed owning method result");
+            true, "a checked child leaf may return without primitive or output-carrier authority");
     check(rows == 16, "all mixed child category, receiver and unsafe-use controls ran");
+
+    const auto returned =
+        replaced(fixture, "scf.yield %matches : !ctjs.value", "scf.yield %saved : !ctjs.value");
+    const std::string laterGet =
+        "    %againGetter = ctjs.get_property %owned[%key]\n" +
+        std::string(prepared ? "    %againEnv = ctjs.load_upvalue %againGetter[0]\n"
+                               "    %againAnswer = ctjs.call_direct @get$3(%owned, %u, "
+                               "%againGetter, %againEnv)\n"
+                             : "    %againAnswer = ctjs.call %againGetter(%owned)\n");
+    const auto returnedIdentity =
+        replaced(returned, "    ctjs.store_global \"trace\", %answer\n",
+                 "    %entrySame = ctjs.compare strict_eq %answer, %fieldValue\n"
+                 "    %entryNot = ctjs.unary not %answer\n"
+                 "    %entryFlag = ctjs.truthy %answer\n" +
+                     laterGet + "    ctjs.store_global \"trace\", %entrySame\n");
+    variant(returnedIdentity, true,
+            "a returned child owner permits non-coercing entry observations", 5);
+    variant(
+        replaced(returnedIdentity, "strict_eq %answer, %fieldValue", "strict_eq %answer, %payload"),
+        true, "returned child identity can be compared with the original caller object", 5);
+    variant(replaced(replaced(returnedIdentity, ", %actual, %payload)", ", %actual, %fieldValue)"),
+                     ", %future, %fieldValue)", ", %future, %payload)"),
+            true, "Number-first writes preserve the same owning returned-child proof", 5);
+    variant(replaced(returnedIdentity, "    %entrySame =",
+                     "    %uncheckedField = ctjs.get_property %answer[%fieldKey]\n"
+                     "    %entrySame ="),
+            false, "a returned child owner supplies no definite object or own-field receiver");
+    variant(replaced(fixture, "ctjs.return %size\n  }\n}\n", "ctjs.return %input\n  }\n}\n"), false,
+            "a direct caller-formal return still fails its complete use census");
+    const std::string returnArgument =
+        "    %returnedPutter = ctjs.get_property %owned[%putKey]\n" +
+        std::string(prepared ? "    %returnedEnv = ctjs.load_upvalue %returnedPutter[0]\n"
+                               "    %returnedCall = ctjs.call_direct @put$4(%owned, %u, "
+                               "%returnedPutter, %returnedEnv, %actual, %answer)\n"
+                             : "    %returnedCall = ctjs.call %returnedPutter(%owned, %actual, "
+                               "%answer)\n");
+    variant(replaced(returnedIdentity, laterGet, returnArgument + laterGet), false,
+            "an owning result cannot provide its own family parameter or child-write proof");
+    check(rows == 22, "all returned-child identity and independent refusal controls ran");
+
+    {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(returnedIdentity, &context);
+        check(static_cast<bool>(module), "returned-child live source fixture parses");
+        if (!module) { return; }
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.object_origin",
+                               mlir::StringAttr::get(&context, "payload"));
+        });
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() && owner.proved(),
+              "owning return source proof is independent of forged reports");
+        if (!host.proved() || !owner.proved()) { return; }
+        const unsigned completion = owner.steps();
+        check(completion > 2 && completion < 100000, "owning return proof has a bounded census");
+        if (completion <= 2 || completion >= 100000) { return; }
+        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "incomplete owning return work publishes no partial ownership");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion,
+              "the exact owning return budget preserves its complete family");
+        auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
+        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        std::vector<mlir::Value> calls;
+        for (const auto & edge : host.callables()) {
+            if (edge.function == getter) { calls.push_back(edge.call->getResult(0)); }
+        }
+        ctjs::CompareOp compare;
+        ctjs::UnaryOp negate;
+        ctjs::TruthyOp truthy;
+        entry.walk([&](ctjs::CompareOp operation) { compare = operation; });
+        entry.walk([&](ctjs::UnaryOp operation) { negate = operation; });
+        entry.walk([&](ctjs::TruthyOp operation) { truthy = operation; });
+        check(calls.size() == 2 && compare && negate && truthy,
+              "owning return mutation targets retain two calls and the entry observations");
+        if (calls.size() != 2 || !compare || !negate || !truthy) { return; }
+        auto scoped = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
+        unsigned mutations = 0;
+        for (mlir::Operation * operation :
+             {compare.getOperation(), negate.getOperation(), truthy.getOperation()}) {
+            for (mlir::Value invalid : std::vector<mlir::Value>{calls.back(), scoped.getValue()}) {
+                ++mutations;
+                const auto original = operation->getOperand(0);
+                operation->setOperand(0, invalid);
+                OwnedGlobalRoots stale(*module, contract);
+                HostContractAnalysis freshHost(*module, requested(*module));
+                OwnedGlobalRoots fresh(*module, requested(*module));
+                check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                          empty(*module, stale) && !freshHost.proved() && !freshHost.exhausted() &&
+                          freshHost.callables().empty() && !fresh.proved() && !fresh.exhausted() &&
+                          empty(*module, fresh),
+                      "a fresh fingerprint cannot authorize a later or foreign owning result");
+                operation->setOperand(0, original);
+                check(OwnedGlobalRoots(*module, contract).proved(),
+                      "restoring the in-scope owning result restores its source proof");
+            }
+        }
+        std::printf("mixed child returns %s: 6 rows, %u live mutations, 4 incomplete budgets, "
+                    "%u steps\n",
+                    prepared ? "prepared" : "source", mutations, completion);
+    }
 
     auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
     check(static_cast<bool>(module), "mixed child live proof fixture parses");

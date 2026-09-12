@@ -321,12 +321,12 @@ std::string analyzer::environmentProblem() {
     }
     module.walk([&](mlir::Operation * operation) {
         if (!step()) { return; }
-        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+        if (llvm::isa<ctjs::BinaryOp, ctjs::CompareOp, ctjs::UnaryOp, ctjs::TruthyOp>(operation)) {
             // Even an inactive source arm must have real SSA operands. A
             // selected-arm effect anchor cannot export its local definitions.
-            for (mlir::Value operand : binary->getOperands()) {
+            for (mlir::Value operand : operation->getOperands()) {
                 if (!step() || !dominance.dominates(operand, operation)) {
-                    reject("numeric provider operand is outside its source scope");
+                    reject("provider operand is outside its source scope");
                     return;
                 }
             }
