@@ -280,6 +280,11 @@ int main() {
     js_expect("Math.sinh(1e400)", "Infinity");
     js_expect("Number('1e400')", "Infinity");
     js_expect("Number('-1e400')", "-Infinity");
+    // A numeric literal has ONE dot: `0..toString(2)` is `0.` and a member
+    // access (the lexer used to swallow both dots and refuse the script).
+    js_expect("0..toString(2)", "0");
+    js_expect("1.5.toFixed(1)", "1.5");
+    js_expect(".5 + 1", "1.5");
     js_expect("Number('1e-400')", "0");
     js_expect_negative_zero("Number('-1e-400')", true);
 
