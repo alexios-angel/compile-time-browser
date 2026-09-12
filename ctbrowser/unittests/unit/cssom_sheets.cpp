@@ -163,6 +163,37 @@ void test_an_adopted_sheet_reaches_the_author_css() {
     CHECK_EQ(none->bindings().author_style_text(), std::string{"#t { color: rgb(1, 2, 3); }\n"});
 }
 
+// adoptedstylesheets-observablearray: the array is mutated IN PLACE and each
+// mutation is checked and reaches the author CSS; a held computed style sees
+// it (the style stamp), and the array keeps its identity across `= [...]`.
+void test_adopted_sheets_are_an_observable_array() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style></head>
+    <body><p id=t>x</p><script>
+        const held = document.adoptedStyleSheets;
+        const red = new CSSStyleSheet();
+        red.replaceSync('#t { color: rgb(255, 0, 0) }');
+        const green = new CSSStyleSheet();
+        green.replaceSync('#t { color: rgb(0, 128, 0) }');
+        const cs = getComputedStyle(document.getElementById('t'));
+        document.adoptedStyleSheets = [red];
+        held.push(green);
+        console.log('pushed=' + held.length + ',' + (held === document.adoptedStyleSheets) +
+                    ',' + (document.adoptedStyleSheets[1] === green) + ',' + cs.color);
+        held.pop();
+        console.log('popped=' + held.length + ',' + cs.color);
+        let caught = '';
+        try { held.push(document.styleSheets[0]); } catch (e) { caught = e.name; }
+        let typed = '';
+        try { held.push('foo'); } catch (e) { typed = e.name; }
+        console.log('refused=' + caught + ',' + typed + ',' + held.length);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "pushed="), std::string{"pushed=2,true,true,rgb(0, 128, 0)"});
+    CHECK_EQ(logged(page, "popped="), std::string{"popped=1,rgb(255, 0, 0)"});
+    CHECK_EQ(logged(page, "refused="), std::string{"refused=NotAllowedError,TypeError,1"});
+}
+
 // `replace` and `replaceSync` REFUSE DIFFERENTLY: one throws and one rejects.
 void test_replace_refuses_a_regular_sheet() {
     browser page{browser_options{400, 200}};
@@ -390,6 +421,7 @@ int main() {
     test_the_sheet_of_an_element();
     test_the_text_the_cascade_would_get();
     test_an_adopted_sheet_reaches_the_author_css();
+    test_adopted_sheets_are_an_observable_array();
     test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
     test_a_pseudo_element_argument_is_not_the_element();
