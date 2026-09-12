@@ -40,16 +40,26 @@ The **320-step devbox rebuild**, **8/8 focused CTests in 1.35 seconds** and
 all-CPU object-key workflow in **39.85 seconds** pass. All **1240 frozen inputs**
 match the devbox. Stable clang-format **22.1.8** passes **795 files**; the actual
 bundled-23 check retains the same **nine byte-identical baseline differences**.
-The full standard gate is pending; no fresh full Bootstrap count is claimed yet.
-Evidence: `/tmp/ctcompile-payload-resume-{focused.log,frozen.json}` and
-`/tmp/ctcompile-payload-resume-static/summary.json`.
+The corrected full standard gate passes **530/530 CTests in 783.53 seconds**,
+including **158 browser tests** and **168/168 lit cases in 534.83 seconds**.
+All **1240 frozen inputs** still match locally/remotely after the gate. Fresh
+full Bootstrap remains **19/574 native functions** in both modes; exact Data
+remains **0/7 CommonJS, 0/7 browser and 0/8 AMD**. No bundle increase is claimed.
+Evidence: `/tmp/ctcompile-payload-resume-{focused.log,frozen.json}`,
+`/tmp/ctcompile-payload-resume-final-full{.log,-detail.log,-summary.json}`,
+`/tmp/ctcompile-payload-resume-static/summary.json` and
+`/tmp/ctcompile-payload-resume-measured/summary.json`.
 
 **Next Bootstrap boundary:** preserve the existing exact Data ordinary
 publication source **8359592c** (2,522 bytes, seven functions, 40 calls,
 19 observations). Prove a fresh child Map retained by the captured outer Map
 and its guarded readback, keeping each Map identity and mutation state separate.
-Existing local nested-Map schemas and carriers already exist; the captured
-family and independent ownership proof must authorize them. Exact Data also
+Start in `HostContract/CapturedMapBody.cpp`: its current `maps` set means
+aliases of one captured allocation, so adding a child to that set is unsound.
+Extend the captured-family and independent `OwnedGlobalMethods` proofs with
+separate child identity, contents and presence facts. Reuse `NativeMap` nested
+schemas/presence and existing EmitC storage; local `Maps/object-key.js` and
+`Maps/nested-map.js` already provide smaller ownership fixtures. Exact Data also
 needs field-bearing/mixed payloads, object returns and its recorder callback;
 BaseComponent then needs component and DOM ownership. Earlier measured Data
 publication refusals are not a measured nested-Map diagnostic. See
@@ -67,10 +77,19 @@ array-index mutation still refuses. The inherited-accessor oracle remains
 **760 observed sites, 24 unclaimed, zero violations, precision 8/139**.
 Evidence: `/tmp/ctcompile-payload-resume-pow-fixed.log` and
 `/tmp/ctcompile-dense-array-pow-{static,expectations-static}.json`.
-Both code increments are committed; the full standard **530-test gate is now
-running** in `/tmp/ctcompile-payload-resume-full.log` with 1,240 frozen inputs.
-Claude's async/class/GC changes described in the **03:07:09 UTC** journal remain
-on its separate branch; they are not part of this compiler gate.
+**bf5605c0** corrects two historical key-only rejection expectations after the
+first full run exposed them. Their unchanged source/prepared programs only
+store the checked caller leaf and return Boolean/Undefined; the existing
+positive identity/family/owner assertions now execute. Object-valued readback
+and return refusals remain. The corrected ownership test passes in **248.62
+seconds**, and the final full gate above is green. All code changes are committed.
+
+Claude's **04:03:51 UTC** journal reports further DOM/JS/VM changes on
+`ctbrowser-wpt`, including new DOM node kinds with a compatibility hunk in
+`ctcompile/lib/HTML/DocumentComparator.cpp`, nullish property-access errors,
+named array properties, indirect eval and native-call rooting. These changes
+are outside this gate's frozen inputs. Re-read that journal when they integrate
+before using the changed interpreter as the native differential oracle.
 
 ## Global key alias chains, 2026-09-11
 
