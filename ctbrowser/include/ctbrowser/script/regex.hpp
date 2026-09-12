@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -17,11 +18,14 @@
 // already carrying its positions - only ctjs's exec wrapper discarded them -
 // so `.index`, which p5.js reads 143 times, comes for free.
 //
-// Added here: lookahead `(?=`/`(?!`, the sticky `y` flag, and named groups
-// `(?<name>...)`. NOT here, and said out loud rather than mis-matched:
-// lookbehind and backreferences. Neither appears anywhere in p5.js, and a
-// backtracker that silently ignores an assertion is worse than one that
-// refuses it.
+// Added here: lookahead `(?=`/`(?!`, the sticky `y` flag, named groups
+// `(?<name>...)`, and - 2026-09-12, for test262's String.prototype rows -
+// backreferences (`\1`, `\k<name>`), lookbehind (`(?<=`/`(?<!`), the `s`
+// flag, and the specification's rule that a quantified group's captures are
+// cleared on every repetition (`/(a)|(b)/` twice over "ab" leaves group 1
+// undefined). A pattern character above U+00FF is matched as its UTF-8 bytes,
+// which is what the subject is made of; a CLASS above U+00FF is still refused,
+// because a class here is a set of byte ranges.
 
 namespace ctbrowser::script::rx {
 
@@ -33,11 +37,19 @@ struct rx_class {
 };
 struct rx_alt;
 struct rx_piece {
-	enum kind_t { lit, any, cls, grp, bol, eol, wordb, nwordb, ahead, nahead } kind = lit;
+	enum kind_t { lit, any, cls, grp, bol, eol, wordb, nwordb, ahead, nahead, behind, nbehind, backref } kind = lit;
 	char c = 0;
+	// A literal above one byte: the UTF-8 sequence of the code point, matched
+	// as a run. Empty for the ordinary one-byte case, which stays in `c`.
+	std::string text;
 	rx_class cc;
 	std::shared_ptr<rx_alt> sub;
-	std::int32_t cap = -1; // capture slot, -1 = (?:)
+	std::int32_t cap = -1; // capture slot, -1 = (?:); for backref, the slot it names
+	// `\k<name>` before the name is resolved (a group may be defined later in
+	// the pattern), and the capture slots a group ENCLOSES - [caps_lo, caps_hi)
+	// - which a repetition resets.
+	std::string ref_name;
+	std::int32_t caps_lo = 0, caps_hi = 0;
 	std::int32_t min = 1;
 	std::int32_t max = 1; // -1 = unbounded
 	bool greedy = true;
@@ -50,6 +62,7 @@ struct rx_prog {
 	std::shared_ptr<rx_alt> root;
 	std::int32_t ngroups = 0;
 	bool icase = false, global = false, multi = false, sticky = false;
+	bool dotall = false, unicode = false, unicode_sets = false, indices = false;
 	// A pattern that did not compile. Checked by the caller; a program that is
 	// not ok never matches.
 	bool ok = true;
@@ -146,6 +159,24 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 	return true;
 }
 
+inline void rx_utf8_append(std::string & out, std::uint32_t cp) {
+	if (cp < 0x80) {
+		out.push_back(static_cast<char>(cp));
+	} else if (cp < 0x800) {
+		out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+	} else if (cp < 0x10000) {
+		out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+		out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+	} else {
+		out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+		out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+	}
+}
+
 inline char rx_escape_char(char e) {
 	switch (e) {
 	case 'n': return '\n';
@@ -185,14 +216,16 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			if (i < src.size()) { ++i; } // past '>'
 			pc.cap = p.ngroups++;
 			p.names.emplace_back(name, pc.cap);
-		} else if (i + 1 < src.size() && src[i] == '?' && src[i + 1] == '<') {
-			// lookbehind. Refused rather than mis-matched - see the header.
-			rx_fail(p, src);
-			return pc;
+		} else if (i + 2 < src.size() && src[i] == '?' && src[i + 1] == '<') {
+			// `(?<=...)` and `(?<!...)`, the two lookbehinds.
+			pc.kind = src[i + 2] == '=' ? rx_piece::behind : rx_piece::nbehind;
+			i += 3;
 		} else {
 			pc.cap = p.ngroups++;
 		}
+		pc.caps_lo = p.ngroups;
 		pc.sub = rx_parse_alt(src, i, p, false);
+		pc.caps_hi = p.ngroups;
 		if (i >= src.size() || src[i] != ')') { rx_fail(p, src); }
 		++i;
 		return pc;
@@ -204,9 +237,9 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			pc.cc.neg = true;
 			++i;
 		}
-		bool first = true;
-		while (i < src.size() && (src[i] != ']' || first)) {
-			first = false;
+		// `[]` is the EMPTY class and `[^]` matches anything (22.2.2.9 - a
+		// ClassContents may be empty); the `]` is never literal in a class.
+		while (i < src.size() && src[i] != ']') {
 			unsigned char lo;
 			if (src[i] == '\\' && i + 1 < src.size()) {
 				const char e = src[i + 1];
@@ -281,6 +314,35 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		i += 2;
 		if (e == 'b') { pc.kind = rx_piece::wordb; return pc; }
 		if (e == 'B') { pc.kind = rx_piece::nwordb; return pc; }
+		// A BACKREFERENCE: `\1`..`\99` by number, `\k<name>` by name. The
+		// number is read greedily; whether the group exists is checked after
+		// the whole pattern is parsed, because a reference may point forward.
+		// Annex B makes `\8` with no eighth group the literal "8", and that
+		// leniency is kept for the number form only.
+		if (e >= '1' && e <= '9') {
+			const std::size_t start = i - 1;
+			std::int32_t n = e - '0';
+			while (i < src.size() && src[i] >= '0' && src[i] <= '9') {
+				n = n * 10 + (src[i++] - '0');
+			}
+			pc.kind = rx_piece::backref;
+			pc.cap = n - 1;
+			pc.text = std::string{src.substr(start, i - start)}; // kept for Annex B
+			return pc;
+		}
+		if (e == 'k' && i < src.size() && src[i] == '<') {
+			const std::size_t start = i + 1;
+			std::size_t close = start;
+			while (close < src.size() && src[close] != '>') { ++close; }
+			if (close >= src.size()) {
+				rx_fail(p, src);
+				return pc;
+			}
+			pc.kind = rx_piece::backref;
+			pc.ref_name = std::string{src.substr(start, close - start)};
+			i = close + 1;
+			return pc;
+		}
 		if (e == 'd' || e == 'w' || e == 's') {
 			pc.kind = rx_piece::cls;
 			rx_class_escape(pc.cc, e);
@@ -294,14 +356,14 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		}
 		std::uint32_t cp = 0;
 		if (rx_code_point_escape(src, i, e, cp)) {
-			// Same bound and the same reason as in a class above: a literal is
-			// one byte here, so `\u00e9` and beyond is refused rather than
-			// truncated into whichever byte happens to fit.
-			if (cp > 0xFF) {
-				rx_fail(p, src);
+			pc.kind = rx_piece::lit;
+			if (cp > 0x7F) {
+				// THE SUBJECT IS UTF-8, so a code point above ASCII is the
+				// run of bytes that spells it there, matched as a sequence.
+				// (Below 0x80 a code point and its byte are the same thing.)
+				rx_utf8_append(pc.text, cp);
 				return pc;
 			}
-			pc.kind = rx_piece::lit;
 			pc.c = static_cast<char>(cp);
 			return pc;
 		}
@@ -376,6 +438,52 @@ inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & 
 	return out;
 }
 
+// After the whole pattern is parsed: a `\k<name>` finds its slot (the first
+// group of that name - a duplicate name in another alternative is matched
+// by whichever participated, see the matcher), an unknown name is a
+// SyntaxError, and a numbered reference past the last group falls back to
+// Annex B's literal digits.
+inline void rx_resolve_backrefs(rx_alt & alt, rx_prog & p, std::string_view src) {
+	for (rx_seq & sq : alt.alts) {
+		for (rx_piece & pc : sq) {
+			if (pc.sub) { rx_resolve_backrefs(*pc.sub, p, src); }
+			if (pc.kind != rx_piece::backref) { continue; }
+			if (!pc.ref_name.empty()) {
+				pc.cap = -1;
+				for (const auto & [name, slot] : p.names) {
+					if (name == pc.ref_name) {
+						pc.cap = slot;
+						break;
+					}
+				}
+				if (pc.cap < 0) { rx_fail(p, src); }
+			} else if (pc.cap >= p.ngroups) {
+				// Annex B.1.2: a number past the last group is a LEGACY OCTAL
+				// escape (`\1` with no group is U+0001, up to `\377`), except
+				// that `\8` and `\9` are the identity escapes of their digit.
+				// Whatever digits the octal does not consume are literal.
+				const std::string digits = pc.text;
+				pc.kind = rx_piece::lit;
+				pc.text.clear();
+				std::size_t used = 0;
+				if (digits[0] == '8' || digits[0] == '9') {
+					pc.text = digits;
+				} else {
+					std::uint32_t code = 0;
+					while (used < digits.size() && used < 3 && digits[used] >= '0' &&
+					       digits[used] <= '7' && code * 8 + static_cast<std::uint32_t>(digits[used] - '0') <= 0377) {
+						code = code * 8 + static_cast<std::uint32_t>(digits[used++] - '0');
+					}
+					rx_utf8_append(pc.text, code);
+					pc.text += digits.substr(used);
+				}
+			} else {
+				pc.text.clear();
+			}
+		}
+	}
+}
+
 inline rx_prog rx_compile(std::string_view source, std::string_view flags) {
 	rx_prog p;
 	std::string seen;
@@ -391,15 +499,25 @@ inline rx_prog rx_compile(std::string_view source, std::string_view flags) {
 		else if (f == 'g') { p.global = true; }
 		else if (f == 'm') { p.multi = true; }
 		else if (f == 'y') { p.sticky = true; }
-		else if (f == 'u' || f == 's' || f == 'd' || f == 'v') { /* accepted, not modelled */ }
+		else if (f == 's') { p.dotall = true; }
+		else if (f == 'd') { p.indices = true; }
+		else if (f == 'u') { p.unicode = true; }
+		else if (f == 'v') { p.unicode_sets = true; }
 		else {
 			p.ok = false;
 			p.error = "Invalid regular expression flags: " + std::string{flags};
 		}
 	}
+	// `u` and `v` are two spellings of one mode and exclude each other
+	// (22.2.3.4 step 6).
+	if (p.unicode && p.unicode_sets) {
+		p.ok = false;
+		p.error = "Invalid regular expression flags: " + std::string{flags};
+	}
 	std::size_t i = 0;
 	p.root = rx_parse_alt(source, i, p, true);
 	if (i != source.size()) { rx_fail(p, source); }
+	if (p.ok) { rx_resolve_backrefs(*p.root, p, source); }
 	return p;
 }
 
@@ -444,10 +562,67 @@ inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::siz
 	const std::string & s = *st.s;
 	switch (pc.kind) {
 	case rx_piece::lit:
+		if (!pc.text.empty()) {
+			if (s.compare(pos, pc.text.size(), pc.text) != 0) { return false; }
+			return k(pos + pc.text.size());
+		}
 		return pos < s.size() && rx_fold(s[pos], st.p->icase) == rx_fold(pc.c, st.p->icase) &&
 		       k(pos + 1);
 	case rx_piece::any:
-		return pos < s.size() && s[pos] != '\n' && k(pos + 1);
+		// A line terminator is not "any" unless `s` says so. \u2028 and \u2029
+		// are three bytes each here and are let through; \r and \n are the
+		// two that pages meet.
+		return pos < s.size() && (st.p->dotall || (s[pos] != '\n' && s[pos] != '\r')) &&
+		       k(pos + 1);
+	case rx_piece::backref: {
+		// A group that has not captured matches EMPTY (22.2.2.7.2 step 3),
+		// and one that has must be repeated here, folded like a literal. A
+		// duplicated name resolves to its first slot; the alternatives' other
+		// slots share the name, so the one that participated is looked up.
+		std::pair<std::ptrdiff_t, std::ptrdiff_t> cap{-1, -1};
+		if (pc.cap >= 0 && static_cast<std::size_t>(pc.cap) < st.caps.size()) {
+			cap = st.caps[static_cast<std::size_t>(pc.cap)];
+		}
+		if (cap.first < 0 && !pc.ref_name.empty()) {
+			for (const auto & [name, slot] : st.p->names) {
+				if (name == pc.ref_name && st.caps[static_cast<std::size_t>(slot)].first >= 0) {
+					cap = st.caps[static_cast<std::size_t>(slot)];
+					break;
+				}
+			}
+		}
+		if (cap.first < 0) { return k(pos); }
+		const auto len = static_cast<std::size_t>(cap.second - cap.first);
+		if (pos + len > s.size()) { return false; }
+		for (std::size_t j = 0; j < len; ++j) {
+			if (rx_fold(s[pos + j], st.p->icase) !=
+			    rx_fold(s[static_cast<std::size_t>(cap.first) + j], st.p->icase)) {
+				return false;
+			}
+		}
+		return k(pos + len);
+	}
+	case rx_piece::behind:
+	case rx_piece::nbehind: {
+		// ZERO WIDTH, LOOKING BACK: does the sub-pattern match some text that
+		// ENDS exactly here? Tried from the nearest start outward, so the
+		// shortest match wins the captures - the specification matches the
+		// sub-pattern right to left, which prefers the same thing.
+		const auto saved = st.caps;
+		bool inner = false;
+		for (std::size_t start = pos + 1; start-- > 0 && !inner;) {
+			inner = rx_match_alt(*pc.sub, st, start, [&](std::size_t end) { return end == pos; });
+		}
+		if (pc.kind == rx_piece::nbehind) {
+			st.caps = saved;
+			return !inner && k(pos);
+		}
+		if (!inner) {
+			st.caps = saved;
+			return false;
+		}
+		return k(pos);
+	}
 	case rx_piece::cls:
 		return pos < s.size() && rx_class_hit(pc.cc, s[pos], st.p->icase) && k(pos + 1);
 	case rx_piece::bol:
@@ -507,9 +682,26 @@ inline constexpr bool rx_match_piece(const rx_piece & pc, rx_state & st, std::si
 		const bool may_more = pc.max < 0 || n < pc.max;
 		const bool may_stop = n >= pc.min;
 		const auto more = [&]() {
-			return may_more && rx_match_once(pc, st, at, [&](std::size_t np) {
-				       return np == at ? (n + 1 >= pc.min && k(np)) : rec(np, n + 1);
-			       });
+			if (!may_more) { return false; }
+			// 22.2.2.3.1 RepeatMatcher step 4: every capture INSIDE the atom
+			// is cleared before each repetition, so `/(a)|(b)/` run twice by
+			// a quantifier does not keep group 1 from the first round. Saved
+			// and put back when the repetition fails, since the caller may
+			// still take the shorter match.
+			std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> saved;
+			if (pc.caps_hi > pc.caps_lo) {
+				saved.assign(st.caps.begin() + pc.caps_lo, st.caps.begin() + pc.caps_hi);
+				for (std::int32_t c = pc.caps_lo; c < pc.caps_hi; ++c) {
+					st.caps[static_cast<std::size_t>(c)] = {-1, -1};
+				}
+			}
+			const bool ok = rx_match_once(pc, st, at, [&](std::size_t np) {
+				return np == at ? (n + 1 >= pc.min && k(np)) : rec(np, n + 1);
+			});
+			if (!ok && !saved.empty()) {
+				std::copy(saved.begin(), saved.end(), st.caps.begin() + pc.caps_lo);
+			}
+			return ok;
 		};
 		if (pc.greedy) { return more() || (may_stop && k(at)); }
 		return (may_stop && k(at)) || more();

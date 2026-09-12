@@ -20,9 +20,8 @@ namespace {
 // A REGEX ENGINE. Literals were rejected by name; there was none. Ported from
 // ctjs's backtracking matcher, which was already self-contained and coupled to
 // its host by exactly two calls, then extended with what p5.js actually uses:
-// lookahead, the sticky flag and named groups. Lookbehind and backreferences
-// are REFUSED rather than mis-matched - neither appears in p5.js, and a
-// matcher that silently ignores an assertion is worse than one that says no.
+// lookahead, the sticky flag and named groups - and, for test262's String
+// rows, lookbehind and backreferences.
 void test_regex() {
     // Invalid FLAGS are an early error - a SyntaxError of the source,
     // reported as a parse error - not a throw when the line runs. The
@@ -53,8 +52,13 @@ void test_regex() {
     // `g` resumes from lastIndex and writes it back
     expect_result("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
     expect_result("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
-    // and a pattern that cannot compile does not match rather than crashing
-    expect_result("return /(?<=x)y/.test('xy');", "false");
+    // lookbehind and backreferences, since 2026-09-12 (regexp_model.cpp has
+    // the rest of the object model)
+    expect_result("return /(?<=x)y/.test('xy');", "true");
+    expect_result("return /(a)\\1/.test('aa') + '' + /(a)\\1/.test('ab');", "truefalse");
+    // and a pattern that cannot compile is a SyntaxError when the line runs
+    expect_result("try { new RegExp('('); return 'no'; } catch (e) { return e.name; }",
+                  "SyntaxError");
 }
 
 // `a.length = n` RESIZES, and a write that is silently dropped is the kind of
