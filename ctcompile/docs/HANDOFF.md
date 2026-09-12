@@ -8,70 +8,82 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Recovered inverted Map guards and mixed static BigInt retention, 2026-09-12
 
-Resumed **32957956** after the **08:21:14 UTC failed loop**. Its only dirty
-compiler file was `CapturedMapBody.cpp`: Not unwrapping had been started but
-its owner/source gates were unfinished. The synchronization journal named
-three interrupted parallel tasks; agents completed ownership controls,
-repeated-lookup execution, and mixed static BigInt retention. The old
-`codex-wip-20260907` branch was already an ancestor.
+Resumed **32957956** after the **08:21:14 UTC failed loop**. Its only dirty compiler file
+was `CapturedMapBody.cpp`: Not unwrapping had been started but its owner/source gates were
+unfinished. The synchronization journal named three interrupted parallel tasks; agents
+completed ownership controls, repeated-lookup execution, and mixed static BigInt
+retention. The old `codex-wip-20260907` branch was already an ancestor.
 
-**2830aee0** completes captured-Map guard polarity and scalar filtering.
-The actual Data removal IR already puts its continuation in the opposite arm
-of `if (!has) return`; no CFG or frame-exit rule changed. Thirteen additional
-source/prepared rows cover odd/even Not, wrong keys, stale observations,
-mutations, scalar key filtering and the original common frame exit. Every
-incomplete budget and hostile live edit still withholds ownership evidence.
-The first gate exposed six test-cleanup failures: a forged Map annotation had
-to be removed along with restoring the operand to recover the original source
-fingerprint. Production fingerprinting and proof rules were unchanged.
+**2830aee0** completes captured-Map guard polarity and scalar filtering. The actual Data
+removal IR already puts its continuation in the opposite arm of `if (!has) return`; no CFG
+or frame-exit rule changed. Thirteen additional source/prepared rows cover odd/even Not,
+wrong keys, stale observations, mutations, scalar key filtering and the original common
+frame exit. All **81,987 incomplete budgets** across six new source/prepared forms and
+hostile live edits withhold ownership evidence. The first gate exposed six test-cleanup
+failures: a forged Map annotation had to be removed along with restoring the operand to
+recover the original source fingerprint. Production fingerprinting and proof rules were
+unchanged.
 
-**394b5b91** adds repeated child lookup **3463e38c** and inverted guard
-**a3c06f9c**: **4/4 and 5/5 native functions**, respectively, in both modes, with **nine calls / trace=41** each. All **28 historical JS sources** remain identical.
-The expanded cohort passes **8 native programs / 23 refusals**, **55 typed Node/interpreter observations / 36 distinguishing mutations** in **18.39s**. Complete proof budgets are **2118/31 cutoffs** and **4610/30**. Both C++ layouts pass GCC/Clang,
-no-Script checks and ownership sanitizers through future calls, saved children,
-clear/replacement, entry reexecution and final destruction.
+**394b5b91** adds repeated child lookup **3463e38c** and inverted guard **a3c06f9c**:
+**4/4 and 5/5 native functions**, respectively, in both modes, with **nine calls /
+trace=41** each. All **28 historical JS sources** remain identical. The expanded cohort
+passes **8 native programs / 23 refusals**, **55 typed Node/interpreter observations / 36
+distinguishing mutations** in **18.39s**. Complete proof budgets are **2118/31 cutoffs**
+and **4610/30**. Both C++ layouts pass GCC/Clang, no-Script checks and ownership
+sanitizers through **128 future calls**, saved children, clear/replacement, entry
+reexecution and final destruction.
 
-**66965ef7** finishes mixed static BigInt error retention across all seven
-supported static operators. Each operand needs independent original primitive
-provenance. An error has its own origin and never acquires a BigInt category;
-object/opaque operands, unsupported effects and handlers still refuse. The
-old escape fixture remains an exact **22,451-byte prefix**; three appended
-functions check Number4, saved-child retention and distinct TypeErrors. The
-runtime confirms six literal sites/twelve instances/three retained and Error
-PCs **24/29/11**, with no source claims for the Errors. Focused escape checks
-pass **11/11**, including arrays **1.04s** and the oracle fixture **1.61s**.
-The fixture measures **785 observed sites / 30 unclaimed**, zero violations,
-partial or pending cases, precision **10/145**.
+**66965ef7** finishes mixed static BigInt error retention across all seven supported
+static operators. Each operand needs independent original primitive provenance. An error
+has its own origin and never acquires a BigInt category; object/opaque operands,
+unsupported effects and handlers still refuse. The old escape fixture remains an exact
+**22,451-byte prefix**; three appended functions check Number4, saved-child retention and
+distinct TypeErrors. The runtime confirms six literal sites/twelve instances/three
+retained and Error PCs **24/29/11**, with no source claims for the Errors. Focused escape
+checks pass **11/11**, including arrays **1.04s** and the oracle fixture **1.61s**. The
+fixture measures **785 observed sites / 30 unclaimed**, zero violations, partial or
+pending cases, precision **10/145**.
 
-The **259-step rebuild** passes. Nineteen focused CTests pass initially; the corrected **two-step rebuild** and ownership CTest pass in **222.13s**, completing all twenty focused checks. The standard **534-CTest gate is running** on **1367 frozen inputs**, with no final full-suite result claimed yet. Fresh full Bootstrap and Data counts await this gate. Stable clang-format **22.1.8** passes **800 files**;
-`tools/format.sh --check` with bundled23 retains exactly the same **nine baseline
-files / 28 diagnostics**. No browser, runtime, native emitter or carrier source
-changed. Full Bootstrap and exact Data remain unfinished.
+The **259-step rebuild** passes. Nineteen focused CTests pass initially; the corrected
+**two-step rebuild** and ownership CTest pass in **222.13s**, completing all twenty
+focused checks.
 
-**Next boundary:** preserve `nested_map_conditional_unknown_contents`
-**99954bab** and prove nullable prior child contents across every sibling method.
-Independently close a homogeneous scalar write category, separate from the
-existing required-key `childEntries` theorem. Empty publication, deletion and
-clear do not establish membership; unknown or incompatible writes must withhold
-the category. Try the existing optional native Map reads and nullable scalar
-helpers before adding lowerings. Dynamic String keys already fit parameter
-plumbing. Exact Data **8359592c** additionally needs mixed/field-bearing caller
-payloads, object returns/identity and its original recorder callback, including
-`Array.from(s.keys())` and the template diagnostic. Component/DOM ownership then
-uses ctbrowser public APIs. Detailed source/IR pointers: `/tmp/ctcompile-guard-next.md`.
+**The standard gate passes 534/534 CTests in 1006.93s**, including **162 browser tests**
+and **168/168 lit cases in 667.41s** (CTest wrapper **667.49s**). All **1367 selected
+code/test/parser input hashes** match locally and remotely. The snapshot recorded
+**66965ef7** before the guard/source commits, which contain identical bytes. Fresh full
+Bootstrap remains **19/574 native functions** in both modes; exact Data remains **0/7
+CommonJS, 0/7 browser and 0/8 AMD**. The final source cohort independently confirms **8
+native / 23 refusals**, and the escape oracle confirms **785 sites / 30 unclaimed / zero
+violations / precision 10/145**. Stable clang-format **22.1.8** passes **800 files**;
+`tools/format.sh --check` with bundled23 retains exactly the same **nine baseline files /
+28 diagnostics**. No browser, runtime, native emitter or carrier source changed. Full
+Bootstrap and exact Data remain unfinished.
 
-This gate uses parser **8eb3375**. Claude's **08:00:13 / 08:28:55 UTC**
-journals describe pending unresolved-global/soft-typeof ABI, inferred names,
-iterator destructuring, eager generator prologues, private names, generator
-finally and strict-write semantics. Re-read the latest journal and synchronize
-the recorded submodule after integration before judging an oracle disagreement.
+**Next boundary:** preserve `nested_map_conditional_unknown_contents` **99954bab** (still
+**0/4 native** in both modes, nine calls) and prove nullable prior child contents across
+every sibling method. Independently close a homogeneous scalar write category, separate
+from the existing required-key `childEntries` theorem. Empty publication, deletion and
+clear do not establish membership; unknown or incompatible writes must withhold the
+category. Try the existing optional native Map reads and nullable scalar helpers before
+adding lowerings. Dynamic String keys already fit parameter plumbing. Exact Data
+**8359592c** additionally needs mixed/field-bearing caller payloads, object
+returns/identity and its original recorder callback, including `Array.from(s.keys())` and
+the template diagnostic. Component/DOM ownership then uses ctbrowser public APIs. Detailed
+source/IR pointers: `/tmp/ctcompile-guard-next.md`.
+
+This gate uses parser **8eb3375**. Claude's **08:00:13 / 08:28:55 UTC** journals describe
+pending unresolved-global/soft-typeof ABI, inferred names, iterator destructuring, eager
+generator prologues, private names, generator finally and strict-write semantics. Re-read
+the latest journal and synchronize the recorded submodule after integration before judging
+an oracle disagreement.
 
 Evidence: `/tmp/ctcompile-guard-{focused.log,focused-detail.log,
 corrected-focused.log,corrected-focused-detail.log,full.log,full-detail.log,
 full-summary.json,full-frozen.json,full-revision.json}`,
 `/tmp/ctcompile-guard-full-measured/summary.json` and
-`/tmp/ctcompile-guard-mixed-static-observed.json`. Repository changes are
-committed locally; external plan journals are updated. Nothing was pushed.
+`/tmp/ctcompile-guard-mixed-static-observed.json`. Repository changes are committed
+locally; external plan journals are updated. Nothing was pushed.
 
 ## Retained child Maps across calls, 2026-09-12
 
