@@ -905,4 +905,225 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     return value::undefined();
 }
 
+// --- ELEMENT REFERENCES: `ariaActiveDescendantElement` AND THE SEVEN LISTS ---
+//
+// HTML 2.6.1's two remaining shapes, "Element" and "FrozenArray<Element>",
+// which are not a table row: they carry an EXPLICITLY SET attr-element beside
+// the content attribute (ARIA 1.3 §9.4). On getting, the explicit element wins
+// while it is still in scope - a descendant of one of this element's
+// shadow-including ancestors - else the content attribute's ID is looked up in
+// this element's tree; on setting, the content attribute becomes "" and the
+// element is remembered. `aria-element-reflection*.html` measures all of it.
+//
+// THE STATE IS ON THE WRAPPER, as the event handler slots are, because the
+// wrapper is what the collector traces: the explicit reference, the content
+// attribute's text as it was when it was set (a content attribute changed
+// since then has superseded the reference - there is no attribute-change
+// hook, so this is checked on every read), and for a list the array last
+// answered, so a page comparing two reads by identity gets the same object
+// while nothing changed.
+namespace {
+
+struct element_reference_row {
+    std::string_view idl;
+    std::string_view content;
+    bool list;
+};
+
+constexpr element_reference_row element_reference_rows[] = {
+    {"ariaActiveDescendantElement", "aria-activedescendant", false},
+    {"ariaControlsElements", "aria-controls", true},
+    {"ariaDescribedByElements", "aria-describedby", true},
+    {"ariaDetailsElements", "aria-details", true},
+    {"ariaErrorMessageElements", "aria-errormessage", true},
+    {"ariaFlowToElements", "aria-flowto", true},
+    {"ariaLabelledByElements", "aria-labelledby", true},
+    {"ariaOwnsElements", "aria-owns", true},
+};
+
+[[nodiscard]] std::string explicit_slot(std::string_view idl) {
+    return "__explicit_" + std::string{idl};
+}
+[[nodiscard]] std::string explicit_source_slot(std::string_view idl) {
+    return "__explicitsrc_" + std::string{idl};
+}
+[[nodiscard]] std::string cached_slot(std::string_view idl) {
+    return "__cached_" + std::string{idl};
+}
+
+} // namespace
+
+void dom_bindings::install_element_reflection(context & cx) {
+    const value iface = interface_prototype("Element");
+    if (!iface.is_object()) { return; }
+    auto * proto = static_cast<script::object_object *>(iface.as_heap());
+    for (const element_reference_row & row : element_reference_rows) {
+        const std::string name{row.idl};
+        proto->define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name,
+                [this, &row](context & c, std::span<value>) {
+                    return element_reference_get(c, row.idl, row.content, row.list);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                name, [this, &row](context & c, std::span<value> a) {
+                    element_reference_set(c, row.idl, row.content, row.list, arg(a, 0));
+                    return value::undefined();
+                })));
+    }
+}
+
+// "Descendant of any of `element`'s shadow-including ancestors": the candidate's
+// tree is this element's tree, or the tree of a host above it.
+bool dom_bindings::element_reference_in_scope(const read_txn & txn, node_id element,
+                                              node_id candidate) const {
+    const node_id wanted = root_of_tree(txn, candidate, false);
+    for (node_id root = root_of_tree(txn, element, false); root;) {
+        if (root == wanted) { return true; }
+        const shadow_tree * tree = shadow_tree_of(root);
+        root = tree == nullptr ? node_id{} : root_of_tree(txn, tree->host, false);
+    }
+    return false;
+}
+
+// The first element in `element`'s tree whose ID is `id` - DOM's "get an
+// element by ID" scoped to the root, which for a disconnected subtree is the
+// subtree and for a shadow tree is that tree alone.
+node_id dom_bindings::element_reference_by_id(const read_txn & txn, node_id element,
+                                              std::string_view id) const {
+    if (id.empty()) { return {}; }
+    const atom id_attribute = atoms_->intern("id");
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (txn.kind(at).value_or(node_kind::text) == node_kind::element &&
+            txn.attribute_value(at, id_attribute) == id) {
+            found = at;
+            return;
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, root_of_tree(txn, element, false));
+    return found;
+}
+
+value dom_bindings::element_reference_get(context & cx, std::string_view idl,
+                                          std::string_view content, bool list) {
+    const value self = cx.current_this();
+    const node_id id = receiver(cx);
+    if (!id || !self.is_object()) { return value::null(); }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const auto txn = doc_->read();
+    const atom name = atoms_->intern(content);
+    const bool present = txn.has_attribute(id, name);
+    const std::string raw = present ? std::string{txn.attribute_value(id, name)} : std::string{};
+    std::vector<node_id> found;
+    bool answered = false;
+    // The explicit reference, while the content attribute still reads as it
+    // did when the reference was set.
+    if (const value * held = object->find(explicit_slot(idl)); held != nullptr) {
+        const value * source = object->find(explicit_source_slot(idl));
+        const bool superseded =
+            !present || source == nullptr || !source->is_string() || cx.to_string(*source) != raw;
+        if (superseded) {
+            (void)object->erase(explicit_slot(idl));
+            (void)object->erase(explicit_source_slot(idl));
+        } else {
+            answered = true;
+            const auto keep = [&](value candidate) {
+                const node_id node = handle_of(candidate);
+                if (node && element_reference_in_scope(txn, id, node)) { found.push_back(node); }
+            };
+            if (held->is_array()) {
+                for (const value & each :
+                     static_cast<script::array_object *>(held->as_heap())->items) {
+                    keep(each);
+                }
+            } else {
+                keep(*held);
+            }
+        }
+    }
+    if (!answered) {
+        if (!present) { return value::null(); }
+        if (list) {
+            for (const std::string_view token : split(raw)) {
+                if (const node_id node = element_reference_by_id(txn, id, token)) {
+                    found.push_back(node);
+                }
+            }
+        } else if (const node_id node = element_reference_by_id(txn, id, raw)) {
+            found.push_back(node);
+        }
+    }
+    if (!list) { return found.empty() ? value::null() : wrap(cx, found.front()); }
+    // THE SAME ARRAY while it would hold the same elements.
+    if (const value * cached = object->find(cached_slot(idl));
+        cached != nullptr && cached->is_array()) {
+        const auto & items = static_cast<script::array_object *>(cached->as_heap())->items;
+        bool same = items.size() == found.size();
+        for (std::size_t i = 0; same && i < items.size(); ++i) {
+            same = handle_of(items[i]) == found[i];
+        }
+        if (same) { return *cached; }
+    }
+    value made = cx.make_array();
+    auto * items = static_cast<script::array_object *>(made.as_heap());
+    for (const node_id node : found) { items->items.push_back(wrap(cx, node)); }
+    object->define(cached_slot(idl), made, script::attr_none);
+    return made;
+}
+
+void dom_bindings::element_reference_set(context & cx, std::string_view idl,
+                                         std::string_view content, bool list, value given) {
+    const value self = cx.current_this();
+    const node_id id = receiver(cx);
+    if (!id || !self.is_object()) { return; }
+    auto * object = static_cast<script::object_object *>(self.as_heap());
+    const atom name = atoms_->intern(content);
+    // null (and undefined) removes the content attribute and forgets the
+    // reference.
+    if (given.is_nullish()) {
+        (void)object->erase(explicit_slot(idl));
+        (void)object->erase(explicit_source_slot(idl));
+        (void)doc_->remove_attribute(id, name);
+        mutated();
+        return;
+    }
+    const auto is_element = [&](value v) {
+        const node_id node = handle_of(v);
+        return node && doc_->read().kind(node).value_or(node_kind::text) == node_kind::element;
+    };
+    value kept = given;
+    if (list) {
+        if (!given.is_array()) {
+            cx.throw_error("TypeError", "Failed to set '" + std::string{idl} +
+                                            "': the value is not a sequence of Elements.");
+            return;
+        }
+        // A COPY, so a page mutating the array it passed does not edit the slot.
+        kept = cx.make_array();
+        auto * items = static_cast<script::array_object *>(kept.as_heap());
+        for (const value & each : static_cast<script::array_object *>(given.as_heap())->items) {
+            if (!is_element(each)) {
+                cx.throw_error("TypeError", "Failed to set '" + std::string{idl} +
+                                                "': an item is not an Element.");
+                return;
+            }
+            items->items.push_back(each);
+        }
+    } else if (!is_element(given)) {
+        cx.throw_error("TypeError",
+                       "Failed to set '" + std::string{idl} + "': the value is not an Element.");
+        return;
+    }
+    // "Set the content attribute to the empty string" and remember the
+    // reference beside the text it was set with.
+    (void)doc_->set_attribute(id, name, "");
+    mutated();
+    object->define(explicit_slot(idl), kept, script::attr_none);
+    object->define(explicit_source_slot(idl), cx.string(""), script::attr_none);
+}
+
 } // namespace ctbrowser::shell

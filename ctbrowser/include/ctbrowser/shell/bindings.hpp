@@ -1923,6 +1923,18 @@ public:
     // `contentWindow`/`contentDocument` on HTMLIFrameElement.prototype, which
     // build a not-yet-reconciled frame on demand. See frames.cpp.
     void install_frame_accessors(context & cx);
+    // `ariaActiveDescendantElement` and the seven `aria*Elements` lists: HTML
+    // 2.6.1's Element and FrozenArray<Element> reflection, with the explicitly
+    // set attr-element kept on the wrapper. See element/reflection.cpp.
+    void install_element_reflection(context & cx);
+    [[nodiscard]] value element_reference_get(context & cx, std::string_view idl,
+                                              std::string_view content, bool list);
+    void element_reference_set(context & cx, std::string_view idl, std::string_view content,
+                               bool list, value given);
+    [[nodiscard]] bool element_reference_in_scope(const read_txn & txn, node_id element,
+                                                  node_id candidate) const;
+    [[nodiscard]] node_id element_reference_by_id(const read_txn & txn, node_id element,
+                                                  std::string_view id) const;
     // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
     // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
     // LEFT IT, which before the first frame is no layout at all. The browser

@@ -176,6 +176,41 @@ void test_the_document_knows_its_running_script_and_its_ready_state() {
     }
 }
 
+void test_aria_element_references_reflect_both_ways() {
+    // aria-element-reflection.html: the content attribute's ID is looked up
+    // in the element's tree, an explicitly set element wins and writes "",
+    // null removes the attribute, and a later content attribute write
+    // supersedes the explicit element. The list shape answers the same array
+    // while its elements are the same, and refuses a non-element.
+    is("(function () { var h = document.getElementById('host');"
+       " h.innerHTML = '<div id=p aria-activedescendant=i1><div id=i1></div><div "
+       "id=i2></div></div>';"
+       " var p = document.getElementById('p'), i1 = document.getElementById('i1'),"
+       " i2 = document.getElementById('i2'); var seen = [];"
+       " seen.push(p.ariaActiveDescendantElement === i1);"
+       " p.ariaActiveDescendantElement = i2;"
+       " seen.push(p.ariaActiveDescendantElement === i2, p.getAttribute('aria-activedescendant'));"
+       " p.setAttribute('aria-activedescendant', 'i1');"
+       " seen.push(p.ariaActiveDescendantElement === i1);"
+       " p.ariaActiveDescendantElement = null;"
+       " seen.push(p.hasAttribute('aria-activedescendant'), p.ariaActiveDescendantElement);"
+       " try { p.ariaActiveDescendantElement = 'x'; seen.push('no'); } catch (e) { "
+       "seen.push(e.name); }"
+       " return seen.join(); })()",
+       "true,true,,true,false,null,TypeError");
+    is("(function () { var h = document.getElementById('host');"
+       " h.innerHTML = '<input id=f aria-labelledby=\"a b\"><span id=a></span><span id=b></span>';"
+       " var f = document.getElementById('f'), a = document.getElementById('a'),"
+       " b = document.getElementById('b'); var seen = [];"
+       " var l = f.ariaLabelledByElements; seen.push(l.length, l[0] === a, l[1] === b,"
+       " f.ariaLabelledByElements === l);"
+       " f.ariaLabelledByElements = [b]; seen.push(f.ariaLabelledByElements[0] === b,"
+       " f.getAttribute('aria-labelledby'));"
+       " f.ariaLabelledByElements = null; seen.push(f.ariaLabelledByElements);"
+       " return seen.join(); })()",
+       "2,true,true,true,true,,null");
+}
+
 // --- the translate attribute --------------------------------------------------
 
 void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
@@ -255,6 +290,7 @@ int main() {
     test_an_anchor_reports_the_parts_of_its_url();
     test_a_located_document_resolves_its_url_attributes();
     test_the_document_knows_its_running_script_and_its_ready_state();
+    test_aria_element_references_reflect_both_ways();
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
     test_inner_text_reads_the_inline_style_it_can_see();
