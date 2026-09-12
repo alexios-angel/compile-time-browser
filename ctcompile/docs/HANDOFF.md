@@ -6,6 +6,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fresh child Maps, 2026-09-12
+
+Continued clean **bc639f5d** and the **04:11:42 UTC** synchronization journal.
+The interrupted payload work was already gated; `codex-wip-20260907` was
+already an ancestor. **26b68622** now proves fresh method-local child Maps
+retained by a captured outer Map. Each runtime origin has independent contents,
+presence, cardinality and saved aliases; structural branches join those states
+separately. The independent owner checks exact standard constructors, the full
+use census and root-to-child retention. Child-to-Map ownership and Map returns
+remain refused. No browser, runtime, carrier or emitter source changed.
+
+The corrected **313-step devbox rebuild** and **5/5 focused CTests in 188.58s**
+pass, including the new source/prepared child, branch, mutation, forged-report
+and budget controls. Stable clang-format **22.1.8** passes **795 files**; the
+bundled-23 check has the same **nine byte-identical baseline differences**.
+
+**In flight:** the unchanged fresh-child sources exposed a separate native
+presence gap: a definite outer `get` did not preserve its stored child's alias.
+`NativeMap/Presence.cpp` and `TypeInference/MapPresence.cpp` contain the frozen
+follow-up, with exact stored origins, saved aliases, conservative joins/call
+invalidation and fresh-allocation disjointness. The new `--group nested-maps`
+workflow in `Ownership/global-maps.py` has four intended native sources and
+12 refusals. Local Node checks pass **20 typed observations / 11 distinguishing
+mutations**; native/VM/GCC/Clang/lifetime sanitizer checks and the full standard
+gate remain pending. Preserve all 16 new source bodies, all 55 historical
+object-key sources and exact Data **8359592c**. Continue the pending gate at
+`/tmp/ctcompile-nested-alias-focused.log`; root's frozen input manifest is
+`/tmp/ctcompile-nested-frozen.json` (1,241 files).
+
+After that alias fix, the next boundary is guarded readback of a child retained
+by an earlier invocation, including Data's `has(...) || set(..., new Map)`.
+Exact Data also needs mixed/field-bearing payloads, object returns and its
+recorder callback; component/DOM ownership follows. Full native Bootstrap is
+unfinished; no fresh bundle count is claimed by this checkpoint.
+
 ## Caller-owned Map payloads, 2026-09-11
 
 Resumed the seven dirty files left by the **03:04:07 UTC failed loop**,
