@@ -70,6 +70,14 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
         throw_dom_exception(cx, "HierarchyRequestError", "a Document cannot be inserted");
         return false;
     }
+    // 5. "...or node is a doctype and parent is not a document, throw a
+    //    HierarchyRequestError." The parent here is never the Document - a
+    //    Document's own insertions run document/as_node.cpp's checks.
+    if (txn.kind(child).value_or(node_kind::element) == node_kind::document_type) {
+        throw_dom_exception(cx, "HierarchyRequestError",
+                            "a DocumentType can only be inserted into a Document");
+        return false;
+    }
     return true;
 }
 
