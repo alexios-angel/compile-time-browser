@@ -1,4 +1,4 @@
-# ctbrowser.core - the foundation: slab allocation, generation-tagged handles, epochs,
+# ctbrowser.core - the foundation: slab allocation, generation-tagged handles,
 # atoms, the thread pool, geometry. Knows nothing about browsers.
 add_library(ctbrowser-core)
 ctbrowser_subsystem_sources(ctbrowser-core core)

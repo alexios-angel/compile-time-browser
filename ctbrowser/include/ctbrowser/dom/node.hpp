@@ -9,22 +9,19 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// The DOM node, and the reason reads take no locks.
+// The DOM node.
 //
-// A generation-tagged handle stops a reader resolving a FREED node. It does
-// nothing about a reader iterating a child vector while a writer pushes onto
-// it - that is a plain data race on the vector, and no amount of handle
-// checking fixes it. So the mutable parts of a node are not mutable:
+// A generation-tagged handle stops a reader resolving a FREED node. The
+// mutable parts of a node are not mutable: children, attributes and text are
+// IMMUTABLE blocks behind pointers. A writer builds a whole new block, swaps
+// the pointer and DELETES the old block at once - so a span or string_view a
+// read_txn handed out over a node is invalidated by the next write to THAT
+// node, and a caller that walks a list while writing copies it first.
 //
-//   children, attributes and text are IMMUTABLE blocks behind atomic
-//   pointers. A writer builds a whole new block and publishes the pointer
-//   with one release store; a reader loads it with one acquire load and then
-//   reads a block nobody will ever touch again. The old block is handed to
-//   the epoch domain, which destroys it once no reader can still be holding
-//   it.
-//
-// That is RCU, and it is why a reader needs no lock: it never observes a
-// half-updated anything. It sees the old block or the new one.
+// SINGLE-THREADED. The blocks were once retired through an epoch domain so
+// that concurrent readers could keep them (git history, audit CTB-01); no
+// engine thread ever read the DOM off the frame thread, and the atomics are
+// what that design left behind.
 //
 // What this deliberately does NOT store: layout rects, text-line caches, widget
 // state, selection ranges, caret positions, blink phase. Those are outputs of
@@ -187,8 +184,8 @@ struct text_block {
     std::string value;
 };
 
-// Shared empties, so a leaf element costs no allocation at all. Never
-// published into the epoch domain - `retire_payload` skips them.
+// Shared empties, so a leaf element costs no allocation at all. Never deleted
+// - `destroy_payload` skips them.
 template <class T> inline const T empty_payload{};
 inline const child_list & empty_children = empty_payload<child_list>;
 inline const attr_list & empty_attributes = empty_payload<attr_list>;
@@ -205,8 +202,6 @@ struct node {
     bool prefixed = false;
     atom tag; // elements only
 
-    // 8 bytes and lock-free on every target we care about; a reader that
-    // races a reparent sees the old parent or the new one, never a mix.
     std::atomic<node_id> parent{node_id{}};
 
     std::atomic<const child_list *> children{&empty_children};
@@ -234,6 +229,8 @@ struct node {
     ~node() {
         // Only the shared empties survive a document teardown untouched;
         // anything else was allocated by a publish and is ours to free.
+        // The same three calls are what a publish makes for the block it
+        // replaced - see document::publish.
         destroy_payload(children.load(std::memory_order_relaxed));
         destroy_payload(attributes.load(std::memory_order_relaxed));
         destroy_payload(text.load(std::memory_order_relaxed));
@@ -243,12 +240,5 @@ struct node {
         if (p != &empty_payload<T>) { delete p; }
     }
 };
-
-// Hand a replaced payload block to the epoch domain. The shared empties are
-// never retired - they outlive every document.
-template <class T> void retire_payload(epoch_domain & domain, const T * p) {
-    if (p == &empty_payload<T>) { return; }
-    domain.retire(const_cast<T *>(p), [](void * q) { delete static_cast<T *>(q); });
-}
 
 } // namespace ctbrowser

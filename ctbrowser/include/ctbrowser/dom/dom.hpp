@@ -1,11 +1,12 @@
 #pragma once
 // The runtime document: a slab of nodes addressed by generation-tagged
-// handles, with lock-free reads and RCU-published payloads.
+// handles, their payloads immutable blocks a write replaces whole.
 //
 //   node      the node itself - and, deliberately, NOT its layout results.
 //             Those belong to the box tree.
-//   document  creation, structural and per-node writes, reclamation
-//   read_txn  a pinned, lock-free read view
+//   document  creation, structural and per-node writes
+//   read_txn  the read view; what it hands out lasts until the next write
+//             to that node
 //   html      the WHATWG tokenizer and tree builder, behind document::builder
 //
 // See :document for the locking policy and for precisely which atomicity

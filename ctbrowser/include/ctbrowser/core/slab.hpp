@@ -6,36 +6,25 @@
 #include <memory>
 #include <new>
 #include <utility>
-#include <vector>
 
-#include <ctbrowser/core/epoch.hpp>
 #include <ctbrowser/core/handle.hpp>
 
-// Stable, generation-tagged storage with LOCK-FREE reads.
+// Stable, generation-tagged storage.
 //
-// Storage is chunked and the chunk directory is a fixed array of atomic
-// pointers, never reallocated. That is stricter than the reference stability a
-// stable_vector would give: a reader indexing by slot must see a stable
-// slot -> address mapping, and a container that reallocates its own internal
-// index array cannot promise that even when element addresses are stable.
-// So this is hand-rolled rather than built on boost::container::stable_vector,
-// which the plan had pencilled in.
+// Storage is chunked and the chunk directory is a fixed array, never
+// reallocated, so a slot's address is stable for the life of the slab and a
+// handle is an index plus a generation. Generations encode liveness in their
+// parity - odd is live, even is free - so "is this slot occupied" and "is this
+// handle current" are the same check. Generation 0 means never used, which is
+// what makes a zeroed handle null.
 //
-// Removal is split, per the epoch design:
+// erase() destroys the object and recycles the slot at once; the generation
+// bump is what stops a stale handle resolving to whatever takes the slot next.
 //
-//   erase()   bumps the generation, so every existing handle stops resolving
-//             IMMEDIATELY and no new reader can reach the object;
-//   collect() destroys the object and recycles the slot, once the epoch domain
-//             proves no reader from before the erase is still running.
-//
-// Generations encode liveness in their parity - odd is live, even is free -
-// so "is this slot occupied" and "is this handle current" are the same check.
-// Generation 0 means never used, which is what makes a zeroed handle null.
-//
-// CONCURRENCY CONTRACT: many concurrent readers, ONE writer at a time.
-// Structural operations (insert/erase/collect) must be serialized by the
-// caller. In the engine that serialization is the DOM's write transaction;
-// the slab does not lock, so it does not pay for locking on the read path.
+// SINGLE-THREADED. It was built for concurrent readers under epoch-based
+// reclamation (git history, audit CTB-01), which no engine thread ever used;
+// the atomics are what that left behind and cost nothing uncontended. A
+// pointer from get() is valid until the next erase() of that handle.
 //
 // A template, so it stays in the header: there is no fixed set of T to
 // instantiate it for in one place.
@@ -51,8 +40,7 @@ public:
     static constexpr std::uint32_t chunk_mask = chunk_size - 1;
     static constexpr std::size_t max_chunks = 1024; // 4M slots
 
-    explicit slab(epoch_domain & domain) noexcept : domain_(&domain) {}
-
+    slab() = default;
     slab(const slab &) = delete;
     slab & operator=(const slab &) = delete;
 
@@ -64,18 +52,10 @@ public:
                 std::destroy_at(value_of(e));
             }
         }
-        // So do slots that were ERASED but never collected: erase() only marks
-        // them dead, and destruction is deferred to collect(). They read as
-        // even-generation and are therefore invisible to the loop above, so
-        // without this they leak whatever T owned.
-        for (const deferred & d : pending_) {
-            if (entry * e = locate(d.slot)) { std::destroy_at(value_of(e)); }
-        }
         for (std::atomic<entry *> & c : directory_) { delete[] c.load(std::memory_order_relaxed); }
     }
 
-    // --- reader side: lock-free, safe to call from any thread inside an
-    // epoch_domain::guard --------------------------------------------------
+    // --- reader side ---------------------------------------------------------
 
     [[nodiscard]] T * get(handle_type h) const noexcept {
         if (!h) { return nullptr; }
@@ -88,7 +68,7 @@ public:
         return value_of(e);
     }
 
-    // --- writer side: caller-serialized ------------------------------------
+    // --- writer side -----------------------------------------------------------
 
     template <typename... Args> [[nodiscard]] handle_type insert(Args &&... args) {
         const std::uint32_t slot = claim_slot();
@@ -102,53 +82,28 @@ public:
         return handle_type{slot, generation};
     }
 
-    // Logical removal: immediate. Physical destruction: deferred to collect().
+    // Destroy the object and recycle the slot. Every outstanding handle to it
+    // stops resolving here.
     bool erase(handle_type h) {
         if (!h) { return false; }
         entry * e = locate(h.slot);
         if (e == nullptr) { return false; }
         if (e->generation.load(std::memory_order_relaxed) != h.generation) { return false; }
-        // Even generation == dead. Every outstanding handle stops resolving here.
-        e->generation.store(h.generation + 1, std::memory_order_release);
+        e->generation.store(h.generation + 1, std::memory_order_release); // even == dead
+        std::destroy_at(value_of(e));
+        e->next_free = free_head_;
+        free_head_ = h.slot + 1; // biased by one so 0 can mean "empty"
         --live_;
-        pending_.push_back({domain_->epoch(), h.slot});
         return true;
     }
 
-    // Destroy and recycle everything no reader can still be looking at.
-    std::size_t collect() {
-        domain_->advance();
-        const std::uint64_t oldest = domain_->oldest_active();
-        std::size_t reclaimed = 0;
-        std::size_t keep = 0;
-        for (std::size_t i = 0; i < pending_.size(); ++i) {
-            const deferred d = pending_[i];
-            if (d.retired_at >= oldest) {
-                pending_[keep++] = d; // a reader from before the erase is still running
-                continue;
-            }
-            entry * e = locate(d.slot);
-            std::destroy_at(value_of(e));
-            e->next_free = free_head_;
-            free_head_ = d.slot + 1; // biased by one so 0 can mean "empty"
-            ++reclaimed;
-        }
-        pending_.resize(keep);
-        return reclaimed;
-    }
-
     [[nodiscard]] std::size_t size() const noexcept { return live_; }
-    [[nodiscard]] std::size_t pending() const noexcept { return pending_.size(); }
 
 private:
     struct entry {
         std::atomic<std::uint32_t> generation{0}; // odd = live, even = free, 0 = never used
         std::uint32_t next_free = 0;              // biased by one; 0 = end of list
         alignas(T) std::byte storage[sizeof(T)]{};
-    };
-    struct deferred {
-        std::uint64_t retired_at;
-        std::uint32_t slot;
     };
 
     [[nodiscard]] static constexpr bool is_live(std::uint32_t generation) noexcept {
@@ -183,12 +138,10 @@ private:
         return slot;
     }
 
-    epoch_domain * domain_;
     mutable std::array<std::atomic<entry *>, max_chunks> directory_{};
     std::atomic<std::uint32_t> capacity_{0};
     std::uint32_t free_head_ = 0; // biased by one
     std::size_t live_ = 0;
-    std::vector<deferred> pending_;
 };
 
 } // namespace ctbrowser

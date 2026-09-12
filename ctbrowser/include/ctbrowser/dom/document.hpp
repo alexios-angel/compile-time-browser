@@ -19,41 +19,29 @@
 
 // The live document.
 //
-// LOCKING POLICY, and why it is what it is.
+// SINGLE-THREADED, and the contract that follows from it: reads take no
+// locks, and a write INVALIDATES every span and string_view a read_txn
+// handed out over the node it wrote. children(), attributes(), text() and
+// find_attribute() point into an immutable block; a write to that node
+// builds a new block, swaps it in and deletes the old one on the spot. A
+// caller that walks a child or attribute list and writes in the body copies
+// the list to a vector first; a write to a DIFFERENT node touches nothing
+// the reader holds.
 //
-// Reads take no locks. Ever. That is the whole point of the RCU payloads in
-// :node, and it is the operation an engine does hundreds of millions of times
-// per second.
-//
-// Writes split into two classes, because they have genuinely different
-// hazards:
-//
-//   PER-NODE writes (attributes, text) touch exactly one node. They take that
-//   node's stripe lock, so unrelated nodes are mutated fully in parallel.
-//
-//   STRUCTURAL writes (append, remove, reparent) take ONE document-wide
-//   mutex. This is a deliberate simplification and it deserves justification
-//   rather than an apology: reparenting concurrently is the classic hard
-//   problem in concurrent trees, because preventing a cycle means reasoning
-//   about a whole ancestor path that other threads are simultaneously
-//   rewriting, and a fine-grained protocol that gets it right is subtle
-//   enough to be a research result. Serializing shape changes makes
-//   cycle-freedom trivially provable, costs nothing on the read path, and
-//   costs nothing on attribute writes either. Structural mutation is rare
-//   next to both. If profiling ever shows this mutex mattering, the fix is
-//   hand-over-hand path locking - but there is no evidence for that cost yet,
-//   and shipping a subtly wrong tree protocol to avoid a mutex nobody is
-//   contending on would be a bad trade.
+// The stripe locks on per-node writes and the one document-wide mutex on
+// structural writes (append, remove, reparent) are what the original
+// concurrent design left behind (git history, audit CTB-01: the DOM was
+// built for lock-free readers under epoch reclamation, and no engine thread
+// ever read it off the frame thread). Uncontended, they cost one atomic
+// each and keep the cycle check trivially correct; they are not a promise
+// that a second thread may write.
 //
 // WHAT ATOMICITY YOU GET. Each node's publication is atomic: a reader sees a
 // node's old children or its new children, never a mix. A multi-node write is
 // NOT atomic as a unit - a reader can observe the child appended to its new
-// parent slightly before it observes the removal from the old one. Cross-node
-// consistency is what an isolating snapshot is for, and that lands in stage 3
-// with the style engine that needs it. Calling this a "snapshot" now would
-// promise isolation it does not have, so read_txn is named for what it does:
-// it pins the epoch (nothing is destroyed underneath you) and gives per-node
-// coherent reads.
+// parent slightly before it observes the removal from the old one. read_txn
+// is named for what it does: per-node coherent reads, not an isolating
+// snapshot.
 
 namespace ctbrowser {
 
@@ -66,8 +54,9 @@ enum class dom_error : std::uint8_t {
 
 class document;
 
-// A pinned read view. While one exists, no node and no payload block it can
-// reach will be destroyed. Cheap to make - one relaxed load and one store.
+// A read view. Free to make; it holds nothing alive. What it hands out is
+// valid until the next write to the node it came from - see the contract
+// above.
 class read_txn {
 public:
     explicit read_txn(const document & doc) noexcept;
@@ -98,9 +87,8 @@ public:
     [[nodiscard]] std::string_view prefix(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
-    // The returned span points into an IMMUTABLE block held alive by this
-    // read_txn. It stays valid for the transaction's lifetime, and not one
-    // instant longer.
+    // The returned span points into an IMMUTABLE block, valid until the next
+    // write to THAT node - copy it before a loop that writes.
     [[nodiscard]] std::span<const node_id> children(node_id) const noexcept;
     [[nodiscard]] std::span<const attribute> attributes(node_id) const noexcept;
     [[nodiscard]] std::string_view text(node_id) const noexcept;
@@ -118,7 +106,7 @@ public:
     // The attribute itself, so a caller that wants its namespace or its value
     // AND its presence does not pay for the walk twice. The pointer is into the
     // same immutable block `attributes` returns a span over, and is valid for
-    // exactly as long.
+    // exactly as long: until the next write to that node.
     [[nodiscard]] const attribute * find_attribute(node_id, atom name) const noexcept;
     // `ns` and `local` are TEXT rather than atoms on purpose: a read must not be
     // able to grow the atom table, and `getAttributeNS` is handed whatever URI a
@@ -137,7 +125,6 @@ public:
 
 private:
     const document * doc_;
-    epoch_domain::guard guard_;
 };
 
 class document {
@@ -244,17 +231,12 @@ public:
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
 
-    // Destroy the storage of nodes removed and no longer observable. Callers
-    // drive this (typically once per frame) rather than it happening inside a
-    // write, so the cost never lands on an interactive mutation.
-    std::size_t collect();
-
     // --- the parse path -----------------------------------------------------
-    // Building a document by repeatedly appending through the RCU path would
-    // copy the child list on every append: O(n^2) for one element's children,
-    // and the whole point of RCU is publication to readers that do not exist
-    // yet. `builder` mutates in place instead. It is legal ONLY while nothing
-    // else can see the document, which is exactly the case during parsing.
+    // Building a document by repeatedly appending through the published path
+    // would copy the child list on every append: O(n^2) for one element's
+    // children, to keep spans valid for readers that do not exist yet.
+    // `builder` mutates in place instead. It is legal ONLY while nothing else
+    // can see the document, which is exactly the case during parsing.
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
@@ -353,11 +335,11 @@ private:
     }
     void bump_version() noexcept { version_.fetch_add(1, std::memory_order_release); }
 
-    // Publish a replacement payload and retire the old one.
+    // Publish a replacement payload and delete the old one - which is what
+    // invalidates every span a read_txn handed out over this node.
     template <typename Payload>
     void publish(std::atomic<const Payload *> & slot, const Payload * fresh) {
-        const Payload * stale = slot.exchange(fresh, std::memory_order_release);
-        retire_payload(domain_, stale);
+        node::destroy_payload(slot.exchange(fresh, std::memory_order_release));
     }
 
     // detach `child` from whatever parent it has; caller holds structure_
@@ -407,8 +389,7 @@ private:
     std::vector<write_note> writes_log_;
 
     atom_table * atoms_;
-    mutable epoch_domain domain_;
-    mutable slab<node, node_tag> nodes_{domain_};
+    mutable slab<node, node_tag> nodes_;
     mutable std::array<std::mutex, stripe_count> stripes_;
     std::mutex structure_; // serializes tree-SHAPE changes; see the policy note
     // (element, contents fragment) pairs - see template_content. A vector

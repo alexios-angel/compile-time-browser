@@ -1398,7 +1398,7 @@ private:
     [[nodiscard]] node_id body_node();
 
     // The DOM and the cascade are rebuilt on navigation, and neither type is
-    // copyable - a slab with live epochs is not something to assign over.
+    // copyable - a slab is not something to assign over.
     void reset_document();
 
     // Whether the focused element is one that shows a caret. Distinct from

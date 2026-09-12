@@ -1,5 +1,4 @@
-// ctbrowser.dom single-threaded semantics. The concurrent guarantees are in
-// stress_dom.cpp, which runs under TSan.
+// ctbrowser.dom: the document, its nodes and its read view.
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
@@ -303,28 +302,6 @@ void test_parsed_foreign_attributes() {
     }
 }
 
-// A read_txn keeps what it can reach alive. This is the guarantee the whole
-// lock-free design rests on, so it gets a test of its own.
-void test_read_txn_pins_storage() {
-    atom_table atoms;
-    document doc{atoms};
-    const node_id n = doc.create_element(atoms.intern("div"));
-    CHECK(doc.append_child(doc.root(), n).has_value());
-
-    {
-        const auto r = doc.read();
-        const auto children = r.children(doc.root()); // span into the live block
-        CHECK_EQ(children.size(), 1u);
-
-        CHECK(doc.remove_child(n).has_value()); // republishes the parent's list
-        CHECK_EQ(doc.collect(), 0u);            // ...but this reader still holds the old one
-
-        CHECK_EQ(children.size(), 1u); // the span we took is still valid and unchanged
-        CHECK(children[0] == n);
-    }
-    CHECK(doc.collect() > 0u); // reader gone: the stale block is reclaimed
-}
-
 void test_version_advances_on_writes() {
     atom_table atoms;
     document doc{atoms};
@@ -390,7 +367,6 @@ int main() {
     test_attribute_namespaces();
     test_attribute_prefixes();
     test_parsed_foreign_attributes();
-    test_read_txn_pins_storage();
     test_version_advances_on_writes();
     test_parse_html();
     REPORT("dom_basics");
