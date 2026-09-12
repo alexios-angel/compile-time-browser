@@ -63,7 +63,7 @@ template <typename F> [[nodiscard]] sample measure(browser & page, int repeats, 
     for (int i = 0; i < repeats; ++i) {
         const auto began = clock_type::now();
         operation(i);
-        (void)page.frame();
+        page.frame();
         times.push_back(
             std::chrono::duration<double, std::milli>(clock_type::now() - began).count());
     }
@@ -82,7 +82,7 @@ int main() {
     browser_options options{640, 560};
     browser page{options};
     page.load_html(html);
-    (void)page.frame();
+    page.frame();
 
     // Two points that are certainly in DIFFERENT elements, so every other move
     // is a real hover change - which is the case that costs.

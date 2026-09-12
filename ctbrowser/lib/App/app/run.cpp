@@ -386,7 +386,7 @@ int run_app(std::string_view html, app_options options) {
         if (page.needs_frame()) { needs_frame = true; }
 
         if (needs_frame) {
-            if (!page.frame(&pool)) { break; }
+            page.frame(&pool);
             host->present(page);
             rendered = true;
             needs_frame = false;
@@ -395,9 +395,7 @@ int run_app(std::string_view html, app_options options) {
         ++frame;
         const bool last = options.max_frames > 0 && frame >= options.max_frames;
         if (last && !options.screenshot_path.empty()) {
-            if (const auto image = page.read_pixels()) {
-                (void)write_ppm(options.screenshot_path, *image);
-            }
+            (void)write_ppm(options.screenshot_path, page.read_pixels());
         }
         // WHAT THE PAGE ASKED FOR AND THE BACKEND DID NOT DO.
         //

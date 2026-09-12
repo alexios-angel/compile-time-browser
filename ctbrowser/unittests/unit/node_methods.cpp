@@ -351,7 +351,7 @@ void test_inner_html() {
     check(log[4] == "asText=0,<not markup>", "textContent stores text, not markup: " + log[4]);
     // And the parsed nodes are in the CASCADE, which is what says they are
     // really in the document rather than in a side table.
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A <script>'s textContent is its SOURCE, unmangled. p5's error system
     // reads it back and parses it, so anything lost here becomes a syntax

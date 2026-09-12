@@ -81,7 +81,7 @@ void test_p5_receives_input() {
     </script></body></html>)");
     check(page.script_error().empty(), "p5 loaded: " + page.script_error());
     // A frame first, so p5 has finished starting up and attached its listeners.
-    (void)page.frame();
+    page.frame();
     page.tick(16);
 
     (void)page.handle(input_event::mouse_move_to(40, 60));
@@ -132,7 +132,7 @@ void test_key_events_carry_the_legacy_codes() {
           window.__log.push(e.code + ' ' + e.keyCode + ' ' + e.which + ' ' + e.key);
         });
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // The arrows first, because they are the ones that were broken. The numbers
     // are the well-known ones every browser reports rather than anything
@@ -205,7 +205,7 @@ void test_preventDefault_stops_the_browser_acting() {
     page.load_html(std::string{tall} + R"(<script>
       document.addEventListener('keydown', function (e) { e.preventDefault(); });
     </script></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.max_scroll() > 0, "the page is taller than the viewport");
     (void)page.handle(input_event::key_press("Space"));
     check(page.scroll_y() == 0, "a cancelled keydown does not scroll the page");
@@ -214,7 +214,7 @@ void test_preventDefault_stops_the_browser_acting() {
     // about preventDefault rather than about Space doing nothing.
     browser plain{browser_options{200, 100}};
     plain.load_html(std::string{tall} + "</body>");
-    check(plain.frame().has_value(), "the plain page renders");
+    plain.frame();
     (void)plain.handle(input_event::key_press("Space"));
     check(plain.scroll_y() > 0, "an uncancelled Space still scrolls");
 }
@@ -267,7 +267,7 @@ void test_the_breakout_page_survives_its_own_game_over() {
     // hanging.
     for (int frame = 0; frame < 2000 && page.alerts().empty(); ++frame) {
         (void)page.tick(1000.0 / 60.0);
-        (void)page.frame();
+        page.frame();
     }
     check(!page.alerts().empty(), "the game ended and alerted");
     if (!page.alerts().empty()) { check(page.alerts()[0] == "GAME OVER", "with GAME OVER"); }
@@ -278,7 +278,7 @@ void test_the_breakout_page_survives_its_own_game_over() {
     const std::size_t after_first = page.alerts().size();
     for (int frame = 0; frame < 2000 && page.alerts().size() == after_first; ++frame) {
         (void)page.tick(1000.0 / 60.0);
-        (void)page.frame();
+        page.frame();
     }
     check(page.alerts().size() > after_first, "and the reloaded game runs and ends too");
 }
@@ -339,15 +339,13 @@ void test_a_real_page_responds_to_input() {
         if (!held.empty()) { (void)page.handle(input_event::key_press(std::string{held})); }
         for (int frame = 0; frame < 20; ++frame) {
             (void)page.tick(1000.0 / 60.0);
-            (void)page.frame();
+            page.frame();
         }
-        const auto image = page.read_pixels();
+        const raster::surface & image = page.read_pixels();
         std::vector<std::uint32_t> pixels;
-        if (image) {
-            for (int y = 0; y < image->height(); ++y) {
-                const auto row = image->row(y);
-                pixels.insert(pixels.end(), row.begin(), row.end());
-            }
+        for (int y = 0; y < image.height(); ++y) {
+            const auto row = image.row(y);
+            pixels.insert(pixels.end(), row.begin(), row.end());
         }
         return pixels;
     };
@@ -376,7 +374,7 @@ void test_the_invaders_page_responds_to_input() {
         if (!held.empty()) { (void)page.handle(input_event::key_press(std::string{held})); }
         for (int frame = 0; frame < 30; ++frame) {
             (void)page.tick(1000.0 / 60.0);
-            (void)page.frame();
+            page.frame();
         }
         // The ship's row of the canvas: moving left or right changes it, and
         // the drifting aliens above do not touch it.
@@ -423,7 +421,7 @@ void test_the_invaders_page_shoots() {
     const auto run = [&](int frames) {
         for (int i = 0; i < frames; ++i) {
             (void)page.tick(1000.0 / 60.0);
-            (void)page.frame();
+            page.frame();
         }
     };
 
@@ -444,7 +442,7 @@ void test_a_letterboxed_page_keeps_its_size() {
     std::ostringstream buffer;
     buffer << in.rdbuf();
     page.load_html(buffer.str());
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     const auto canvas_box = [&] {
         const node_id want = find_id(page, "game");

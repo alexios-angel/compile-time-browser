@@ -145,7 +145,7 @@ void test_location_reload_reruns_the_page() {
     var runs = 0;
     </script></body>)");
     check(page.script_error().empty(), "the reloading page ran");
-    (void)page.frame();
+    page.frame();
     check(page.tick(10) == 1, "the timer fired");
     // After the reload the page is fresh: the same timer is armed again.
     check(page.script_error().empty(), "the reloaded page ran too");
@@ -170,7 +170,7 @@ void test_a_link_is_handed_to_the_embedder() {
     std::vector<std::string> visited;
     page.set_navigate_hook([&visited](const std::string & url) { visited.push_back(url); });
     page.load_html("<body><a href='https://example.com/x'>a link</a></body>");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // Clicked on the link's TEXT, which is a different node from the <a>.
     (void)page.handle(input_event::mouse_down_at(8, 8));
@@ -187,7 +187,7 @@ void test_a_fragment_scrolls_instead_of_navigating() {
     page.load_html(R"(<body><a href='#far'>jump</a>
     <div style='height:1200px'>tall</div>
     <p id=far>the target</p></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.scroll_y() == 0, "starts at the top");
 
     (void)page.handle(input_event::mouse_down_at(8, 8));
@@ -203,7 +203,7 @@ void test_a_page_can_read_where_a_link_went() {
     page.load_html(R"(<body><a href='/first'>go</a><script>
     document.addEventListener('click', function () { console.log(location.href); });
     </script></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
 
     // A listener runs BEFORE the default action, so the first click logs the
     // href from before it - empty - and the second logs the first link's.
@@ -245,7 +245,7 @@ void test_a_link_reaches_the_application_through_run_app() {
     };
     options.on_ready = [](shell::browser & page) {
         // The click has to happen inside the run: run_app owns the browser.
-        (void)page.frame();
+        page.frame();
         (void)page.handle(input_event::mouse_down_at(12, 12));
         (void)page.handle(input_event::mouse_up_at(12, 12));
     };

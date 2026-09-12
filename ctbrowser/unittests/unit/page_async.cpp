@@ -324,7 +324,7 @@ void test_collection_keeps_what_the_page_still_uses() {
     setInterval(function () { console.log('tick'); }, 1000);
     var kept = document.getElementById('a');
     </script></body>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.script_error().empty(), "the script ran");
 
     // Make a lot of garbage, then collect. Without external roots this frees
@@ -406,7 +406,7 @@ void test_timers() {
     setTimeout(function () { console.log('late'); }, 100);
     setTimeout(function () { console.log('soon'); }, 5);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.bindings().pending_timers() == 2, "two timers are armed");
 
     check(page.tick(1) == 0, "nothing is due after 1ms");
@@ -424,7 +424,7 @@ void test_interval_repeats_and_can_be_cleared() {
     var id = setInterval(function () { n = n + 1; console.log('tick ' + n);
       if (n == 3) { clearInterval(id); } }, 10);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     for (int i = 0; i < 6; ++i) { (void)page.tick(11); }
     // Three ticks then cleared. An interval that keeps firing after
     // clearInterval is the classic leak, and it only shows up over time.
@@ -440,7 +440,7 @@ void test_request_animation_frame() {
       if (frames < 3) { requestAnimationFrame(loop); } }
     requestAnimationFrame(loop);
     </script></body></html>)");
-    check(page.frame().has_value(), "the page renders");
+    page.frame();
     check(page.bindings().pending_animation_frames() == 1, "one frame callback is queued");
     for (int i = 0; i < 5; ++i) { (void)page.tick(16); }
     // A rAF callback that re-registers itself is the commonest animation

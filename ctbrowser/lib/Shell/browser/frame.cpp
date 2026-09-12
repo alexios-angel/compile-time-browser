@@ -101,9 +101,8 @@ void browser::resize(int width, int height) {
     if (width == options_.width && height == options_.height) { return; }
     options_.width = std::max(1, width);
     options_.height = std::max(1, height);
-    // RESIZE the renderer, do not replace it. Replacing it built a fresh
-    // software backend, so an app that chose the GPU silently dropped to
-    // software on its first window resize and never came back.
+    // RESIZE the renderer, do not replace it: the fonts and the raster
+    // counter stay, only the tiles are thrown away.
     renderer_.resize(options_.width, options_.height);
     // RE-EVALUATE THE MEDIA QUERIES, and mark the cascade dirty only if one of them
     // actually FLIPPED. That distinction is the whole reason set_environment reports
@@ -154,7 +153,7 @@ rect browser::viewport() const noexcept {
     return rect{0, 0, static_cast<float>(options_.width), static_cast<float>(options_.height)};
 }
 
-std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * pool) {
+void browser::frame(scheduler * pool) {
     // A value the page assigned OUTSIDE an event handler - at the top of the
     // script, say - reaches the control here. Dispatch covers the rest.
     // Anything a script wrote into `value`/`checked` reaches the controls here.
@@ -167,7 +166,7 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
         canvas_revision_ = canvases_.total_revision();
     }
     if (dirty_ >= dirty::raster) { renderer_.discard(); }
-    renderer_.set_clear_color(options_.background);
+    renderer_.clear_color = options_.background;
     // TIMED PER STAGE, because the four of them are what the dirty level exists
     // to choose between and the profiler could only see their sum. A stage that
     // is skipped reports 0, which is the number worth looking at: an idle page
@@ -203,10 +202,9 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     // has had. Idempotent, and the bindings are rebuilt per document, so a
     // navigation gets its own.
     if (bindings_) { bindings_->record_first_paint(); }
-    auto drawn = ctbrowser::raster::draw(renderer_, layers_, pool,
-                                         ctbrowser::raster::default_tile_extent, viewport());
+    ctbrowser::raster::draw(renderer_, layers_, pool, ctbrowser::raster::default_tile_extent,
+                            viewport());
     timing_.raster_ms = ms_since(at);
-    return drawn;
 }
 
 void browser::resolve_styles() {

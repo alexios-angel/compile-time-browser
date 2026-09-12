@@ -1,8 +1,7 @@
 # Raster — tiles, backends, and real fonts
 
 `include/ctbrowser/raster/` — `draw.hpp`, `surface.hpp` and `tile.hpp` at the
-top; `backend/` holds `backend.hpp`, `software.hpp`, `renderer.hpp`,
-`compositor.hpp`; `text/` holds `ttf.hpp` (SDL3_ttf) and
+top; `backend/` holds `software.hpp` and `compositor.hpp`; `text/` holds `ttf.hpp` (SDL3_ttf) and
 `font8x8.hpp`, the built-in bitmap fallback the goldens are rendered with.
 
 ## FONTS: real ones (stage 6, 2026-07-25)
@@ -69,7 +68,7 @@ The seam is `raster::font_backend`: `advance()`, `draw_run()` and `ascent()`
 together, because those are the ones that must agree — layout measures with the
 first and the rasterizer draws with the second, and text lands where layout
 thought only if ONE object answers both (`browser::fonts()` / `measure()`).
-`renderer::set_fonts()` hands it to both raster backends. `font8x8` is still an
+`software_backend::fonts` is where the browser hands it over. `font8x8` is still an
 implementation of the same interface and still the default, so **the goldens do
 not move**.
 
@@ -186,8 +185,7 @@ is what a reader of `raster/` needs to know.
 **Why it is here.** WebGL has no fixed pipeline: `drawArrays` runs a vertex
 shader per vertex and a fragment shader per fragment, and nothing draws without
 executing them. That is software rasterisation, which is what this directory
-does. It stays SDL-free like everything else here, and the GPU back end -
-stage 7, not yet written - will live in `gpu/` behind an interface.
+does. It stays SDL-free like everything else here.
 
 **The parse corpus is p5's own shaders.** `tools/gen-glsl-fixtures.py` extracts
 the sixteen shaders p5.js ships into `tests/glsl/`, and the test compiles each

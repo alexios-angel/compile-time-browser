@@ -142,13 +142,13 @@ public:
     }
 
     void present(browser & page) override {
-        const auto image = page.read_pixels();
-        if (!image || image->empty()) { return; }
-        if (texture_ == nullptr || width_ != image->width() || height_ != image->height()) {
+        const raster::surface & image = page.read_pixels();
+        if (image.empty()) { return; }
+        if (texture_ == nullptr || width_ != image.width() || height_ != image.height()) {
             if (texture_ != nullptr) { SDL_DestroyTexture(texture_); }
             texture_ =
                 SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                  image->width(), image->height());
+                                  image.width(), image.height());
             // NEAREST, because SDL3 defaults a texture to LINEAR and the only
             // time this one is SCALED is under logical presentation - where a
             // 320x240 playfield is stretched over a 960x720 window and bilinear
@@ -160,12 +160,12 @@ public:
             // the single frame between the resize event and the reflow, where
             // the old texture is stretched and NEAREST is the right answer too.
             if (texture_ != nullptr) { SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_NEAREST); }
-            width_ = image->width();
-            height_ = image->height();
+            width_ = image.width();
+            height_ = image.height();
         }
         if (texture_ == nullptr) { return; }
-        SDL_UpdateTexture(texture_, nullptr, image->pixels().data(),
-                          static_cast<int>(image->stride() * sizeof(std::uint32_t)));
+        SDL_UpdateTexture(texture_, nullptr, image.pixels().data(),
+                          static_cast<int>(image.stride() * sizeof(std::uint32_t)));
         SDL_RenderClear(renderer_);
         SDL_RenderTexture(renderer_, texture_, nullptr, nullptr);
         SDL_RenderPresent(renderer_);

@@ -1,14 +1,12 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include <expected>
-#include <span>
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/raster/backend/backend.hpp>
+#include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/tile.hpp>
 
 // Driving a frame: draw() rasters the tiles a frame needs and composites them.
@@ -34,14 +32,8 @@ using ctbrowser::paint::layer_tree;
 // The prefetch margin is one tile on each side. It is what stops a slow scroll
 // from stuttering at every tile boundary, and one tile is the smallest margin
 // that can hide a scroll step shorter than a tile.
-template <RasterBackend B>
-[[nodiscard]] std::expected<void, gpu_error> draw(B & backend, const layer_tree & tree,
-                                                  scheduler * pool = nullptr,
-                                                  int extent = default_tile_extent,
-                                                  const rect & viewport = rect{}) {
-    const auto token = backend.begin_frame();
-    if (!token) { return std::unexpected(token.error()); }
-
+inline void draw(software_backend & backend, const layer_tree & tree, scheduler * pool = nullptr,
+                 int extent = default_tile_extent, const rect & viewport = rect{}) {
     // The tiles this frame has to have, and which display list each comes from.
     std::vector<tile> tiles;
     std::vector<const paint::display_list *> lists;
@@ -64,16 +56,10 @@ template <RasterBackend B>
         }
     }
 
-    if (const auto reserved = backend.reserve_tiles(tiles); !reserved) {
-        (void)backend.end_frame();
-        return std::unexpected(reserved.error());
-    }
+    backend.reserve_tiles(tiles);
 
     // Each tile is written by one thread into storage reserve_tiles already
-    // allocated, and reads a const display list. Nothing is shared but the
-    // error slots, and those are one per tile.
-    std::vector<gpu_error> failures(tiles.size(), gpu_error::no_frame);
-    std::vector<char> failed(tiles.size(), 0);
+    // allocated, and reads a const display list. Nothing is shared.
     // Ask which tiles are actually stale BEFORE fanning out: needs_raster reads
     // the same store raster() writes, and mixing the two across threads would
     // be a race for no benefit - the query is trivial.
@@ -85,28 +71,14 @@ template <RasterBackend B>
 
     const auto do_tile = [&](std::size_t k) {
         const std::size_t i = stale[k];
-        if (const auto r = backend.raster(tiles[i].id, *lists[i]); !r) {
-            failures[i] = r.error();
-            failed[i] = 1;
-        }
+        backend.raster(tiles[i].id, *lists[i]);
     };
     if (pool != nullptr && stale.size() > 1) {
         pool->parallel_for(stale.size(), do_tile);
     } else {
         for (std::size_t k = 0; k < stale.size(); ++k) { do_tile(k); }
     }
-    for (std::size_t i = 0; i < tiles.size(); ++i) {
-        if (failed[i] != 0) {
-            (void)backend.end_frame();
-            return std::unexpected(failures[i]);
-        }
-    }
-
-    if (const auto c = backend.composite(tree.layers); !c) {
-        (void)backend.end_frame();
-        return std::unexpected(c.error());
-    }
-    return backend.end_frame();
+    backend.composite(tree.layers);
 }
 
 } // namespace ctbrowser::raster
