@@ -117,7 +117,11 @@ void dom_bindings::install_character_data(context & cx) {
         if (!id) { return false; }
         const auto txn = doc_->read();
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
-        if (kind != node_kind::text && kind != node_kind::comment) { return false; }
+        // Every CharacterData kind: Text, Comment, CDATASection, PI.
+        if (!is_text_kind(kind) && kind != node_kind::comment &&
+            kind != node_kind::processing_instruction) {
+            return false;
+        }
         text = std::string{txn.text(id)};
         return true;
     };
@@ -321,7 +325,7 @@ void dom_bindings::install_character_data(context & cx) {
                    while (at < kids.size() && kids[at] != id) { ++at; }
                    if (at >= kids.size()) { return c.string(text); }
                    const auto is_text = [&txn](node_id one) {
-                       return txn.kind(one).value_or(node_kind::element) == node_kind::text;
+                       return is_text_kind(txn.kind(one).value_or(node_kind::element));
                    };
                    std::size_t first = at;
                    while (first > 0 && is_text(kids[first - 1])) { --first; }
