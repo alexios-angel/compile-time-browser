@@ -683,6 +683,26 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     }
                     if (checked) { continue; }
                 }
+                // The complete host proof checks scalar fields and definite own
+                // initialization; ownership separately binds each use to this
+                // exact caller allocation and its stable global aliases.
+                if (use.getOwner()->getParentOp() == entry &&
+                    value.getDefiningOp()->isBeforeInBlock(use.getOwner())) {
+                    if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                        write && use.getOperandNumber() == 0 && capture &&
+                        llvm::is_contained(capture->leafWrites, write)) {
+                        continue;
+                    }
+                    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+                        read && use.getOperandNumber() == 0 && capture &&
+                        llvm::is_contained(capture->leafReads, read)) {
+                        continue;
+                    }
+                    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(use.getOwner());
+                        compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                        continue;
+                    }
+                }
                 const auto * call = host.callable(use.getOwner());
                 if (!call || !methodCalls.contains(use.getOwner()) ||
                     use.getOwner()->getParentOp() != entry ||

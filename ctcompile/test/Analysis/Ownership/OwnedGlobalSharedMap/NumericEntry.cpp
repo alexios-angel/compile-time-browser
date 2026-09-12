@@ -89,7 +89,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                          prepared ? "%thirdPutterEnv, %savedSum)" : "%owned, %savedSum)");
         checkSavedScalarReads(context, saved, prepared);
         const auto census = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query,
-                                unsigned count) {
+                                unsigned count, bool mixedObject = false) {
             check(query.roots().size() == 1 && query.roots().front().methodTable &&
                       query.roots().front().methodTable->capturedMap,
                   "numeric results publish exactly one complete method-table owner");
@@ -104,7 +104,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
             const auto numbers = Alternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
             auto setter = module.lookupSymbol<ctjs::FuncOp>(setterName);
             auto getter = module.lookupSymbol<ctjs::FuncOp>(getterName);
-            unsigned setters = 0;
+            unsigned setters = 0, objects = 0;
             mlir::Operation * previous = nullptr;
             bool complete = edges.size() == count;
             for (const auto & edge : edges) {
@@ -123,24 +123,32 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                 complete &= edge.function == setter && edge.arguments.size() == 1;
                 if (edge.arguments.size() != 1) { continue; }
                 const auto & actual = edge.arguments.front();
+                auto made = actual.actual.getDefiningOp<ctjs::CreateObjectOp>();
+                objects += static_cast<unsigned>(static_cast<bool>(made));
                 complete &=
                     actual.parameter == setter.getBody().front().getArgument(prepared ? 4 : 3) &&
                     actual.actual == edge.call->getOperand(prepared ? 4 : 2) &&
-                    actual.alternatives == numbers;
+                    actual.alternatives == (mixedObject ? Alternatives{} : numbers) &&
+                    actual.object == made;
                 unsigned families = 0;
                 for (const auto & parameters : capture.parameters) {
                     if (parameters.function != setter) { continue; }
                     ++families;
-                    complete &= parameters.alternatives == std::vector{numbers};
+                    complete &=
+                        parameters.alternatives ==
+                            std::vector{mixedObject ? Alternatives{} : numbers} &&
+                        parameters.objectKeys == (mixedObject ? std::vector{actual.parameter}
+                                                              : std::vector<mlir::BlockArgument>{});
                 }
                 complete &= families == 1;
             }
-            check(complete && setters == count - 1, "numeric results retain source order, actual "
-                                                    "operands and complete future categories");
+            check(complete && setters == count - 1 && objects == (mixedObject ? 1u : 0u),
+                  "numeric results retain exact actual objects and source order without inventing "
+                  "a scalar category for a mixed formal");
         };
         unsigned rows = 0;
         const auto variant = [&](const std::string & text, bool expected, const char * message,
-                                 unsigned count = 4) {
+                                 unsigned count = 4, bool mixedObject = false) {
             ++rows;
             auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             check(static_cast<bool>(module), "source/prepared entry numeric fixture parses");
@@ -154,7 +162,12 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                 std::fprintf(stderr, "numeric owner %s row %u: %s\n",
                              prepared ? "prepared" : "source", rows, query.reason().str().c_str());
             }
-            if (expected && query.proved()) { census(*module, query, count); }
+            if (mixedObject) {
+                HostContractAnalysis host(*module, contract);
+                check(host.proved() && !host.exhausted(),
+                      "the original mixed actual census independently proves its host boundary");
+            }
+            if (expected && query.proved()) { census(*module, query, count, mixedObject); }
             check(hostContractFingerprint(*module) == contract.moduleSha256,
                   "numeric proofs preserve every source call and arithmetic operand");
         };
@@ -184,14 +197,15 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                   {"ctjs.constant #ctjs.null", false},
                   {"ctjs.constant #ctjs.undefined", false},
                   {"ctjs.constant #ctjs.bigint<\"1\">", false},
-                  {"ctjs.create_object", false},
+                  {"ctjs.create_object", true},
                   {"ctjs.load_global \"unknown\"", false}}) {
                 const auto & marker = before ? first : last;
                 variant(replaced(program, marker,
                                  "    %future = " + std::string(definition) + "\n" +
                                      invoke("future", "%future") + marker),
                         expected,
-                        "every earlier and later actual joins the whole numeric method family", 5);
+                        "every earlier and later actual joins the whole numeric method family", 5,
+                        llvm::StringRef(definition) == "ctjs.create_object");
             }
         }
         for (const char * definition :

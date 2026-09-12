@@ -80,7 +80,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected,
                              const Dependencies & dependencies, const char * message,
-                             mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
+                             mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>(),
+                             bool objectObservation = false) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "saved scalar source/prepared fixture parses");
@@ -88,10 +89,11 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
-        check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
+        const bool expectedHost = expected || objectObservation;
+        check(host.proved() == expectedHost && owner.proved() == expected && !host.exhausted() &&
                   !owner.exhausted(),
               message);
-        if (host.proved() != expected || owner.proved() != expected) {
+        if (host.proved() != expectedHost || owner.proved() != expected) {
             std::fprintf(stderr, "scalar reads %s row %u: host=%s owner=%s\n",
                          prepared ? "prepared" : "source", rows, host.reason().str().c_str(),
                          owner.reason().str().c_str());
@@ -102,6 +104,21 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
             check(scalarReadsEmpty(*module, host) && scalarReadsEmpty(*module, owner) &&
                       empty(*module, owner),
                   "failed complete proofs expose no scalar loads or partial owner");
+        }
+        if (objectObservation) {
+            check(host.objectReads().size() == 1 &&
+                      owner.reason() == "object key global cannot be a scalar observation",
+                  "a proved caller object still cannot become a scalar output");
+            if (host.objectReads().size() == 1) {
+                const auto & edge = host.objectReads().front();
+                auto load = edge.read;
+                auto initialization = edge.initialization;
+                auto made = edge.object;
+                check(load.getName() == "savedSum" &&
+                          initialization.getValue() == made.getResult() && !host.scalarRead(load) &&
+                          !owner.scalarRead(load),
+                      "the exact object initializer and load acquire no scalar authority");
+            }
         }
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "scalar queries preserve the original global, arithmetic and call operations");
@@ -187,7 +204,9 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         variant(replaced(constant, constantStore,
                          std::string("    %nonNumber = ") + initializer +
                              "\n    ctjs.store_global \"savedSum\", %nonNumber\n"),
-                false, {}, "BigInt and Object initializers cannot acquire Number load authority");
+                false, {}, "BigInt and Object initializers cannot acquire Number load authority",
+                mlir::TypeID::get<ctjs::NumberAttr>(),
+                llvm::StringRef(initializer) == "ctjs.create_object");
     }
     check(rows == 28, "all independently saved and constant-only scalar source controls ran");
 
@@ -246,7 +265,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                          std::string("    %nonBoolean = ") + initializer +
                              "\n    ctjs.store_global \"savedSum\", %nonBoolean\n"),
                 false, {},
-                "a different scalar or object origin cannot join the Boolean actual census");
+                "incompatible scalars and requested objects retain the Boolean owner boundary",
+                booleanTag, llvm::StringRef(initializer) == "ctjs.create_object");
     }
     check(rows == 54, "all historical and Boolean scalar source controls ran");
 
@@ -303,8 +323,10 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                          std::string("    %nonString = ") + initializer +
                              "\n    ctjs.store_global \"savedSum\", %nonString\n"),
                 absent, {},
-                absent ? "existing nullable String keys need no invented scalar String edge"
-                       : "another primitive or object cannot join exact String key arguments");
+                absent
+                    ? "existing nullable String keys need no invented scalar String edge"
+                    : "incompatible scalars and requested objects retain the String owner boundary",
+                stringTag, llvm::StringRef(initializer) == "ctjs.create_object");
     }
     variant(replaced(string, constantStore, "    ctjs.store_global \"savedSum\", %this\n"), false,
             {}, "an unknown entry parameter cannot acquire String authority from observations");

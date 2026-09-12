@@ -312,7 +312,8 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             const auto parameter = function.getBody().front().getArgument(3 + offset + index);
             const auto actual = arguments[offset + index];
             ctjs::CreateObjectOp made;
-            if (llvm::is_contained(parameters->objectKeys, parameter)) {
+            if (llvm::is_contained(parameters->objectKeys, parameter) &&
+                !entryCategories(actual, capturedResults, operation).known) {
                 made = actual.getDefiningOp<ctjs::CreateObjectOp>();
                 if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
                     const auto global = objectGlobalRead(load);
@@ -763,7 +764,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         auto & parameters = result.parameters[index];
         PrimitiveAlternatives alternatives;
         if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
-                                   familyInvocations, completedResults, parameters) ||
+                                   familyInvocations, completedResults, parameters, &result) ||
             !capturedMapBody(parameters.function, prepared, primitiveContents, parameters, result,
                              alternatives)) {
             return {};
