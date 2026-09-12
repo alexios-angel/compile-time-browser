@@ -368,9 +368,9 @@ int main() {
          "spread call",
          {{"spreadCall", 0u, &ctc_spreadCall}, {}},
          "an argument ARRAY against a contiguous window - passing the array as one argument "
-         "answers 1,2,3/undefined/undefined, and a non-iterable spread yields NO arguments "
-         "rather than one",
-         "1/2/3|undefined/undefined/undefined"},
+         "answers 1,2,3/undefined/undefined, and a non-iterable spread is the TypeError of "
+         "GetIterator rather than one argument or none",
+         "1/2/3|TypeError"},
         {31u,
          "spread method",
          {{"spreadMethod", 0u, &ctc_spreadMethod}, {}},
