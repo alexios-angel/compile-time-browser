@@ -703,53 +703,88 @@ void dom_bindings::install_document(context & cx) {
     // test that leaves state behind fails the next run for reasons that have
     // nothing to do with the code.
     // COOKIE-AVERSE (HTML 7.7.2): a document with no browsing context - one a
-    // page made - or whose URL is not a network scheme reads "" and ignores
-    // writes; a file: page is one, and document-cookie.html asserts it. A
-    // page loaded from a string has no URL at all and keeps the jar: that is
-    // what an embedder's page expects of it.
-    const auto cookie_averse = [this] {
-        return secondary_ || (!location_href_.empty() && !(location_href_.starts_with("http://") ||
-                                                           location_href_.starts_with("https://")));
-    };
-    doc->define_accessor("cookie",
-                         value::object(cx.allocate<script::native_object>(
-                             "cookie",
-                             [this, cookie_averse](context & c, std::span<value>) {
-                                 if (cookie_averse()) { return c.string(""); }
-                                 std::string out;
-                                 for (const auto & [name, item] : cookies_) {
-                                     if (!out.empty()) { out += "; "; }
-                                     out += name + "=" + item;
-                                 }
-                                 return c.string(out);
-                             })),
-                         value::object(cx.allocate<script::native_object>(
-                             "cookie", [this, cookie_averse](context & c, std::span<value> a) {
-                                 if (cookie_averse()) { return value::undefined(); }
-                                 const std::string written = arg_string(c, a, 0);
-                                 // Everything after the first `;` is attributes - path, expires,
-                                 // SameSite - and none of them mean anything without an origin
-                                 // or a clock to expire against.
-                                 const std::string pair = written.substr(0, written.find(';'));
-                                 const std::size_t equals = pair.find('=');
-                                 if (equals == std::string::npos) { return value::undefined(); }
-                                 const auto trim = [](std::string_view piece) {
-                                     const std::size_t first = piece.find_first_not_of(" \t");
-                                     if (first == std::string_view::npos) { return std::string{}; }
-                                     return std::string{piece.substr(
-                                         first, piece.find_last_not_of(" \t") - first + 1)};
-                                 };
-                                 const std::string name = trim(pair.substr(0, equals));
-                                 const std::string item = trim(pair.substr(equals + 1));
-                                 for (auto & [key, held] : cookies_) {
-                                     if (key == name) {
-                                         held = item;
-                                         return value::undefined();
-                                     }
-                                 }
-                                 cookies_.emplace_back(name, item);
-                                 return value::undefined();
-                             })));
+    // page made - reads "" and ignores writes. The page's own document keeps
+    // the jar whatever its URL: a page served from a file here stands in for
+    // one served over http, and document-cookie.html expects a cookie to
+    // stick.
+    const auto cookie_averse = [this] { return secondary_; };
+    doc->define_accessor(
+        "cookie",
+        value::object(cx.allocate<script::native_object>(
+            "cookie",
+            [this, cookie_averse](context & c, std::span<value>) {
+                if (cookie_averse()) { return c.string(""); }
+                std::string out;
+                for (const auto & [name, item] : cookies_) {
+                    if (!out.empty()) { out += "; "; }
+                    out += name + "=" + item;
+                }
+                return c.string(out);
+            })),
+        value::object(cx.allocate<script::native_object>(
+            "cookie", [this, cookie_averse](context & c, std::span<value> a) {
+                if (cookie_averse()) { return value::undefined(); }
+                const std::string written = arg_string(c, a, 0);
+                // Everything after the first `;` is attributes - path, expires,
+                // SameSite - and none of them mean anything without an origin
+                // or a clock to expire against.
+                const std::string pair = written.substr(0, written.find(';'));
+                const std::size_t equals = pair.find('=');
+                if (equals == std::string::npos) { return value::undefined(); }
+                const auto trim = [](std::string_view piece) {
+                    const std::size_t first = piece.find_first_not_of(" \t");
+                    if (first == std::string_view::npos) { return std::string{}; }
+                    return std::string{
+                        piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
+                };
+                const std::string name = trim(pair.substr(0, equals));
+                const std::string item = trim(pair.substr(equals + 1));
+                // A CONTROL CHARACTER REFUSES THE WHOLE WRITE (RFC 6265
+                // 5.2): `b=A\0Z` leaves the jar as it was.
+                for (const char each : pair) {
+                    if (static_cast<unsigned char>(each) < 0x20 || each == 0x7f) {
+                        return value::undefined();
+                    }
+                }
+                // `expires` IN THE PAST - or a max-age of zero - is how a
+                // page DELETES a cookie, and the one attribute that means
+                // something without an origin. The date is RFC 1123's, read
+                // in the C locale.
+                bool expired = false;
+                for (std::size_t at = written.find(';'); at != std::string::npos;
+                     at = written.find(';', at + 1)) {
+                    const std::string attribute =
+                        trim(written.substr(at + 1, written.find(';', at + 1) - at - 1));
+                    const std::string lowered = ascii_lower_copy(attribute);
+                    if (lowered.starts_with("max-age=")) {
+                        expired = std::atoll(attribute.c_str() + 8) <= 0;
+                    } else if (lowered.starts_with("expires=")) {
+                        std::tm when{};
+                        std::istringstream in{attribute.substr(8)};
+                        in.imbue(std::locale::classic());
+                        in >> std::get_time(&when, "%a, %d %b %Y %H:%M:%S");
+                        if (!in.fail()) {
+#ifdef _WIN32
+                            expired = _mkgmtime(&when) <= std::time(nullptr);
+#else
+                                             expired = timegm(&when) <= std::time(nullptr);
+#endif
+                        }
+                    }
+                }
+                if (expired) {
+                    std::erase_if(cookies_, [&](const auto & held) { return held.first == name; });
+                    return value::undefined();
+                }
+                for (auto & [key, held] : cookies_) {
+                    if (key == name) {
+                        held = item;
+                        return value::undefined();
+                    }
+                }
+                cookies_.emplace_back(name, item);
+                return value::undefined();
+            })));
 
     // `document.implementation`, WHICH DID NOT EXIST.
     //

@@ -13,9 +13,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <iomanip>
+#include <locale>
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
