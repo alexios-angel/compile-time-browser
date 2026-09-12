@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -249,14 +250,44 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     auto * frame_object = static_cast<script::object_object *>(element.as_heap());
     frame_object->set("contentDocument", made.document_);
 
-    // `contentWindow`, and it is a SMALL object on purpose. What a page does
-    // with one is read `.document` off it and hand it to `instanceof`; the rest
-    // of the Window interface belongs to a realm this frame does not have.
+    // `contentWindow`: a SMALL object with its own few properties, behind a
+    // proxy whose miss reads the PAGE's globals. The realm is shared (see the
+    // header), so `frame.contentWindow.DOMException`, `.TypeError` and
+    // `.NodeList` ARE the page's, and answering them from the one table is
+    // what makes `e instanceof frameWindow.DOMException` true for an exception
+    // this frame's own DOM threw. Measured: every invalid-selector case in
+    // `ParentNode-querySelector-All` is `assert_throws_dom("SyntaxError",
+    // windowFor(root).DOMException, ...)`, and with that constructor undefined
+    // testharness took it for the function to call - 272 subtests reporting
+    // "`call` is undefined" about a method that had thrown correctly.
     auto * frame_window = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto trap = [&](const char * name, script::native_fn fn) {
+        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    trap("get", [](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        if (target->find(name) == nullptr && target->find_accessor(name) == nullptr &&
+            c.has_global(name)) {
+            return c.global(name);
+        }
+        return c.lookup_property(args[0], name);
+    });
+    trap("has", [](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+        auto * target = static_cast<script::object_object *>(args[0].as_heap());
+        const std::string name = c.to_string(args[1]);
+        return value::boolean(target->find(name) != nullptr ||
+                              target->find_accessor(name) != nullptr || c.has_global(name));
+    });
+    const value frame_view = value::object(
+        cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
     frame_window->set("frameElement", element);
-    frame_window->set("self", value::object(frame_window));
-    frame_window->set("window", value::object(frame_window));
+    frame_window->set("self", frame_view);
+    frame_window->set("window", frame_view);
     frame_window->set("length", value::number(0));
     // `parent` and `top` are the PAGE's window, which is true: this frame's
     // parent browsing context is the top-level one and there is no nesting
@@ -271,7 +302,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     const value page_window = cx.global("window");
     frame_window->set("parent", page_window);
     frame_window->set("top", page_window);
-    frame_object->set("contentWindow", value::object(frame_window));
+    frame_object->set("contentWindow", frame_view);
+    // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set `defaultView`
+    // null for a secondary, which is right for createHTMLDocument and wrong
+    // for a frame: `root.ownerDocument.defaultView` is how a test reaches the
+    // global an exception must have come from.
+    if (auto * doc = made.document_object()) { doc->set("defaultView", frame_view); }
 
     frame_loads_.push_back(pending_frame{id, ok});
 }
