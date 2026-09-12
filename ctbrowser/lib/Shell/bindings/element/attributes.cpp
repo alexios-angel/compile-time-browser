@@ -588,10 +588,8 @@ void dom_bindings::install_named_node_map(context & cx) {
 bool dom_bindings::validate_and_extract(context & cx, std::string_view where,
                                         const std::string & ns, const std::string & qualified) {
     const split_name split = split_attribute_name(qualified);
-    const bool prefix_writable =
-        !split.prefix.empty() &&
-        split.prefix.find_first_of(attribute_name_breaks) == std::string_view::npos;
-    if ((split.has_colon && !prefix_writable) || !valid_attribute_name(split.local)) {
+    if ((split.has_colon && !valid_namespace_prefix(split.prefix)) ||
+        !valid_attribute_name(split.local)) {
         throw_dom_exception(cx, "InvalidCharacterError",
                             std::string{where} + ": '" + qualified +
                                 "' is not a qualified attribute name");

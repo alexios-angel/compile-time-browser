@@ -1024,10 +1024,8 @@ bool dom_bindings::validate_and_extract_element(context & cx, std::string_view w
                                                 const std::string & qualified) {
     const qualified_name split = split_qualified(qualified);
     const bool prefixed = split.has_colon;
-    const bool prefix_writable =
-        !split.prefix.empty() &&
-        split.prefix.find_first_of(element_name_breaks) == std::string_view::npos;
-    if ((prefixed && !prefix_writable) || !is_valid_element_local_name(split.local)) {
+    if ((prefixed && !is_valid_namespace_prefix(split.prefix)) ||
+        !is_valid_element_local_name(split.local)) {
         throw_dom_exception(cx, "InvalidCharacterError",
                             std::string{where} + ": '" + qualified + "' is not a qualified name");
         return false;

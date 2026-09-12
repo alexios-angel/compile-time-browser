@@ -471,10 +471,8 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         const std::string qualified =
             args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
         const qualified_name split = split_qualified(qualified);
-        const bool prefix_writable =
-            !split.prefix.empty() &&
-            split.prefix.find_first_of(attribute_name_breaks) == std::string_view::npos;
-        if ((split.has_colon && !prefix_writable) || !is_valid_attribute_name(split.local)) {
+        if ((split.has_colon && !is_valid_namespace_prefix(split.prefix)) ||
+            !is_valid_attribute_name(split.local)) {
             throw_dom_exception(c, "InvalidCharacterError",
                                 "createAttributeNS: '" + qualified + "' is not a qualified name");
             return value::undefined();
