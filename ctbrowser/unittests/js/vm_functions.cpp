@@ -31,6 +31,18 @@ void test_default_parameters() {
     expect_result("function f(a = 5) { return a; } return f(null);", "null");
     // a default may be an expression, and may see earlier parameters
     expect_result("function f(a, b = a * 2) { return b; } return f(4);", "8");
+    // ...INCLUDING A CAPTURED ONE. `a` is boxed because the arrow closes over
+    // it; the default read it through cell_get before the box existed and
+    // got undefined - zod's `_instanceof(cls, params = {error: cls.name})`
+    // with `(data) => data instanceof cls` in its body, which is what p5's
+    // parameter validator calls. Both the read and the default's own write
+    // go through the cell.
+    expect_result("function f(a, b = a * 2) { return () => a + b; } return f(4)();", "12");
+    expect_result("function f(a, b = a * 2) { const g = () => b; return g(); } return f(3);", "6");
+    expect_result("function f(a, b = a) { const g = () => b; b = 7; return g(); } return f(3);",
+                  "7");
+    expect_result("function f(...r) { const g = () => r.length; return g(); } return f(1, 2, 3);",
+                  "3");
     // and it is only evaluated when it is needed
     expect_result("let hit = 0; function d() { hit = 1; return 1; } "
                   "function f(a = d()) { return a; } f(9); return hit;",

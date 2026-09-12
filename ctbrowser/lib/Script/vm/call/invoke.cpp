@@ -44,7 +44,49 @@ namespace ctbrowser::script {
 // caller's registers are untouched, so a listener that triggers another
 // listener works rather than corrupting the frame that dispatched it.
 value context::call(value callable, std::span<const value> args, value this_value) {
-    return invoke(callable, args, this_value, /*constructing*/ false);
+    // NOT CALLED DIRECTLY BY A NATIVE - a getter reached from op::get_prop,
+    // an event handler from the browser's tick, a setter hit by interpreted
+    // code running under `apply`: the throw unwinds to the JavaScript handler
+    // below at once, as it always did; there is no native to return through
+    // before that handler.
+    if (native_depth_ == 0 || frames_.size() != native_frames_) {
+        return invoke(callable, args, this_value, /*constructing*/ false);
+    }
+    if (has_pending_throw_) { return value::undefined(); } // see the declaration
+    bool threw = false;
+    value thrown = value::undefined();
+    const value out = call_fenced(callable, args, this_value, threw, thrown);
+    if (threw) {
+        has_pending_throw_ = true;
+        pending_throw_ = thrown;
+        return value::undefined();
+    }
+    return out;
+}
+
+value context::call_fenced(value callable, std::span<const value> args, value this_value,
+                           bool & threw, value & thrown) {
+    threw = false;
+    thrown = value::undefined();
+    handler fence;
+    fence.frame = frames_.size();
+    fence.reg_top = registers_.size();
+    fence.fence = true;
+    handlers_.push_back(fence);
+    const std::size_t mark = handlers_.size();
+    const value out = invoke(callable, args, this_value, /*constructing*/ false);
+    if (fence_hit_) {
+        // unwind_to_handler popped the fence and everything above it.
+        fence_hit_ = false;
+        threw = true;
+        thrown = fence_thrown_;
+        fence_thrown_ = value::undefined();
+        return value::undefined();
+    }
+    // A normal return: the callee's own handlers died with its frame, so
+    // ours is on top again.
+    if (handlers_.size() >= mark) { handlers_.resize(mark - 1); }
+    return out;
 }
 
 // EVERY C++ ENTRY INTO JAVASCRIPT ENDS UP HERE - a DOM event, a timer, a
@@ -64,14 +106,28 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         if (guard.overflowed()) { return value::undefined(); }
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
+        // THE ARGUMENTS ARE ROOTED FOR THE CALL. From C++ they live in the
+        // caller's span and nowhere else - drain_microtasks pops a job's
+        // arguments before invoking it - and a native that calls back into
+        // script collects: `deliver` held its handler record only here, the
+        // collection inside the handler freed it, and the settle through the
+        // dangling pointer corrupted the heap. An interpreted callee has its
+        // arguments in registers; a native has them in this vector.
+        const rooted_values keep_args{*this, copy};
+        const rooted keep_callee{*this, callable};
+        const rooted keep_this{*this, this_value};
         const value saved = current_this_;
         current_this_ = this_value;
         note_transition_into_cxx(*this);
         const value out = [&] {
             const executing_as running{*this, executing_kind::cxx};
+            const native_scope pinned{*this};
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        // A throw the native's own `call` parked leaves here, from the
+        // native's call site: the enclosing fence or handler, or a fault.
+        if (rethrow_pending()) { return value::undefined(); }
         return out;
     }
     if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {
@@ -112,6 +168,15 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // Below the copy, `registers_` holds every argument and the collector
     // traces it in full, which is also where a real collector would run: at the
     // point where the frame it is about to enter is describable.
+    //
+    // THE CALLEE AND THE RECEIVER ARE ROOTED TOO, because the frame that will
+    // carry them is not pushed yet and this is no longer a stress-only
+    // collection point. `drain_microtasks` pops a job before calling it, so a
+    // settled promise's reaction can be reachable from nothing but `callable`
+    // here; JSON.parse's reviver gets a wrapper that exists only in a C++
+    // local as `this_value`. Two pushes on `temporaries_` per entry.
+    const rooted keep_callee{*this, callable};
+    const rooted keep_this{*this, this_value};
     safepoint();
     // A COMPILED BODY, IF THIS FUNCTION HAS ONE, asked in the same place the
     // interpreter asks. AFTER the argument fill, because that window is what

@@ -391,7 +391,8 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         out.u16(fn.param_count);
         out.u16(fn.frame_size);
         out.u8(fn.is_arrow ? 1u : 0u);
-        out.u8(fn.is_generator ? 1u : 0u);
+        // 2 is an ASYNC generator: the one case the VM reads is_async.
+        out.u8(fn.is_generator ? (fn.is_async ? 2u : 1u) : 0u);
         out.u32(fn.source_begin);
         out.u32(fn.source_end);
 

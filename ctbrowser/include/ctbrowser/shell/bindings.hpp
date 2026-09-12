@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <span>
@@ -316,12 +317,37 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
+    // A NO-OP since the methods moved to the interface prototypes (see
+    // define_operation); kept only because bindings/custom_elements.cpp calls
+    // it on the instance a `new`-made custom element becomes.
     void install_element_methods(context & cx, script::object_object & obj);
-    // The three files the rest of the method surface lives in - see
-    // lib/Shell/bindings/element/. Called from install_element_methods only.
-    void install_attribute_methods(context & cx, script::object_object & obj);
-    void install_node_methods(context & cx, script::object_object & obj);
-    void install_control_methods(context & cx, script::object_object & obj);
+    // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
+    // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
+    // `"insertBefore" in Node.prototype` and `.length` on each are what the
+    // corpus asks; a wrapper carrying eighty own natives answered none of them.
+    //
+    // Every operation is recorded in `operations_` by the instance that built
+    // it, and the native on the prototype - installed by the PRIMARY bindings
+    // only - is a trampoline that asks `owner_of(this)` which instance's copy
+    // to run: a second Document shares the realm's prototypes (see
+    // adopt_interfaces_of) and its nodes must edit ITS tree, not the primary's.
+    // `interfaces` are the interface names whose prototypes get the native -
+    // one for a Node operation, three for a ParentNode mixin - and `length` is
+    // the WebIDL argument count.
+    void define_operation(context & cx, std::initializer_list<const char *> interfaces,
+                          const char * name, unsigned length, script::native_fn fn);
+    // The three files the operations live in - see lib/Shell/bindings/element/.
+    // Called from install_operations only.
+    void install_operations(context & cx);
+    void install_attribute_methods(context & cx);
+    void install_node_methods(context & cx);
+    void install_control_methods(context & cx);
+    struct operation {
+        std::string name;
+        script::native_fn fn;
+    };
+    // Built lazily for a secondary document, on the first call routed to it.
+    std::vector<operation> operations_;
     void note_callback_fault(std::string_view source);
     // One reading of addEventListener's third argument, shared by the element,
     // document and window registrations - three copies is three chances for
@@ -857,9 +883,21 @@ public:
         std::vector<std::size_t> children; // into css_rule_store_
         std::size_t parent = static_cast<std::size_t>(-1);
         std::size_t sheet = static_cast<std::size_t>(-1);
+        // An `@import`'s own sheet - `rule.styleSheet` - into css_sheets_.
+        std::size_t imported_sheet = static_cast<std::size_t>(-1);
     };
     struct css_sheet_record {
         node_id owner; // the <style>/<link>; unset for a constructed sheet
+        // The tree the owner was last found in - the document's root or a
+        // shadow root - and whether the last walk of that tree still found it.
+        // A `<link disabled>` keeps its record and its identity but answers
+        // null for `ownerNode`, which is what HTMLLinkElement-disabled-001
+        // asserts.
+        node_id tree;
+        bool attached = false;
+        // The CSSImportRule this sheet belongs to, for `ownerRule` and
+        // `parentStyleSheet`; unset for every other sheet.
+        std::size_t owner_rule = static_cast<std::size_t>(-1);
         std::string href;
         std::string title;
         std::string media;  // the `media` ATTRIBUTE as last seen on the owner
@@ -883,8 +921,41 @@ public:
     void install_style_sheets(context & cx);
     // `styleElement.sheet` / `linkElement.sheet` - the LinkStyle interface.
     // Called from install_element_views, which is the only place an element
-    // wrapper is built.
+    // wrapper is built. `HTMLLinkElement.disabled` and a ShadowRoot's
+    // `styleSheets` / `adoptedStyleSheets` ride on the same prototypes and are
+    // installed here too.
     void install_sheet_property(context & cx, script::object_object & obj, node_id id);
+
+    // WHICH `<link>`s ARE STYLESHEETS - one answer for the cascade and the
+    // object model, HTML 4.6.7 and 4.2.4.4. `rel` is a space-separated token
+    // list matched ASCII case-insensitively; the `disabled` attribute keeps
+    // the sheet from being obtained at all; an `alternate stylesheet` is
+    // fetched (its `load` fires) but does not apply and is not in
+    // `document.styleSheets` unless the link was EXPLICITLY ENABLED - the
+    // flag `link.disabled = false` sets when it removes the attribute.
+    enum class link_sheet {
+        none,
+        alternate,
+        active
+    };
+    [[nodiscard]] static link_sheet link_sheet_state(std::string_view rel, bool disabled_attribute,
+                                                     bool explicitly_enabled);
+    [[nodiscard]] bool link_explicitly_enabled(node_id id) const;
+    // HTML 4.2.6, the preferred style sheet set - STICKY, as every engine has
+    // it: the first titled sheet to ARRIVE names the set, and a titled sheet
+    // inserted before it later does not take over
+    // (preferred-stylesheet-reversed-order.html). Arrival order is node
+    // creation order, which is what the smallest owner handle among the
+    // titled sheets picks out; the sheets are re-derived to find it when
+    // nothing has named the set yet.
+    // ponytail: never reset, so a page that removes its preferred sheet keeps
+    // the name; clear it on removal if a page ever needs that.
+    [[nodiscard]] std::string_view preferred_sheet_title();
+    // An `@import`'s URL against the sheet it sits in. A `<style>`'s sheet has
+    // no href, so its imports resolve as the document's own paths do; a
+    // `<link href="a/b.css">` importing `c.css` names `a/c.css`.
+    [[nodiscard]] static std::string resolve_sheet_href(std::string_view base,
+                                                        std::string_view reference);
 
     // WHAT THE CASCADE WOULD HAVE TO BE TOLD. insertRule/deleteRule/replaceSync
     // change the object model; nothing reaches `style::engine` from here,
@@ -915,11 +986,31 @@ private:
     // `document.styleSheets[0] === styleElement.sheet` and what keeps a page's
     // expando on a sheet object alive across a read.
     void sync_style_sheets(context & cx);
+    // One tree's sheets - the document's, or a shadow root's - into one list.
+    // `order` receives the document-order indices the cascade reads, and is
+    // null for a shadow tree, which the cascade does not render.
+    void sync_sheet_list(context & cx, node_id from, script::object_object & list,
+                         std::vector<std::size_t> * order);
     [[nodiscard]] script::object_object * cssom_internals(context & cx);
     [[nodiscard]] value style_sheet_list(context & cx);
     [[nodiscard]] value sheet_object_of(context & cx, node_id owner);
+    // THE object for a record - made once, held on the internals object, so
+    // `rule.styleSheet`, `sheet.parentStyleSheet`, `document.styleSheets[i]`
+    // and `el.sheet` all answer the same object for the same record.
+    [[nodiscard]] value sheet_object_for(context & cx, std::size_t sheet);
+    [[nodiscard]] value rule_object_for(context & cx, std::size_t rule);
     [[nodiscard]] value make_sheet_object(context & cx, std::size_t sheet);
     [[nodiscard]] value make_rule_object(context & cx, std::size_t rule);
+    // An `@import`'s sheet: a record of its own, fetched through the same
+    // registry a `<link>` is, parsed - imports and all - and hung off `rule`.
+    [[nodiscard]] std::size_t load_imported_sheet(std::size_t rule, std::string_view href);
+    [[nodiscard]] value adopted_sheets_array(context & cx, std::span<value> args);
+    // `shadowRoot.styleSheets`: the tree's own list, held on the root's wrapper.
+    [[nodiscard]] value shadow_sheet_list(context & cx, node_id root);
+    // The re-derivation `StyleSheetList.item()` does first.
+    [[nodiscard]] std::vector<style::css::namespace_declaration> sheet_namespaces(
+        std::size_t sheet) const;
+    void resync_sheet_list(context & cx, script::object_object & list);
     [[nodiscard]] value make_rule_list(context & cx, std::span<const std::size_t> rules);
     void refresh_rule_list(context & cx, value list, std::span<const std::size_t> rules);
     [[nodiscard]] value declaration_object(context & cx, std::size_t rule);
@@ -957,6 +1048,10 @@ private:
     // removed stays in the store (a rule object the page still holds must keep
     // answering) and must not appear in the author CSS.
     std::vector<std::size_t> css_document_sheets_;
+    // The `<link>`s whose `disabled` attribute a script removed - HTML's
+    // "explicitly enabled" flag, which is what lets an alternate sheet apply.
+    std::vector<std::uint64_t> enabled_links_;
+    std::string css_preferred_title_; // see preferred_sheet_title
     // The StyleSheetList, the adopted array and the interface prototypes. Held
     // on the DOCUMENT under a non-configurable private key as well as here, so
     // the collector reaches them through `mark(document_)` and this member
@@ -1295,11 +1390,15 @@ private:
             buffer->set("__bytes", byte_array(c, body));
             return c.make_promise(value::object(buffer), false);
         });
-        method("blob", [body, content_type, byte_array](context & c, std::span<value>) {
+        method("blob", [this, body, content_type, byte_array](context & c, std::span<value>) {
             // A minimal Blob: its size, its type and its bytes. Enough for a
             // page that hands one to URL.createObjectURL, which is the only
             // thing anything here does with one.
             auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+            // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
+            // probe only ever read as passing because the throw in its
+            // `.then` was lost rather than delivered as a rejection.
+            if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
             blob->set("size", value::number(static_cast<double>(body.size())));
             blob->set("type", c.string(content_type));
             blob->set("__bytes", byte_array(c, body));

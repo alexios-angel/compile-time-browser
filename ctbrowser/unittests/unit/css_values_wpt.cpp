@@ -310,6 +310,55 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "clamped="), std::string{"clamped=0"});
 }
 
+// exp-log-serialize, minmax-number-serialize, progress-serialize and their
+// kin: the computed `transform` is the product of its functions as a
+// `matrix()`, `none` is `none`, and a function this engine cannot multiply
+// out keeps its text rather than guessing.
+void test_a_transform_computes_to_a_matrix() {
+    using ctbrowser::shell::browser;
+    using ctbrowser::shell::browser_options;
+    using ctbrowser_test::logged;
+    browser page{browser_options{400, 200}};
+    page.load_html(R"html(<html><body>
+    <div id=t style="transform: scale(calc(log(1) + 0.5))"></div>
+    <script>
+        const t = document.getElementById('t');
+        const cs = getComputedStyle(t);
+        const out = [cs.transform];
+        for (const v of ['none', 'matrix(1, 0, 0, 1, 0, 0)', 'scale(2, 3) translate(10px, 5px)',
+                         'rotate(90deg)', 'translate(10%)', 'scale(calc(NaN))']) {
+            t.style.transform = v;
+            out.push(cs.transform);
+        }
+        console.log('matrix=' + out.join('|'));
+    </script></body></html>)html");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "matrix="),
+             std::string{"matrix=matrix(0.5, 0, 0, 0.5, 0, 0)|none|matrix(1, 0, 0, 1, 0, 0)|"
+                         "matrix(2, 0, 0, 3, 20, 15)|matrix(0, 1, -1, 0, 0, 0)|translate(10%)|"
+                         "matrix(0, 0, 0, 0, 0, 0)"});
+}
+
+// getComputedStyle-border-radius-001 and -003: a corner is a pair of radii and
+// the shorthand puts the horizontal four before a slash and the vertical four
+// after it - no slash when the two lists agree.
+void test_border_radius_reassembles_its_corners() {
+    using ctbrowser::shell::browser;
+    using ctbrowser::shell::browser_options;
+    using ctbrowser_test::logged;
+    browser page{browser_options{400, 200}};
+    page.load_html(R"html(<html><body>
+    <div id=a style="border-top-left-radius: 1px 5px; border-top-right-radius: 2px;
+         border-bottom-right-radius: 3px 7px; border-bottom-left-radius: 4px 8px"></div>
+    <div id=b style="border-radius: 2px"></div>
+    <script>
+        const r = (id) => getComputedStyle(document.getElementById(id)).borderRadius;
+        console.log('radius=' + r('a') + '|' + r('b'));
+    </script></body></html>)html");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "radius="), std::string{"radius=1px 2px 3px 4px / 5px 2px 7px 8px|2px"});
+}
+
 } // namespace
 
 int main() {
@@ -322,5 +371,7 @@ int main() {
     test_the_tree_counting_functions();
     test_attr_substitution();
     test_what_a_page_reads_back();
+    test_a_transform_computes_to_a_matrix();
+    test_border_radius_reassembles_its_corners();
     REPORT("css_values_wpt");
 }

@@ -24,6 +24,14 @@ namespace {
 // are REFUSED rather than mis-matched - neither appears in p5.js, and a
 // matcher that silently ignores an assertion is worse than one that says no.
 void test_regex() {
+    // Invalid FLAGS are an early error - a SyntaxError of the source,
+    // reported as a parse error - not a throw when the line runs. The
+    // pattern is not checked at compile time (see compile_regex_literal).
+    CHECK(!compiler::compile("var r = /a/gg;").ok);
+    CHECK(compiler::compile("var r = /a/gg;").error.starts_with("parse error:"));
+    CHECK(!compiler::compile("var r = /a/q;").ok);
+    CHECK(compiler::compile("function f() { return /a(b+)c/gi; }").ok);
+    CHECK(compiler::compile("var r = /(/;").ok);
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
     // .index is the most-used feature of all, at 143 sites in p5.js
@@ -591,7 +599,27 @@ void test_structured_clone() {
 
 } // namespace
 
+// `eval`, as an INDIRECT eval (global scope): the completion value comes
+// back, declarations land on the global object, a syntax error is a
+// catchable SyntaxError, and a non-string is returned as is.
+void test_eval() {
+    expect_result("return eval('1 + 1');", "2");
+    expect_result("return eval('var q = 5; q * 2');", "10");
+    expect_result("eval('var made = 7'); return made;", "7");
+    expect_result("return eval(42);", "42");
+    expect_result("return typeof eval('function f() { return 3; }; f');", "function");
+    expect_result(
+        "try { eval('let x = ;'); return 'no'; } catch (e) { return e instanceof SyntaxError; }",
+        "true");
+    expect_result("return eval('') === undefined;", "true");
+    // `++x` as a program's FIRST statement: the update node is node 1 and its
+    // prefix flag is 1, which the capture tour once followed as a child.
+    expect_result("var x = 1; return eval('++x');", "2");
+    expect_result("var x = 1; return eval('++x; x++; x');", "3");
+}
+
 int main() {
+    test_eval();
     test_regex();
     test_array_length_is_writable();
     test_collections();

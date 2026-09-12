@@ -13,21 +13,6 @@ namespace {
 // table, see declarations.cpp.
 using style::css::css_name_of;
 
-// The tokens of a `class` attribute. Whitespace-separated, and a class list
-// operation is defined in terms of them rather than of the string.
-std::vector<std::string> class_tokens(std::string_view text) {
-    std::vector<std::string> out;
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const std::size_t start = text.find_first_not_of(" \t\n\r\f", i);
-        if (start == std::string_view::npos) { break; }
-        const std::size_t end = text.find_first_of(" \t\n\r\f", start);
-        out.emplace_back(text.substr(start, end == std::string_view::npos ? end : end - start));
-        i = end == std::string_view::npos ? text.size() : end;
-    }
-    return out;
-}
-
 } // namespace
 
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
@@ -809,62 +794,126 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             const auto txn = doc_->read();
             return std::string{txn.attribute_value(id, atoms_->intern(attribute_name))};
         };
-        const auto tokens_now = [attribute_now] { return class_tokens(attribute_now()); };
-        const auto write_attribute = [this, id, attribute_name](std::string_view text) {
-            (void)doc_->set_attribute(id, atoms_->intern(attribute_name), std::string{text});
-            mutated();
-        };
-        const auto write_tokens = [write_attribute](const std::vector<std::string> & tokens) {
+        // AN ORDERED SET, DOM 7.1: `class="a a b"` is the two tokens `a` and
+        // `b`, so `length` is 2 and `item(1)` is `b` - and it is what every
+        // operation edits and then serialises back, which is why `add("a")` on
+        // that attribute writes "a b".
+        const auto tokens_now = [attribute_now] { return ordered_set(attribute_now()); };
+        // THE UPDATE STEPS: nothing is written when there is no attribute and
+        // nothing to put in one, otherwise the set, space-joined.
+        const auto update = [this, id, attribute_name](const std::vector<std::string> & tokens) {
+            const atom key = atoms_->intern(attribute_name);
+            if (tokens.empty() && !doc_->read().has_attribute(id, key)) { return; }
             std::string text;
             for (const std::string & token : tokens) {
                 if (!text.empty()) { text += ' '; }
                 text += token;
             }
-            write_attribute(text);
+            (void)doc_->set_attribute(id, key, text);
+            mutated();
+        };
+        // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING CHANGES: "" is a
+        // SyntaxError, a token with whitespace in it an InvalidCharacterError,
+        // and `add("a", "")` must leave the attribute alone.
+        const auto valid_tokens = [this](context & c, std::span<value> args,
+                                         std::vector<std::string> & out) {
+            for (const value & v : args) {
+                const std::string token = c.to_string(v);
+                if (token.empty()) {
+                    throw_dom_exception(c, "SyntaxError",
+                                        "DOMTokenList: the empty string is not a token");
+                    return false;
+                }
+                if (token.find_first_of("\t\n\f\r ") != std::string::npos) {
+                    throw_dom_exception(c, "InvalidCharacterError",
+                                        "DOMTokenList: '" + token + "' contains whitespace");
+                    return false;
+                }
+                out.push_back(token);
+            }
+            return true;
+        };
+        const auto has = [](const std::vector<std::string> & tokens, const std::string & token) {
+            return std::find(tokens.begin(), tokens.end(), token) != tokens.end();
         };
         const auto list_method = [&](std::string name, script::native_fn fn) {
             list->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
         };
-        list_method("add", [tokens_now, write_tokens](context & c, std::span<value> args) {
-            std::vector<std::string> tokens = tokens_now();
-            for (const value & v : args) {
-                const std::string token = c.to_string(v);
-                if (token.empty()) { continue; }
-                if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
-                    tokens.push_back(token);
-                }
-            }
-            write_tokens(tokens);
-            return value::undefined();
+        list_method("add",
+                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
+                        std::vector<std::string> given;
+                        if (!valid_tokens(c, args, given)) { return value::undefined(); }
+                        std::vector<std::string> tokens = tokens_now();
+                        for (const std::string & token : given) {
+                            if (!has(tokens, token)) { tokens.push_back(token); }
+                        }
+                        update(tokens);
+                        return value::undefined();
+                    });
+        list_method("remove",
+                    [tokens_now, update, valid_tokens](context & c, std::span<value> args) {
+                        std::vector<std::string> given;
+                        if (!valid_tokens(c, args, given)) { return value::undefined(); }
+                        std::vector<std::string> tokens = tokens_now();
+                        for (const std::string & token : given) { std::erase(tokens, token); }
+                        update(tokens);
+                        return value::undefined();
+                    });
+        list_method("contains", [tokens_now, has](context & c, std::span<value> args) {
+            return value::boolean(has(tokens_now(), arg_string(c, args, 0)));
         });
-        list_method("remove", [tokens_now, write_tokens](context & c, std::span<value> args) {
-            std::vector<std::string> tokens = tokens_now();
-            for (const value & v : args) {
-                const std::string token = c.to_string(v);
-                std::erase(tokens, token);
-            }
-            write_tokens(tokens);
-            return value::undefined();
-        });
-        list_method("contains", [tokens_now](context & c, std::span<value> args) {
-            const std::vector<std::string> tokens = tokens_now();
-            return value::boolean(std::find(tokens.begin(), tokens.end(), arg_string(c, args, 0)) !=
-                                  tokens.end());
-        });
-        list_method("toggle", [tokens_now, write_tokens](context & c, std::span<value> args) {
-            std::vector<std::string> tokens = tokens_now();
-            const std::string token = arg_string(c, args, 0);
-            // The two-argument form FORCES a state rather than flipping it -
-            // `classList.toggle("on", isOn)` is the idiom, and treating the
-            // second argument as absent turns it into a flip that is right
-            // half the time.
-            const bool present = std::find(tokens.begin(), tokens.end(), token) != tokens.end();
-            const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
-            if (want && !present) { tokens.push_back(token); }
-            if (!want && present) { std::erase(tokens, token); }
-            write_tokens(tokens);
-            return value::boolean(want);
-        });
+        // `toggle(token, force)`, DOM 7.1 - and a no-op runs NO update steps:
+        // `toggle("c", false)` on `class="a a"` leaves the duplicate in place.
+        list_method("toggle",
+                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
+                        std::vector<std::string> given;
+                        if (!valid_tokens(c, args.subspan(0, args.empty() ? 0 : 1), given)) {
+                            return value::undefined();
+                        }
+                        const std::string token = given.empty() ? "undefined" : given.front();
+                        std::vector<std::string> tokens = tokens_now();
+                        const bool present = has(tokens, token);
+                        const bool forced = args.size() > 1 && !args[1].is_undefined();
+                        const bool force = forced && context::truthy(args[1]);
+                        if (present) {
+                            if (forced && force) { return value::boolean(true); }
+                            std::erase(tokens, token);
+                            update(tokens);
+                            return value::boolean(false);
+                        }
+                        if (forced && !force) { return value::boolean(false); }
+                        tokens.push_back(token);
+                        update(tokens);
+                        return value::boolean(true);
+                    });
+        // `replace(token, newToken)`: "replace within an ordered set" - the
+        // FIRST of either becomes the new token and every other instance of
+        // either goes, so `class="a b c"` replacing c with a is "a b".
+        list_method("replace",
+                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
+                        if (args.size() < 2) {
+                            c.throw_error("TypeError", "replace: 2 arguments required");
+                            return value::undefined();
+                        }
+                        std::vector<std::string> given;
+                        if (!valid_tokens(c, args.subspan(0, 2), given)) {
+                            return value::undefined();
+                        }
+                        std::vector<std::string> tokens = tokens_now();
+                        if (!has(tokens, given[0])) { return value::boolean(false); }
+                        std::vector<std::string> replaced;
+                        bool done = false;
+                        for (const std::string & token : tokens) {
+                            if (token != given[0] && token != given[1]) {
+                                replaced.push_back(token);
+                            } else if (!done) {
+                                replaced.push_back(given[1]);
+                                done = true;
+                            }
+                        }
+                        update(replaced);
+                        return value::boolean(true);
+                    });
         list_method("item", [tokens_now](context & c, std::span<value> args) {
             const std::vector<std::string> tokens = tokens_now();
             const auto i = static_cast<std::ptrdiff_t>(
@@ -889,6 +938,10 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         list_method("toString", [attribute_now](context & c, std::span<value>) {
             return c.string(attribute_now());
         });
+        const auto write_attribute = [this, id, attribute_name](std::string_view text) {
+            (void)doc_->set_attribute(id, atoms_->intern(attribute_name), std::string{text});
+            mutated();
+        };
         list->define_accessor(
             "value",
             value::object(cx.allocate<script::native_object>(
@@ -910,7 +963,26 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                           static_cast<double>(tokens_now().size()));
                                   })),
                               value::undefined());
-        return list;
+        // `classList[i]` - the indexed getter, which only a proxy can keep live.
+        // The same shape as make_live_collection's, and only `get`: an index is
+        // read-only and everything else falls through to the list itself.
+        auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+        handler->set("get", value::object(cx.allocate<script::native_object>(
+                                "get", [tokens_now](context & c, std::span<value> args) {
+                                    if (args.size() < 2) { return value::undefined(); }
+                                    const std::string key = c.to_string(args[1]);
+                                    if (!key.empty() && key.size() < 10 &&
+                                        key.find_first_not_of("0123456789") == std::string::npos &&
+                                        (key == "0" || key[0] != '0')) {
+                                        const std::vector<std::string> tokens = tokens_now();
+                                        const std::size_t at = std::stoul(key);
+                                        return at < tokens.size() ? c.string(tokens[at])
+                                                                  : value::undefined();
+                                    }
+                                    return c.lookup_property(args[0], key);
+                                })));
+        return value::object(
+            cx.allocate<script::proxy_object>(value::object(list), value::object(handler)));
     };
     // READONLY, and this one had a price. `classList` is `[SameObject] readonly
     // attribute DOMTokenList` and it was a writable data property, so
@@ -918,7 +990,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // its first case and every case after it called `add`, `contains` and
     // `item` on that string. A write to a readonly property is silently
     // discarded in sloppy mode, which is what the corpus expects to happen.
-    obj.define("classList", value::object(make_token_list("class", {})),
+    obj.define("classList", make_token_list("class", {}),
                script::attr_enumerable | script::attr_configurable);
 
     // --- element.blocking, HTML 2.5.7 "blocking attributes"
@@ -941,7 +1013,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
         if (txn.element_ns(id) == node_ns::html &&
             (tag == "link" || tag == "script" || tag == "style")) {
-            const value list = value::object(make_token_list("blocking", "render"));
+            const value list = make_token_list("blocking", "render");
             auto * reader = cx.allocate<script::native_object>(
                 "blocking", [list](context &, std::span<value>) { return list; });
             // A capture is not a GC edge - see the note on `attributes` above.

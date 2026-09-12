@@ -168,11 +168,17 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // it, and written as soon as the class value exists.
     if (!n.text.empty()) { emit_write(n.text, dst); }
 
+    // TWO PASSES, WHICH IS THE SPECIFICATION'S ORDER: every method and accessor
+    // is defined first (ClassDefinitionEvaluation step 26), then the class's
+    // own members are made non-enumerable in one native call, and only THEN
+    // do the static field initialisers run (step 31) - so a static initialiser
+    // that reads a static method finds it, and `Object.keys(C)` lists the
+    // static fields and nothing else.
     const std::uint16_t slot = alloc_reg();
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.text == "constructor" && m.c == 1) { continue; }
-        if (m.c == 0 && (m.d & 1) == 0) { continue; } // an instance field; handled above
+        if (m.c == 0) { continue; } // fields: instance ones above, static ones below
         if (m.c == 2) {
             // An accessor. It goes on the prototype like a method - or on
             // the constructor when static - and `d` bit2 says which half.
@@ -215,6 +221,24 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         if (m.c == 1) {
             proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
         }
+    }
+    {
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{class_defined_name})));
+        const std::uint16_t klass = alloc_reg();
+        proto().emit(instruction{op::move, klass, dst});
+        proto().emit(instruction{op::call, callee, 1});
+    }
+    for (const std::int32_t member : members) {
+        const vp::node & m = at(member);
+        if (m.c != 0 || (m.d & 1) == 0) { continue; } // a static field
+        if (m.b >= 0) {
+            compile_expr(m.b, slot);
+        } else {
+            proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
+        }
+        proto().emit(instruction{op::set_prop, dst, name_operand(std::string{m.text}), slot});
     }
     release_to(mark);
     // Closed AFTER every method is compiled, so they capture the name, and

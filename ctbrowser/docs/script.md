@@ -293,12 +293,14 @@ anything array-LIKE.
 with a `next()` of its own is not iterated. A generator would need the same
 machinery and is out of scope (below).
 
-### Reading a property of undefined does not throw
+### Reading a property of undefined throws (since 2026-09-12)
 
-`undefined.x` gives `undefined` here rather than a TypeError. It is why the class
-expression leak above took an afternoon: `p5` was undefined, `.TableRow` was
-undefined, and the error surfaced one step later naming `TableRow`. Left as it is
-for now, and written down because it turns a precise failure into a vague one.
+`undefined.x` gave `undefined` here rather than a TypeError, and it is why the
+class expression leak above took an afternoon: `p5` was undefined, `.TableRow`
+was undefined, and the error surfaced one step later naming `TableRow`. It is a
+TypeError now, in `lookup_property`/`store_property` so both tiers agree:
+"Cannot read properties of undefined (reading 'x')". `?.` is the way to ask
+without one.
 
 ### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
 

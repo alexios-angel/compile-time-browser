@@ -198,7 +198,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
-    if (p->kind == k::freeform) { return yes(simplified); }
+    // `font-family` IS FREEFORM WITH ONE EXTRA RULE: its strings are the one
+    // place CSSOM unquotes a string on the way back out. `'Lucida Grande'`
+    // reads back as `Lucida Grande`, and serialize-values asks for it.
+    if (p->kind == k::freeform) {
+        return yes(ascii_iequals(property, "font-family") ? serialize_font_family(simplified)
+                                                          : simplified);
+    }
 
     // A `<position>` IS THE ONE MULTI-COMPONENT VALUE THIS TABLE MODELS, so it
     // is asked before the single-token path: `object-position: 10%` is a whole

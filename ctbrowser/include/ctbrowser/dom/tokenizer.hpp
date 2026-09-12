@@ -65,6 +65,11 @@ struct token {
     std::string name; // tag or doctype name
     std::string data; // character run, or comment text
     std::vector<token_attribute> attributes;
+    // A doctype's public and system identifiers, as written; empty when the
+    // declaration had none. The DocumentType node reports them and nothing
+    // else reads them.
+    std::string public_id;
+    std::string system_id;
     bool self_closing = false;
     bool force_quirks = false;
 

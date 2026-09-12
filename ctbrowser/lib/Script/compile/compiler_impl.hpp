@@ -128,6 +128,9 @@ public:
     // compiler::compile from the script_kind; see the note on that enum for why
     // the distinction is not cosmetic.
     bool module_scope_ = false;
+    // `eval`: a trailing expression statement is the program's return value.
+    // See compiler::compile_for_eval.
+    bool completion_value_ = false;
 
     // THE BYTES THE AST WAS PARSED FROM, which is NOT `out_.source`.
     //
@@ -502,7 +505,8 @@ public:
     //      the cell on the floor and the closure would see the wrong variable.
     //   3. a temporary allocated for a default expression must be released, or
     //      every default permanently widens the frame.
-    void compile_parameter_prologue(std::span<const std::int32_t> params);
+    void compile_parameter_prologue(std::span<const std::int32_t> params,
+                                    const std::function<bool(std::uint16_t)> & is_boxed);
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
@@ -699,6 +703,7 @@ public:
     // an object with a `next()` of its own is not iterated, because nothing
     // dispatches through Symbol.iterator.
     void compile_for_of(const vp::node & n);
+    void compile_for_await(const vp::node & n);
 
     // switch.
     //

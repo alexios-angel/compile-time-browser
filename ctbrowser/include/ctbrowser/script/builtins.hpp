@@ -35,6 +35,22 @@ namespace ctbrowser::script {
 // What a regex LITERAL compiles to. A reserved name rather than `RegExp` so a
 // page that shadows the constructor cannot change what its own literals mean.
 inline constexpr std::string_view regexp_factory_name = "__ctbrowser_regexp";
+// `Promise.reject`, under a name a page cannot shadow: the compiler's async
+// fence returns `__ctbrowser_reject(e)` for a throw an async body did not
+// catch. See compile_function_body.
+inline constexpr std::string_view promise_reject_name = "__ctbrowser_reject";
+// Called once per class, after its methods and accessors are installed and
+// before its static fields are: makes every own property of the constructor
+// and of its prototype NON-ENUMERABLE, which is what ClassDefinitionEvaluation
+// (15.7.14) gives a method, an accessor, `prototype` and `constructor`.
+// op::set_prop has no attribute operand and a new opcode is an ABI change, so
+// this is one native call rather than one per method.
+inline constexpr std::string_view class_defined_name = "__ctbrowser_class_defined";
+// GetIterator(obj, async) for `for await`: the object's @@asyncIterator, or
+// its @@iterator wrapped so that every `next()` answers a promise of the
+// record (CreateAsyncFromSyncIterator, 27.1.6.1). The loop itself is bytecode:
+// `next()` through call_receiver, await_value, get_prop done/value.
+inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_iterator";
 
 // Install the standard library into a context.
 //

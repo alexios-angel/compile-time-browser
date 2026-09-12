@@ -220,6 +220,23 @@ void install_dynamic_function(context & cx) {
         const program & kept = c.own_program(std::move(compiled));
         return c.run_nested(kept);
     });
+    // `eval(x)`, 19.2.1 - AS AN INDIRECT EVAL, always: the source runs at the
+    // global scope, through the same run_nested `new Function` uses, and its
+    // completion value (a trailing expression) comes back. A DIRECT eval that
+    // sees the caller's locals needs the compiler to keep a frame's scope
+    // alive by name, which this engine's register frames do not; test262's
+    // eval-code/direct tests measure that gap by name. A non-string comes
+    // back unchanged (step 1).
+    cx.define_native("eval", [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_string()) { return a.empty() ? value::undefined() : a[0]; }
+        program compiled = compiler::compile_for_eval(c.to_string(a[0]));
+        if (!compiled.ok) {
+            c.throw_error("SyntaxError", compiled.error);
+            return value::undefined();
+        }
+        const program & kept = c.own_program(std::move(compiled));
+        return c.run_nested(kept);
+    });
     // `Function.prototype`, reachable from script rather than only consulted by
     // lookup. `Function.prototype.call.bind(...)` and
     // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the
@@ -230,6 +247,34 @@ void install_dynamic_function(context & cx) {
             ->set("prototype", value::object(table));
         link_constructor(cx, table, "Function", 1, cx.global("Function"));
     }
+}
+
+// See class_defined_name: the class's own members, made non-enumerable.
+void install_class_defined(context & cx) {
+    cx.define_native(std::string{class_defined_name}, [](context &, std::span<value> a) {
+        if (a.empty() || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
+        auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        for (std::size_t i = 0; i < ctor->props.size(); ++i) {
+            const std::string & key = ctor->props[i].first;
+            ctor->set_attrs(key, static_cast<std::uint8_t>(ctor->attrs_of(key) & ~attr_enumerable));
+        }
+        for (accessor_entry & entry : ctor->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_enumerable);
+        }
+        value * proto = ctor->find("prototype");
+        if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
+        auto * table = static_cast<object_object *>(proto->as_heap());
+        std::vector<std::pair<std::string, std::uint8_t>> entries;
+        table->each_own_entry(
+            [&](const std::string & key, std::uint8_t attrs) { entries.emplace_back(key, attrs); });
+        for (const auto & [key, attrs] : entries) {
+            table->set_attrs(key, static_cast<std::uint8_t>(attrs & ~attr_enumerable));
+        }
+        for (accessor_entry & entry : table->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_enumerable);
+        }
+        return value::undefined();
+    });
 }
 
 // `.next(v)`, `.throw(e)`, `.return(v)` - the iterator protocol, for every
@@ -255,6 +300,23 @@ void install_generator(context & cx) {
     detail::method(cx, table, "@@iterator", 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
     cx.set_prototype(context::proto_kind::generator, table);
+
+    // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
+    // PROMISE of the record and queued behind the body - see
+    // context::async_generator_request. An async generator is its own async
+    // iterator.
+    object_object * async_table = detail::new_table(cx);
+    const auto async_driver = [](context::resume_mode how) {
+        return [how](context & c, std::span<value> a) {
+            return c.async_generator_request(c.current_this(), arg_at(a, 0), how);
+        };
+    };
+    detail::method(cx, async_table, "next", 1, async_driver(context::resume_mode::next));
+    detail::method(cx, async_table, "throw", 1, async_driver(context::resume_mode::thrown));
+    detail::method(cx, async_table, "return", 1, async_driver(context::resume_mode::returned));
+    detail::method(cx, async_table, "@@asyncIterator", 0,
+                   [](context & c, std::span<value>) { return c.current_this(); });
+    cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 
 } // namespace ctbrowser::script::builtins_detail

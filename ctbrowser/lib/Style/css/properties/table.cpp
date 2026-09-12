@@ -153,6 +153,15 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
+    // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
+    // font-variant-alternates, font-variation-settings and font-width, which
+    // using-font-relative-units-in-font-properties asks to exist. Adding the
+    // six put a page's baseline script heap over 3,000 objects (each known
+    // property is accessors on the style prototypes), and unit/page_async's
+    // heap-growth assertion holds only below that: the collector's threshold
+    // doubles after a collection, so a 3,000-object churn against a baseline
+    // above 3,000 collects on every OTHER tick and the sixtieth sample lands
+    // on the high one (3005 -> 6005). Fix the test's sampling first.
     {"line-height", k::number_length_percentage, "normal", "normal", true, true},
     // CSS Text 4 gave both of these a percentage: `normal | <length-percentage>`.
     // `calc-letter-spacing` asks for `letter-spacing: calc(100%)` to compute to

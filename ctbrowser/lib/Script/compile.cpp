@@ -22,7 +22,20 @@ namespace {
 
 } // namespace
 
+namespace {
+program compile_source(std::string_view source, script_kind kind, bool completion_value);
+} // namespace
+
 program compiler::compile(std::string_view source, script_kind kind) {
+    return compile_source(source, kind, /*completion_value*/ false);
+}
+
+program compiler::compile_for_eval(std::string_view source) {
+    return compile_source(source, script_kind::classic, /*completion_value*/ true);
+}
+
+namespace {
+program compile_source(std::string_view source, script_kind kind, bool completion_value) {
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;
@@ -71,9 +84,11 @@ program compiler::compile(std::string_view source, script_kind kind) {
     // address - so the copy is the wrong thing to subtract against. See
     // compiler_impl::offset_of.
     c.source_view_ = source;
+    c.completion_value_ = completion_value;
     c.compile_program();
     return out;
 }
+} // namespace
 
 bool debug_names_enabled() noexcept {
 #if CTBROWSER_SCRIPT_DEBUG_NAMES

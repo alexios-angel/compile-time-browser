@@ -8,27 +8,38 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// Does this `rel` make the link a stylesheet? The attribute is a
-// space-separated token list matched ASCII case-insensitively, so `stylesheet`,
-// `StyleSheet` and `stylesheet preload` are all one.
-//
-// `alternate stylesheet` is NOT one: it is a user-selectable alternative and a
-// browser leaves it disabled until something picks it. Applying it would make a
-// page that offers a light and a dark sheet render both.
-[[nodiscard]] bool rel_is_stylesheet(std::string_view rel) {
-    bool stylesheet = false;
+// `@import`, EXPANDED IN PLACE. The sheet parser drops the statement because it
+// cannot fetch; this can, through the same registry the `<link>` came from. The
+// imported text goes where the statement stood - so it precedes the sheet's own
+// rules, as the cascade requires - wrapped in the import's media query when it
+// has one, and expanded itself first so a chain of imports nests correctly.
+// `chain` is the hrefs being expanded, which refuses a cycle and caps the depth.
+std::string expand_imports(const asset_registry & assets, std::string css, std::string_view base,
+                           std::vector<std::string> & chain) {
+    if (chain.size() >= 16) { return css; }
+    const std::vector<ctbrowser::style::css::import_statement> imports =
+        ctbrowser::style::css::leading_imports(css);
+    if (imports.empty()) { return css; }
+    std::string out;
     std::size_t at = 0;
-    while (at < rel.size()) {
-        const std::size_t start = rel.find_first_not_of(ctbrowser::html_whitespace, at);
-        if (start == std::string_view::npos) { break; }
-        std::size_t end = rel.find_first_of(ctbrowser::html_whitespace, start);
-        if (end == std::string_view::npos) { end = rel.size(); }
-        const std::string_view token = rel.substr(start, end - start);
-        if (ctbrowser::ascii_iequals(token, "alternate")) { return false; }
-        if (ctbrowser::ascii_iequals(token, "stylesheet")) { stylesheet = true; }
-        at = end;
+    for (const ctbrowser::style::css::import_statement & each : imports) {
+        out += css.substr(at, each.begin - at);
+        at = each.end;
+        const std::string href = dom_bindings::resolve_sheet_href(base, each.href);
+        if (std::ranges::find(chain, href) != chain.end()) { continue; }
+        const std::vector<std::byte> bytes = assets.load(href);
+        std::string text{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+        chain.push_back(href);
+        text = expand_imports(assets, std::move(text), href, chain);
+        chain.pop_back();
+        if (each.media.empty()) {
+            out += text + "\n";
+        } else {
+            out += "@media " + each.media + " {\n" + text + "\n}\n";
+        }
     }
-    return stylesheet;
+    out += css.substr(at);
+    return out;
 }
 
 } // namespace
@@ -93,6 +104,29 @@ std::string browser::collect_author_styles() {
     const atom link_tag = atoms_.intern_lower("link");
     const atom rel_attribute = atoms_.intern_lower("rel");
     const atom href_attribute = atoms_.intern_lower("href");
+    const atom disabled_attribute = atoms_.intern_lower("disabled");
+    const atom title_attribute = atoms_.intern_lower("title");
+    // HTML 4.2.6: the first TITLED sheet names the preferred style sheet set,
+    // and a sheet with any other title is an alternative set that does not
+    // apply - unless its link was explicitly enabled. The set is the bindings'
+    // sticky answer once they exist (dom_bindings::preferred_sheet_title);
+    // before scripts run it is the first titled sheet of this walk, which is
+    // the same answer for a parsed document.
+    std::string preferred;
+    bool have_preferred = false;
+    const auto applies = [&](node_id at, bool enabled) {
+        const std::string_view title = txn.attribute_value(at, title_attribute);
+        if (title.empty()) { return true; }
+        if (bindings_) {
+            const std::string_view preferred = bindings_->preferred_sheet_title();
+            return enabled || preferred.empty() || title == preferred;
+        }
+        if (!have_preferred) {
+            preferred = std::string{title};
+            have_preferred = true;
+        }
+        return enabled || title == preferred;
+    };
     // ONE sheet, concatenated in document order, rather than one add_sheet per
     // <style> and <link>. Both preserve source order; this one also cannot get
     // it wrong, because ctcss numbers a declaration's `order` from zero on every
@@ -106,15 +140,29 @@ std::string browser::collect_author_styles() {
         // paragraph on the page.
         if (txn.element_ns(at) == ctbrowser::node_ns::html) {
             const atom tag = txn.tag(at).value_or(atom{});
+            // Which links are stylesheets is the CSSOM's answer too, so the two
+            // cannot disagree - dom_bindings::link_sheet_state. An ALTERNATE
+            // sheet is fetched for its `load` and applies nothing.
+            const bool enabled = bindings_ && bindings_->link_explicitly_enabled(at);
+            const dom_bindings::link_sheet state =
+                tag == link_tag
+                    ? dom_bindings::link_sheet_state(txn.attribute_value(at, rel_attribute),
+                                                     txn.has_attribute(at, disabled_attribute),
+                                                     enabled)
+                    : dom_bindings::link_sheet::none;
             if (tag == style_tag) {
-                for (const node_id child : txn.children(at)) { css += txn.text(child); }
-                css += '\n';
+                if (applies(at, false)) {
+                    std::string text;
+                    for (const node_id child : txn.children(at)) { text += txn.text(child); }
+                    std::vector<std::string> chain;
+                    css += expand_imports(assets_, std::move(text), {}, chain);
+                    css += '\n';
+                }
                 // HTML "update a style block" ends by firing `load` at the
                 // element; the sheet is applied by the caller straight after
                 // this walk, and the event is queued for the tick after that.
                 note_resource_load(at, true);
-            } else if (tag == link_tag &&
-                       rel_is_stylesheet(txn.attribute_value(at, rel_attribute))) {
+            } else if (state != dom_bindings::link_sheet::none) {
                 // Resolved by the asset registry exactly as <script src> is
                 // (see load_page_scripts): registry, then data:, then the
                 // filesystem from three roots. A miss is RECORDED, not passed
@@ -127,8 +175,10 @@ std::string browser::collect_author_styles() {
                     if (style_error_.empty()) {
                         style_error_ = "<link rel=stylesheet href=\"" + href + "\"> not found";
                     }
-                } else {
-                    css.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                } else if (state == dom_bindings::link_sheet::active && applies(at, enabled)) {
+                    std::string text{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+                    std::vector<std::string> chain{href};
+                    css += expand_imports(assets_, std::move(text), href, chain);
                     css += '\n';
                 }
                 // `load` once the sheet applies, `error` when there is nothing

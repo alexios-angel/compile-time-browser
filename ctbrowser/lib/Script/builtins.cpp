@@ -9,6 +9,7 @@ using namespace builtins_detail;
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_generator(cx);
+    install_class_defined(cx);
     install_regexp(cx);
     install_symbol(cx);
     install_collections(cx);

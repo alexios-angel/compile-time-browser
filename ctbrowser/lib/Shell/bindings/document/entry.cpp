@@ -197,6 +197,22 @@ std::string dom_bindings::text_of(node_id id) const {
 
 void dom_bindings::set_text(node_id id, std::string text) {
     if (!id) { return; }
+    // CharacterData: `textContent = x` on a Text, Comment, CDATA section or PI
+    // sets ITS data - "replace data" - and a DocumentType ignores it. Only an
+    // element or a fragment replaces its children.
+    switch (doc_->read().kind(id).value_or(node_kind::element)) {
+    case node_kind::text:
+    case node_kind::comment:
+    case node_kind::cdata_section:
+    case node_kind::processing_instruction:
+        (void)doc_->set_text(id, text);
+        mutated();
+        return;
+    case node_kind::document_type: return;
+    case node_kind::document:
+    case node_kind::element:
+    case node_kind::document_fragment: break;
+    }
     // Copied before removing: children() is a view onto the live child
     // list, and removing while iterating it is a use-after-free waiting for
     // the second child.

@@ -123,28 +123,24 @@ void test_create_document_makes_an_xml_document() {
        "http://www.w3.org/1999/xhtml");
 }
 
-void test_a_node_of_one_document_is_refused_by_the_other() {
-    // THE HONEST FAILURE. `pack(node_id)` is a slot and a generation into ONE
-    // slab, so the same number names a different node in a different document.
-    // The primary's `handle_of` now checks that a wrapper is in ITS table, so a
-    // foreign node reads as no node - a method that does nothing - rather than
-    // as whatever happens to occupy that slot here.
-    // WHAT THE DOM ACTUALLY REQUIRES IS ADOPTION: `appendChild` runs "adopt
-    // node" first, so a node of another document is MOVED into this one rather
-    // than refused. That needs a subtree copy across two slabs and it is not
-    // done - `importNode` and `adoptNode` are not done either, and the same
-    // work buys all three. What the engine does instead is refuse, and it
-    // refuses through the one step that already exists: `handle_of` does not
-    // find the wrapper in THIS instance's table, so the argument is not a Node
-    // and "ensure pre-insertion validity" step 1 throws a TypeError. That is
-    // wrong about the DOM and right about the engine's own model, and it is
-    // pinned here so the day adoption arrives this line has to change.
+void test_a_node_of_one_document_is_adopted_by_the_other() {
+    // ADOPTION, AS THE DOM REQUIRES. `pack(node_id)` is a slot and a
+    // generation into ONE slab, so the same number names a different node in
+    // a different document - which is why this used to be refused with a
+    // TypeError, pinned here "so the day adoption arrives this line has to
+    // change". It arrived (2026-09-12): `appendChild` runs "adopt node" first,
+    // node_from clone-adopts the subtree across the two slabs and rebinds the
+    // page's wrapper to the copy, so the node is MOVED into this document.
+    // NOT YET: `document.getElementById('moved') === p` - the page hands out a
+    // second wrapper for the adopted copy, so identity across the adoption is
+    // the next thing this test should pin.
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('m');"
-       " var p = d.createElement('p');"
-       " try { document.body.appendChild(p); return 'appended'; }"
-       " catch (e) { return e.name + ',' + document.body.childNodes.length; } })()",
-       "TypeError,3");
+       " var p = d.createElement('p'); p.id = 'moved';"
+       " document.body.appendChild(p);"
+       " return (p.ownerDocument === document) + ',' + p.parentNode.tagName"
+       "   + ',' + document.body.childNodes.length; })()",
+       "true,BODY,4");
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('m');"
        " return document.contains(d.body); })()",
@@ -161,6 +157,6 @@ int main() {
     test_a_made_document_can_be_built_up();
     test_a_made_document_has_no_browsing_context();
     test_create_document_makes_an_xml_document();
-    test_a_node_of_one_document_is_refused_by_the_other();
+    test_a_node_of_one_document_is_adopted_by_the_other();
     REPORT("second_document");
 }

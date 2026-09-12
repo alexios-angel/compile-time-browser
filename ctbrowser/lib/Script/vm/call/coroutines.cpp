@@ -129,7 +129,10 @@ value context::make_generator(closure_object * closure, value receiver,
 
     value out = make_object();
     auto * obj = static_cast<object_object *>(out.as_heap());
-    if (object_object * table = prototype(proto_kind::generator)) {
+    saved->async_gen = closure->proto->is_async;
+    saved->self = out;
+    if (object_object * table =
+            prototype(saved->async_gen ? proto_kind::async_generator : proto_kind::generator)) {
         obj->prototype = value::object(table);
     }
     obj->set("__co", value::object(saved));
@@ -160,6 +163,14 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     }
     // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
     // not an error and must not run the body again.
+    //
+    // AN ASYNC GENERATOR NEVER THROWS AT ITS CALLER: `.throw(e)` on one that
+    // has finished, or has not started, answers a REJECTED promise, which
+    // settle_async_generator hands to the request. The sync form unwinds.
+    if (saved->async_gen && how == resume_mode::thrown && (saved->done || !saved->started)) {
+        saved->done = true;
+        return make_promise(sent, true);
+    }
     if (saved->done) {
         if (how == resume_mode::thrown) {
             thrown_ = sent;
@@ -204,6 +215,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     frame.receiver = saved->receiver;
     frame.handler_base = handlers_.size();
     frame.generator = saved;
+    // An async generator's frame settles the REQUEST'S promise, so an await
+    // inside it parks on that one rather than minting another.
+    if (saved->async_gen) { frame.async_promise = saved->promise; }
     frames_.push_back(frame);
     const std::size_t index = frames_.size() - 1;
     for (handler restored : saved->handlers) {
@@ -245,11 +259,101 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         yielded_ = false;
         return record(produced, false);
     }
+    // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
+    // frame back into this same coroutine and flagged it; the request is
+    // finished by resume() when the awaited promise settles. Nothing to
+    // answer yet.
+    if (suspended_ && saved->awaiting) {
+        suspended_ = false;
+        return value::undefined();
+    }
     // The body returned, threw past its own handlers, or the VM failed. Any of
     // those finish the generator; a further `.next()` answers done for ever.
     saved->done = true;
     registers_.resize(base);
     return record(produced, true);
+}
+
+// --- async generators ---------------------------------------------------------
+//
+// `async function*`, 27.6. The body is the generator above with `await`
+// allowed in it, so a request - `.next(v)`, `.throw(e)`, `.return(v)` - cannot
+// always be answered on the spot: the body may be parked on an await from the
+// previous one. So every request is a promise, joins a queue, and runs when
+// the body is free. The record a sync generator returns is what the promise
+// resolves with; a body that throws rejects it instead - the compiler's async
+// fence turns the throw into a rejected promise on the body's return path, and
+// settle_async_generator reads it back out.
+
+value context::async_generator_request(value generator, value sent, resume_mode how) {
+    if (!pending_promise_factory_ || !promise_settler_) { return value::undefined(); }
+    const value promise = pending_promise_factory_(*this);
+    value * held = generator.is_object()
+                       ? static_cast<object_object *>(generator.as_heap())->find("__co")
+                       : nullptr;
+    if (held == nullptr || !held->is_kind(heap_kind::coroutine) ||
+        !static_cast<coroutine_object *>(held->as_heap())->async_gen) {
+        // 27.6.3.3 step 3: not an async generator - the promise rejects, the
+        // caller is never thrown at.
+        promise_settler_(*this, promise, make_error("TypeError", "not an async generator"), true);
+        return promise;
+    }
+    auto * saved = static_cast<coroutine_object *>(held->as_heap());
+    saved->queue.push_back({how, sent, promise});
+    async_generator_drain(saved);
+    return promise;
+}
+
+void context::async_generator_drain(coroutine_object * saved) {
+    while (!saved->queue.empty() && !saved->running && !saved->awaiting && !failed_) {
+        const coroutine_object::async_request request = saved->queue.front();
+        saved->queue.erase(saved->queue.begin());
+        // Popped, so the request's values are in a C++ local and nowhere else
+        // until the body has them; `promise` is what this run settles.
+        const rooted keep_sent{*this, request.sent};
+        const rooted keep_promise{*this, request.promise};
+        saved->promise = request.promise;
+        const value answer = generator_resume(saved->self, request.sent, request.how);
+        if (saved->awaiting) { return; } // resume() settles this one
+        settle_async_generator(saved, answer, /*raw_return*/ false);
+    }
+}
+
+void context::settle_async_generator(coroutine_object * saved, value outcome, bool raw_return) {
+    if (!promise_settler_) { return; }
+    const value promise = saved->promise;
+    saved->promise = value::undefined();
+    // A settled, rejected promise is the body's throw: the async fence caught
+    // it and returned `Promise.reject(e)`, which generator_resume reports as
+    // the record's value (or, from `.throw()` on a finished generator, as the
+    // whole answer).
+    const auto rejection_of = [](value v) -> value * {
+        if (!v.is_object()) { return nullptr; }
+        auto * obj = static_cast<object_object *>(v.as_heap());
+        value * state = obj->find("__rejected");
+        if (state == nullptr || !truthy(*state)) { return nullptr; }
+        return obj->find("__value");
+    };
+    if (value * reason = rejection_of(outcome)) {
+        promise_settler_(*this, promise, *reason, true);
+        return;
+    }
+    value record = outcome;
+    if (raw_return) {
+        record = make_object();
+        auto * obj = static_cast<object_object *>(record.as_heap());
+        obj->set("value", outcome);
+        obj->set("done", value::boolean(true));
+    }
+    if (record.is_object()) {
+        if (value * v = static_cast<object_object *>(record.as_heap())->find("value")) {
+            if (value * reason = rejection_of(*v)) {
+                promise_settler_(*this, promise, *reason, true);
+                return;
+            }
+        }
+    }
+    promise_settler_(*this, promise, record, false);
 }
 
 void context::resume(value coroutine, value with, bool rejected) {
@@ -273,6 +377,13 @@ void context::resume(value coroutine, value with, bool rejected) {
     frame.constructing = saved->constructing;
     frame.handler_base = handlers_.size();
     frame.async_promise = saved->promise;
+    // An async generator comes back as a GENERATOR frame, so its next `yield`
+    // finds the coroutine to park in.
+    if (saved->generator) {
+        frame.generator = saved;
+        saved->awaiting = false;
+        saved->running = true;
+    }
     frames_.push_back(frame);
     const std::size_t index = frames_.size() - 1;
     for (handler restored : saved->handlers) {
@@ -297,6 +408,14 @@ void context::resume(value coroutine, value with, bool rejected) {
             while (frames_.size() > stop) { frames_.pop_back(); }
             registers_.resize(base);
             thrown_ = value::undefined();
+            if (saved->generator) {
+                saved->running = false;
+                saved->done = true;
+                promise_settler_(*this, saved->promise, with, true);
+                saved->promise = value::undefined();
+                async_generator_drain(saved);
+                return;
+            }
             promise_settler_(*this, saved->promise, with, true);
             drain_microtasks();
             return;
@@ -304,6 +423,30 @@ void context::resume(value coroutine, value with, bool rejected) {
     }
 
     const value returned = run_loop(stop);
+    if (saved->generator) {
+        // THE ASYNC GENERATOR'S REQUEST, finished here: the body yielded (the
+        // record), returned or threw (done), or parked on another await
+        // (nothing yet). Then the queue moves on.
+        saved->running = false;
+        if (suspended_) {
+            suspended_ = false;
+            return;
+        }
+        if (failed_) { return; }
+        if (yielded_) {
+            yielded_ = false;
+            value record = make_object();
+            auto * obj = static_cast<object_object *>(record.as_heap());
+            obj->set("value", returned);
+            obj->set("done", value::boolean(false));
+            settle_async_generator(saved, record, /*raw_return*/ false);
+        } else {
+            saved->done = true;
+            settle_async_generator(saved, returned, /*raw_return*/ true);
+        }
+        async_generator_drain(saved);
+        return;
+    }
     if (suspended_) {
         suspended_ = false;
         return; // it awaited again; its promise settles on some later resume

@@ -94,18 +94,6 @@ private:
     void skip_space() {
         while (!done() && is_space(peek())) { advance(); }
     }
-    // Consume through the end of `text`, or to the end of input if it never
-    // appears - an unterminated comment is a fatal error, and the caller says
-    // so; this only has to not run off the end.
-    bool skip_to(std::string_view text) {
-        const std::size_t found = src_.find(text, at_);
-        if (found == std::string_view::npos) {
-            advance(src_.size() - at_);
-            return false;
-        }
-        advance(found + text.size() - at_);
-        return true;
-    }
 
     void fail(std::string message) {
         if (failed_) { return; }
@@ -122,7 +110,7 @@ private:
             skip_space();
             if (done()) { return; }
             if (looking_at("<?")) {
-                if (!skip_to("?>")) { fail("unterminated processing instruction"); }
+                processing_instruction();
                 continue;
             }
             if (looking_at("<!--")) {
@@ -137,9 +125,14 @@ private:
         }
     }
 
-    // Comments in the prolog and the epilogue have nowhere to go - there is no
-    // Document node above the root in this engine - so they are parsed and
-    // dropped. Inside an element they become real comment nodes.
+    // WHERE A NODE GOES: under the open element, or - in the prolog and the
+    // epilogue, where nothing is open - under the Document node, beside the
+    // root element. That is what `document.childNodes` on an XML document is.
+    void emit(node_id id) {
+        builder_.append(open_.empty() ? doc_.document_node() : open_.back().id, id);
+    }
+
+    // A comment, wherever it is.
     void comment() {
         advance(4); // <!--
         const std::size_t start = at_;
@@ -151,18 +144,57 @@ private:
         }
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
-        if (!open_.empty()) {
-            const node_id id = builder_.create_comment(text);
-            builder_.append(open_.back().id, id);
-        }
+        emit(builder_.create_comment(text));
     }
 
-    // `<!DOCTYPE name ...>`, with an internal subset that may itself contain
-    // `>` inside brackets. SKIPPED rather than read: nothing downstream asks
-    // what an XML doctype declared, and an XML document is never in quirks
-    // mode whether or not one is present.
+    // `<?target data?>`. The XML DECLARATION is not a processing instruction -
+    // XML 1.0 reserves the target `xml` in any case for it - so `<?xml
+    // version="1.0"?>` is consumed and leaves nothing behind, and every other
+    // target becomes a ProcessingInstruction node: the target, then the data
+    // after the first run of white space, up to `?>`.
+    void processing_instruction() {
+        advance(2); // <?
+        const std::string target = name();
+        if (target.empty()) {
+            fail("a processing instruction has no target");
+            return;
+        }
+        const std::size_t end = src_.find("?>", at_);
+        if (end == std::string_view::npos) {
+            fail("unterminated processing instruction");
+            advance(src_.size() - at_);
+            return;
+        }
+        skip_space();
+        const std::string_view data = src_.substr(at_, end > at_ ? end - at_ : 0);
+        advance(end + 2 - at_);
+        if (ascii_lower_copy(target) == "xml") { return; }
+        emit(builder_.create_processing_instruction(atoms_.intern(target), data));
+    }
+
+    // `<!DOCTYPE name PUBLIC "p" "s" [ ... ]>`: the name and the two
+    // identifiers become a DocumentType node under the Document; the internal
+    // subset - which may itself contain `>` inside its brackets - is SKIPPED
+    // rather than read. Nothing downstream asks what it declared, and an XML
+    // document is never in quirks mode whether or not a doctype is present.
     void doctype() {
         advance(9); // <!DOCTYPE
+        skip_space();
+        const std::string doctype_name = name();
+        skip_space();
+        std::string public_id;
+        std::string system_id;
+        if (looking_at("PUBLIC")) {
+            advance(6);
+            skip_space();
+            (void)quoted_literal(public_id);
+            skip_space();
+            (void)quoted_literal(system_id);
+        } else if (looking_at("SYSTEM")) {
+            advance(6);
+            skip_space();
+            (void)quoted_literal(system_id);
+        }
         int depth = 0;
         while (!done()) {
             const char c = peek();
@@ -170,11 +202,31 @@ private:
             if (c == ']') { --depth; }
             if (c == '>' && depth <= 0) {
                 advance();
+                emit(builder_.create_document_type(atoms_.intern(doctype_name), public_id,
+                                                   system_id));
                 return;
             }
             advance();
         }
         fail("unterminated doctype");
+    }
+
+    // A quoted literal with NO references in it - a doctype's identifiers, XML
+    // 1.0's PubidLiteral and SystemLiteral - in either quote.
+    bool quoted_literal(std::string & into) {
+        const char quote = peek();
+        if (quote != '"' && quote != '\'') { return false; }
+        advance();
+        while (!done() && peek() != quote) {
+            into.push_back(peek());
+            advance();
+        }
+        if (done()) {
+            fail("unterminated literal");
+            return false;
+        }
+        advance();
+        return true;
     }
 
     // An element, and everything under it. Iterative rather than recursive:
@@ -205,10 +257,7 @@ private:
                 continue;
             }
             if (looking_at("<?")) {
-                // A processing instruction inside the tree. There is no
-                // `node_kind` for one, so it is consumed and dropped rather
-                // than becoming a comment that would then answer `nodeType` 8.
-                if (!skip_to("?>")) { fail("unterminated processing instruction"); }
+                processing_instruction();
                 continue;
             }
             if (looking_at("<!")) {
@@ -229,7 +278,7 @@ private:
             skip_space();
             if (done()) { return; }
             if (looking_at("<?")) {
-                if (!skip_to("?>")) { fail("unterminated processing instruction"); }
+                processing_instruction();
                 continue;
             }
             if (looking_at("<!--")) {
@@ -369,10 +418,9 @@ private:
         open_.pop_back();
     }
 
-    // `<![CDATA[ ... ]]>`. There is no `CDATASection` node kind here, so it
-    // becomes a text node - which is what makes a `<script>` written the XML
-    // way run at all, because the script's text is then the code and not the
-    // code with `<![CDATA[` on the front.
+    // `<![CDATA[ ... ]]>`: a CDATASection node, which is a Text node that
+    // remembers its brackets - a `<script>` written the XML way reads its text
+    // through the same `text()` and runs, and `nodeType` answers 4.
     void cdata() {
         advance(9); // <![CDATA[
         const std::size_t start = at_;
@@ -384,8 +432,7 @@ private:
         }
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
-        const node_id id = builder_.create_text(text);
-        builder_.append(open_.back().id, id);
+        builder_.append(open_.back().id, builder_.create_cdata_section(text));
     }
 
     // Text up to the next `<`, with references resolved. A bare `&` or a

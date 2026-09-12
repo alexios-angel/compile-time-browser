@@ -460,6 +460,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (self != nullptr) { static_cast<array_object *>(out.as_heap())->items = self->items; }
         return list_iterator(c, out, "Array Iterator");
     });
+    // 23.1.3.40: Array.prototype[@@iterator] IS `values` - the same function
+    // object. `for (x of a)` never asks (op::iterable reads the items), but
+    // `for await`, spread of an array into a Map, and anything driving the
+    // protocol by hand does.
+    if (value * values = array_proto->find("values")) {
+        array_proto->define("@@iterator", *values, attr_writable | attr_configurable);
+    }
     // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
     //
     // `copyWithin` (23.1.3.4) and the four change-by-copy methods added in

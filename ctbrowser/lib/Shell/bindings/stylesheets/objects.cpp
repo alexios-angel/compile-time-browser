@@ -7,23 +7,53 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+// `shadowRoot.styleSheets` - the StyleSheetList of one shadow tree, held on
+// the root's wrapper so it is [SameObject] for as long as the wrapper is, and
+// re-derived from the tree on every read exactly as the document's is.
+value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
+    if (!root || shadow_tree_of(root) == nullptr) { return value::undefined(); }
+    script::object_object * wrapper = as_object(wrap(cx, root));
+    if (wrapper == nullptr) { return value::undefined(); }
+    value list = value::undefined();
+    if (const value * held = wrapper->find(rules_key)) {
+        list = *held;
+    } else {
+        list = cx.make_object();
+        script::object_object * obj = as_object(list);
+        if (obj == nullptr) { return value::undefined(); }
+        if (script::object_object * internals = cssom_internals(cx)) {
+            if (const value * proto = internals->find("StyleSheetList.prototype")) {
+                obj->prototype = *proto;
+            }
+        }
+        obj->define("length", value::number(0), script::attr_none);
+        obj->define(tree_key, value::object(wrapper), script::attr_none);
+        wrapper->define(rules_key, list, script::attr_none);
+    }
+    if (script::object_object * obj = as_object(list)) { sync_sheet_list(cx, root, *obj, nullptr); }
+    return list;
+}
+
 value dom_bindings::sheet_object_of(context & cx, node_id owner) {
     sync_style_sheets(cx);
+    // A `<style>` IN A SHADOW TREE is that tree's sheet: the document walk
+    // never reaches the fragment, so the tree's own list is synced instead.
+    {
+        node_id root{};
+        {
+            const auto txn = doc_->read();
+            root = root_of_tree(txn, owner, false);
+        }
+        if (root && root != owner && shadow_tree_of(root) != nullptr) {
+            (void)shadow_sheet_list(cx, root);
+        }
+    }
     const auto it = css_sheet_by_owner_.find(pack(owner));
-    if (it == css_sheet_by_owner_.end()) { return value::null(); }
-    script::object_object * list_obj = as_object(style_sheet_list(cx));
-    if (list_obj == nullptr) { return value::null(); }
-    std::size_t count = 0;
-    if (const value * held = list_obj->find("length"); held != nullptr && held->is_number()) {
-        const double n = held->as_number();
-        if (n > 0) { count = static_cast<std::size_t>(n); }
+    if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size() ||
+        !css_sheets_[it->second]->attached) {
+        return value::null();
     }
-    for (std::size_t i = 0; i < count; ++i) {
-        const value * held = list_obj->find(std::to_string(i));
-        if (held == nullptr) { continue; }
-        if (slot_index(as_object(*held), sheet_key) == it->second) { return *held; }
-    }
-    return value::null();
+    return sheet_object_for(cx, it->second);
 }
 
 // --- the objects ------------------------------------------------------------
@@ -115,33 +145,12 @@ value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> ru
 void dom_bindings::refresh_rule_list(context & cx, value list, std::span<const std::size_t> rules) {
     script::object_object * obj = as_object(list);
     if (obj == nullptr) { return; }
-    // The rule OBJECTS already in the list, by record index. insertRule must not
+    // ONE OBJECT PER RECORD, for as long as the record is. insertRule must not
     // rebuild the ones it did not touch: `css/cssom/CSSStyleSheet.html` puts an
     // expando on two rules, inserts a third between them, and asserts both
     // expandos survived.
-    std::vector<std::pair<std::size_t, value>> existing;
-    std::size_t was = 0;
-    if (const value * held = obj->find("length"); held != nullptr && held->is_number()) {
-        const double count = held->as_number();
-        if (count > 0) { was = static_cast<std::size_t>(count); }
-    }
-    for (std::size_t i = 0; i < was; ++i) {
-        const value * held = obj->find(std::to_string(i));
-        if (held == nullptr) { continue; }
-        existing.emplace_back(slot_index(as_object(*held), rule_key), *held);
-    }
     std::vector<value> ordered;
-    for (const std::size_t rule : rules) {
-        value object = value::undefined();
-        for (const auto & [index, held] : existing) {
-            if (index == rule) {
-                object = held;
-                break;
-            }
-        }
-        if (object.is_undefined()) { object = make_rule_object(cx, rule); }
-        ordered.push_back(object);
-    }
+    for (const std::size_t rule : rules) { ordered.push_back(rule_object_for(cx, rule)); }
     set_indexed(*obj, ordered);
 }
 
@@ -260,18 +269,128 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // receiver names the node; a wrapper is only made after the interfaces
     // are, so the fallback below is for an embedder that built none.
     bool installed = false;
+    const auto getter = [&](script::object_object & on, const char * name, script::native_fn read) {
+        on.define_accessor(name,
+                           value::object(cx.allocate<script::native_object>(
+                               std::string{"get "} + name, std::move(read))),
+                           value::undefined(), script::attr_configurable);
+    };
     for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
         script::object_object * proto = as_object(interface_prototype(name));
         if (proto == nullptr) { continue; }
         installed = true;
         if (proto->find_accessor("sheet") != nullptr) { continue; }
-        proto->define_accessor("sheet",
+        getter(*proto, "sheet", [this](context & c, std::span<value>) {
+            return sheet_object_of(c, handle_of(c.current_this()));
+        });
+        if (name == "HTMLStyleElement") {
+            // `HTMLStyleElement.disabled` is the SHEET's flag, not an attribute:
+            // false while the element has no sheet, and a write then does
+            // nothing (style-sheet-interfaces-001, "disabled attribute
+            // getter/setter").
+            const auto owned = [this](context & c) -> css_sheet_record * {
+                sync_style_sheets(c);
+                const auto it = css_sheet_by_owner_.find(pack(handle_of(c.current_this())));
+                if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size()) {
+                    return nullptr;
+                }
+                css_sheet_record * sheet = css_sheets_[it->second].get();
+                return sheet->attached ? sheet : nullptr;
+            };
+            proto->define_accessor("disabled",
+                                   value::object(cx.allocate<script::native_object>(
+                                       "get disabled",
+                                       [owned](context & c, std::span<value>) {
+                                           const css_sheet_record * sheet = owned(c);
+                                           return value::boolean(sheet != nullptr &&
+                                                                 sheet->disabled);
+                                       })),
+                                   value::object(cx.allocate<script::native_object>(
+                                       "set disabled",
+                                       [this, owned](context & c, std::span<value> a) {
+                                           css_sheet_record * sheet = owned(c);
+                                           const bool wanted = !a.empty() && context::truthy(a[0]);
+                                           if (sheet != nullptr && sheet->disabled != wanted) {
+                                               sheet->disabled = wanted;
+                                               style_sheets_changed();
+                                           }
+                                           return value::undefined();
+                                       })),
+                                   script::attr_configurable);
+            continue;
+        }
+        // `HTMLLinkElement.disabled`, HTML 4.2.4: it reflects the attribute,
+        // and REMOVING the attribute is what sets the element's "explicitly
+        // enabled" flag - the one thing that makes an `alternate stylesheet`
+        // apply. Setting false on a link that has no attribute is therefore
+        // a no-op, which HTMLLinkElement-disabled-006 asserts by name.
+        // ponytail: only this setter sets the flag; `removeAttribute('disabled')`
+        // does not. Hook the attribute mutation funnel if a page needs it.
+        proto->define_accessor("disabled",
                                value::object(cx.allocate<script::native_object>(
-                                   "get sheet",
+                                   "get disabled",
                                    [this](context & c, std::span<value>) {
-                                       return sheet_object_of(c, handle_of(c.current_this()));
+                                       const node_id id = handle_of(c.current_this());
+                                       if (!id) { return value::boolean(false); }
+                                       const auto txn = doc_->read();
+                                       return value::boolean(
+                                           txn.has_attribute(id, atoms_->intern_lower("disabled")));
                                    })),
-                               value::undefined(), script::attr_configurable);
+                               value::object(cx.allocate<script::native_object>(
+                                   "set disabled",
+                                   [this](context & c, std::span<value> a) {
+                                       const node_id id = handle_of(c.current_this());
+                                       if (!id) { return value::undefined(); }
+                                       const bool wanted = !a.empty() && context::truthy(a[0]);
+                                       const atom name = atoms_->intern_lower("disabled");
+                                       const bool present = doc_->read().has_attribute(id, name);
+                                       if (wanted == present) { return value::undefined(); }
+                                       if (wanted) {
+                                           (void)doc_->set_attribute(id, name, "");
+                                       } else {
+                                           (void)doc_->remove_attribute(id, name);
+                                           if (!link_explicitly_enabled(id)) {
+                                               enabled_links_.push_back(pack(id));
+                                           }
+                                       }
+                                       mutated();
+                                       return value::undefined();
+                                   })),
+                               script::attr_configurable);
+    }
+    // A ShadowRoot's `styleSheets` and `adoptedStyleSheets` - DocumentOrShadowRoot,
+    // the same two members the document has, over the shadow tree alone.
+    if (script::object_object * proto = as_object(interface_prototype("ShadowRoot"));
+        proto != nullptr && proto->find_accessor("styleSheets") == nullptr) {
+        getter(*proto, "styleSheets", [this](context & c, std::span<value>) {
+            return shadow_sheet_list(c, handle_of(c.current_this()));
+        });
+        proto->define_accessor("adoptedStyleSheets",
+                               value::object(cx.allocate<script::native_object>(
+                                   "get adoptedStyleSheets",
+                                   [](context & c, std::span<value>) {
+                                       script::object_object * self = as_object(c.current_this());
+                                       if (self == nullptr) { return value::undefined(); }
+                                       if (const value * held = self->find("__ctbrowser_adopted")) {
+                                           return *held;
+                                       }
+                                       const value made = c.make_array();
+                                       self->define("__ctbrowser_adopted", made, script::attr_none);
+                                       return made;
+                                   })),
+                               value::object(cx.allocate<script::native_object>(
+                                   "set adoptedStyleSheets",
+                                   [this](context & c, std::span<value> a) {
+                                       script::object_object * self = as_object(c.current_this());
+                                       if (self == nullptr) { return value::undefined(); }
+                                       const value made = adopted_sheets_array(c, a);
+                                       if (!made.is_undefined()) {
+                                           self->define("__ctbrowser_adopted", made,
+                                                        script::attr_none);
+                                       }
+                                       return value::undefined();
+                                   })),
+                               script::attr_configurable);
     }
     if (installed) { return; }
     obj.define_accessor(

@@ -7,6 +7,7 @@
 // The class is declared whole in compiler_impl.hpp beside this.
 
 #include "compiler_impl.hpp"
+#include <ctbrowser/script/regex.hpp>
 
 namespace ctbrowser::script::detail {
 
@@ -133,6 +134,10 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         } else {
             proto().emit(instruction{op::load_undef, sent});
         }
+        // AN ASYNC GENERATOR AWAITS WHAT IT YIELDS (27.6.3.8 AsyncGeneratorYield
+        // step 5): `yield promise` hands out the promise's value, and a
+        // rejected one throws at the yield.
+        if (fn().is_async) { proto().emit(instruction{op::await_value, sent, sent}); }
         proto().emit(instruction{op::yield_value, dst, sent});
         break;
     }
@@ -831,6 +836,17 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
     const std::size_t close = literal.rfind('/');
     if (literal.size() < 2 || literal.front() != '/' || close == 0) {
         fail("malformed regular expression literal (" + std::string{literal} + ")");
+        proto().emit(instruction{op::load_undef, dst});
+        return;
+    }
+    // INVALID FLAGS ARE AN EARLY ERROR (13.2.7.2): `/a/gg`, `/a/x`. The
+    // PATTERN is deliberately not checked here: rx_compile cannot tell a
+    // syntax error from a feature it lacks (lookbehind, `\u{...}`), and the
+    // runtime path hands it the escape-DECODED text - so a compile-time
+    // check refused p5.js whole over `/\u2028/`, which runs fine. A bad
+    // pattern stays a throw at the line, as it was.
+    if (const rx::rx_prog probe = rx::rx_compile("", literal.substr(close + 1)); !probe.ok) {
+        fail("parse error: " + probe.error);
         proto().emit(instruction{op::load_undef, dst});
         return;
     }

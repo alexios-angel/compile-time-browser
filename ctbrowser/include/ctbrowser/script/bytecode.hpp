@@ -363,6 +363,11 @@ struct function_proto {
     // object over a suspended frame and hands that back, so the first
     // instruction runs on the first `.next()`.
     bool is_generator = false;
+    // `async`. The VM needs it only together with is_generator - an async
+    // generator's call builds a different object - and the image carries it
+    // only in that case; a plain async function's promise wrapping and its
+    // rejection fence are entirely the compiler's.
+    bool is_async = false;
     // WHERE IT WAS WRITTEN, as byte offsets into the program's source, for
     // `f.toString()`.
     std::uint32_t source_begin = 0, source_end = 0;

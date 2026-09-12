@@ -192,7 +192,10 @@ void install_collections(context & cx) {
             const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
             const value args[3] = {pair.size() > 1 ? pair[1] : value::undefined(),
                                    pair.empty() ? value::undefined() : pair[0], c.current_this()};
-            (void)c.call(a[0], args);
+            // 24.1.3.5 step 5: the callback's `this` is thisArg. Phaser's loader
+            // walks its file Sets with `list.forEach(fn, this)` and read
+            // `this.inflight` off undefined without it.
+            (void)c.call(a[0], args, arg_at(a, 1));
         }
         return value::undefined();
     });
@@ -269,7 +272,7 @@ void install_collections(context & cx) {
         const std::vector<value> snapshot = entries->items;
         for (const value & item : snapshot) {
             const value args[3] = {item, item, c.current_this()};
-            (void)c.call(a[0], args);
+            (void)c.call(a[0], args, arg_at(a, 1)); // thisArg, 24.2.3.6 step 5
         }
         return value::undefined();
     });

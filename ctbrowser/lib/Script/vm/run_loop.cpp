@@ -511,9 +511,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(construct_apply) do {
             // a IS BOTH THE CALLEE AND THE DESTINATION, b is the argument
             // array and c is the receiver.
-            reg(in.a) = in.code == op::construct_apply
-                            ? construct_spread(reg(in.a), reg(in.b))
-                            : call_spread(reg(in.a), reg(in.b), reg(in.c));
+            const value produced = in.code == op::construct_apply
+                                       ? construct_spread(reg(in.a), reg(in.b))
+                                       : call_spread(reg(in.a), reg(in.b), reg(in.c));
+            // call_spread goes through context::call, whose fence parks a
+            // throw; it is thrown here, at the spread call's own site.
+            if (rethrow_pending()) { break; }
+            reg(in.a) = produced;
             break;
         }
         while (0);
@@ -599,6 +603,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             {
                 value callee = reg(in.a);
                 value receiver = value::undefined();
+                // THE LOOKUP CAN THROW - a getter, a proxy trap, or a nullish
+                // receiver - and a throw has already unwound to its handler by
+                // the time it returns. Calling `undefined` after that would
+                // throw a SECOND TypeError from the landing site.
+                const std::size_t unwound = unwinds_;
                 if (in.code == op::call_receiver) {
                     // The callee was resolved elsewhere (up the prototype chain, for
                     // `super`) and the receiver is passed explicitly.
@@ -612,6 +621,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     receiver = reg(in.a);
                     callee = lookup_index(receiver, reg(in.c));
                 }
+                if (unwinds_ != unwound) { break; }
                 const std::size_t arg_base = base + in.a + 1;
                 if (callee.is_kind(heap_kind::native)) {
                     auto * nat = static_cast<native_object *>(callee.as_heap());
@@ -625,8 +635,14 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                         registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
                     const value saved_this = current_this_;
                     current_this_ = receiver;
-                    const value produced = nat->fn(*this, args);
+                    const value produced = [&] {
+                        const native_scope pinned{*this};
+                        return nat->fn(*this, args);
+                    }();
                     current_this_ = saved_this;
+                    // A throw the native's `call` parked is thrown HERE, at
+                    // its call site - see context::call.
+                    if (rethrow_pending()) { break; }
                     reg(in.a) = produced;
                     break;
                 }
@@ -811,7 +827,19 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                         vm_frame->async_promise = pending_promise_factory_(*this);
                     }
                     const value promise = vm_frame->async_promise;
-                    auto * saved = allocate<coroutine_object>();
+                    // AN ASYNC GENERATOR'S FRAME IS ALREADY A COROUTINE - the one
+                    // its `.next()` resumes - so the await parks THAT object rather
+                    // than making a second one the generator would never see.
+                    // `awaiting` keeps the request queue from resuming it until
+                    // the awaited promise does.
+                    coroutine_object * saved = vm_frame->generator;
+                    if (saved != nullptr) {
+                        saved->awaiting = true;
+                        saved->running = false;
+                        saved->handlers.clear();
+                    } else {
+                        saved = allocate<coroutine_object>();
+                    }
                     saved->proto = vm_frame->proto;
                     saved->ip = vm_frame->ip;
                     saved->await_reg = in.a;

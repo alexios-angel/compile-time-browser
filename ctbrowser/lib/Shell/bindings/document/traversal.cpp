@@ -33,23 +33,29 @@ constexpr spot the_document{node_id{}, true};
 void dom_bindings::install_traversal(context & cx, script::object_object & doc) {
     // --- the primitives, each one read_txn long ------------------------------
 
+    // THE DOCUMENT'S CHILDREN ARE THE DOCUMENT NODE'S LIST - the doctype, the
+    // element and whatever sits beside them - and the document element is in
+    // that list with no parent pointer, which is why parent_of and sibling_of
+    // ask is_document_child rather than parent(). See document::document_node.
     const auto parent_of = [this](spot at) -> spot {
         if (at.document) { return no_spot; }
         const auto txn = doc_->read();
+        if (is_document_child(txn, at.id)) { return the_document; }
         if (const node_id parent = txn.parent(at.id)) { return spot{parent}; }
-        return at.id == txn.root() ? the_document : no_spot;
+        return no_spot;
     };
     const auto child_of = [this](spot at, bool last) -> spot {
         const auto txn = doc_->read();
-        if (at.document) { return txn.root() ? spot{txn.root()} : no_spot; }
-        const std::span<const node_id> kids = txn.children(at.id);
+        const std::span<const node_id> kids =
+            txn.children(at.document ? txn.document_node() : at.id);
         if (kids.empty()) { return no_spot; }
         return spot{last ? kids.back() : kids.front()};
     };
     const auto sibling_of = [this](spot at, bool next) -> spot {
         if (at.document) { return no_spot; }
         const auto txn = doc_->read();
-        const node_id parent = txn.parent(at.id);
+        const node_id parent =
+            is_document_child(txn, at.id) ? txn.document_node() : txn.parent(at.id);
         if (!parent) { return no_spot; }
         const std::span<const node_id> kids = txn.children(parent);
         const auto here = std::ranges::find(kids, at.id);
@@ -61,8 +67,11 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         if (at.document) { return 9; }
         switch (doc_->read().kind(at.id).value_or(node_kind::element)) {
         case node_kind::text: return 3;
+        case node_kind::cdata_section: return 4;
+        case node_kind::processing_instruction: return 7;
         case node_kind::comment: return 8;
         case node_kind::document: return 9;
+        case node_kind::document_type: return 10;
         case node_kind::document_fragment: return 11;
         case node_kind::element: break;
         }

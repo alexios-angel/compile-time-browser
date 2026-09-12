@@ -378,7 +378,15 @@ inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & 
 
 inline rx_prog rx_compile(std::string_view source, std::string_view flags) {
 	rx_prog p;
+	std::string seen;
 	for (const char f : flags) {
+		// A repeated flag is a SyntaxError (22.2.3.3 step 5): `/a/gg`.
+		if (seen.find(f) != std::string::npos) {
+			p.ok = false;
+			p.error = "Invalid regular expression flags: " + std::string{flags};
+			break;
+		}
+		seen.push_back(f);
 		if (f == 'i') { p.icase = true; }
 		else if (f == 'g') { p.global = true; }
 		else if (f == 'm') { p.multi = true; }

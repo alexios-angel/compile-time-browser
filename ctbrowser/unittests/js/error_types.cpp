@@ -139,5 +139,60 @@ int main() {
               "return (e instanceof TypeError)+','+(e instanceof Error);})()",
               "true,true");
 
+    // A PROPERTY OF null OR undefined IS A TypeError (7.3.2), read, written
+    // or called - and `?.` is the way to ask without one. Until 2026-09-12 a
+    // read answered undefined and the failure surfaced one step later under
+    // the wrong name.
+    js_expect("(function(){try{return null.x;}catch(e){return e instanceof TypeError;}})()",
+              "true");
+    js_expect("(function(){var u;try{u.x=1;}catch(e){return e.constructor.name;}})()", "TypeError");
+    js_expect("(function(){var u;try{u.f();}catch(e){return e instanceof TypeError;}})()", "true");
+    js_expect("(function(){var u;try{u[0];}catch(e){return e.message;}})()",
+              "Cannot read properties of undefined (reading '0')");
+    js_expect("(function(){var u;return u?.x === undefined && u?.[0] === undefined;})()", "true");
+    js_expect("(function(){try{var {a} = null;}catch(e){return e instanceof TypeError;}})()",
+              "true");
+    js_expect("(function(){try{null.f();}catch(e){return 'one';}return 'none';})()", "one");
+
+    // A THROW CROSSING A NATIVE IS THROWN ONCE, AT THE NATIVE'S CALL SITE
+    // (context::call). forEach's callback throws on the first element: the
+    // second is never visited, and the try around the forEach catches once.
+    // Before, forEach carried on and the second throw found the handler
+    // consumed - an engine fault, and testharness's `step` is exactly this
+    // shape (func.apply inside a try).
+    js_expect("(function(){var n=0;try{[1,2,3].forEach(function(){n++;throw new Error('x');});}"
+              "catch(e){return n+'/'+e.message;}return 'none';})()",
+              "1/x");
+    js_expect("(function(){function step(f){try{return f.apply(null,[]);}catch(e){return "
+              "'step:'+e.message;}}"
+              "return step(function(){[1,2].forEach(function(){throw new Error('a');});});})()",
+              "step:a");
+    js_expect("(function(){try{[1,2].map(function(){return [3,4].map(function(){throw new "
+              "Error('n');});});}"
+              "catch(e){return e.message;}})()",
+              "n");
+    js_expect("(function(){var o={get g(){throw new Error('get');}};try{return "
+              "o.g;}catch(e){return e.message;}})()",
+              "get");
+    js_expect("(function(){try{[3,1,2].sort(function(){throw new Error('cmp');});}catch(e){return "
+              "e.message;}})()",
+              "cmp");
+    // ...but interpreted code running UNDER a native keeps its own handlers:
+    // a setter that throws inside a test body that `apply` is running lands
+    // in the body's try, not at apply's return (css/cssom property-accessors
+    // went PASS -> FAIL on exactly this).
+    js_expect("(function(){function step(f){try{return f.apply(null,[]);}catch(e){return 'step';}}"
+              "return step(function(){var o={set x(v){throw new Error('s');}};"
+              "try{o.x=1;return 'no';}catch(e){return 'inner:'+e.message;}});})()",
+              "inner:s");
+    js_expect("(function(){return [1].map(function(){var o={get g(){throw new Error('g');}};"
+              "try{return o.g;}catch(e){return 'inner:'+e.message;}})[0];})()",
+              "inner:g");
+    // The native's own result after a parked throw is discarded, not used.
+    js_expect(
+        "(function(){var r='unset';try{r=[1,2].map(function(x){if(x===1){throw 1;}return x;});}"
+        "catch(e){}return r;})()",
+        "unset");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -61,6 +61,17 @@ value context::lookup_index(value target, value key) {
 }
 
 value context::lookup_property(value target, const std::string & name) {
+    // A PROPERTY OF null OR undefined IS A TypeError (7.3.2 GetV -> ToObject),
+    // not undefined. Until 2026-09-12 it was undefined, and docs/script.md
+    // recorded why that hurt: a missing object surfaced one step later under
+    // the wrong name. Here rather than in op::get_prop alone because the
+    // compiled tier calls this same member, so the two cannot disagree.
+    if (target.is_nullish()) [[unlikely]] {
+        throw_error("TypeError", "Cannot read properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     " (reading '" + name + "')");
+        return value::undefined();
+    }
     // A PROXY ANSWERS FIRST, or hands the question to its target. This sits at
     // the top because a proxy's whole purpose is to be asked before anything
     // else looks at the object underneath it.
@@ -109,6 +120,13 @@ value context::lookup_property(value target, const std::string & name) {
         // `length` without allocating for it, and this is the one read that has
         // to see that. Everything else keeps items.size() and its bounds.
         if (name == "length") { return value::number(static_cast<double>(arr->js_length())); }
+        // A CANONICAL INDEX SPELLED AS A STRING is the element: `a["0"]`, and
+        // `for (i in a) a[i]` where i is always a string. It went to the
+        // prototype (and, since the named table, would have gone there) - p5's
+        // PrintWriter walks its writers exactly this way.
+        if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
+            return lookup_index(target, value::number(static_cast<double>(at)));
+        }
         // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
         // how a page makes a second view of a different width over storage it
         // already has - Phaser does exactly that - and it needs `buffer` to
@@ -134,6 +152,16 @@ value context::lookup_property(value target, const std::string & name) {
             if (name == "index") { return arr->index; }
             if (name == "input") { return arr->input; }
             if (name == "groups") { return arr->groups; }
+        }
+        // A NAMED OWN PROPERTY - see array_object::named. Data or accessor,
+        // before the prototypes, as on any object.
+        if (arr->named) {
+            if (value * found = arr->named->find(name)) { return *found; }
+            if (accessor_entry * entry = arr->named->find_accessor(name)) {
+                return entry->getter.is_callable()
+                           ? call(entry->getter, std::span<const value>{}, target)
+                           : value::undefined();
+            }
         }
         // A TYPED array's own methods first, then every array's, then every
         // object's - which is the chain JavaScript actually has, and the reason

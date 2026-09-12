@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -100,7 +101,8 @@ using style_map = flat_map<std::uint64_t, computed_style_ptr>;
 class engine {
 public:
     explicit engine(atom_table & atoms)
-        : atoms_(&atoms), font_size_(atoms.intern_lower("font-size")) {}
+        : atoms_(&atoms), font_size_(atoms.intern_lower("font-size")),
+          line_height_(atoms.intern_lower("line-height")) {}
 
     // Interactive state, matching ctcss's pseudo_state bits so a compiled
     // selector's requirement and an element's actual state are the same
@@ -200,6 +202,18 @@ public:
     [[nodiscard]] static bool is_border_style(std::string_view part) {
         for (const std::string_view name : {"none", "hidden", "dotted", "dashed", "solid", "double",
                                             "groove", "ridge", "inset", "outset"}) {
+            if (ascii_iequals(part, name)) { return true; }
+        }
+        return false;
+    }
+    // A `background` component that names a longhand OTHER than the colour or
+    // the image: repeat, attachment, position, size, clip/origin boxes.
+    [[nodiscard]] static bool is_background_keyword(std::string_view part) {
+        for (const std::string_view name :
+             {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
+              "round",      "scroll",      "fixed",       "local",    "center",    "top",
+              "bottom",     "left",        "right",       "cover",    "contain",   "auto",
+              "border-box", "padding-box", "content-box", "text"}) {
             if (ascii_iequals(part, name)) { return true; }
         }
         return false;
@@ -451,6 +465,34 @@ public:
                 }
             }
             return {{"list-style-type", type}, {"list-style-position", position}};
+        }
+        // `background` is `<bg-layer>#? , <final-bg-layer>`, and the two parts
+        // with a consumer are the COLOUR and the IMAGE. Every other component is
+        // a keyword of some other longhand, a position or size (a number, a
+        // percentage or the `/` between them), or the layer comma - so the
+        // colour is whatever is left, and only the final layer may carry one.
+        // An omitted colour is `transparent`: `background: url(x)` resets a
+        // colour set elsewhere, as every shorthand resets what it does not name.
+        if (property == "background") {
+            const std::vector<std::string_view> parts = value_parts(value, 32);
+            if (parts.empty()) { return {}; }
+            std::string_view colour = "transparent";
+            std::string_view image = "none";
+            for (std::string_view part : parts) {
+                // `red,` - a layer boundary glued to the part before it.
+                const bool comma = !part.empty() && part.back() == ',';
+                if (comma) { part.remove_suffix(1); }
+                if (ascii_istarts_with(part, "url(") ||
+                    part.find("gradient(") != std::string_view::npos) {
+                    image = part;
+                } else if (!part.empty() && part != "/" && !is_border_width(part) &&
+                           !is_background_keyword(part)) {
+                    colour = part;
+                }
+                // The colour belongs to the LAST layer only.
+                if (comma) { colour = "transparent"; }
+            }
+            return {{"background-color", colour}, {"background-image", image}};
         }
         // `inset` IS the four offsets, in the side order - the one shorthand that
         // shares `margin`'s shape exactly, which is why it can share its code.
@@ -772,6 +814,27 @@ public:
                 break;
             }
         }
+        // ...AND THE PARENT'S LINE HEIGHT, for `lh` (CSS Values 4 §6.1.1). The
+        // same asymmetry as `em`: `lh` in `font-size` and in `line-height`
+        // itself is the parent's, everywhere else the element's own. The
+        // parent's line-height is inherited text - a number, a length the
+        // parent's cascade already folded to px, a percentage or `normal` - and
+        // resolves against the parent's font size.
+        //
+        // THE ROOT RESOLVES AGAINST THE INITIAL VALUES: `font-size: 1lh` on
+        // `:root` is 1.25 times 16px, however the root's own font size and
+        // line-height come out (lh-rlh-on-root-001).
+        const float parent_line_height =
+            parent && parent->inherited
+                ? line_height_px(parent->inherited->get(line_height_), parent_font_size)
+                : 16.0f * 1.25f;
+        // THE ROOT STARTS FROM THE INITIAL VALUES - a `font-size: 3rem` on `:root`
+        // is 48px however the previous resolve of this document left the root,
+        // and the two members below persist across resolves (rem-unit-root-element).
+        if (!parent) {
+            root_font_size_ = 16.0f;
+            root_line_height_ = parent_line_height;
+        }
         float own_font_size = parent_font_size;
         // Whether the WINNING font-size declaration actually resolved to a length.
         // `font-size: larger` and the other relative keywords are not modelled, and
@@ -783,7 +846,11 @@ public:
             // the root's, which for the root element is its own answer and so is
             // seeded from the parent's - a root `font-size: 2rem` is circular and CSS
             // resolves it against the initial 16px.
-            const css::length_context ctx = font_context(parent_font_size);
+            // A PERCENTAGE IN A FONT SIZE IS OF THE PARENT'S, and the evaluator
+            // can be told so: `calc(50% + 1px)` folds here rather than waiting
+            // for a containing block it will never be measured against.
+            css::length_context ctx = font_context(parent_font_size, parent_line_height);
+            ctx.percent_basis = parent_font_size;
             fold([&](const declaration & d) {
                 if (d.property != font_size_) { return; }
                 std::string value{d.value};
@@ -824,7 +891,64 @@ public:
         // The root's size is what every `rem` in the document resolves against, so it
         // is recorded as the tree is descended rather than looked up per element.
         if (!parent) { root_font_size_ = own_font_size; }
-        const css::length_context lengths = font_context(own_font_size);
+        // PASS ONE AND THREE QUARTERS: LINE HEIGHT, for `lh` in everything else.
+        // The winning `line-height` declaration, substituted and folded against
+        // the PARENT's `lh` and the element's own `em`, then resolved to px. An
+        // absent declaration is the inherited text against the element's OWN
+        // font size - a `1.5` is a factor and inherits as one.
+        float own_line_height = line_height_px(
+            parent && parent->inherited ? parent->inherited->get(line_height_) : "", own_font_size);
+        // ...and a percentage in a line-height is of the element's own font size,
+        // so `calc(10% / 1px)` is the number 1 here (typed_arithmetic).
+        css::length_context line_height_lengths = font_context(own_font_size, parent_line_height);
+        line_height_lengths.percent_basis = own_font_size;
+        {
+            const css::length_context & ctx = line_height_lengths;
+            fold([&](const declaration & d) {
+                if (d.property != line_height_) { return; }
+                std::string value{d.value};
+                if (css::may_have_var(value)) {
+                    const std::optional<std::string> done =
+                        css::substitute_var(value, lookup, *atoms_, attributes);
+                    if (!done) { return; }
+                    value = *done;
+                }
+                if (css::may_have_math(value)) { value = css::fold_math(value, ctx).text; }
+                // A bare number is a factor, not pixels - which is why
+                // length_text_to_px is asked only after from_chars has had its
+                // turn; a percentage and `normal` are line_height_px's.
+                const std::string_view text = trim(value, html_whitespace);
+                float number = 0;
+                const auto [ptr, ec] =
+                    std::from_chars(text.data(), text.data() + text.size(), number);
+                if (ec == std::errc{} && ptr == text.data() + text.size()) {
+                    own_line_height = number * own_font_size;
+                } else if (const auto px = css::length_text_to_px(value, ctx);
+                           px && !text.ends_with('%')) {
+                    own_line_height = *px;
+                } else if (ascii_iequals(text, "inherit")) {
+                    own_line_height = line_height_px(
+                        parent && parent->inherited ? parent->inherited->get(line_height_) : "",
+                        own_font_size);
+                } else {
+                    own_line_height = line_height_px(value, own_font_size);
+                }
+            });
+        }
+        if (!parent) { root_line_height_ = own_line_height; }
+        const css::length_context lengths = font_context(own_font_size, own_line_height);
+        // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
+        // `line-height: 2lh` folded against its own answer would double it -
+        // and `line_height_lengths` above is what that property folds with; and
+        // EXCEPT IN THE OTHER font-* PROPERTIES, where an `em` is the PARENT's
+        // font size as it is in `font-size`: `font-weight: calc(1em / 1px)`
+        // under a 10px parent is 10 whatever the element's own size
+        // (using-font-relative-units-in-font-properties, CSS Values 4 §6.1.1).
+        const css::length_context font_lengths = font_context(parent_font_size, parent_line_height);
+        const auto lengths_for = [&](atom property) -> const css::length_context & {
+            if (property == line_height_) { return line_height_lengths; }
+            return atoms_->text(property).starts_with("font-") ? font_lengths : lengths;
+        };
 
         // PASS TWO: everything else. Substitute, then expand, then put.
         fold([&](const declaration & d) {
@@ -886,7 +1010,7 @@ public:
                 // value here: `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)`
                 // is a syntax error.
                 css::folded_value done =
-                    css::fold_math(value, lengths, css::math_context_of(property));
+                    css::fold_math(value, lengths_for(d.property), css::math_context_of(property));
                 if (!done.ok) {
                     // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
                     // declaration is invalid. WHICH KIND of invalid depends on where
@@ -932,7 +1056,7 @@ public:
             // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
             // and still answers `96px` for `1in`.
             const auto folded = [&](std::string text) {
-                if (auto canonical = css::canonical_dimension_text(text, lengths)) {
+                if (auto canonical = css::canonical_dimension_text(text, lengths_for(d.property))) {
                     return std::move(*canonical);
                 }
                 return text;
@@ -995,15 +1119,38 @@ public:
     // The bases every relative length in this document resolves against. `em` is
     // the caller's, because it differs between font-size and everything else; the
     // rest are facts about the document and the window.
-    [[nodiscard]] css::length_context font_context(float em_basis) const noexcept {
+    [[nodiscard]] css::length_context font_context(float em_basis,
+                                                   float lh_basis = 20.0f) const noexcept {
         css::length_context ctx;
         ctx.font_size = em_basis;
         ctx.root_font_size = root_font_size_;
+        ctx.line_height = lh_basis;
+        ctx.root_line_height = root_line_height_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
         ctx.sibling_index = sibling_index_;
         ctx.sibling_count = sibling_count_;
         return ctx;
+    }
+
+    // A `line-height` VALUE IN PIXELS, the way layout reads one: a number is a
+    // factor on the font size, a percentage likewise, `normal` and anything
+    // unreadable are 1.25 times it (layout's factor for `normal`, see
+    // layout::box_builder::resolve_line_height), and a length is itself -
+    // which by the time it is inherited the cascade has folded to px.
+    [[nodiscard]] static float line_height_px(std::string_view text, float font_size) noexcept {
+        const std::string_view value = trim(text, html_whitespace);
+        if (value.empty() || ascii_iequals(value, "normal")) { return font_size * 1.25f; }
+        float number = 0;
+        const bool percent = value.ends_with('%');
+        const char * end = value.data() + value.size() - (percent ? 1 : 0);
+        const auto [ptr, ec] = std::from_chars(value.data(), end, number);
+        if (ec != std::errc{}) { return font_size * 1.25f; }
+        if (ptr == end) { return number * (percent ? font_size / 100.0f : font_size); }
+        if (ascii_iequals(std::string_view{ptr, static_cast<std::size_t>(end - ptr)}, "px")) {
+            return number;
+        }
+        return font_size * 1.25f;
     }
 
     // --- whole-document resolution ------------------------------------------
@@ -1086,17 +1233,25 @@ public:
     //
     // `first_only` stops at the first match, which is what `querySelector` wants
     // and what keeps it from walking a large document to build a list of one.
+    //
+    // `scope` is what `:scope` names when it is not the root: `:has()` searches
+    // from the subject's PARENT so a sibling argument can be found, and the
+    // subject stays the scope. Empty means the root.
     [[nodiscard]] std::vector<node_id> select(const read_txn & txn, node_id root,
                                               std::span<const compiled_selector> list,
-                                              bool first_only);
+                                              bool first_only, node_id scope = {});
 
     // WHETHER ONE ELEMENT MATCHES, without walking the document to find out - what
     // `matches` and `closest` ask, per call, so `select` would make them
     // O(document). Matching ONE element needs its ancestor chain and the earlier
     // siblings at each step of it, and nothing else: this builds exactly that
     // cursor and then runs the same matcher.
+    //
+    // `scope` is what `:scope` names; empty means the subject. `closest` walks
+    // the ancestors and must keep the element it was called on as the scope,
+    // or `div > :scope` would be true of whichever ancestor sits under a div.
     [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
-                                       std::span<const compiled_selector> list);
+                                       std::span<const compiled_selector> list, node_id scope = {});
 
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
@@ -1308,7 +1463,7 @@ private:
     // Returns whether one was found, so the walk can stop at it.
     [[nodiscard]] static bool first_strong(const read_txn & txn, node_id node, bool & rtl) {
         const node_kind kind = txn.kind(node).value_or(node_kind::comment);
-        if (kind == node_kind::text) { return first_strong_in(txn.text(node), rtl); }
+        if (is_text_kind(kind)) { return first_strong_in(txn.text(node), rtl); }
         if (kind != node_kind::element) { return false; }
         for (const node_id child : txn.children(node)) {
             if (first_strong(txn, child, rtl)) { return true; }
@@ -1502,10 +1657,13 @@ private:
     // Interned once. The font-size pre-pass compares against it per element per
     // declaration, and interning takes a shared_mutex.
     atom font_size_;
+    atom line_height_;
     // The ROOT element's computed font size, which is what every `rem` in the
     // document resolves against. Recorded as the tree is descended - the root is
-    // resolved first, so by the time anything else asks, it is right.
+    // resolved first, so by the time anything else asks, it is right. The root's
+    // line height is `rlh`'s basis the same way.
     float root_font_size_ = 16.0f;
+    float root_line_height_ = 20.0f;
     // The element being resolved, among its siblings: set by resolve() from the
     // facts the traversal gathered, read by font_context() for the tree-counting
     // functions. Zero outside a resolve, which leaves them unresolved.
@@ -1523,6 +1681,19 @@ private:
     // elements and across documents, so a steady-state resolve allocates nothing.
     std::vector<std::vector<visited_element>> levels_;
     std::vector<std::size_t> path_;
+    // THE SCOPING ROOT, Selectors 4 §3.5: what `:scope` names. `select` sets it to
+    // its root and `element_matches` to its subject; empty means there is none -
+    // a whole-document query, or the cascade - and `:scope` is then `:root`. A
+    // root that is not an element (a fragment) is a scope no element can equal.
+    node_id scope_{};
+    // THE `:has()` WALKER: a second engine, made on first use, that runs the
+    // scoped query a `:has()` argument is. A nested query cannot share this
+    // engine's traversal state - `levels_` and `path_` ARE the outer match's
+    // position - and swapping them out around every `:has()` would cost more than
+    // the 4 KiB ancestor filter the walker carries. It answers `:hover` and the
+    // other interactive bits from this engine, through `states_source_`.
+    mutable std::unique_ptr<engine> has_walker_;
+    const engine * states_source_ = nullptr;
     // Per level, the totals the traversal cannot know from what it has already seen:
     // how many element children the level has in all, and how many of each tag.
     // Counted once when the level is entered.

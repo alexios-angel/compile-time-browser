@@ -49,6 +49,12 @@ std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
     case vp::nk::export_decl:
     case vp::nk::export_spec:
     case vp::nk::dynamic_import: return {n.a, -1, -1, -1};
+    // `++x` / `x++`: a is the operand and b IS THE PREFIX FLAG (1 or 0). The
+    // default arm followed b as a node index; a program whose update node
+    // is node 1 - `++x;` as the first statement, which is what
+    // `eval("++x")` compiles - toured itself forever and overflowed the
+    // stack. test262's eval-code/direct/cptn-* found it.
+    case vp::nk::update: return {n.a, -1, -1, -1};
     default: return {n.a, n.b, n.c, n.d};
     }
 }

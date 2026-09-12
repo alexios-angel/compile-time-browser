@@ -61,6 +61,10 @@ public:
     // with ok == false and error set, rather than throwing.
     [[nodiscard]] static program compile(std::string_view source,
                                          script_kind kind = script_kind::classic);
+    // `eval`'s shape: the program RETURNS the value of a trailing expression
+    // statement (its completion value, 16.1.6 step 12 for the common case),
+    // so `eval("1 + 1")` is 2. Otherwise the same classic script.
+    [[nodiscard]] static program compile_for_eval(std::string_view source);
 };
 
 // WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.

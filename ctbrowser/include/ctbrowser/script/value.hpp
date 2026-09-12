@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -84,6 +85,7 @@ enum class heap_kind : std::uint8_t {
 };
 
 struct heap_object; // every heap value starts with one
+struct object_object;
 
 class value {
 public:
@@ -457,7 +459,19 @@ struct array_object final : heap_object {
     bool extensible = true;
     bool elements_writable = true;
     bool elements_configurable = true;
-    array_object() : heap_object(heap_kind::array) {}
+    // NAMED OWN PROPERTIES - `a.foo = 1`, `a.getClass = Object.prototype.toString`
+    // - which an array here had nowhere to put until 2026-09-12: the write was
+    // dropped and the read went to the prototype. An ordinary property table,
+    // owned by the array rather than by the heap (it is not a heap object of
+    // its own; the collector traces it through the array), and made on the
+    // first write so the common array pays a null pointer. `length` and the
+    // indices stay where they are and never land here.
+    std::unique_ptr<object_object> named;
+    [[nodiscard]] object_object & named_table();
+    // Both out of line, after object_object: the unique_ptr needs the
+    // complete type to destroy, and an inline constructor instantiates that.
+    array_object();
+    ~array_object();
 };
 
 // --- reading and writing one element of a view -----------------------------
@@ -799,5 +813,12 @@ struct object_object final : heap_object {
         return true;
     }
 };
+
+inline object_object & array_object::named_table() {
+    if (!named) { named = std::make_unique<object_object>(); }
+    return *named;
+}
+inline array_object::array_object() : heap_object(heap_kind::array) {}
+inline array_object::~array_object() = default;
 
 } // namespace ctbrowser::script

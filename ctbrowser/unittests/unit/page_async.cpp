@@ -371,15 +371,24 @@ void test_collection_happens_on_its_own() {
     //
     // So: the timer really ran, and after sixty rounds of three thousand
     // objects each the heap is no bigger than it was after the first.
+    //
+    // "AFTER" IS THE TROUGH OF THE LAST FEW TICKS, not the last sample. The
+    // collector waits for the heap to double before it runs again, so a page
+    // whose baseline is a little over 3,000 objects - which it became when the
+    // DOM methods moved off the wrappers - collects every OTHER tick, and the
+    // sample after an odd tick is always one round of junk high. That is the
+    // collector keeping up, which is what this test is for.
     std::size_t ticked = 0;
     ticked += page.tick(20);
     const std::size_t early = page.live_script_objects();
     std::size_t peak = early;
+    std::size_t settled = early;
     for (int i = 0; i < 59; ++i) {
         ticked += page.tick(20);
-        peak = std::max(peak, page.live_script_objects());
+        const std::size_t now = page.live_script_objects();
+        peak = std::max(peak, now);
+        settled = i < 55 ? now : std::min(settled, now);
     }
-    const std::size_t settled = page.live_script_objects();
     // The numbers are IN the message: a bare "failed" tells whoever reads it
     // nothing about which half of the claim broke.
     check(ticked >= 60, "the timer really ran (" + std::to_string(ticked) + " callbacks)");

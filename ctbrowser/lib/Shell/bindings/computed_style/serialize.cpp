@@ -1,8 +1,12 @@
 // dom_bindings - how a computed value is written down: numbers as CSSOM's
 // shortest round-tripping decimal, colours in the one form both engines
-// normalise to, font-family lists with CSSOM's quoting, and keywords folded.
+// normalise to, and keywords folded.
 
 #include "internal.hpp"
+
+#include <ctbrowser/style/css/token.hpp>
+
+#include <numbers>
 
 namespace ctbrowser::shell {
 
@@ -29,81 +33,6 @@ namespace {
 // BOTH sides to 1/64 itself before comparing (EPSILON_PX), so nothing in the
 // parity report depends on this rounding here.
 // (Defined in `detail` below, beside the helpers that build on it.)
-
-// --- A FONT FAMILY IS NOT A KEYWORD --------------------------------------
-//
-// `collapse_keyword` below ASCII-lowercases, which is right for `display: BLOCK`
-// and wrong for every family name a page has ever written: Chrome answers
-// `Twisty Tie` and this answered `twisty tie`, on every element of every page
-// that names a font. The case is the author's and it is significant.
-//
-// AND THE LIST IS SERIALISED, not handed back. CSSOM says a family name that is
-// a valid IDENTIFIER SEQUENCE serialises without quotes and one that is not
-// serialises as a string - so `'Times New Roman'` loses its quotes, `'34J'`
-// keeps them because `34J` is not an identifier, `"A  B"` keeps them because
-// the double space would not survive, and `"serif"` keeps them because dropping
-// them would turn a family CALLED serif into the generic one. The quotes a name
-// keeps are always DOUBLE ones, whichever the author used.
-// css/cssom/font-family-serialization-001 is fourteen assertions about exactly
-// this, and the five it makes about the COMPUTED value are the ones here.
-
-[[nodiscard]] bool is_identifier_start(unsigned char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 0x80;
-}
-
-[[nodiscard]] bool is_identifier_char(unsigned char c) {
-    return is_identifier_start(c) || (c >= '0' && c <= '9') || c == '-';
-}
-
-// A CSS identifier that needs no escaping to be written down. A LEADING RUN OF
-// HYPHENS is allowed - `-webkit-serif` is an identifier and so is `--x` - but a
-// hyphen run with nothing after it is not, and neither is anything starting with
-// a digit, which is the whole reason `34J` has to stay a string.
-[[nodiscard]] bool is_bare_identifier(std::string_view word) {
-    std::size_t start = 0;
-    while (start < word.size() && word[start] == '-') { ++start; }
-    if (start >= word.size() || !is_identifier_start(static_cast<unsigned char>(word[start]))) {
-        return false;
-    }
-    for (const char c : word) {
-        if (!is_identifier_char(static_cast<unsigned char>(c))) { return false; }
-    }
-    return true;
-}
-
-// The words CSS has already spoken for. A family name that IS one of them can
-// only be said as a string, because unquoting it would change what it means.
-[[nodiscard]] bool is_reserved_family_word(std::string_view name) {
-    for (const std::string_view reserved :
-         {"inherit", "initial", "unset", "revert", "revert-layer", "default", "serif", "sans-serif",
-          "monospace", "cursive", "fantasy", "system-ui", "math", "fangsong", "ui-serif",
-          "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji"}) {
-        if (ascii_iequals(name, reserved)) { return true; }
-    }
-    return false;
-}
-
-[[nodiscard]] bool family_can_drop_its_quotes(std::string_view name) {
-    if (name.empty() || is_reserved_family_word(name)) { return false; }
-    for (std::size_t at = 0;;) {
-        const std::size_t space = name.find(' ', at);
-        const std::string_view word =
-            space == std::string_view::npos ? name.substr(at) : name.substr(at, space - at);
-        if (!is_bare_identifier(word)) { return false; }
-        if (space == std::string_view::npos) { return true; }
-        at = space + 1;
-    }
-}
-
-[[nodiscard]] std::string quoted_family(std::string_view name) {
-    std::string out{"\""};
-    for (const char c : name) {
-        if (c == '"' || c == '\\') { out += '\\'; }
-        out += c;
-    }
-    out += '"';
-    return out;
-}
 
 } // namespace
 
@@ -170,63 +99,136 @@ namespace detail {
     return "rgba(" + rgb + ", " + number_text(std::round(alpha * 64.0f) / 64.0f) + ")";
 }
 
-[[nodiscard]] std::string font_family_text(std::string_view text) {
-    // (name, was it written as a string). The pair is the whole of the rule: an
-    // unquoted name is already an identifier sequence and is handed back as it
-    // stands, and only a QUOTED one has a decision to make.
-    std::vector<std::pair<std::string, bool>> families;
-    std::string name;
-    bool quoted = false;
+// THE COMPUTED `transform` IS A MATRIX. CSS Transforms 1 §9: the resolved value
+// of a 2D transform list is the product of its functions, serialised as
+// `matrix(a, b, c, d, e, f)` - `scale(0.5)` reads back as `matrix(0.5, 0, 0,
+// 0.5, 0, 0)` and `none` stays `none`. Six of css/css-values' serialize files
+// ask for it through `scale()`.
+//
+// ONLY WHAT CAN BE MULTIPLIED HERE IS. A function this reader does not model, a
+// percentage (needs the box) and a 3D function (a `matrix3d`) keep the
+// cascade's text, which is what every transform used to read back as.
+//
+// ponytail: 2D only, lengths in px alone; add `em`/percent against the probe's
+// font size and box when a test asks.
+[[nodiscard]] std::string transform_matrix_text(std::string_view text) {
+    using style::css::token_type;
+    const style::css::token_stream ts = style::css::tokenize(text);
+    // The affine matrix as CSS writes it: x' = a*x + c*y + e, y' = b*x + d*y + f.
+    double m[6] = {1, 0, 0, 1, 0, 0};
+    const auto multiply = [&m](const double (&n)[6]) {
+        const double a = m[0] * n[0] + m[2] * n[1];
+        const double b = m[1] * n[0] + m[3] * n[1];
+        const double c = m[0] * n[2] + m[2] * n[3];
+        const double d = m[1] * n[2] + m[3] * n[3];
+        const double e = m[0] * n[4] + m[2] * n[5] + m[4];
+        const double f = m[1] * n[4] + m[3] * n[5] + m[5];
+        m[0] = a, m[1] = b, m[2] = c, m[3] = d, m[4] = e, m[5] = f;
+    };
+    std::size_t at = 0;
     bool any = false;
-    bool gap = false;
-    // One past the end is read as a comma, so the last family is finished by the
-    // same branch as every other one.
-    for (std::size_t i = 0; i <= text.size();) {
-        const char c = i < text.size() ? text[i] : ',';
-        if (c == '"' || c == '\'') {
-            const char close = c;
-            ++i;
-            quoted = true;
-            any = true;
-            while (i < text.size() && text[i] != close) {
-                // A backslash escapes the next byte and is not itself part of
-                // the name. This does not decode `\61` - a hex escape in a font
-                // name is rare enough that carrying the digits through is a
-                // better answer than a half-implemented decoder.
-                if (text[i] == '\\' && i + 1 < text.size()) { ++i; }
-                name += text[i];
-                ++i;
+    for (;;) {
+        while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+        if (ts.tokens[at].type == token_type::eof) { break; }
+        if (ts.tokens[at].type != token_type::function) { return std::string{text}; }
+        const std::string_view raw = ts.text_of(ts.tokens[at]);
+        const std::string name = ascii_lower_copy(raw.substr(0, raw.size() - 1));
+        ++at;
+        // The arguments: numbers, angles in degrees, lengths in px; anything
+        // else is not this reader's.
+        std::vector<double> args;
+        std::vector<bool> is_length;
+        for (;;) {
+            while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+            const style::css::css_token & t = ts.tokens[at];
+            if (t.type == token_type::close_paren) {
+                ++at;
+                break;
             }
-            if (i < text.size()) { ++i; }
-            continue;
+            if (t.type == token_type::comma) {
+                ++at;
+                continue;
+            }
+            if (t.type == token_type::number) {
+                args.push_back(t.number);
+                is_length.push_back(false);
+            } else if (t.type == token_type::dimension) {
+                const std::string unit = ascii_lower_copy(ts.unit_of(t));
+                if (unit == "px") {
+                    args.push_back(t.number);
+                    is_length.push_back(true);
+                } else if (unit == "deg") {
+                    args.push_back(t.number);
+                    is_length.push_back(false);
+                } else if (unit == "rad") {
+                    args.push_back(t.number * 180.0 / std::numbers::pi);
+                    is_length.push_back(false);
+                } else if (unit == "grad") {
+                    args.push_back(t.number * 0.9);
+                    is_length.push_back(false);
+                } else if (unit == "turn") {
+                    args.push_back(t.number * 360.0);
+                    is_length.push_back(false);
+                } else {
+                    return std::string{text};
+                }
+            } else {
+                return std::string{text};
+            }
+            ++at;
         }
-        if (c == ',') {
-            if (any) { families.emplace_back(name, quoted); }
-            name.clear();
-            quoted = false;
-            any = false;
-            gap = false;
-            ++i;
-            continue;
+        const auto radians = [](double deg) { return deg * std::numbers::pi / 180.0; };
+        double n[6] = {1, 0, 0, 1, 0, 0};
+        const std::size_t count = args.size();
+        if (name == "matrix" && count == 6) {
+            for (std::size_t i = 0; i < 6; ++i) { n[i] = args[i]; }
+        } else if (name == "scale" && (count == 1 || count == 2)) {
+            n[0] = args[0];
+            n[3] = count == 2 ? args[1] : args[0];
+        } else if (name == "scalex" && count == 1) {
+            n[0] = args[0];
+        } else if (name == "scaley" && count == 1) {
+            n[3] = args[0];
+        } else if (name == "translate" && (count == 1 || count == 2)) {
+            n[4] = args[0];
+            n[5] = count == 2 ? args[1] : 0.0;
+        } else if (name == "translatex" && count == 1) {
+            n[4] = args[0];
+        } else if (name == "translatey" && count == 1) {
+            n[5] = args[0];
+        } else if (name == "rotate" && count == 1) {
+            const double r = radians(args[0]);
+            n[0] = std::cos(r), n[1] = std::sin(r), n[2] = -std::sin(r), n[3] = std::cos(r);
+        } else if (name == "skew" && (count == 1 || count == 2)) {
+            n[2] = std::tan(radians(args[0]));
+            n[1] = count == 2 ? std::tan(radians(args[1])) : 0.0;
+        } else if (name == "skewx" && count == 1) {
+            n[2] = std::tan(radians(args[0]));
+        } else if (name == "skewy" && count == 1) {
+            n[1] = std::tan(radians(args[0]));
+        } else {
+            return std::string{text};
         }
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
-            gap = !name.empty();
-            ++i;
-            continue;
+        // A LENGTH WHERE A NUMBER BELONGS, or the reverse, is a syntax error the
+        // cascade let through; it is not this reader's to guess at.
+        for (std::size_t i = 0; i < count; ++i) {
+            const bool translate = name.starts_with("translate");
+            if (is_length[i] != translate && !(translate && args[i] == 0.0)) {
+                return std::string{text};
+            }
         }
-        if (gap) {
-            name += ' ';
-            gap = false;
-        }
-        name += c;
+        multiply(n);
         any = true;
-        ++i;
     }
-    std::string out;
-    for (const auto & [family, was_string] : families) {
-        if (!out.empty()) { out += ", "; }
-        out += !was_string || family_can_drop_its_quotes(family) ? family : quoted_family(family);
+    if (!any) { return std::string{text}; }
+    std::string out{"matrix("};
+    for (std::size_t i = 0; i < 6; ++i) {
+        if (i != 0) { out += ", "; }
+        // TO SIX DECIMALS, as Chrome prints a matrix: `cos(90deg)` is 6e-17 in
+        // a double and `0` on the page.
+        out += number_text(static_cast<float>(std::round(m[i] * 1e6) / 1e6));
     }
+    out += ')';
     return out;
 }
 

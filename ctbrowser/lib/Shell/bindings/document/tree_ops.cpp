@@ -33,7 +33,15 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     switch (from.kind(source).value_or(node_kind::element)) {
     case node_kind::text: made = doc_->create_text(from.text(source)); break;
     case node_kind::comment: made = doc_->create_comment(from.text(source)); break;
+    case node_kind::cdata_section: made = doc_->create_cdata_section(from.text(source)); break;
     case node_kind::document_fragment: made = doc_->create_fragment(); break;
+    case node_kind::document_type:
+        made = doc_->create_document_type(from.name(source), from.public_id(source),
+                                          from.system_id(source));
+        break;
+    case node_kind::processing_instruction:
+        made = doc_->create_processing_instruction(from.name(source), from.text(source));
+        break;
     // A document has no clone that means anything here - there is one document -
     // so it is treated as the element it actually is: this tree builder makes
     // `<html>` the root and nothing sits above it.
@@ -98,9 +106,60 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
     return true;
 }
 
+// THE NODE A VALUE NAMES: ours as it is, another document's ADOPTED into this
+// one, and anything else as a Text node holding its string - which is what
+// "convert nodes into a node" says.
+//
+// ADOPTION, DOM 4.5 "adopt": the node leaves its parent, and it and every
+// descendant become this document's. A node is a slot in ONE document's slab,
+// so the move is a deep clone into this slab, the original's removal from its
+// tree, and - the part that makes it an adoption rather than an import - the
+// page's wrapper objects REBOUND to the copies: same JavaScript object, new
+// handle, and the methods and views re-installed by THESE bindings so that no
+// closure on it still reaches into the tree it left. That is exactly the
+// hazard the old note on adoptNode named, and re-installing is the answer to
+// it. What does not travel: event listeners and custom-element state, both
+// keyed by the old handle in the old document's tables. ponytail: a shadow
+// root is refused rather than moved, as importNode refuses it.
 node_id dom_bindings::node_from(context & cx, value v) {
     if (const node_id held = handle_of(v)) { return held; }
-    return doc_->create_text(cx.to_string(v));
+    dom_bindings * owner = owner_of(v);
+    if (owner == nullptr || owner == this || is_a_document(v)) {
+        return doc_->create_text(cx.to_string(v));
+    }
+    const node_id source = owner->handle_of(v);
+    if (!source || owner->shadow_tree_of(source) != nullptr) { return node_id{}; }
+    node_id made;
+    {
+        const auto from = owner->doc_->read();
+        made = clone_node(from, source, true, owner);
+        const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
+            if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
+                script::object_object * obj = it->second;
+                owner->wrappers_.erase(it);
+                obj->set(std::string{handle_property},
+                         value::number(static_cast<double>(pack(fresh))));
+                wrappers_.emplace(pack(fresh), obj);
+                install_element_methods(cx, *obj);
+                install_element_views(cx, *obj, fresh);
+                refresh_element(cx, *obj, fresh);
+            }
+            const std::span<const node_id> olds = from.children(old);
+            std::vector<node_id> news;
+            {
+                const auto mine = doc_->read();
+                const std::span<const node_id> made_kids = mine.children(fresh);
+                news.assign(made_kids.begin(), made_kids.end());
+            }
+            for (std::size_t i = 0; i < olds.size() && i < news.size(); ++i) {
+                self(self, olds[i], news[i]);
+            }
+        };
+        rebind(rebind, source, made);
+    }
+    (void)owner->doc_->remove_child(source);
+    owner->mutated();
+    return made;
 }
 
 // PARSE THE MARKUP, do not store it.
@@ -186,6 +245,27 @@ std::string dom_bindings::inner_html(node_id target) const {
             out += txn.text(node);
             out += "-->";
             return;
+        // HTML 13.3, the fragment serialisation algorithm's three remaining
+        // rows: a PI is its target, a space and its data; a doctype is
+        // `<!DOCTYPE name>` and nothing else - the identifiers are not written;
+        // a CDATA section is its data between the brackets, unescaped.
+        case node_kind::processing_instruction:
+            out += "<?";
+            out += atoms_->text(txn.name(node));
+            out += " ";
+            out += txn.text(node);
+            out += ">";
+            return;
+        case node_kind::document_type:
+            out += "<!DOCTYPE ";
+            out += atoms_->text(txn.name(node));
+            out += ">";
+            return;
+        case node_kind::cdata_section:
+            out += "<![CDATA[";
+            out += txn.text(node);
+            out += "]]>";
+            return;
         case node_kind::document:
         case node_kind::document_fragment:
             for (const node_id child : txn.children(node)) { self(self, child, false); }
@@ -221,14 +301,14 @@ std::string dom_bindings::inner_html(node_id target) const {
 std::string dom_bindings::text_content(node_id target) const {
     const auto txn = doc_->read();
     const node_kind kind = txn.kind(target).value_or(node_kind::element);
-    if (kind == node_kind::text || kind == node_kind::comment) {
+    if (kind == node_kind::text || kind == node_kind::comment || kind == node_kind::cdata_section ||
+        kind == node_kind::processing_instruction) {
         return std::string{txn.text(target)};
     }
     std::string out;
     const auto walk = [&](auto && self, node_id node) -> void {
-        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
-            out += txn.text(node);
-        }
+        // Text and its subclass: a PI's data is not "descendant text content".
+        if (is_text_kind(txn.kind(node).value_or(node_kind::element))) { out += txn.text(node); }
         for (const node_id child : txn.children(node)) { self(self, child); }
     };
     for (const node_id child : txn.children(target)) { walk(walk, child); }

@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/shell/net/url.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -164,8 +166,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // --- StyleSheetList
     script::object_object * list_proto = interface("StyleSheetList", nullptr, nullptr);
     iterable(list_proto);
-    method(list_proto, "item",
-           [](context & c, std::span<value> a) { return collection_item(c, a); });
+    // `item()` re-derives the list from the tree first - see resync_sheet_list.
+    method(list_proto, "item", [this](context & c, std::span<value> a) {
+        if (script::object_object * self = as_object(c.current_this())) {
+            resync_sheet_list(c, *self);
+        }
+        return collection_item(c, a);
+    });
 
     // --- CSSRuleList
     script::object_object * rules_proto = interface("CSSRuleList", nullptr, nullptr);
@@ -183,12 +190,37 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     });
     getter(base_proto, "ownerNode", [this](context & c, std::span<value>) {
         const css_sheet_record * sheet = receiver_sheet(c);
+        // NULL ONCE THE OWNER NO LONGER CARRIES IT: a `<link>` that was
+        // disabled or removed keeps this record for the page that holds it,
+        // and the record answers that it belongs to nothing. The owner's tree
+        // is re-walked first, so the answer follows a `link.disabled = true`
+        // made a statement ago.
         if (sheet == nullptr || !sheet->owner) { return value::null(); }
+        if (shadow_tree_of(sheet->tree) != nullptr) {
+            (void)shadow_sheet_list(c, sheet->tree);
+        } else {
+            sync_style_sheets(c);
+        }
+        if (!sheet->attached) { return value::null(); }
         return wrap(c, sheet->owner);
     });
-    getter(base_proto, "ownerRule", [](context &, std::span<value>) { return value::null(); });
-    getter(base_proto, "parentStyleSheet",
-           [](context &, std::span<value>) { return value::null(); });
+    // An `@import`'s sheet knows its rule, and through it its parent - and
+    // deleteRule detaches the rule from its sheet, which is what makes
+    // `parentStyleSheet` null afterwards (cssimportrule-parent.html).
+    const auto owner_rule = [this](context & c) -> const css_rule_record * {
+        const css_sheet_record * sheet = receiver_sheet(c);
+        if (sheet == nullptr || sheet->owner_rule >= css_rule_store_.size()) { return nullptr; }
+        const css_rule_record & rule = *css_rule_store_[sheet->owner_rule];
+        return rule.sheet < css_sheets_.size() ? &rule : nullptr;
+    };
+    getter(base_proto, "ownerRule", [this, owner_rule](context & c, std::span<value>) {
+        const css_rule_record * rule = owner_rule(c);
+        return rule == nullptr ? value::null() : rule_object_for(c, receiver_sheet(c)->owner_rule);
+    });
+    getter(base_proto, "parentStyleSheet", [this, owner_rule](context & c, std::span<value>) {
+        const css_rule_record * rule = owner_rule(c);
+        return rule == nullptr ? value::null() : sheet_object_for(c, rule->sheet);
+    });
     getter(base_proto, "title", [this](context & c, std::span<value>) {
         const css_sheet_record * sheet = receiver_sheet(c);
         // "The title attribute must return the title or null if the title is
@@ -236,6 +268,20 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // `title` is NOT, which is not an omission - the specification says
             // a constructed sheet has no title however it was constructed, and
             // `CSSStyleSheet-constructable.html` asserts exactly that.
+            // `baseURL` is parsed against the document's; one that cannot be
+            // parsed is a NotAllowedError (CSSStyleSheet-constructable-baseURL).
+            // Nothing here resolves a `url()` against it, so it is only checked.
+            if (!args.empty() && args[0].is_object()) {
+                auto * options = static_cast<script::object_object *>(args[0].as_heap());
+                if (const value * base = options->find("baseURL");
+                    base != nullptr && !base->is_undefined()) {
+                    const std::string given = c.to_string(*base);
+                    if (given.find("://") != std::string::npos && !parse_absolute(given).valid) {
+                        throw_dom_exception(c, "NotAllowedError", "baseURL is not a valid URL");
+                        return value::undefined();
+                    }
+                }
+            }
             css_sheets_.push_back(std::make_unique<css_sheet_record>());
             const std::size_t at = css_sheets_.size() - 1;
             css_sheets_[at]->constructed = true;
@@ -249,7 +295,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                     css_sheets_[at]->disabled = context::truthy(*disabled);
                 }
             }
-            return make_sheet_object(c, at);
+            return sheet_object_for(c, at);
         });
     // "If the origin-clean flag is unset, throw a SecurityError" - the first
     // step of cssRules, insertRule and deleteRule alike, CSSOM 6.3.
@@ -494,15 +540,12 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     getter(rule_proto, "parentRule", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr || rule->parent >= css_rule_store_.size()) { return value::null(); }
-        return make_rule_object(c, rule->parent);
+        return rule_object_for(c, rule->parent);
     });
     getter(rule_proto, "parentStyleSheet", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr || rule->sheet >= css_sheets_.size()) { return value::null(); }
-        if (!css_sheets_[rule->sheet]->constructed && css_sheets_[rule->sheet]->owner) {
-            return sheet_object_of(c, css_sheets_[rule->sheet]->owner);
-        }
-        return make_sheet_object(c, rule->sheet);
+        return sheet_object_for(c, rule->sheet);
     });
 
     script::object_object * style_rule_proto = interface("CSSStyleRule", "CSSRule", nullptr);
@@ -527,11 +570,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // inside an attribute value could derail.
             const std::string text = arg_string(c, a, 0);
             bool bad = false;
+            const std::vector<style::css::namespace_declaration> namespaces =
+                sheet_namespaces(rule->sheet);
             const style::css::stylesheet parsed =
-                style::css::parse_selector_text(text, *atoms_, bad);
+                style::css::parse_selector_text(text, *atoms_, bad, &namespaces);
             if (bad || parsed.selectors.empty()) { return value::undefined(); }
             rule->selector = representable(parsed.selectors)
-                                 ? serialize_selector_list(parsed.selectors, *atoms_)
+                                 ? serialize_selector_list(parsed.selectors, *atoms_, namespaces)
                                  : collapse_whitespace(text);
             style_sheets_changed();
             return value::undefined();
@@ -705,17 +750,19 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
 
     // --- CSSImportRule, CSSOM 6.4.7
     //
-    // `styleSheet` IS NULL AND THAT IS THE HONEST ANSWER: nothing here fetches
-    // an `@import`, and a page reading `rule.styleSheet.cssRules` must find out
-    // that there is no sheet rather than find an empty one that claims the
-    // import succeeded. `cssimportrule.html` asserts a CSSStyleSheet there and
-    // that subtest stays red until the loader does the fetch.
+    // `styleSheet` is the sheet load_imported_sheet fetched when the rule was
+    // parsed - a CSSStyleSheet of its own with its own rules, as every engine
+    // answers, and null only for an import a constructed sheet was given.
     script::object_object * import_proto = interface("CSSImportRule", "CSSRule", nullptr);
     getter(import_proto, "href", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
         return c.string(rule == nullptr ? std::string{} : rule->selector);
     });
-    getter(import_proto, "styleSheet", [](context &, std::span<value>) { return value::null(); });
+    getter(import_proto, "styleSheet", [this](context & c, std::span<value>) {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr || rule->imported_sheet >= css_sheets_.size()) { return value::null(); }
+        return sheet_object_for(c, rule->imported_sheet);
+    });
     accessor(
         import_proto, "media",
         [this](context & c, std::span<value>) {
@@ -862,7 +909,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         // walks backwards: a keyframes rule may name the same key twice.
         const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
         if (rule == nullptr || found == no_index) { return value::null(); }
-        return make_rule_object(c, rule->children[found]);
+        return rule_object_for(c, rule->children[found]);
     });
     method(keyframes_proto, "deleteRule",
            [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
@@ -976,7 +1023,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         script::object_object * self = as_object(c.current_this());
         const std::size_t at = slot_index(self, rule_key);
         if (at >= css_rule_store_.size()) { return value::null(); }
-        return make_rule_object(c, at);
+        return rule_object_for(c, at);
     });
     accessor(
         declaration_proto, "cssText",

@@ -230,7 +230,12 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // NOT for a generator, even an async one. A generator's `return`
         // becomes the `value` of a `{value, done: true}` record; the
         // promise, if there is to be one, is the driver's job - which is
-        // exactly what TypeScript's __awaiter helper does with it.
+        // exactly what TypeScript's __awaiter helper does with it. An ASYNC
+        // generator's `return v` awaits v first (15.7.2 AsyncGeneratorBody's
+        // Return evaluation), so the record never carries a promise.
+        if (fn().is_async && fn().is_generator && n.a >= 0) {
+            proto().emit(instruction{op::await_value, r, r});
+        }
         // AN OPEN `finally` GETS IT FIRST. Returning straight out of a try
         // block skipped the finally entirely - see compile_try_with_finally.
         if (!route_return_through_finally(r)) {

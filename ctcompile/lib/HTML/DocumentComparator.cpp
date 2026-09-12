@@ -26,6 +26,12 @@ namespace {
     // this arm exists to keep the switch exhaustive rather than because a
     // comparison can reach it.
     case node_kind::document_fragment: return "#document-fragment";
+    // Added with the three kinds of 2026-09-12. A doctype lives under the
+    // Document node, not under the root the walk starts from; the other two
+    // are XML's and the HTML tree builder makes neither.
+    case node_kind::document_type: return "#doctype";
+    case node_kind::processing_instruction: return "#processing-instruction";
+    case node_kind::cdata_section: return "#cdata-section";
     }
     return "?";
 }

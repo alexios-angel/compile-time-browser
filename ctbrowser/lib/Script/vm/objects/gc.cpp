@@ -71,6 +71,16 @@ void context::trace_object(heap_object * o) {
         edge(arr->index);
         edge(arr->input);
         edge(arr->groups);
+        // The named table is the array's own, not a heap object: its edges
+        // are traced here rather than by pushing it (a mark bit nobody
+        // sweeps would stay set and hide its edges from the next cycle).
+        if (arr->named) {
+            for (const auto & [name, v] : arr->named->props) { edge(v); }
+            for (const accessor_entry & entry : arr->named->accessors.entries) {
+                edge(entry.getter);
+                edge(entry.setter);
+            }
+        }
         break;
     }
     case heap_kind::object: {
@@ -136,6 +146,13 @@ void context::trace_object(heap_object * o) {
         edge(saved->receiver);
         edge(saved->promise);
         push_mark(saved->closure);
+        // An async generator's queued requests - each a promise a caller
+        // holds and the value it sent - and the generator object itself.
+        edge(saved->self);
+        for (const coroutine_object::async_request & waiting : saved->queue) {
+            edge(waiting.sent);
+            edge(waiting.promise);
+        }
         break;
     }
     default: break; // strings and symbols own no values
@@ -180,6 +197,17 @@ std::size_t context::collect() {
     // oracle walks too. The whole register file and every frame: a
     // collection has no dead window.
     mark_roots(registers_.size());
+    // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED - see context::native_scope.
+    // Newest first, down to but NOT including the head at the outermost
+    // entry: that one was live before the native and is the collector's to
+    // judge (ctcompile's Cycle.cpp pins that `churnVia` keeps exactly one
+    // dead ring, and the epoch head is a node of the previous one). sweep()
+    // moves the epoch along if it frees it.
+    if (native_depth_ > 0) {
+        for (heap_object * o = heap_; o != nullptr && o != native_epoch_; o = o->next) {
+            mark_object(o);
+        }
+    }
     return sweep();
 }
 
@@ -197,6 +225,10 @@ std::size_t context::sweep() {
             link = &o->next;
         } else {
             *link = o->next;
+            // The native-scope boundary (see collect) moves to the next older
+            // object when the one it named is freed: everything between was
+            // freed too, so the "allocated since entry" prefix is unchanged.
+            if (o == native_epoch_) { native_epoch_ = o->next; }
             // THE ESCAPE ORACLE HEARS ABOUT EVERY FREE, so a record can never
             // be read through a stale pointer: the recorder flags it dead and
             // forgets the address before `delete` reuses it.

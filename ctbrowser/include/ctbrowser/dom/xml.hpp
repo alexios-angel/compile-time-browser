@@ -42,10 +42,10 @@
 // are SKIPPED rather than read, so an entity an internal subset declares is
 // not resolved (the five predefined ones and numeric character references
 // are). There is no validation and no external entity fetching - both are
-// what every browser also refuses. `CDATASection` and `ProcessingInstruction`
-// have no `node_kind` in this engine, so a CDATA section becomes a text node
-// and a processing instruction outside the prolog is dropped; both are
-// recorded here so nobody reads their absence as an oversight. An inline
+// what every browser also refuses. A doctype, a comment or a processing
+// instruction outside the root element lands under the Document node - see
+// document::document_node - a CDATA section is a CDATASection node and a
+// processing instruction inside the tree a ProcessingInstruction. An inline
 // `<svg>` is put in the SVG namespace but its SOURCE is not captured the way
 // the HTML tree builder captures it, so it does not rasterise - the element and
 // its children are in the DOM and nothing draws.

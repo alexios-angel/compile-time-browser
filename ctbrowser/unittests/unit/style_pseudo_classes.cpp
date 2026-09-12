@@ -241,13 +241,14 @@ void test_functional_pseudos() {
         expect_value(f, f.find_id("a"), "color", "#020202", ":not weighs its argument");
     }
     {
-        // :has() is NOT supported and must not silently pass. It looks forward at
-        // descendants the traversal has not visited, so it stays unmatchable rather
-        // than wrong.
+        // :has() looks forward at descendants the traversal has not visited, so
+        // it is answered by a scoped query from the subject - a second walker,
+        // because the first is mid-traversal. It weighs its argument, as :is does.
         fixture f;
-        f.load("<div id=a><p></p></div>", "div:has(p) { color: #010101 }");
-        CHECK(f.value_of(f.find_id("a"), "color").empty());
-        CHECK(f.styles.selector_count() == 0);
+        f.load("<div id=a><p></p></div><div id=b></div>",
+               "div:has(p) { color: #010101 } div:has(> span) { color: #020202 }");
+        expect_value(f, f.find_id("a"), "color", "#010101", ":has matches a descendant");
+        CHECK(f.value_of(f.find_id("b"), "color").empty());
     }
     {
         // An argument this engine cannot represent makes the whole thing unmatchable

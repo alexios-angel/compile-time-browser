@@ -330,14 +330,37 @@ void test_character_references() {
 
 // --- comments and doctype -------------------------------------------------
 
+// The dumper prints elements and text only, so what these say is that a
+// doctype and a comment produce no ELEMENT and no TEXT; the nodes they do
+// produce are unit/dom_special_nodes' to check.
 void test_comments_and_doctype() {
-    expect_tree("<!doctype html><p>a", R"(html(body(p("a"))))", "a doctype produces no node");
+    expect_tree("<!doctype html><p>a", R"(html(body(p("a"))))",
+                "a doctype produces no element and no text");
     expect_tree("<p>a<!-- hidden -->b</p>", R"(html(body(p("a" "b"))))",
-                "a comment produces no node");
+                "a comment produces no element and no text");
     expect_tree("<p>a<!-- unterminated", R"(html(body(p("a"))))",
                 "an unterminated comment swallows the rest rather than the document");
     expect_tree("<?php echo 1; ?><p>a", R"(html(body(p("a"))))",
-                "a processing instruction becomes a comment and is dropped");
+                "a processing instruction becomes a comment, which is not text");
+    // And where the comment lands: ahead of <html> it is the Document's, and
+    // inside the tree it is the current node's.
+    {
+        parsed p;
+        (void)p.tree("<!-- x --><!doctype html><p>a<!-- y -->b</p>");
+        const auto txn = p.doc.read();
+        const std::span<const node_id> top = txn.children(txn.document_node());
+        check(top.size() == 3 && txn.kind(top[0]).value_or(node_kind::text) == node_kind::comment &&
+                  txn.kind(top[1]).value_or(node_kind::text) == node_kind::document_type &&
+                  top[2] == txn.root(),
+              "a comment before the doctype is the Document's first child");
+        std::size_t comments = 0;
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (txn.kind(at).value_or(node_kind::text) == node_kind::comment) { ++comments; }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        walk(walk, txn.root());
+        check(comments == 1, "a comment inside the tree is a child of the current node");
+    }
 }
 
 // --- robustness -----------------------------------------------------------

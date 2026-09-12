@@ -550,8 +550,22 @@ public:
     // non-function is a TypeError in JavaScript and pages CATCH it - feature
     // detection is written as `try { thing() } catch (e) {}`.
     void throw_error(std::string_view kind, std::string message) {
+        // A throw is already crossing this native (see `call`): the first
+        // one propagates, this one is the native carrying on after it.
+        if (has_pending_throw_) { return; }
         thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+    // The throw `call` parked, thrown again from the native's call site.
+    // Answers whether there was one; the caller then continues as after any
+    // other unwind.
+    bool rethrow_pending() {
+        if (!has_pending_throw_) { return false; }
+        has_pending_throw_ = false;
+        thrown_ = pending_throw_;
+        pending_throw_ = value::undefined();
+        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+        return true;
     }
 
     // THROW SOMETHING THAT IS NOT AN ECMAScript Error - a DOM method must throw
@@ -559,6 +573,7 @@ public:
     // `e.constructor === DOMException`. The unwinding is `throw_error`'s
     // exactly, with the object supplied rather than made.
     void throw_value(value thrown) {
+        if (has_pending_throw_) { return; }
         thrown_ = thrown;
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
     }
@@ -614,7 +629,33 @@ public:
     // requestAnimationFrame callback. Re-entrant: it runs a nested interpreter
     // loop on the existing register stack, so a listener may itself call back
     // into script.
+    // A THROW THE CALLEE DOES NOT CATCH IS HELD UNTIL THE NATIVE RETURNS.
+    // Called DIRECTLY from a native (native_scope, and no interpreted frame
+    // pushed since it began), `call` fences the callee (see call_fenced); a
+    // throw that crosses it is parked in pending_throw_, this returns
+    // undefined, every further `call` from the same native returns undefined
+    // without calling, and the VM rethrows it at the native's own call site
+    // (rethrow_pending, at the three places a native returns to it). From
+    // interpreted code - a setter reached through op::set_index inside a test
+    // body that `apply` is running - the throw unwinds at once to that code's
+    // own handlers, as before. So `[1, 2].forEach(f)` with `f`
+    // throwing on 1 never calls `f` for 2, and the page's `try` around the
+    // forEach catches once - before, the first throw unwound to that `try`
+    // while forEach kept going, and the second throw found the handler
+    // already consumed and was an engine fault. A native that wants to see
+    // the throw itself uses call_fenced.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
+    // `call`, WITH THE THROW VISIBLE TO THE CALLER. A throw the callee does
+    // not catch unwinds to the innermost `try` on the WHOLE stack - which,
+    // from C++, is whatever page code happened to be running above the
+    // native, or nothing (an engine fault). This puts a fence on the handler
+    // stack first: the throw stops here, `threw` says so and `thrown` is the
+    // value, and the caller decides - a promise reaction rejects its
+    // promise, a callback-taking native rethrows. The listener trampoline in
+    // events/dispatch.cpp did this with compiled JavaScript; this is the
+    // same fence in the VM.
+    value call_fenced(value callable, std::span<const value> args, value this_value, bool & threw,
+                      value & thrown);
     // Queue a job for the end of the turn. FIFO, and a job queued BY a job runs
     // in the same drain - that is what makes a promise chain complete before
     // the turn ends rather than one link per turn.
@@ -848,6 +889,7 @@ public:
         typed_array,
         promise,
         generator,
+        async_generator,
         count_
     };
 
@@ -1280,13 +1322,51 @@ public:
         std::size_t count_;
     };
 
+    // WHAT A NATIVE IN PROGRESS MAY BE HOLDING. A native allocates an object,
+    // calls back into JavaScript (`to_string` on an argument, a callback, a
+    // getter) and then uses the object - `new Blob([part])` stringifies each
+    // part with the Blob it is building in a C++ local. The precise collector
+    // has no inventory of C++ locals, so every such native was a use-after-free
+    // once collection could run inside a turn; the first one found was
+    // `loadBlob`'s result no longer being `instanceof Blob`. Rather than audit
+    // ~1,300 natives for `rooted`, the collector PINS EVERYTHING ALLOCATED
+    // SINCE THE OUTERMOST NATIVE WAS ENTERED: the heap is a newest-first list,
+    // so that is the prefix down to the object that was the head at entry.
+    // Bounded, because a native's own allocations are bounded; what is NOT
+    // pinned is what testharness.js's per-subtest `apply` was called on, so a
+    // synchronous script of ten thousand subtests still collects. A collector
+    // policy, not a root: it is applied in collect(), outside each_root, so the
+    // escape oracle's notion of "reachable" does not learn it.
+    class native_scope {
+    public:
+        explicit native_scope(context & cx) : cx_(&cx), saved_frames_(cx.native_frames_) {
+            if (cx.native_depth_++ == 0) { cx.native_epoch_ = cx.heap_; }
+            // How deep the interpreter was when THIS native began: `call`
+            // parks a throw only while no interpreted frame has been pushed
+            // since (see `call`).
+            cx.native_frames_ = cx.frames_.size();
+        }
+        ~native_scope() {
+            cx_->native_frames_ = saved_frames_;
+            if (--cx_->native_depth_ == 0) { cx_->native_epoch_ = nullptr; }
+        }
+        native_scope(const native_scope &) = delete;
+        native_scope & operator=(const native_scope &) = delete;
+
+    private:
+        context * cx_;
+        std::size_t saved_frames_;
+    };
+
     // COLLECT AT EVERY SAFEPOINT, FOR TESTS.
     //
-    // The only thing that collects in an ordinary run is `collect_if_due`, once
-    // per tick, from the browser's frame loop - so a collection NEVER happens
-    // while script is running, and a rooting bug is unreachable. This TEST MODE
-    // collects the whole heap at every safepoint, which is enormously slow, and
-    // is the only way the rooting discipline the ABI demands can be exercised.
+    // Until 2026-09-12 the only thing that collected in an ordinary run was
+    // `collect_if_due`, once per tick, from the browser's frame loop - so a
+    // collection NEVER happened while script was running, and a rooting bug
+    // was unreachable. `safepoint()` now collects when the heap is due, but
+    // only at a call boundary. This TEST MODE collects the whole heap at every
+    // safepoint, which is enormously slow, and is the only way the rooting
+    // discipline the ABI demands can be exercised.
     void set_gc_stress(bool on) noexcept { gc_stress_ = on; }
     [[nodiscard]] bool gc_stress() const noexcept { return gc_stress_; }
 
@@ -1306,11 +1386,24 @@ public:
     // further down, after call_frame.
     void record_step(instruction in);
 
-    // A point where the ABI says a collection may happen. Does nothing unless
-    // stress is on, so this is one predictable not-taken branch on the paths
-    // that call it.
+    // A point where the ABI says a collection may happen. Under stress it
+    // always does; otherwise only when the heap has grown past the threshold
+    // `collect_if_due` keeps - the tick's rule, applied inside a turn, so a
+    // synchronous script that never yields is bounded the way a page on a
+    // timer is. Before this it was stress-only, and seven WPT reflection
+    // files - thousands of subtests in ONE top-level script - grew until a
+    // 4 GB address-space cap killed the process. One compare on the path that
+    // calls it: `invoke`, every C++ entry into JavaScript - which is what
+    // `Function.prototype.apply` is, and what testharness.js runs every
+    // subtest through. An interpreted JS-to-JS call is deliberately NOT one:
+    // ctcompile/test/EscapeCycle.cpp pins that `churn(1000)` collects exactly
+    // once under stress and returns with its 4,000 dead nodes unswept.
     void safepoint() {
-        if (gc_stress_) { (void)collect(); }
+        if (gc_stress_) [[unlikely]] {
+            (void)collect();
+            return;
+        }
+        (void)collect_if_due();
     }
 
     // HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
@@ -1320,8 +1413,11 @@ public:
     [[nodiscard]] std::size_t collections() const noexcept { return collections_; }
 
     // Collect if the heap has grown enough to be worth it. Called once per
-    // tick, so a long-running page's garbage is bounded instead of accumulating
-    // for the life of the document.
+    // tick, and from `safepoint()` at every call boundary, so a long-running
+    // page's garbage is bounded instead of accumulating for the life of the
+    // document - or of one synchronous script. The threshold doubles with the
+    // survivors, so the work is amortised O(1) per allocation and the heap
+    // peaks at about twice the live set.
     std::size_t collect_if_due() {
         if (live_objects_ < collect_threshold_) { return 0; }
         const std::size_t freed = collect();
@@ -1340,6 +1436,9 @@ public:
         std::size_t address = 0; // the catch block
         std::size_t reg_top = 0; // registers_ size on entry
         std::uint16_t slot = 0;  // where to put the thrown value
+        // A C++ caller's catch (call_fenced): `frame` is the depth to unwind
+        // to, and the throw lands in fence_thrown_ rather than a register.
+        bool fence = false;
     };
 
     // A SUSPENDED FRAME, saved whole.
@@ -1358,6 +1457,14 @@ public:
     // The register window is COPIED rather than referenced. It has to be: the
     // stack is truncated the moment the frame leaves, and whatever runs next
     // reuses those slots.
+    // What `.next(v)` / `.throw(e)` / `.return(v)` do to a generator. Declared
+    // ahead of coroutine_object because an async generator queues them.
+    enum class resume_mode {
+        next,
+        thrown,
+        returned
+    };
+
     struct coroutine_object final : heap_object {
         const function_proto * proto = nullptr;
         std::size_t ip = 0;
@@ -1389,6 +1496,25 @@ public:
         // Set while the body is running, so a `.next()` from inside itself is
         // refused rather than corrupting the register stack.
         bool running = false;
+        // --- async generators ------------------------------------------
+        // `async function*`: the SAME frame again, resumed by `.next()` and
+        // suspended by BOTH `yield` and `await`. Each `.next(v)` hands back a
+        // promise of the `{value, done}` record and joins a queue
+        // (AsyncGeneratorEnqueue, 27.6.3.5); requests run one at a time, the
+        // next one starting when the body yields or finishes. `awaiting` is
+        // the body parked on an `await` between two requests - `promise` is
+        // then the request that the eventual yield settles - and `self` is
+        // the generator object, which the drain needs and the frame does not
+        // carry.
+        bool async_gen = false;
+        bool awaiting = false;
+        value self;
+        struct async_request {
+            resume_mode how;
+            value sent;
+            value promise;
+        };
+        std::vector<async_request> queue;
         coroutine_object() : heap_object(heap_kind::coroutine) {}
     };
 
@@ -1398,13 +1524,20 @@ public:
 
     // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
     // yields or finishes, and answers the `{value, done}` record the iterator
-    // protocol is made of.
-    enum class resume_mode {
-        next,
-        thrown,
-        returned
-    };
+    // protocol is made of. For an ASYNC generator the body may also park on an
+    // `await`, in which case the answer is undefined and `awaiting` is set:
+    // resume() finishes that request when the awaited promise settles.
     [[nodiscard]] value generator_resume(value generator, value sent, resume_mode how);
+    // The async generator's `.next(v)` / `.throw(e)` / `.return(v)`: a promise
+    // of the record, queued behind whatever the body is doing.
+    [[nodiscard]] value async_generator_request(value generator, value sent, resume_mode how);
+    // Run queued requests while the body is neither running nor awaiting.
+    void async_generator_drain(coroutine_object * saved);
+    // What one request's outcome does to its promise: a rejected settled
+    // promise rejects it (the body threw - see the compiler's async fence),
+    // anything else fulfils it with `{value, done}`. `raw_return` says the
+    // outcome is the body's return value, still to be wrapped in a done record.
+    void settle_async_generator(coroutine_object * saved, value outcome, bool raw_return);
     // WHERE THE PARENT'S HALF OF AN UPVALUE COMES FROM, and the two tiers
     // genuinely differ - which is why this is a parameter and not an
     // assumption.
@@ -1662,9 +1795,24 @@ private:
     // frame between here and the one that owns it. Returning false means
     // nothing caught it, which is an uncaught exception.
     [[nodiscard]] bool unwind_to_handler() {
+        ++unwinds_;
         while (!handlers_.empty()) {
             const handler h = handlers_.back();
             handlers_.pop_back();
+            if (h.fence) {
+                // A C++ caller catches here - see call_fenced. Every frame the
+                // callee pushed goes; the caller's registers stay (a native
+                // still on the C++ stack may write its result into a popped
+                // frame's slot, as it already could through a page's `try`).
+                if (recorder_ != nullptr && h.frame < frames_.size()) [[unlikely]] {
+                    record_frames_unwound(h.frame);
+                }
+                if (frames_.size() > h.frame) { frames_.resize(h.frame); }
+                fence_thrown_ = thrown_;
+                fence_hit_ = true;
+                thrown_ = value::undefined();
+                return true;
+            }
             if (h.frame >= frames_.size()) { continue; } // its frame already returned
             // THE ESCAPE ORACLE SEES THE FRAMES BEFORE THEY GO - FrameEnds.def
             // row `unwind`. Here `thrown_` is still
@@ -1765,6 +1913,8 @@ private:
         }
         // A thrown value in flight is reachable from nothing else.
         visit(root_label::thrown, thrown_);
+        visit(root_label::thrown, fence_thrown_);  // caught by a C++ fence, not yet consumed
+        visit(root_label::thrown, pending_throw_); // parked by `call`, not yet rethrown
         // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates
         // the instance and then runs field initialisers and the constructor
         // body with it in a local; without this the object being constructed
@@ -1975,9 +2125,25 @@ private:
     type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
+    // See native_scope: the head of the heap when the outermost native in
+    // progress was entered, and how many natives are in progress.
+    heap_object * native_epoch_ = nullptr;
+    std::size_t native_depth_ = 0;
+    std::size_t native_frames_ = 0; // frames_.size() when the innermost native began
     // Values a C++ scope is holding across something that can collect. See
     // `rooted`; marked in collect() like any other root.
     std::vector<value> temporaries_;
+    // What the innermost call_fenced caught, consumed by it on return.
+    bool fence_hit_ = false;
+    value fence_thrown_;
+    // What `call` parked for rethrow_pending - see `call`.
+    bool has_pending_throw_ = false;
+    value pending_throw_;
+    // How many throws have unwound, ever. A handler that called into
+    // something that may throw compares it before and after, which is the
+    // only way to know a throw crossed the call: the landing already cleared
+    // thrown_.
+    std::size_t unwinds_ = 0;
     std::size_t collections_ = 0;
     bool gc_stress_ = false;
     // TOTAL allocations, never reset: the cap is about a loop that does not
