@@ -14,6 +14,45 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-12, evening
+
+**716 of the 1,090 tests that ran, which is 65.7%**, and still not one crash.
+Same instrument, engine at commit `15f47064` on `ctbrowser-wpt` — browser gate
+540/540 at that commit; five suites run one after another on the devbox, 4
+workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, as every row below.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 242 | 55 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 135 | 81 | 2 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 133 | 49 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 125 | 126 | 11 | 0 | 9 | 237 | 508 |
+| **total** | **716** | **318** | **24** | **0** | **32** | **542** | **1,632** |
+
+Subtests: **78,570 PASS, 3,578 FAIL, 67 NOTRUN, 10 TIMEOUT.**
+
+Against `d27d8f36` (the row below): **+129 files, 1 lost.** Per suite:
+`dom/nodes` 175 -> 242 (agents D then E, 67 files: `Document-createElement`,
+`Document-createElementNS`, `Document-importNode`, `Element-classlist`,
+`Element-children`, `CharacterData-surrogates`, `DocumentFragment-getElementById`
+among them), `dom/events` 72 -> 81 (`Event-dispatch-bubbles-*`,
+`shadow-relatedTarget`, `mouse-event-retarget`, `Body-FrameSet-Event-Handlers`),
+`html/dom` 114 -> 135 (agents H then E: the seven `reflection-*` files are
+PASS now, `nameditem-*`, `document.title`, `document.body`, `document-dir`),
+`css/cssom` 116 -> 133 (agent C: `shorthand-serialization`,
+`cssstyledeclaration-csstext-*`, `CSSStyleRule-set-selectorText`,
+`page-descriptors`, `variable-names`), `css/css-values` 111 -> 125 (agent S:
+`attr-argument-grammar`, `if-*`, `random-item-*`, `round-mod-rem-computed`,
+`rem-unit-root-element`). The one lost: `html/dom/elements/name-content-attribute-and-property.html`
+is HARNESS_ERROR because `/html/resources/common.js` was not in the sparse
+corpus — an instrument gap, `fetch-wpt.sh` carries the file since `4a21438a`
+and the next row has it back. The engine side of the evening is mostly in the
+script tier (`docs/test262.md`, the `15f47064` row) and shows here as subtests:
+`dom/nodes` 11,889 PASS from 10,455.
+
+test262 at the same commit: **25,051 of 32,927 (76.1%)**, from 58.3%.
+
 ## The baseline — 2026-09-12, late
 
 **588 of the 1,090 tests that ran, which is 53.9%**, and still not one crash.

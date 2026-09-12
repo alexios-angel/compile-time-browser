@@ -839,3 +839,74 @@ Landed on `ctbrowser-wpt`, each named so the delta above can be read:
   wrong answer, not a missing feature (`f(cls, p = cls.name)` read undefined).
 - collection inside a turn (the reflection TIMEOUTs), with a native's own
   allocations pinned and a native's C++-held arguments rooted.
+
+## Measured at `15f47064` — 2026-09-12, evening
+
+Same instrument, same corpus, engine at `15f47064` on `ctbrowser-wpt`
+(browser gate 540/540 at that commit; `tools/check/test262-baseline.sh` on the
+devbox, 4 workers, 10 s timeout, 2 GB cap):
+
+| area | tests | pass at `d27d8f36` | pass at `15f47064` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 12,624 | **17,226** | +4,602 | 6,446 | 26 / 6 |
+| `built-ins/Array` | 3,082 | 2,167 | **2,624** | +457 | 426 | 4 / 11 |
+| `built-ins/Object` | 3,411 | 2,519 | **3,128** | +609 | 281 | 0 / 0 |
+| `built-ins/Number` | 340 | 261 | **273** | +12 | 66 | 0 / 0 |
+| `built-ins/Math` | 327 | 275 | **279** | +4 | 48 | 0 / 0 |
+| `built-ins/String` | 1,223 | 893 | **975** | +82 | 245 | 0 / 0 |
+| `built-ins/Boolean` | 51 | 28 | **42** | +14 | 8 | 0 / 0 |
+| `built-ins/Function` | 509 | 291 | **331** | +40 | 165 | 0 / 0 |
+| `built-ins/Error` | 93 | 31 | **72** | +41 | 16 | 0 / 0 |
+| `built-ins/JSON` | 165 | 101 | **101** | +0 | 62 | 0 / 0 |
+| **total** | **32,927** | **19,190** | **25,051** | **+5,861** | | |
+
+**25,051 of 32,927 (76.1%), from 58.3% at `d27d8f36`.** Not one PASS became
+a FAIL. `test/language` +4,602 is the compiler and VM work of the evening
+(the list below) plus agent B's built-ins round one; the built-ins columns
+are agent B (`d27d8f36..502c691f`: ArraySpeciesCreate, IsConstructor, the
+`Object` descriptors) — agent G's round two (+650 measured on its own
+branch: Date, encode/decodeURI, `@@toPrimitive`, JSON.rawJSON) merged AFTER
+this run and is in the next row.
+
+**The 30 crashes are all diagnosed and fixed after this run**, which is why
+they are named rather than left as a number: 13 `dynamic-import` files are
+`import('')` resolving to the test's directory, which ct262's loader opened
+and then aborted on (`9dd67566`); 13 `for-of`/`derived-class-return-override`
+files are a GC hole — `iterable_values` drained a page's `[Symbol.iterator]`
+into an array reachable from nothing while `next()` ran, and a collection
+under the call freed it (`e3344344`); the 4 `slice` files push 2^32 elements
+until the cap kills the process (`e5772310`, then agent G's ArraySpeciesCreate
+which throws the RangeError first).
+
+**What moved, by name** (`d27d8f36..15f47064`, `ctbrowser-wpt`):
+
+- **an unresolvable name is the ReferenceError** — `get_global` throws; the
+  `typeof x` case is silenced by a run-loop peek at the following opcode, and
+  the AOT bridge grew `ct_aot_global_get_soft` for the same case.
+- **strict mode, the runtime half**: a rejected write throws in strict code,
+  an assignment to an undeclared name throws (the probe runs before the RHS;
+  the three `toFixed` files that want RHS-then-ReferenceError are the cost).
+- **the early errors of strict code**: `eval`/`arguments` as bindings, the
+  reserved words, duplicate simple parameters, `delete x`, legacy octal.
+- **every `await` in a function takes a job**; a script's top level keeps the
+  synchronous read and drains the queue for a pending promise.
+- **`yield*`** (delegation through `__ctbrowser_delegate_*`, `.throw`/`.return`
+  forwarded), **generator `.return()` running `finally`** (the `{@#return}`
+  marker), the eager generator prologue.
+- **NamedEvaluation** (`function_proto::inferred_name`, image format 5), the
+  `name` of every anonymous function and class expression.
+- **array destructuring through the iterator protocol** (`__ctbrowser_iter_*`,
+  IteratorClose on the normal exit), empty and rest-first object patterns
+  throw on `null`/`undefined`, computed accessors, computed class methods.
+- **array literal elisions are holes**, `Object.keys([,1])` is `["1"]`.
+- **`var` hoists across the whole script** (`program::hoisted_vars`), for-in
+  walks the prototype chain, `iterable_values` honours `[Symbol.iterator]`.
+- **private names are one name** (`@#x`), never a property key.
+
+**The next clearest failures**, from the causes at this commit: 1,527
+"negative parse expected" files (early errors still missing: `arguments`
+in field initialisers, `await`/`yield` as names, `import()` arity — the
+next commits take the first three), 482 parse errors at `;` (the
+`for ([a, b] of xs)` and `catch ({x})` heads, 600 files, taken next), 350
+`with`-statement files, ~200 `using` declarations, the private brand checks
+(~150, taken next), `import.defer` (~150), TCO (30).
