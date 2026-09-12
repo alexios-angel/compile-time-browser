@@ -36,6 +36,7 @@ namespace {
     case nk::labeled:
     case nk::try_stmt:
     case nk::switch_stmt:
+    case nk::with_stmt:
     case nk::func_decl: return true;
     default: return false;
     }

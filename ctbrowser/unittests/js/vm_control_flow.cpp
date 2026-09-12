@@ -464,7 +464,34 @@ void test_calling_a_non_function_throws() {
 
 } // namespace
 
+// `with (o) body` (14.11): the object stands in front of the scope chain for
+// every name the body does not declare itself. Compiled, not interpreted -
+// see compile/with.cpp - so what is tested is the resolution order: object
+// over outer local, object over global, a body-local over the object, the
+// @@unscopables veto, a nested closure seeing the object, `this` on a call
+// through it, an assignment landing on the object, and the TypeError for a
+// nullish object. Sloppy code only: strict code refuses the statement.
+void test_with() {
+    expect_result("var x = 1; var o = {x: 2}; with (o) { return x; }", "2");
+    expect_result("var o = {x: 2}; with (o) { var y = x + 1; } return y;", "3");
+    expect_result("var x = 1; with ({}) { return x; }", "1");
+    expect_result("var o = {x: 2}; with (o) { let x = 5; return x; }", "5");
+    expect_result("var o = {x: 2}; with (o) { x = 7; } return o.x;", "7");
+    expect_result("var o = {x: 2}; var x = 0; with (o) { x += 1; } return o.x + ':' + x;", "3:0");
+    expect_result("var o = {f() { return this === o; }}; with (o) { return f(); }", "true");
+    expect_result("var o = {x: 2}; var g; with (o) { g = function () { return x; }; } return g();",
+                  "2");
+    expect_result("var o = {x: 2}; with (o) { return typeof x + typeof nope; }", "numberundefined");
+    expect_result("var a = {x: 1}; var b = {x: 2}; with (a) { with (b) { return x; } }", "2");
+    expect_result("var a = {x: 1}; var b = {y: 2}; with (a) { with (b) { return x; } }", "1");
+    expect_result("try { with (null) {} } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("function f(o) { with (o) { return arguments.length; } } return f({});", "1");
+    CHECK(!compiler::compile("'use strict'; with ({}) {}").ok);
+}
+
 int main() {
+    test_with();
     test_errors();
     test_variables_and_control_flow();
     test_increment_semantics();

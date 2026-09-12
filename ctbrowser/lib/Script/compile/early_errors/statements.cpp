@@ -87,6 +87,15 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         walk_loop_body(n.b, vars);
         return;
 
+    // 14.11.1: `with` is not allowed in strict mode code. Its body is a
+    // Statement, so a declaration there is the same error an `if` body has.
+    case nk::with_stmt:
+        if (strict()) { report("`with` is not allowed in strict mode code", idx); }
+        walk_expression(n.a);
+        check_nested_declaration(n.b, false);
+        walk_statement(n.b, nested, vars);
+        return;
+
     case nk::do_stmt:
         check_nested_declaration(n.a, false);
         walk_loop_body(n.a, vars);

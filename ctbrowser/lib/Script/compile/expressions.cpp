@@ -193,20 +193,21 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
 }
 
 void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
-    if (const local * l = find_local_entry(fn(), name_text)) {
-        if (l->boxed) {
-            proto().emit(instruction{op::cell_set, l->reg, src});
-        } else {
-            proto().emit(instruction{op::move, l->reg, src});
-        }
+    // Inside a `with`: the object that binds the name takes the write.
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t obj = alloc_reg();
+    if (emit_with_object(name_text, obj)) {
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+        emit_plain_write(name_text, src);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::set_prop, obj, name_operand(std::string{name_text}), src});
+        patch_here(done);
+        release_to(mark);
         return;
     }
-    const int up = resolve_upvalue(frames_.size() - 1, name_text);
-    if (up >= 0) {
-        proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), src});
-        return;
-    }
-    proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name_text})));
+    release_to(mark);
+    emit_plain_write(name_text, src);
 }
 
 void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
@@ -217,26 +218,21 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
-    if (const local * l = find_local_entry(fn(), n.text)) {
-        if (l->boxed) {
-            proto().emit(instruction{op::cell_get, dst, l->reg});
-        } else {
-            proto().emit(instruction{op::move, dst, l->reg});
-        }
+    // Inside a `with`: the object that binds the name answers the read.
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t obj = alloc_reg();
+    if (emit_with_object(n.text, obj)) {
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+        emit_plain_read(n.text, dst);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::get_prop, dst, obj, name_operand(std::string{n.text})});
+        patch_here(done);
+        release_to(mark);
         return;
     }
-    const int up = resolve_upvalue(frames_.size() - 1, n.text);
-    if (up >= 0) {
-        proto().emit(instruction{op::get_upvalue, dst, static_cast<std::uint16_t>(up)});
-        return;
-    }
-    // `arguments` is not synthesised here: compile_function_body made it a
-    // real local at entry, so it resolved above as a local or an upvalue.
-    // Reaching this point means the mention is at TOP LEVEL, where a script
-    // has no arguments and reading the name is an ordinary global lookup -
-    // which is what a browser does too.
-    const std::uint16_t name = name_operand(std::string{n.text});
-    proto().emit(instruction::with_bx(op::get_global, dst, name));
+    release_to(mark);
+    emit_plain_read(n.text, dst);
 }
 
 // `yield* expr` (14.4.14): every value the inner iterator produces is
@@ -428,6 +424,25 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
     // step 2). No special form is emitted: the pair get_global + type_of on
     // one register is what the run loop and the AOT lowering recognise as
     // the silent read - see op::get_global in bytecode_opcodes.def.
+    //
+    // Inside a `with` the pair has to stay adjacent on the fallback path, so
+    // the object's answer and the plain read each get their own type_of.
+    if (n.text == "typeof" && at(n.a).kind == vp::nk::ident) {
+        const std::uint16_t obj = alloc_reg();
+        if (emit_with_object(at(n.a).text, obj)) {
+            const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
+            emit_plain_read(at(n.a).text, operand);
+            proto().emit(instruction{op::type_of, dst, operand});
+            const std::size_t done = proto().emit(instruction{op::jump});
+            patch_here(bound);
+            proto().emit(
+                instruction{op::get_prop, operand, obj, name_operand(std::string{at(n.a).text})});
+            proto().emit(instruction{op::type_of, dst, operand});
+            patch_here(done);
+            release_to(mark);
+            return;
+        }
+    }
     compile_expr(n.a, operand);
     if (n.text == "-") {
         proto().emit(instruction{op::negate, dst, operand});
@@ -463,6 +478,21 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
 compiler_impl::reference compiler_impl::prepare_reference(const vp::node & target) {
     reference out;
     if (target.kind == vp::nk::ident) {
+        // Inside a `with`, the binding is decided ONCE, here (13.15.2 step 1
+        // evaluates the reference before the right side): the object that
+        // binds the name, or undefined, sits in a register of its own for as
+        // long as the caller keeps the reference.
+        {
+            const std::uint32_t before = reg_mark();
+            const std::uint16_t obj = alloc_reg();
+            if (emit_with_object(target.text, obj)) {
+                out.with = true;
+                out.with_reg = obj;
+                out.with_name = name_operand(std::string{target.text});
+            } else {
+                release_to(before);
+            }
+        }
         if (const local * l = find_local_entry(fn(), target.text)) {
             out.what = l->boxed ? reference::kind::boxed_local : reference::kind::local;
             out.reg = l->reg;
@@ -497,6 +527,17 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
 }
 
 void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
+    if (ref.with) {
+        reference plain = ref;
+        plain.with = false;
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, ref.with_reg});
+        emit_load(plain, dst);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::get_prop, dst, ref.with_reg, ref.with_name});
+        patch_here(done);
+        return;
+    }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, dst, ref.reg}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_get, dst, ref.reg}); break;
@@ -514,6 +555,17 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
 }
 
 void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
+    if (ref.with) {
+        reference plain = ref;
+        plain.with = false;
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, ref.with_reg});
+        emit_store(plain, src);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(instruction{op::set_prop, ref.with_reg, ref.with_name, src});
+        patch_here(done);
+        return;
+    }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
@@ -775,6 +827,11 @@ bool call_has_receiver(const vp::node & callee) {
 }
 } // namespace
 
+bool compiler_impl::call_needs_receiver(const vp::node & callee) {
+    return call_has_receiver(callee) ||
+           (callee.kind == vp::nk::ident && !applicable_with_scopes(callee.text).empty());
+}
+
 void compiler_impl::emit_optional_guard(std::uint16_t value) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t nullish = alloc_reg();
@@ -798,6 +855,16 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         const std::string name = super_method ? std::string{callee.text} : "constructor";
         proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
         proto().emit(instruction{op::load_this, self});
+    } else if (callee.kind == vp::nk::ident && emit_with_object(callee.text, self)) {
+        // `f()` inside a `with`: the object that binds f is the receiver,
+        // and undefined when none does - which is what a plain call passes.
+        const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, self});
+        emit_plain_read(callee.text, target);
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(bound);
+        proto().emit(
+            instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+        patch_here(done);
     } else if (call_has_receiver(callee)) {
         compile_expr(callee.a, self);
         if (callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index) {
@@ -825,7 +892,7 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t target = alloc_reg();
     const std::uint16_t self = alloc_reg();
     compile_call_target(n, target, self);
-    if (!call_has_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
+    if (!call_needs_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
     const std::uint16_t argv = alloc_reg();
     emit_argument_array(args, argv);
     // `super(...)` - NOT `super.m(...)` - carries new.target into the base
@@ -851,7 +918,7 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     std::vector<std::uint16_t> arg_regs;
     arg_regs.reserve(args.size());
     for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
-    const bool receiver = call_has_receiver(callee);
+    const bool receiver = call_needs_receiver(callee);
     const std::uint16_t self = receiver ? alloc_reg() : base;
     compile_call_target(n, base, self);
     for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }

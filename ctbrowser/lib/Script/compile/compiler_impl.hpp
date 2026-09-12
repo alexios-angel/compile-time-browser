@@ -538,6 +538,42 @@ public:
     // `throw new <kind>(message)`, through the global constructor.
     void emit_throw(std::string_view kind, std::string message);
 
+    // --- `with` ---------------------------------------------------------------
+    //
+    // `with (o) body` puts an OBJECT in front of the scope chain: every name
+    // the body mentions is looked up on `o` first (HasProperty, then a
+    // @@unscopables veto, 9.1.1.2.1), and only a name the body itself
+    // declares - a `let` in the block, a nested function's parameter - is
+    // exempt. The object lives in a hidden, boxed local named `@with:N`, so a
+    // closure made inside the body captures it like any other local; each
+    // open `with` is one of these, innermost last, and emit_with_object emits
+    // the lookup chain for a name. Hoisted function DECLARATIONS are compiled
+    // at the enclosing function's entry, before any `with` is open, and read
+    // their names without the object - the one shape this does not cover.
+    struct with_scope {
+        std::string name;        // the hidden local holding the object
+        std::size_t frame = 0;   // frames_ index the statement is in
+        std::size_t locals_mark; // position of that local in its frame: names
+                                 // declared at or past it are inside the body
+    };
+    std::vector<with_scope> with_scopes_;
+    void compile_with(const vp::node & n);
+    // The name's resolution as the compiler sees it: the frame declaring it
+    // and its position there, or `frames_.size()` when it is a global.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> declaring_frame(std::string_view name);
+    // Leaves in `obj` the innermost with-object that binds `name` - or
+    // undefined when none does at run time - and answers whether any `with`
+    // applies to the name at all (nothing is emitted when none does).
+    [[nodiscard]] bool emit_with_object(std::string_view name, std::uint16_t obj);
+    [[nodiscard]] std::vector<const with_scope *> applicable_with_scopes(std::string_view name);
+    // Does this call need a receiver register: a member callee, or a plain
+    // name inside a `with` (the object that binds it is the `this`, 13.3.6.2
+    // step 6 via WithBaseObject).
+    [[nodiscard]] bool call_needs_receiver(const vp::node & callee);
+    // compile_ident without the with lookup: a local, an upvalue or a global.
+    void emit_plain_read(std::string_view name, std::uint16_t dst);
+    void emit_plain_write(std::string_view name, std::uint16_t src);
+
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
     // of these literals reach.
@@ -820,6 +856,12 @@ public:
         std::uint16_t reg = 0;  // local/boxed: its register. member/index: the object.
         std::uint16_t key = 0;  // index: the key register
         std::uint16_t name = 0; // global/member: the name index
+        // A NAME INSIDE A `with`: `with_reg` holds the object that bound it
+        // when the reference was prepared, or undefined, and the fields above
+        // are the fallback. See emit_with_object.
+        bool with = false;
+        std::uint16_t with_reg = 0;
+        std::uint16_t with_name = 0; // the name, as a property-name operand
     };
 
     [[nodiscard]] reference prepare_reference(const vp::node & target);

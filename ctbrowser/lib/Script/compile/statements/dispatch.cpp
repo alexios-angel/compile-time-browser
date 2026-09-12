@@ -218,6 +218,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
     case vp::nk::labeled: compile_labeled(n); break;
     case vp::nk::try_stmt: compile_try(n); break;
     case vp::nk::throw_stmt: compile_throw(n); break;
+    case vp::nk::with_stmt: compile_with(n); break;
     case vp::nk::return_stmt: {
         const std::uint16_t r = alloc_reg();
         if (n.a >= 0) {
