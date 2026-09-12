@@ -18,6 +18,7 @@ int main() {
 
     checkArrayContents(context);
     checkArrayRetention(context);
+    checkLiteralBigIntIndices(context);
     checkObjectContents(context);
     checkObjectDeletions(context);
     checkObjectCopies(context);

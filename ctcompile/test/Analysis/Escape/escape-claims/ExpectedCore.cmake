@@ -97,6 +97,38 @@
   endif()
   message(STATUS "canonical String indices: ten literal sites, four confined, six retained; saved identity and live claims agree")
 
+  # Original decimal BigInts reach the same dense slots after primitive key
+  # conversion. The negative computed key cannot release the original child.
+  set(_expected_decimal_bigint_rows
+      "decimalBigIntReleased obj 1 1 0 0 0 - confined"
+      "decimalBigIntReleased arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "decimalBigIntSaved obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "decimalBigIntSaved arr 1 1 0 0 0 - escapes:passed"
+      "decimalBigIntSecond obj 1 1 0 0 0 - confined"
+      "decimalBigIntSecond arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "decimalBigIntLoaded obj 1 1 0 0 0 - confined"
+      "decimalBigIntLoaded arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "decimalBigIntLoaded arr 1 1 0 0 0 - escapes:passed"
+      "decimalBigIntLoaded arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "decimalBigIntNegative obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "decimalBigIntNegative arr 1 0 1 0 0 temporaries:1 escapes:passed")
+  set(_expected_decimal_bigint_literal_pcs
+      "decimalBigIntReleased obj 2" "decimalBigIntReleased arr 4"
+      "decimalBigIntSaved obj 3" "decimalBigIntSaved arr 5"
+      "decimalBigIntSecond obj 2" "decimalBigIntSecond arr 4"
+      "decimalBigIntLoaded obj 5" "decimalBigIntLoaded arr 7"
+      "decimalBigIntLoaded arr 11" "decimalBigIntLoaded arr 27"
+      "decimalBigIntNegative obj 2" "decimalBigIntNegative arr 4")
+  list(SORT _decimal_bigint_rows)
+  list(SORT _expected_decimal_bigint_rows)
+  list(SORT _decimal_bigint_literal_pcs)
+  list(SORT _expected_decimal_bigint_literal_pcs)
+  if(NOT _decimal_bigint_rows STREQUAL _expected_decimal_bigint_rows OR
+      NOT _decimal_bigint_literal_pcs STREQUAL _expected_decimal_bigint_literal_pcs)
+    message(FATAL_ERROR "decimal BigInt index evidence mismatch:\nexpected: ${_expected_decimal_bigint_rows}\nobserved: ${_decimal_bigint_rows}\nliteral PCs: ${_decimal_bigint_literal_pcs}")
+  endif()
+  message(STATUS "decimal BigInt indices: twelve literal sites, five confined, seven retained; saved identity and live claims agree")
+
   # The returned object loses its child, but a saved read retains that child.
   # The compiler now refuses the preceding ordinary-object writes, including
   # the deleted self-cycle's earlier receiver exposure.

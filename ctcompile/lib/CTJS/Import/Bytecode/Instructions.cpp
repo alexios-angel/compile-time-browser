@@ -322,9 +322,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
             state.give_up(at, in.code, "bigint literal index out of range");
             break;
         }
-        // THE SOURCE TEXT, NOT A PARSED INTEGER. bigint_from_literal
-        // owns `0x1fn`, `0b..n` and the 1.5n-to-0n substitution, and
-        // parsing here would be a second implementation of all three.
+        // Literal spelling after the compiler strips the source `n` suffix.
+        // bigint_from_literal owns radices and invalid-spelling substitution;
+        // preserve these unparsed bytes instead of duplicating its parser.
         set(in.a, state.constant(where, ctjs::BigIntAttr::get(context, proto.strings[in.bx()])));
         break;
     // ---- ES modules ---------------------------------------------

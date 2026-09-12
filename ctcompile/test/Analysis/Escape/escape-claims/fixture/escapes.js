@@ -565,3 +565,47 @@ if (canonicalStringNormal[0] !== 9 || typeof canonicalStringNormal[0] !== "numbe
     canonicalStringNamed["00"] !== 9 || canonicalStringNamed.length !== 1 ||
     canonicalStringForwarded[0][0] !== 9 || typeof canonicalStringForwarded[0][0] !== "number" ||
     canonicalStringForwarded[1] !== true) throw "canonical String index and saved identity witness";
+
+// --- DECIMAL BIGINT INDICES: exact dense slots, saved identity, literal origins ---
+function decimalBigIntReleased() {
+    var child = {}, items = [child];
+    items[0n] = 9;
+    return items;
+}
+function decimalBigIntSaved() {
+    var child = {}, items = [child], saved = items[0n];
+    items[0n] = 9;
+    return saved;
+}
+function decimalBigIntSecond() {
+    var child = {}, items = [0, child];
+    items[1n] = 9;
+    return items;
+}
+function decimalBigIntLoaded() {
+    var child = {}, items = [child], keys = [0n];
+    var key = keys[0], saved = items[key];
+    items[key] = 9;
+    return [items, saved === child];
+}
+function decimalBigIntNegative() {
+    var child = {}, items = [child];
+    items[-1n] = 9;
+    return items;
+}
+var decimalBigIntNormal = decimalBigIntReleased();
+var decimalBigIntRetained = decimalBigIntSaved();
+var decimalBigIntOne = decimalBigIntSecond();
+var decimalBigIntForwarded = decimalBigIntLoaded();
+var decimalBigIntNamed = decimalBigIntNegative();
+H.push(decimalBigIntNormal); H.push(decimalBigIntRetained); H.push(decimalBigIntOne);
+H.push(decimalBigIntForwarded); H.push(decimalBigIntNamed);
+if (decimalBigIntNormal[0] !== 9 || typeof decimalBigIntNormal[0] !== "number" ||
+    typeof decimalBigIntRetained !== "object" || decimalBigIntRetained === null ||
+    Array.isArray(decimalBigIntRetained) ||
+    decimalBigIntOne[0] !== 0 || decimalBigIntOne[1] !== 9 || decimalBigIntOne.length !== 2 ||
+    decimalBigIntForwarded[0][0] !== 9 || typeof decimalBigIntForwarded[0][0] !== "number" ||
+    decimalBigIntForwarded[1] !== true ||
+    typeof decimalBigIntNamed[0] !== "object" || decimalBigIntNamed[0] === null ||
+    decimalBigIntNamed["-1"] !== 9 || decimalBigIntNamed.length !== 1)
+    throw "decimal BigInt index and saved identity witness";

@@ -342,7 +342,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
             inspect(isComparison || isConcat || isMixedError
-                        ? (position == 1 ? ArrayContentsFailure::UnknownIndex
+                        ? (position == 1 ? ArrayContentsFailure::MissingElement
                                          : ArrayContentsFailure::None)
                         : ArrayContentsFailure::UnsupportedOperation);
             constant.setValueAttr(oldValue);

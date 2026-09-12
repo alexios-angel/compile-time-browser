@@ -294,9 +294,11 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                       mlir::Attribute(ctjs::BigIntAttr::get(&context, "2")),
                       mlir::Attribute(ctjs::StringAttr::get(&context, ""))}) {
                     constant.setValueAttr(replacement);
-                    inspect(position == 1 && !llvm::isa<ctjs::NumberAttr>(replacement)
-                                ? ArrayContentsFailure::UnknownIndex
-                                : ArrayContentsFailure::None);
+                    inspect(position != 1 || llvm::isa<ctjs::NumberAttr>(replacement)
+                                ? ArrayContentsFailure::None
+                            : llvm::isa<ctjs::BigIntAttr>(replacement)
+                                ? ArrayContentsFailure::MissingElement
+                                : ArrayContentsFailure::UnknownIndex);
                     constant.setValueAttr(old);
                     inspect(ArrayContentsFailure::None);
                 }

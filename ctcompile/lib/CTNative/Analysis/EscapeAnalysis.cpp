@@ -773,8 +773,8 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
-// Number -0 and canonical String "0" are index zero; 2^32-1 is not an element.
-// Only an original literal proves an index; computed String categories do not.
+// Number -0 and canonical String/BigInt "0" are index zero; 2^32-1 is not an element.
+// Only an original literal proves an index; computed categories do not.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
@@ -785,14 +785,21 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
             return static_cast<std::size_t>(index);
         }
     }
+    llvm::StringRef key;
     if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-        const llvm::StringRef key = string.getValue();
-        std::uint32_t index = 0;
-        if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
-            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
-            !key.getAsInteger(10, index) && index < 4294967295ULL) {
-            return static_cast<std::size_t>(index);
-        }
+        key = string.getValue();
+    } else if (auto bigint = llvm::dyn_cast<ctjs::BigIntAttr>(constant.getValue())) {
+        // compile/expressions.cpp removes source 'n' before load_bigint. The VM
+        // converts decimal digits to an index without object hooks. Do not strip
+        // an attribute suffix: the literal parser rejects it and substitutes 0n.
+        // ponytail: only canonical decimal literals; model other radices separately.
+        key = bigint.getText();
+    }
+    std::uint32_t index = 0;
+    if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
+        llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
+        !key.getAsInteger(10, index) && index < 4294967295ULL) {
+        return static_cast<std::size_t>(index);
     }
     return std::nullopt;
 }

@@ -32,6 +32,7 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected);
 void checkArrayContents(mlir::MLIRContext & context);
 std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & expected);
 void checkArrayRetention(mlir::MLIRContext & context);
+void checkLiteralBigIntIndices(mlir::MLIRContext & context);
 void checkObjectContents(mlir::MLIRContext & context);
 void checkObjectDeletions(mlir::MLIRContext & context);
 void checkObjectCopies(mlir::MLIRContext & context);
