@@ -58,11 +58,16 @@ void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
 // the title goes in through `set_text` afterwards, which is how an argument
 // containing `<` stays a text node rather than becoming markup.
 dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fresh) {
-    auto & made = *secondary_documents_.emplace_back(
+    // EVERY MADE DOCUMENT IS THE PRIMARY'S SECONDARY, whichever document made
+    // it: `owner_of` and `is_a_document` search one flat list, and a doctype
+    // that `made.implementation.createDocument` adopted has to be findable
+    // by `document.implementation.createDocument` afterwards.
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    auto & made = *top.secondary_documents_.emplace_back(
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
-    made.primary_ = this;
+    made.primary_ = &top;
     made.cx_ = &cx;
     // BEFORE the adoption, and this is not belt and braces. The primary builds
     // its interface table lazily, on the first `wrap()` - so a page whose very
@@ -76,7 +81,8 @@ dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fres
 }
 
 value dom_bindings::make_html_document(context & cx, const std::string * title) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
     dom_bindings & made = adopt_second_document(cx, fresh);
     if (title != nullptr) {
@@ -109,7 +115,8 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 // dom/common.js opens with one.
 value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                                       std::string_view qualified_name, bool as_xml_document) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     // IT IS AN XML DOCUMENT, and saying so is what makes `nodeName` keep its
     // case and `compatMode` answer CSS1Compat. `createDocument` never parses
     // anything, so nothing else would have set the flag.
@@ -166,7 +173,8 @@ dom_bindings * dom_bindings::owner_of(value v) {
 // had when it stopped plus that element, which is what a page checks for.
 value dom_bindings::parse_from_string(context & cx, std::string_view markup,
                                       std::string_view type) {
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    document & fresh = *(primary_ == nullptr ? *this : *primary_)
+                            .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     if (type == "text/html") {
         (void)parse_html(fresh, markup);
         dom_bindings & made = adopt_second_document(cx, fresh);

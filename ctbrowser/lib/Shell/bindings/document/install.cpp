@@ -746,6 +746,12 @@ void dom_bindings::install_document(context & cx) {
             "createDocument",
             value::object(cx.allocate<script::native_object>(
                 "createDocument", [this](context & c, std::span<value> args) {
+                    // TWO REQUIRED ARGUMENTS - nullable, but required.
+                    if (args.size() < 2) {
+                        c.throw_error("TypeError",
+                                      "createDocument needs a namespace and a qualified name");
+                        return value::undefined();
+                    }
                     const value given = arg(args, 0);
                     const std::string ns = given.is_null() || given.is_undefined()
                                                ? std::string{}
@@ -779,11 +785,12 @@ void dom_bindings::install_document(context & cx) {
                         return value::undefined();
                     }
                     const value made = make_xml_document(c, ns, qualified);
-                    if (!doctype || secondary_documents_.empty()) { return made; }
+                    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+                    if (!doctype || top.secondary_documents_.empty()) { return made; }
                     // ADOPTED into the new document - the same JavaScript object,
                     // now that document's node - and put ahead of the element.
                     // See node_from.
-                    dom_bindings & fresh = *secondary_documents_.back();
+                    dom_bindings & fresh = *top.secondary_documents_.back();
                     const node_id adopted = fresh.node_from(c, given_doctype);
                     document & tree = *fresh.doc_;
                     const node_id ahead_of =

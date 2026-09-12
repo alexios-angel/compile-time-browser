@@ -834,8 +834,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     method("cloneNode", [this](context & c, std::span<value> args) {
         const bool deep = !args.empty() && context::truthy(args[0]);
         const value made = make_xml_document(c, {}, {}, false);
-        if (secondary_documents_.empty()) { return made; }
-        dom_bindings & fresh = *secondary_documents_.back();
+        dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+        if (top.secondary_documents_.empty()) { return made; }
+        dom_bindings & fresh = *top.secondary_documents_.back();
         fresh.doc_->set_xml(doc_->xml());
         fresh.doc_->set_quirks(doc_->quirks());
         fresh.content_type_ = content_type_;
