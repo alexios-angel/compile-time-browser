@@ -215,10 +215,11 @@ void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak &
 // would answer about the page as it was. What is read instead is the
 // element's own `style` attribute over the UA sheet's per-tag defaults, which
 // is what a browser computes for those four properties on nearly every
-// element of nearly every page.
-// ponytail: author stylesheets are not consulted - `.table { display: table }`
-// is invisible here, and text-transform is ASCII (the engine's rule, see
-// core/algorithms.hpp). The upgrade is a layout flush a binding can ask for.
+// element of nearly every page - AND, when the getter could flush the cascade
+// first (a connected element of the page's own document), the cascade's
+// answer for the element, which is where `.table { display: table }` lives.
+// ponytail: text-transform is ASCII (the engine's rule, see
+// core/algorithms.hpp), and ::first-line/::first-letter are not consulted.
 
 struct text_style {
     bool preserve = false;        // white-space: pre / pre-wrap / break-spaces
@@ -279,11 +280,18 @@ struct text_style {
 constexpr std::string_view replaced_tags =
     "img input textarea iframe audio video canvas object embed meter progress";
 
+// The SVG elements that never render their contents: the `<defs>` and
+// gradient family, and the metadata the DOM keeps but no box shows.
+constexpr std::string_view unrendered_svg_tags =
+    "defs stop symbol clipPath mask marker pattern linearGradient radialGradient metadata title "
+    "desc script style";
+
 class inner_text_collector {
 public:
-    inner_text_collector(const read_txn & txn, atom_table & atoms)
-        : txn_(txn), atoms_(atoms), style_(atoms.intern("style")), type_(atoms.intern("type")),
-          hidden_(atoms.intern("hidden")), open_(atoms.intern("open")) {}
+    inner_text_collector(const read_txn & txn, atom_table & atoms, const style::style_map * styles)
+        : txn_(txn), atoms_(atoms), styles_(styles), style_(atoms.intern("style")),
+          type_(atoms.intern("type")), hidden_(atoms.intern("hidden")),
+          open_(atoms.intern("open")) {}
 
     [[nodiscard]] std::string_view tag_of(node_id node) const {
         return atoms_.text(txn_.tag(node).value_or(atom{}));
@@ -294,30 +302,49 @@ public:
     [[nodiscard]] std::string_view own_style(node_id node) const {
         return txn_.attribute_value(node, style_);
     }
+    // One of the four properties as the cascade left it on this element -
+    // own declaration first, inherited otherwise, exactly what `get` means -
+    // or the inline declaration when there is no cascade to ask.
+    [[nodiscard]] std::string declared(node_id node, std::string_view property) const {
+        if (styles_ != nullptr) {
+            const auto found = styles_->find(style::engine::key_of(node));
+            if (found != styles_->end() && found->second) {
+                const std::string_view text = found->second->get(atoms_.intern(property));
+                if (!text.empty()) { return ascii_lower_copy(trim(text, html_whitespace)); }
+            }
+        }
+        return inline_declaration(own_style(node), property);
+    }
 
     // The element's computed `display` keyword, as far as an inline style over
     // the UA sheet can say. A float or an out-of-flow position makes any
     // display block-level, which is the one place `display` is not the whole
     // answer and the corpus tests it on a <span>.
     [[nodiscard]] std::string display_of(node_id node) const {
-        const std::string_view style = own_style(node);
         const std::string_view tag = tag_of(node);
         const bool html = is_html(node);
         // `noscript` is `display: none !important` while scripting is on, and
         // a <template>'s children are its contents, which live elsewhere.
         if (html && (tag == "noscript" || tag == "template")) { return "none"; }
-        std::string display = inline_declaration(style, "display");
+        if (txn_.element_ns(node) == node_ns::svg && lists_token(unrendered_svg_tags, tag)) {
+            return "none";
+        }
+        // `[hidden]` and `<input type=hidden>` are `display: none` in the UA
+        // sheet - this engine's has no such rule, so they are asked here, and
+        // an inline `display` still wins over them as the cascade would have it.
+        if (html &&
+            (txn_.has_attribute(node, hidden_) ||
+             (tag == "input" && ascii_iequals(txn_.attribute_value(node, type_), "hidden"))) &&
+            inline_declaration(own_style(node), "display").empty()) {
+            return "none";
+        }
+        std::string display = declared(node, "display");
         if (display.empty()) {
-            if (html &&
-                (txn_.has_attribute(node, hidden_) ||
-                 (tag == "input" && ascii_iequals(txn_.attribute_value(node, type_), "hidden")))) {
-                return "none";
-            }
             display = html ? std::string{default_display(tag)} : std::string{"inline"};
         }
         if (display == "none") { return display; }
-        const std::string floated = inline_declaration(style, "float");
-        const std::string position = inline_declaration(style, "position");
+        const std::string floated = declared(node, "float");
+        const std::string position = declared(node, "position");
         if (floated == "left" || floated == "right" || position == "absolute" ||
             position == "fixed") {
             return "block";
@@ -338,8 +365,7 @@ public:
     // The three inherited properties as this element leaves them for its
     // children: its own inline declarations over what it inherited.
     [[nodiscard]] text_style style_under(node_id node, text_style inherited) const {
-        const std::string_view style = own_style(node);
-        const std::string white_space = inline_declaration(style, "white-space");
+        const std::string white_space = declared(node, "white-space");
         if (!white_space.empty()) {
             inherited.preserve =
                 white_space == "pre" || white_space == "pre-wrap" || white_space == "break-spaces";
@@ -349,13 +375,13 @@ public:
             inherited.preserve = true;
             inherited.preserve_breaks = false;
         }
-        const std::string visibility = inline_declaration(style, "visibility");
+        const std::string visibility = declared(node, "visibility");
         if (visibility == "hidden" || visibility == "collapse") {
             inherited.hidden = true;
         } else if (visibility == "visible") {
             inherited.hidden = false;
         }
-        const std::string transform = inline_declaration(style, "text-transform");
+        const std::string transform = declared(node, "text-transform");
         if (transform == "uppercase") {
             inherited.transform = 1;
         } else if (transform == "lowercase") {
@@ -385,13 +411,27 @@ public:
     // The children of `node`, under `style`. Where the walk starts for the
     // target, whose own display contributes nothing - "No tab on table-cell
     // itself", "No newline on table-row itself".
-    void collect_children(node_id node, const text_style & style) {
-        if (is_html(node) && lists_token(replaced_tags, tag_of(node))) { return; }
-        const bool closed_details =
-            is_html(node) && tag_of(node) == "details" && !txn_.has_attribute(node, open_);
+    void collect_children(node_id node, const text_style & style,
+                          std::string_view display = "block") {
+        const bool html = is_html(node);
+        const std::string_view tag = tag_of(node);
+        if (html && lists_token(replaced_tags, tag)) { return; }
+        const bool closed_details = html && tag == "details" && !txn_.has_attribute(node, open_);
+        // A <select> renders its options and an <optgroup> its options: text
+        // beside them, and a group inside a group, has no box.
+        const std::string_view widget_children = html && tag == "select"
+                                                     ? "option optgroup"
+                                                     : (html && tag == "optgroup" ? "option" : "");
+        // "Blockification": the in-flow children of a flex or grid container
+        // are block-level whatever their display says.
+        const bool blockify = lists_token("flex inline-flex grid inline-grid", display);
         for (const node_id child : txn_.children(node)) {
             if (closed_details && !(is_html(child) && tag_of(child) == "summary")) { continue; }
-            collect(child, style);
+            if (!widget_children.empty() &&
+                !(is_html(child) && lists_token(widget_children, tag_of(child)))) {
+                continue;
+            }
+            collect(child, style, blockify);
         }
     }
 
@@ -475,7 +515,7 @@ private:
         int breaks = 0;
     };
 
-    void collect(node_id node, const text_style & inherited) {
+    void collect(node_id node, const text_style & inherited, bool blockify = false) {
         const node_kind kind = txn_.kind(node).value_or(node_kind::comment);
         if (kind == node_kind::text) {
             if (inherited.hidden) { return; }
@@ -501,8 +541,11 @@ private:
             return;
         }
         if (kind != node_kind::element) { return; }
-        const std::string display = display_of(node);
+        std::string display = display_of(node);
         if (display == "none") { return; }
+        if (blockify && display != "contents" && !display.starts_with("table-")) {
+            display = "block";
+        }
         const bool html = is_html(node);
         const std::string_view tag = tag_of(node);
         if (html && tag == "br") {
@@ -510,6 +553,13 @@ private:
             return;
         }
         const text_style style = style_under(node, inherited);
+        // "If node's computed value of visibility is not visible, then return
+        // items": the children's text, and none of the breaks or tabs this
+        // element's own box would have added.
+        if (style.hidden) {
+            collect_children(node, style, display);
+            return;
+        }
         // "If node is a p element, append 2" - by TAG, whatever its display;
         // the corpus asks for the blank lines around a `display: inline-block`
         // <p> by name. Otherwise a block-level box is a line of its own.
@@ -521,7 +571,7 @@ private:
                                             (html && lists_token(replaced_tags, tag)));
         if (breaks > 0) { items_.push_back({text_item::required, {}, breaks}); }
         if (atomic) { items_.push_back({text_item::open, {}, 0}); }
-        collect_children(node, style);
+        collect_children(node, style, display);
         if (display == "table-cell" && !last_of_kind(node, "table-cell")) {
             items_.push_back({text_item::separator, "\t", 0});
         }
@@ -576,6 +626,7 @@ private:
 
     const read_txn & txn_;
     atom_table & atoms_;
+    const style::style_map * styles_;
     atom style_;
     atom type_;
     atom hidden_;
@@ -915,14 +966,19 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             if (!id) { return value::undefined(); }
             bool not_rendered = false;
             std::string text;
+            // The cascade as the script left the tree, so a class from the
+            // page's own stylesheet counts; `styles_` stays null for a document
+            // nothing lays out, and the collector reads inline style then.
+            flush_layout();
             {
                 const auto txn = doc_->read();
-                inner_text_collector collector{txn, *atoms_};
+                inner_text_collector collector{txn, *atoms_, styles_};
                 if (!is_document_root(txn, root_of_tree(txn, id, true)) ||
                     collector.unrendered(id)) {
                     not_rendered = true;
                 } else {
-                    collector.collect_children(id, collector.inherited_style(id));
+                    collector.collect_children(id, collector.inherited_style(id),
+                                               collector.display_of(id));
                     text = collector.finish();
                 }
             }

@@ -295,6 +295,17 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
              "\"abc\\tdef\\nghi\"");
     // A replaced element has no text, and outerText reads the same as innerText.
     CHECK_EQ(inner_text_of("'<textarea>abc'"), "\"\"");
+    // The input stream's CR is a newline; a hidden element adds no breaks of
+    // its own; a flex container's children are blockified; a <select>'s text
+    // child has no box; an SVG <defs> renders nothing.
+    CHECK_EQ(inner_text_of("'<pre>abc\\rdef'"), "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div style=visibility:hidden><p><span style=visibility:visible>"
+                           "abc</span></p><div style=visibility:visible>def</div></div>'"),
+             "\"abc\\ndef\"");
+    CHECK_EQ(inner_text_of("'<div style=display:flex><span>1</span><span>2</span></div>'"),
+             "\"1\\n2\"");
+    CHECK_EQ(inner_text_of("'<div><select>abc<option>x</option></select></div>'"), "\"x\"");
+    CHECK_EQ(inner_text_of("'<div><svg><defs><text>abc</text></defs></svg></div>'"), "\"\"");
     is("(function () { var h = document.getElementById('host'); h.innerHTML = '<p>a<br>b';"
        " return JSON.stringify(h.firstChild.outerText); })()",
        "\"a\\nb\"");
