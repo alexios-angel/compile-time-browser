@@ -328,6 +328,19 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
     frame_window->set("frameElement", element);
+    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
+    // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's
+    // cross-global case), so those three are the frame's own natives over the
+    // shared prototypes - `instanceof Text` still holds, `ownerDocument` is
+    // the frame's.
+    for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
+        auto * ctor = cx.allocate<script::native_object>(
+            name, [&made, name](context & c, std::span<value> args) {
+                return made.construct_node_interface(c, name, args);
+            });
+        ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
+        frame_window->set(name, value::object(ctor));
+    }
     frame_window->set("self", frame_view);
     frame_window->set("window", frame_view);
     frame_window->set("length", value::number(0));

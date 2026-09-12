@@ -217,8 +217,10 @@ void test_the_frames_are_indexed_on_the_window() {
     // WindowProxy - and not a property past the end.
     is("<iframe src=inner.html></iframe>",
        "(frames === window) + ',' + window.length + ',' + frames[0].document.title + ','"
-       " + (0 in window) + ',' + (1 in window) + ',' + String(window[1])",
-       "true,1,inner,true,false,undefined");
+       " + (0 in window) + ',' + (1 in window) + ',' + String(window[1]) + ','"
+       " + (new frames[0].Text('x').ownerDocument === frames[0].document) + ','"
+       " + (new frames[0].Comment('x') instanceof Comment)",
+       "true,1,inner,true,false,undefined,true,true");
 }
 
 void test_an_inserted_frame_has_its_window_at_once() {
