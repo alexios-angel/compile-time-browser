@@ -1,11 +1,9 @@
 #pragma once
-#include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <boost/container_hash/hash.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,6 +75,8 @@ using declaration_list = boost::container::small_vector<declaration, 8>;
 class inherited_style {
 public:
     explicit inherited_style(declaration_list d) noexcept : declarations(std::move(d)) {}
+    inherited_style(const inherited_style &) = delete;
+    inherited_style & operator=(const inherited_style &) = delete;
 
     declaration_list declarations;
 
@@ -88,27 +88,23 @@ public:
     }
 
 private:
-    friend void intrusive_ptr_add_ref(const inherited_style * s) noexcept {
-        s->refs_.fetch_add(1, std::memory_order_relaxed);
-    }
+    friend void intrusive_ptr_add_ref(const inherited_style * s) noexcept { ++s->refs_; }
     friend void intrusive_ptr_release(const inherited_style * s) noexcept {
-        if (s->refs_.fetch_sub(1, std::memory_order_release) == 1) {
-            std::atomic_thread_fence(std::memory_order_acquire);
-            delete s;
-        }
+        if (--s->refs_ == 0) { delete s; }
     }
-    mutable std::atomic<std::uint32_t> refs_{0};
+    mutable std::uint32_t refs_ = 0;
 };
 
 using inherited_ptr = boost::intrusive_ptr<const inherited_style>;
 
 class computed_style {
 public:
-    // The refcount is an atomic, so this type is neither copyable nor
-    // movable - interning therefore builds the declaration list first and
-    // constructs the style in place around it.
+    // Interning builds the declaration list first and constructs the style
+    // in place around it; the refcount makes it neither copyable nor movable.
     computed_style(declaration_list d, inherited_ptr from) noexcept
         : declarations(std::move(d)), inherited(std::move(from)) {}
+    computed_style(const computed_style &) = delete;
+    computed_style & operator=(const computed_style &) = delete;
 
     // The element's OWN declarations - what its own rules said. Named as it was
     // because every reader outside this file goes through get().
@@ -142,25 +138,19 @@ public:
     }
 
 private:
-    friend void intrusive_ptr_add_ref(const computed_style * s) noexcept {
-        s->refs_.fetch_add(1, std::memory_order_relaxed);
-    }
+    friend void intrusive_ptr_add_ref(const computed_style * s) noexcept { ++s->refs_; }
     friend void intrusive_ptr_release(const computed_style * s) noexcept {
-        // acquire on the last release so the destructor sees every prior write
-        if (s->refs_.fetch_sub(1, std::memory_order_release) == 1) {
-            std::atomic_thread_fence(std::memory_order_acquire);
-            delete s;
-        }
+        if (--s->refs_ == 0) { delete s; }
     }
-    mutable std::atomic<std::uint32_t> refs_{0};
+    mutable std::uint32_t refs_ = 0;
 };
 
 using computed_style_ptr = boost::intrusive_ptr<const computed_style>;
 
-// Interning table. Style resolution runs in PARALLEL across elements, so this
-// is the one piece of the style engine that several threads write to - hence
-// the mutex. It is taken once per resolved element rather than per property,
-// and the common case (a style that already exists) is a hash lookup.
+// Interning table. Resolution is single-threaded - the engine mutates its own
+// match state per element - so this is plain storage: one hash lookup per
+// resolved element, and the common case is a style that already exists.
+// ponytail: unsynchronised; add a mutex back if resolve() ever runs on the pool.
 class style_table {
 public:
     // A style is (own declarations, inherited pointer). Two elements share one only
@@ -169,7 +159,6 @@ public:
     [[nodiscard]] computed_style_ptr intern(declaration_list && candidate, inherited_ptr from) {
         std::size_t h = hash_declarations(candidate);
         boost::hash_combine(h, from.get());
-        const std::lock_guard lock{mutex_};
         auto & bucket = by_hash_[h];
         for (const computed_style_ptr & existing : bucket) {
             if (existing->inherited == from && existing->declarations == candidate) {
@@ -186,7 +175,6 @@ public:
     // thousands of elements.
     [[nodiscard]] inherited_ptr intern_inherited(declaration_list && candidate) {
         const std::size_t h = hash_declarations(candidate);
-        const std::lock_guard lock{inherited_mutex_};
         auto & bucket = inherited_by_hash_[h];
         for (const inherited_ptr & existing : bucket) {
             if (existing->declarations == candidate) { return existing; }
@@ -197,7 +185,6 @@ public:
     }
 
     [[nodiscard]] std::size_t distinct_styles() const {
-        const std::lock_guard lock{mutex_};
         std::size_t n = 0;
         for (const auto & [h, bucket] : by_hash_) { n += bucket.size(); }
         return n;
@@ -206,17 +193,14 @@ public:
     // doing its job. If it tracks the element count, inheritance has collapsed the
     // sharing and something is putting per-element data in the inherited half.
     [[nodiscard]] std::size_t distinct_inherited() const {
-        const std::lock_guard lock{inherited_mutex_};
         std::size_t n = 0;
         for (const auto & [h, bucket] : inherited_by_hash_) { n += bucket.size(); }
         return n;
     }
 
 private:
-    mutable std::mutex mutex_;
     // hash -> the styles that share it; collisions are compared for real
     flat_map<std::size_t, std::vector<computed_style_ptr>> by_hash_;
-    mutable std::mutex inherited_mutex_;
     flat_map<std::size_t, std::vector<inherited_ptr>> inherited_by_hash_;
 };
 

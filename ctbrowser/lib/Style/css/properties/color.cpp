@@ -90,7 +90,7 @@ bool match_color(const token_stream & ts, const scan & found, std::string_view n
         return true;
     }
     if (t.type == token_type::function && !body.empty() &&
-        in_list(color_functions, body.substr(0, body.size() - 1)) &&
+        ascii_iequals_any(body.substr(0, body.size() - 1), color_functions) &&
         ts.tokens[found.significant.back()].type == token_type::close_paren) {
         // THE ARITY OF THE THREE-CHANNEL FUNCTIONS, and only that: `rgb(0)` is
         // no colour (attr-all-types), `rgb(from red r g b)` is one and its

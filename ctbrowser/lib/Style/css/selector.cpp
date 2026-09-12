@@ -58,12 +58,6 @@ namespace {
 // asserts a rule carrying one is not in the sheet at all. What these lists decide
 // is only VALID or NOT - a name here that the matcher does not model still makes
 // the compound unmatchable, exactly as before.
-[[nodiscard]] bool in_names(std::string_view name, std::span<const std::string_view> names) {
-    for (const std::string_view each : names) {
-        if (ascii_iequals(name, each)) { return true; }
-    }
-    return false;
-}
 
 [[nodiscard]] bool known_pseudo_class(std::string_view name) {
     static constexpr std::string_view names[] = {"active",
@@ -127,7 +121,7 @@ namespace {
                                                  "active-view-transition",
                                                  "-webkit-any-link",
                                                  "-webkit-autofill"};
-    return in_names(name, names);
+    return ascii_iequals_any(name, names);
 }
 
 [[nodiscard]] bool known_functional_pseudo_class(std::string_view name) {
@@ -141,14 +135,14 @@ namespace {
                                                  "state",       "active-view-transition-type",
                                                  "current",     "heading",
                                                  "-webkit-any"};
-    return in_names(name, names);
+    return ascii_iequals_any(name, names);
 }
 
 // The four CSS 2 pseudo-elements may be written with one colon, and serialise
 // with two either way.
 [[nodiscard]] bool legacy_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"before", "after", "first-line", "first-letter"};
-    return in_names(name, names);
+    return ascii_iequals_any(name, names);
 }
 
 } // namespace
@@ -176,7 +170,7 @@ bool known_pseudo_element(std::string_view name) {
                                                  "column"};
     // A vendor-prefixed pseudo-element - `::-webkit-scrollbar`, `::-moz-selection` -
     // is whatever that vendor says it is, and every browser parses the others'.
-    return in_names(name, names) || ascii_istarts_with(name, "-webkit-") ||
+    return ascii_iequals_any(name, names) || ascii_istarts_with(name, "-webkit-") ||
            ascii_istarts_with(name, "-moz-");
 }
 
@@ -194,7 +188,7 @@ namespace {
                                                  "view-transition-new",
                                                  "picker",
                                                  "scroll-button"};
-    return in_names(name, names);
+    return ascii_iequals_any(name, names);
 }
 
 // `An+B`, from the component values inside an `:nth-child()` - Syntax 3 §6.

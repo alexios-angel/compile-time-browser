@@ -11,6 +11,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/layout/values.hpp>
 
 // The display list: what to draw, recorded once and then never changed.
 //
@@ -83,14 +84,10 @@ struct bitmap {
 // `family` is the resolved name, not the CSS list - "Fira Sans", not
 // "Fira Sans, Helvetica, sans-serif". Choosing among the alternatives is
 // layout's job, and doing it once there rather than per tile is the difference
-// between resolving a font list once and resolving it for every glyph.
-struct font_face {
-    std::string family; // "" = whatever the backend calls its default
-    bool bold = false;
-    bool italic = false;
-
-    [[nodiscard]] friend bool operator==(const font_face &, const font_face &) = default;
-};
+// between resolving a font list once and resolving it for every glyph. It is
+// layout's type: paint already sits above layout, so naming it costs nothing,
+// and a second struct of the same three fields only bought a hand conversion.
+using font_face = layout::text_face;
 
 enum class text_decoration : std::uint8_t {
     none,
@@ -174,15 +171,10 @@ public:
         if (!clipped.empty()) { hit_regions_.push_back(hit_region{clipped, source}); }
     }
 
+    // A square fill is the rounded one with no radius: the recorded command is
+    // identical, and the rasterizer's fast path keys on the command.
     void fill(const rect & where, color c, node_id source = {}) {
-        if (where.empty() || c.transparent()) { return; } // nothing to draw, nothing to record
-        paint_command cmd;
-        cmd.op = paint_op::fill_rect;
-        cmd.bounds = where;
-        cmd.fill = c;
-        cmd.source = source;
-        commands_.push_back(std::move(cmd));
-        bounds_ = bounds_.united(where);
+        fill_rounded(where, c, {}, 0, source);
     }
 
     // The rounded form, and optionally a RING rather than a solid: a rounded

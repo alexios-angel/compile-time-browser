@@ -24,7 +24,7 @@ constexpr std::array<std::string_view, 5> wide_keywords{"inherit", "initial", "u
                                                         "revert-layer"};
 
 [[nodiscard]] bool is_wide_keyword(std::string_view text) {
-    return in_list(wide_keywords, text);
+    return ascii_iequals_any(text, wide_keywords);
 }
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
@@ -152,7 +152,7 @@ const std::vector<expansion> & expansions() {
 [[nodiscard]] std::vector<const expansion *> shorthands_for(std::string_view longhand) {
     std::vector<const expansion *> out;
     for (const expansion & e : expansions()) {
-        if (in_list(e.longhands, longhand)) { out.push_back(&e); }
+        if (ascii_iequals_any(longhand, e.longhands)) { out.push_back(&e); }
     }
     std::stable_sort(out.begin(), out.end(), [](const expansion * a, const expansion * b) {
         return a->longhands.size() > b->longhands.size();
@@ -588,7 +588,7 @@ bool add_parsed(declaration_block & block, std::string_view name, std::string va
     // `background: red !important; background-color: green` keeps the red.
     if (!important) {
         for (const expansion & e : expansions()) {
-            if (!in_list(e.longhands, name)) { continue; }
+            if (!ascii_iequals_any(name, e.longhands)) { continue; }
             const std::size_t whole = index_of(block, e.syntax->name);
             if (whole < block.size() && block[whole].important) { return false; }
         }
@@ -637,7 +637,7 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
     for (const expansion & other : expansions()) {
         if (&other == e || index_of(block, other.syntax->name) == block.size()) { continue; }
         for (const std::string_view longhand : other.longhands) {
-            if (!in_list(e->longhands, longhand)) { continue; }
+            if (!ascii_iequals_any(longhand, e->longhands)) { continue; }
             changed =
                 erase_named(block, std::array<std::string_view, 1>{other.syntax->name}) || changed;
             break;

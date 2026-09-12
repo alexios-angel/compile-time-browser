@@ -200,9 +200,9 @@ std::optional<difference> compare(const document & expected, const document & ac
     walker w{expected, actual};
 
     // THE ROOT'S PARENT MUST BE NOTHING. After a parse the root is the <html>
-    // ELEMENT - tree_builder::parse calls set_root and the document node the
-    // constructor made is left behind - and <html> is never appended to
-    // anything, so its parent stays a null handle. style::engine::facts_of
+    // ELEMENT - tree_builder::parse calls set_document_element and the
+    // document node the constructor made is left behind - and <html> is never
+    // appended to anything, so its parent stays a null handle. style::engine::facts_of
     // computes `is_root` from exactly that, so a blueprint that parents <html>
     // under an element silently loses `:root` and nothing else would say so.
     if (static_cast<bool>(w.a.parent(expected.root())) !=

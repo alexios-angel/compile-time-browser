@@ -103,9 +103,9 @@ Font identity now runs the length of the pipeline: layout resolves
 `font-style` and `text-decoration` with the inherited-resolver pattern;
 `paint_command` carries the face and decoration because the rasterizer has no
 cascade to ask; underline and line-through are drawn as bands whose thickness
-follows the size. `layout::text_face` and `paint::font_face` are deliberately
-separate types — `:values` depends on nothing, and layout importing paint would
-invert the dependency the pipeline is built on.
+follows the size. `paint::font_face` is an alias of `layout::text_face` — the
+type lives in layout because `values.hpp` depends on nothing, and layout naming
+a paint type would invert the dependency the pipeline is built on.
 
 **Opt in with `browser::use_real_fonts()`**; `run_app` does it by default
 (`app_options::real_fonts`, `CTBROWSER_FONTS=font8x8` to force the bitmap font).

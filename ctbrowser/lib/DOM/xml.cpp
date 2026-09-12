@@ -63,8 +63,8 @@ public:
         if (!failed_) { epilogue(); }
         if (!failed_ && !root_) { fail("no root element"); }
         xml_parse_result out;
-        out.tree.root = root_ ? *root_ : builder_.create_element(atoms_.intern("html"));
-        if (!root_) { builder_.set_root(out.tree.root); }
+        out.tree.root = root_ ? *root_ : doc_.create_element(atoms_.intern("html"));
+        if (!root_) { doc_.set_document_element(out.tree.root); }
         out.error = std::move(error_);
         out.line = line_;
         out.column = column_;
@@ -144,7 +144,7 @@ private:
         }
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
-        emit(builder_.create_comment(text));
+        emit(doc_.create_comment(text));
     }
 
     // `<?target data?>`. The XML DECLARATION is not a processing instruction -
@@ -169,7 +169,7 @@ private:
         const std::string_view data = src_.substr(at_, end > at_ ? end - at_ : 0);
         advance(end + 2 - at_);
         if (ascii_lower_copy(target) == "xml") { return; }
-        emit(builder_.create_processing_instruction(atoms_.intern(target), data));
+        emit(doc_.create_processing_instruction(atoms_.intern(target), data));
     }
 
     // `<!DOCTYPE name PUBLIC "p" "s" [ ... ]>`: the name and the two
@@ -202,8 +202,7 @@ private:
             if (c == ']') { --depth; }
             if (c == '>' && depth <= 0) {
                 advance();
-                emit(builder_.create_document_type(atoms_.intern(doctype_name), public_id,
-                                                   system_id));
+                emit(doc_.create_document_type(atoms_.intern(doctype_name), public_id, system_id));
                 return;
             }
             advance();
@@ -362,11 +361,11 @@ private:
         }
 
         const std::string_view uri = resolve(prefix_of(qualified), true);
-        const node_id id = builder_.create_element(atoms_.intern(qualified), ns_of(uri),
-                                                   !prefix_of(qualified).empty());
+        const node_id id = doc_.create_element(atoms_.intern(qualified), ns_of(uri),
+                                               !prefix_of(qualified).empty());
         if (open_.empty()) {
             root_ = id;
-            builder_.set_root(id);
+            doc_.set_document_element(id);
         } else {
             builder_.append(open_.back().id, id);
         }
@@ -433,7 +432,7 @@ private:
         }
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
-        builder_.append(open_.back().id, builder_.create_cdata_section(text));
+        builder_.append(open_.back().id, doc_.create_cdata_section(text));
     }
 
     // Text up to the next `<`, with references resolved. A bare `&` or a
@@ -454,7 +453,7 @@ private:
             advance();
         }
         if (text.empty() || open_.empty()) { return; }
-        const node_id id = builder_.create_text(text);
+        const node_id id = doc_.create_text(text);
         builder_.append(open_.back().id, id);
     }
 
@@ -505,13 +504,6 @@ private:
         }
         fail("undeclared entity &" + std::string{body} + ";");
         return false;
-    }
-
-    [[nodiscard]] static int hex_value(char c) {
-        if (c >= '0' && c <= '9') { return c - '0'; }
-        if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-        if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-        return -1;
     }
 
     [[nodiscard]] std::string name() {

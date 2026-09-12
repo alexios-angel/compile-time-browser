@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <initializer_list>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +39,16 @@ void ascii_upper_in_place(std::string & text) noexcept;
 // `boost::algorithm::iequals`, whose default overload takes the global locale -
 // the host dependence above - and never merges two different UTF-8 sequences.
 [[nodiscard]] bool ascii_iequals(std::string_view a, std::string_view b) noexcept;
+
+// ascii_iequals against ANY of a keyword list - the shape every "is this one
+// of the reserved words" test in the CSS front end has. The initializer_list
+// overload exists because a span will not take a braced list.
+[[nodiscard]] bool ascii_iequals_any(std::string_view text,
+                                     std::span<const std::string_view> names) noexcept;
+[[nodiscard]] inline bool ascii_iequals_any(
+    std::string_view text, std::initializer_list<std::string_view> names) noexcept {
+    return ascii_iequals_any(text, std::span<const std::string_view>{names.begin(), names.size()});
+}
 
 // The prefix form. CSS FUNCTION NAMES ARE ASCII CASE-INSENSITIVE - Bootstrap
 // writes `RGBA(...)` in capitals - so this is what a function-name test wants.

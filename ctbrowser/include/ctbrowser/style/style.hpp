@@ -10,8 +10,7 @@
 //
 // It resolves an element ONCE into a whole computed style, and it takes a document
 // read transaction rather than the live tree, so matching observes a stable view
-// and writes nothing that another thread can see - which is what makes it safe to
-// run in parallel.
+// while a page mutates.
 
 #include <ctbrowser/style/computed.hpp>
 #include <ctbrowser/style/css/boolean.hpp>
