@@ -351,6 +351,25 @@ void test_for_await() {
                       "12");
     // Outside an async function it is refused at compile time.
     CHECK(!compiler::compile("function f() { for await (const v of []) {} }").ok);
+
+    // Array.fromAsync, built on it: a sync iterable of promises, an async
+    // generator, an array-like, and a mapper whose result is awaited.
+    expect_after_turn("var result = ''; Array.fromAsync([Promise.resolve(1), 2]).then(a => { "
+                      "result = a.join(); });",
+                      "1,2");
+    expect_after_turn("var result = ''; async function* g() { yield 'a'; yield 'b'; }"
+                      "Array.fromAsync(g()).then(a => { result = a.join(); });",
+                      "a,b");
+    expect_after_turn(
+        "var result = ''; Array.fromAsync({length: 2, 0: 'x', 1: Promise.resolve('y')})"
+        "  .then(a => { result = a.join(); });",
+        "x,y");
+    expect_after_turn("var result = ''; Array.fromAsync([1, 2], async (v, i) => v * 10 + i)"
+                      "  .then(a => { result = a.join(); });",
+                      "10,21");
+    expect_after_turn("var result = ''; Array.fromAsync(null).then(() => { result = 'no'; }, e => "
+                      "{ result = e.name; });",
+                      "TypeError");
 }
 
 } // namespace
