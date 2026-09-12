@@ -7,6 +7,8 @@
   set(_publication_rows "")
   set(_spread_rows "")
   set(_array_frame_rows "")
+  set(_canonical_string_rows "")
+  set(_canonical_string_literal_pcs "")
   set(_object_deletion_rows "")
   set(_object_copy_rows "")
   set(_object_copy_path_rows "")
@@ -121,6 +123,10 @@
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "canonicalStringReleased 54ce66cbdf8d8962681af9bd3eacf21bfb258aef66c803a2d098184e011583b8"
+      "canonicalStringSaved 31ec0d6b6ea32c80b0b36f3644f7a3b2940d98cc04c8fbdd5e0cd7202e37a161"
+      "canonicalStringLookalike e880b2767d14f1325c77a108a7fe0f99ab3e39e61ba2db91ad0b3c10c4a9f9eb"
+      "canonicalStringLoaded d2fa699f558eaefa16321428cb916d5a7b78541cf1d16e172312089119e28902"
       "primitiveMixedAddEarly 279cdc8aa5e952c8eebf022dccf3492862a718a7ccfe1868cb5e8e0941739f43"
       "primitiveMixedAddRetained 9277b49a81538116e6e68b8631d22ee87ffd2cf4bb9611e3a905dc1a9bee2a23"
       "primitiveMixedAddOpaque 30b26142ccb7ef04e7a43e9da55131639bac2fd2b66c641dbe4475203eb1e8fe"
@@ -177,6 +183,6 @@
     string(REGEX MATCH "function ${_source_name}\\([^\n]*\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _source_body "${_fixture_source}")
     string(SHA256 _observed_source_hash "${_source_body}")
     if(NOT _observed_source_hash STREQUAL _source_hash)
-      message(FATAL_ERROR "${_source_name}: primitive BigInt source changed; preserve or remeasure its evidence")
+      message(FATAL_ERROR "${_source_name}: pinned source changed; preserve or remeasure its evidence")
     endif()
   endforeach()

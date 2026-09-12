@@ -68,6 +68,35 @@
   endif()
   message(STATUS "imported array frames: nineteen sites, twenty-one instances, eleven retained; live claims agree")
 
+  # Exact original String spellings identify dense elements without changing
+  # ownership: saved reads retain their child, and "00" remains a named key.
+  set(_expected_canonical_string_rows
+      "canonicalStringReleased obj 1 1 0 0 0 - confined"
+      "canonicalStringReleased arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "canonicalStringSaved obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "canonicalStringSaved arr 1 1 0 0 0 - escapes:passed"
+      "canonicalStringLookalike obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "canonicalStringLookalike arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "canonicalStringLoaded obj 1 1 0 0 0 - confined"
+      "canonicalStringLoaded arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "canonicalStringLoaded arr 1 1 0 0 0 - escapes:passed"
+      "canonicalStringLoaded arr 1 0 1 0 0 temporaries:1 escapes:returned")
+  set(_expected_canonical_string_literal_pcs
+      "canonicalStringReleased obj 2" "canonicalStringReleased arr 4"
+      "canonicalStringSaved obj 3" "canonicalStringSaved arr 5"
+      "canonicalStringLookalike obj 2" "canonicalStringLookalike arr 4"
+      "canonicalStringLoaded obj 5" "canonicalStringLoaded arr 7"
+      "canonicalStringLoaded arr 11" "canonicalStringLoaded arr 27")
+  list(SORT _canonical_string_rows)
+  list(SORT _expected_canonical_string_rows)
+  list(SORT _canonical_string_literal_pcs)
+  list(SORT _expected_canonical_string_literal_pcs)
+  if(NOT _canonical_string_rows STREQUAL _expected_canonical_string_rows OR
+      NOT _canonical_string_literal_pcs STREQUAL _expected_canonical_string_literal_pcs)
+    message(FATAL_ERROR "canonical String index evidence mismatch:\nexpected: ${_expected_canonical_string_rows}\nobserved: ${_canonical_string_rows}\nliteral PCs: ${_canonical_string_literal_pcs}")
+  endif()
+  message(STATUS "canonical String indices: ten literal sites, four confined, six retained; saved identity and live claims agree")
+
   # The returned object loses its child, but a saved read retains that child.
   # The compiler now refuses the preceding ordinary-object writes, including
   # the deleted self-cycle's earlier receiver exposure.

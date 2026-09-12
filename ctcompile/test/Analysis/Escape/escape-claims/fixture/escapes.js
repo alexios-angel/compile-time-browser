@@ -529,3 +529,39 @@ if (primitiveMixedAddNormal[0] !== 9 || typeof primitiveMixedAddNormal[0] !== "n
     primitiveMixedAddSavedError === primitiveMixedAddUnknownError ||
     typeof primitiveMixedAddError.message !== "string" ||
     typeof primitiveMixedAddSavedError.stack !== "string") throw "mixed dynamic BigInt Add independent TypeError witness";
+
+// --- CANONICAL STRING INDICES: exact dense slots, saved identity, lookalikes ---
+function canonicalStringReleased() {
+    var child = {}, items = [child];
+    items["0"] = 9;
+    return items;
+}
+function canonicalStringSaved() {
+    var child = {}, items = [child], saved = items["0"];
+    items["0"] = 9;
+    return saved;
+}
+function canonicalStringLookalike() {
+    var child = {}, items = [child];
+    items["00"] = 9;
+    return items;
+}
+function canonicalStringLoaded() {
+    var child = {}, items = [child], keys = ["0"];
+    var key = keys[0], saved = items[key];
+    items[key] = 9;
+    return [items, saved === child];
+}
+var canonicalStringNormal = canonicalStringReleased();
+var canonicalStringRetained = canonicalStringSaved();
+var canonicalStringNamed = canonicalStringLookalike();
+var canonicalStringForwarded = canonicalStringLoaded();
+H.push(canonicalStringNormal); H.push(canonicalStringRetained);
+H.push(canonicalStringNamed); H.push(canonicalStringForwarded);
+if (canonicalStringNormal[0] !== 9 || typeof canonicalStringNormal[0] !== "number" ||
+    typeof canonicalStringRetained !== "object" || canonicalStringRetained === null ||
+    Array.isArray(canonicalStringRetained) ||
+    typeof canonicalStringNamed[0] !== "object" || canonicalStringNamed[0] === null ||
+    canonicalStringNamed["00"] !== 9 || canonicalStringNamed.length !== 1 ||
+    canonicalStringForwarded[0][0] !== 9 || typeof canonicalStringForwarded[0][0] !== "number" ||
+    canonicalStringForwarded[1] !== true) throw "canonical String index and saved identity witness";

@@ -773,10 +773,8 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
-// Number -0 is index zero; 2^32-1 is not an array element. String indices
-// remain refused: current VM lookup_index/store_index use dense array slots
-// only for Number keys, so even String "0" disagrees with JavaScript here.
-// Refusal preserves sound retention claims against both execution behaviors.
+// Number -0 and canonical String "0" are index zero; 2^32-1 is not an element.
+// Only an original literal proves an index; computed String categories do not.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
@@ -784,6 +782,15 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
         const double index = number.getDouble();
         if (std::isfinite(index) && index >= 0 && index < 4294967295.0 &&
             std::floor(index) == index) {
+            return static_cast<std::size_t>(index);
+        }
+    }
+    if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
+        const llvm::StringRef key = string.getValue();
+        std::uint32_t index = 0;
+        if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
+            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
+            !key.getAsInteger(10, index) && index < 4294967295ULL) {
             return static_cast<std::size_t>(index);
         }
     }
