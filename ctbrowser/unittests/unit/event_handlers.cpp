@@ -526,6 +526,12 @@ void test_a_body_handler_is_the_windows() {
        " var a = typeof window.onblur === 'function' && window.onblur === document.body.onblur;"
        " document.body.removeAttribute('onblur'); return a && window.onblur === null; })()",
        "true");
+    // A DETACHED body's content attribute reaches the window too - the
+    // file's "Forward" cases set it on a `createElement("body")`.
+    is("(function () { window.onscroll = null; var b = document.createElement('body');"
+       " b.setAttribute('onscroll', 'return 2');"
+       " return typeof window.onscroll === 'function' && window.onscroll === b.onscroll; })()",
+       "true");
     // A frameset made by script forwards too; a div does not.
     is("(function () { var fs = document.createElement('frameset'); function f() {}"
        " fs.onfocus = f; var d = document.createElement('div'); d.onload = f;"

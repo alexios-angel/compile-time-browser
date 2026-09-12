@@ -1890,6 +1890,8 @@ private:
     [[nodiscard]] node_id body_or_frameset_of(value self);
     void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
     flat_map<std::string, node_id> forwarded_from_;
+    std::vector<node_id> bodies_; // every wrapped body/frameset, rebuilt when a wrapper is made
+    std::size_t bodies_scanned_at_ = static_cast<std::size_t>(-1);
     // Which bindings an EventTarget receiver belongs to - `owner_of` for a
     // node, the document's own for a Document, else this. The EventTarget
     // methods route through it so a second document's nodes get a path.

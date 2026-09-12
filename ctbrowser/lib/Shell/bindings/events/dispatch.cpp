@@ -1254,8 +1254,10 @@ node_id dom_bindings::body_or_frameset_of(value self) {
 // element or through the window - and a changed text is compiled onto the
 // window's slot, a removed one clears it. The element that last supplied the
 // window's handler is remembered so its removal is seen from the window side
-// too. What this cannot see is a detached body whose attribute changed and
-// which nothing reads through; a real hook in setAttribute would.
+// too, and every body or frameset a script has a wrapper for - a detached
+// `createElement("body")` included - is checked when the window's handler is
+// read, since that is where its content attribute lands. A real hook in
+// setAttribute would replace all of this.
 void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
                                              const std::string & name) {
     auto * window = window_object();
@@ -1293,14 +1295,29 @@ value dom_bindings::event_handler_get(context & cx, value self, const std::strin
     auto * object = static_cast<script::object_object *>(self.as_heap());
     if (forwards_to_window(name) && window_object() != nullptr) {
         if (object == window_object()) {
-            node_id seen{};
-            if (const auto from = forwarded_from_.find(name); from != forwarded_from_.end()) {
-                seen = from->second;
-                refresh_forwarded_handler(cx, seen, name);
+            // The bodies a script can have written to: the document's own,
+            // and every wrapped one. The wrapped list is rebuilt only when a
+            // wrapper has been made since it was last built.
+            if (wrappers_.size() != bodies_scanned_at_) {
+                bodies_scanned_at_ = wrappers_.size();
+                bodies_.clear();
+                const auto txn = doc_->read();
+                const atom body = atoms_->intern_lower("body");
+                const atom frameset = atoms_->intern_lower("frameset");
+                for (const auto & [packed, wrapper] : wrappers_) {
+                    const node_id node = unpack(packed);
+                    if (!txn.contains(node)) { continue; }
+                    const atom tag = txn.tag(node).value_or(atom{});
+                    if ((tag == body || tag == frameset) && txn.element_ns(node) == node_ns::html) {
+                        bodies_.push_back(node);
+                    }
+                }
             }
-            if (const node_id body = find_by_tag("body"); body && body != seen) {
+            if (const node_id body = find_by_tag("body");
+                body && std::ranges::find(bodies_, body) == bodies_.end()) {
                 refresh_forwarded_handler(cx, body, name);
             }
+            for (const node_id body : bodies_) { refresh_forwarded_handler(cx, body, name); }
         } else if (const node_id element = body_or_frameset_of(self)) {
             refresh_forwarded_handler(cx, element, name);
             object = window_object();
