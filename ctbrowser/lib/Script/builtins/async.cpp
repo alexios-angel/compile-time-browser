@@ -1,101 +1,230 @@
-// ctbrowser.script builtins - JSON and Promise.
+// ctbrowser.script builtins - Promise.
 //
 // One of five files carved out of a 4,118-line builtins.cpp on 2026-08-09.
 // Everything shared - the argument helpers, namespace detail, and these
-// functions' declarations - is in internal.hpp.
+// functions' declarations - is in internal.hpp. The promise machinery itself
+// - deliver, settle, settle_with, the shared prototype - is this file's alone
+// (JSON, which shared the file, is json.cpp since 2026-09-12).
 
 #include "internal.hpp"
 
-namespace ctbrowser::script::builtins_detail {
+namespace ctbrowser::script::detail {
 
-// JSON
-void install_json(context & cx) {
-    using detail::method;
-    using detail::new_table;
-    object_object * json = new_table(cx);
-    method(cx, json, "stringify", 3, [](context & c, std::span<value> a) {
-        detail::json_writer state{c};
-        detail::read_stringify_options(state, arg_at(a, 1), arg_at(a, 2));
-        // THE VALUE IS SERIALISED AS A MEMBER OF A WRAPPER, 25.5.2 step 10, and
-        // that is not ceremony: SerializeJSONProperty reads its value out of a
-        // holder with a key, so the replacer gets `("", value)` and an object
-        // to be `this` on its first call exactly as it does on every later one.
-        // Without the wrapper the top level is a special case that no replacer
-        // and no `toJSON` sees.
-        const value wrapper = c.make_object();
-        static_cast<object_object *>(wrapper.as_heap())->set("", arg_at(a, 0));
-        std::string out;
-        // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
-        // string "null" - step 12. Inside an array the same value becomes null,
-        // which is why the serialiser reports "omit" and the caller decides. A
-        // page testing `if (json === undefined)` was told the string "null".
-        if (!state.serialize(wrapper, "", arg_at(a, 0), out)) { return value::undefined(); }
-        return c.string(out);
-    });
-    method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
-        // The source is held in a NAMED local: json_reader keeps a string_view
-        // into it, and passing the temporary directly leaves the view dangling
-        // for the whole parse.
-        const std::string source = str_at(c, a, 0);
-        detail::json_reader reader{c, source};
-        const value out = reader.parse_text();
-        // 25.5.1 step 3: a document that does not fit the JSON grammar is a
-        // SyntaxError. It used to be `undefined`, which is a value a page can
-        // and does mistake for a successfully parsed `null`-ish document.
-        if (!reader.ok) {
-            c.throw_error("SyntaxError",
-                          "Unexpected token in JSON at position " + std::to_string(reader.at));
-            return value::undefined();
+namespace {
+
+// --- promises ---------------------------------------------------------------
+//
+// A promise is an ordinary object carrying `__value`, `__rejected`, `__settled`
+// and `__handlers`, with then/catch/finally on one shared prototype. A handler
+// never runs the moment a promise settles: `settle` and `settle_with` QUEUE a
+// delivery (enqueue_delivery -> context::queue_microtask) and the event loop
+// drains it at the end of the turn, so `p.then(f); after();` runs `after`
+// first, the way a real job queue orders them.
+
+[[nodiscard]] value make_promise(context & cx, value v, bool rejected);
+void settle(context & cx, value promise, value with, bool rejected);
+
+// Run one registered handler and settle the promise it produced.
+void deliver(context & cx, value handler_record, value settled, bool rejected) {
+    auto * record = static_cast<object_object *>(handler_record.as_heap());
+    value * on_ok = record->find("ok");
+    value * on_err = record->find("err");
+    value * next = record->find("next");
+    const value handler = rejected ? (on_err == nullptr ? value::undefined() : *on_err)
+                                   : (on_ok == nullptr ? value::undefined() : *on_ok);
+    // A RESUMPTION IS A PROMISE HANDLER. `await` registers the suspended frame
+    // on the awaited promise's own handler list, so it queues and orders with
+    // every `then` rather than being a second mechanism that races them.
+    if (value * waiting = record->find("co"); waiting != nullptr) {
+        cx.resume(*waiting, settled, rejected);
+        return;
+    }
+    if (next == nullptr) { return; }
+    // `finally` RUNS EITHER WAY AND CHANGES NOTHING. Its callback takes no
+    // argument, its return value is ignored, and the outcome - value or
+    // rejection - passes straight through to the next promise. It used to call
+    // its callback the moment it was registered and hand back the SAME promise,
+    // so it ran before the rejection it was supposed to follow and a chain
+    // after it saw the wrong link.
+    // A HANDLER THAT THROWS REJECTS THE NEXT PROMISE (27.2.5.4.1 step 9.a):
+    // the call is fenced so the throw stops here instead of unwinding to
+    // whatever page `try` happens to be below the microtask - or to nothing,
+    // which was an engine fault. `finally`'s callback throwing overrides the
+    // outcome the same way.
+    bool threw = false;
+    value thrown = value::undefined();
+    if (value * on_finally = record->find("fin"); on_finally != nullptr) {
+        if (on_finally->is_callable()) {
+            (void)cx.call_fenced(*on_finally, std::span<const value>{}, value::undefined(), threw,
+                                 thrown);
         }
-        const value reviver = arg_at(a, 1);
-        if (!reviver.is_callable()) { return out; }
-        // Step 7: the reviver walks a WRAPPER whose one property is "", for the
-        // same reason stringify's does - the root has to be a (holder, key)
-        // pair so the reviver can replace it.
-        const value wrapper = c.make_object();
-        const context::rooted keep_wrapper{c, wrapper};
-        static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", reviver, 0);
-    });
-    // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
-    // null-prototype object whose `rawJSON` is the text, serialised verbatim
-    // by stringify. [[IsRawJSON]] is the private key; the text must be a JSON
-    // primitive - no object or array, no surrounding whitespace.
-    method(cx, json, "rawJSON", 1, [](context & c, std::span<value> a) {
-        const std::string text = string_arg(c, arg_at(a, 0));
-        if (c.throw_pending()) { return value::undefined(); }
-        const auto edge = [](char ch) {
-            return ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ';
-        };
-        bool ok = !text.empty() && text[0] != '[' && text[0] != '{' && !edge(text.front()) &&
-                  !edge(text.back());
-        if (ok) {
-            detail::json_reader reader{c, text};
-            (void)reader.parse_text();
-            ok = reader.ok;
+        if (threw) {
+            settle(cx, *next, thrown, true);
+        } else {
+            settle(cx, *next, settled, rejected);
         }
-        if (!ok) {
-            c.throw_error("SyntaxError", "Invalid JSON text for JSON.rawJSON");
-            return value::undefined();
+        return;
+    }
+    if (!handler.is_callable()) {
+        // No handler for how this settled: it passes straight through, so a
+        // rejection survives a bare `.then(f)` and a later `.catch` sees it.
+        settle(cx, *next, settled, rejected);
+        return;
+    }
+    const value args[1] = {settled};
+    const value produced = cx.call_fenced(handler, args, value::undefined(), threw, thrown);
+    if (threw) {
+        settle(cx, *next, thrown, true);
+        return;
+    }
+    // A handler returning a promise ADOPTS it, which is what makes a chain of
+    // `then`s that each do async work run in order rather than all at once.
+    if (produced.is_object()) {
+        auto * inner = static_cast<object_object *>(produced.as_heap());
+        if (inner->find("__settled") != nullptr) {
+            value * inner_settled = inner->find("__settled");
+            value * inner_value = inner->find("__value");
+            value * inner_rejected = inner->find("__rejected");
+            if (context::truthy(*inner_settled)) {
+                settle(cx, *next, inner_value == nullptr ? value::undefined() : *inner_value,
+                       inner_rejected != nullptr && context::truthy(*inner_rejected));
+            } else {
+                // still pending: chain onto it
+                value * handlers = inner->find("__handlers");
+                if (handlers != nullptr && handlers->is_array()) {
+                    object_object * record2 = new_table(cx);
+                    record2->set("next", *next);
+                    static_cast<array_object *>(handlers->as_heap())
+                        ->items.push_back(value::object(record2));
+                }
+            }
+            return;
         }
-        const value made = c.make_object();
-        auto * obj = static_cast<object_object *>(made.as_heap());
-        obj->prototype = value::undefined(); // an explicit null - object_object::prototype
-        // Frozen (step 6): the one property { false, true, false }, and no more.
-        obj->define("rawJSON", c.string(text), attr_enumerable);
-        obj->define(std::string{detail::raw_json_slot}, value::boolean(true), attr_none);
-        c.prevent_extensions(made);
-        return made;
-    });
-    method(cx, json, "isRawJSON", 1, [](context &, std::span<value> a) {
-        const value v = arg_at(a, 0);
-        return value::boolean(
-            v.is_object() &&
-            static_cast<object_object *>(v.as_heap())->find(detail::raw_json_slot) != nullptr);
-    });
-    json->define("@@toStringTag", cx.string("JSON"), attr_configurable); // 25.5.4
-    cx.define_global("JSON", value::object(json));
+    }
+    settle(cx, *next, produced, false);
 }
+
+// THE JOB. Delivery is queued rather than run, and a job is a callable plus
+// values so the collector traces it - so the C++ work has to be reachable
+// through a value, which is what this native is. One per context, made on
+// demand and remembered.
+[[nodiscard]] value delivery_job(context & cx) {
+    static const std::string slot = "__deliverJob";
+    if (const value existing = cx.global(slot); existing.is_callable()) { return existing; }
+    value made =
+        value::object(cx.allocate<native_object>(slot, [](context & c, std::span<value> a) {
+            if (a.size() >= 3 && a[0].is_object()) {
+                deliver(c, a[0], a[1], context::truthy(a[2]));
+            }
+            return value::undefined();
+        }));
+    cx.define_global(slot, made);
+    return made;
+}
+
+// Queue one delivery for the end of the turn.
+void enqueue_delivery(context & cx, value record, value settled, bool rejected) {
+    cx.queue_microtask(delivery_job(cx), {record, settled, value::boolean(rejected)});
+}
+
+void settle(context & cx, value promise, value with, bool rejected) {
+    if (!promise.is_object()) { return; }
+    auto * p = static_cast<object_object *>(promise.as_heap());
+    value * already = p->find("__settled");
+    if (already != nullptr && context::truthy(*already)) { return; } // settle once
+    p->define("__value", with, attr_builtin);
+    p->define("__rejected", value::boolean(rejected), attr_builtin);
+    p->define("__settled", value::boolean(true), attr_builtin);
+    value * handlers = p->find("__handlers");
+    if (handlers == nullptr || !handlers->is_array()) { return; }
+    // COPIED before draining: a handler may register another on this same
+    // promise, and appending to the vector being walked invalidates it.
+    const std::vector<value> pending = static_cast<array_object *>(handlers->as_heap())->items;
+    static_cast<array_object *>(handlers->as_heap())->items.clear();
+    // QUEUED, not called. `p.then(f); after();` must run `after` first, and a
+    // handler that runs the instant a promise settles can also reenter code
+    // that is halfway through its own work.
+    for (const value & record : pending) { enqueue_delivery(cx, record, with, rejected); }
+}
+
+// `then`/`catch`/`finally` all reduce to: remember what to do for each way this
+// can settle, and either do it now or when it settles.
+//
+// `on_finally` is the third form: one callback for BOTH outcomes, with no say
+// in either - its return value is ignored and the outcome passes through. It
+// goes in the same record so it queues and orders like everything else, rather
+// than being a special case at the call site.
+value settle_with(context & cx, value on_ok, value on_err, value on_finally = value::undefined()) {
+    const value self = cx.current_this();
+    if (!self.is_object()) { return self; }
+    auto * promise = static_cast<object_object *>(self.as_heap());
+
+    const value next = make_promise(cx, value::undefined(), false);
+    static_cast<object_object *>(next.as_heap())
+        ->define("__settled", value::boolean(false), attr_builtin);
+    object_object * record = new_table(cx);
+    record->set("ok", on_ok);
+    record->set("err", on_err);
+    record->set("next", next);
+    if (!on_finally.is_undefined()) { record->set("fin", on_finally); }
+
+    value * settled = promise->find("__settled");
+    if (settled != nullptr && context::truthy(*settled)) {
+        value * held = promise->find("__value");
+        value * state = promise->find("__rejected");
+        // Already settled, so there is nothing to wait FOR - but the handler
+        // still runs at the end of the turn rather than here. `Promise
+        // .resolve(1).then(f); after();` orders them the same way as the
+        // pending case, which is the whole point of a queue.
+        enqueue_delivery(cx, value::object(record), held == nullptr ? value::undefined() : *held,
+                         state != nullptr && context::truthy(*state));
+        return next;
+    }
+    value * handlers = promise->find("__handlers");
+    if (handlers != nullptr && handlers->is_array()) {
+        static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+    }
+    return next;
+}
+
+// then/catch/finally, once for the program rather than three natives per
+// promise. They were already receiver-based - settle_with reads current_this -
+// so nothing about them was per-instance; and having them here is what makes `p
+// instanceof Promise` answerable at all, since a promise then has a prototype to
+// walk. Built lazily so a context with no promise ever made pays nothing.
+[[nodiscard]] object_object * promise_prototype(context & cx) {
+    if (object_object * existing = cx.prototype(context::proto_kind::promise)) { return existing; }
+    object_object * table = new_table(cx);
+    method(cx, table, "then", [](context & c, std::span<value> a) {
+        return settle_with(c, a.empty() ? value::undefined() : a[0],
+                           a.size() > 1 ? a[1] : value::undefined());
+    });
+    method(cx, table, "catch", [](context & c, std::span<value> a) {
+        return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
+    });
+    method(cx, table, "finally", [](context & c, std::span<value> a) {
+        return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
+    });
+    table->define("@@toStringTag", cx.string("Promise"), attr_configurable); // 27.2.5.5
+    cx.set_prototype(context::proto_kind::promise, table);
+    return table;
+}
+
+[[nodiscard]] value make_promise(context & cx, value v, bool rejected) {
+    object_object * promise = new_table(cx);
+    promise->prototype = value::object(promise_prototype(cx));
+    promise->define("__value", v, attr_builtin);
+    promise->define("__rejected", value::boolean(rejected), attr_builtin);
+    promise->define("__settled", value::boolean(true), attr_builtin);
+    promise->define("__handlers", cx.make_array(), attr_builtin);
+    return value::object(promise);
+}
+
+} // namespace
+
+} // namespace ctbrowser::script::detail
+
+namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
