@@ -560,10 +560,8 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
 // `PI` and `LN2` in `Object.keys(Math)`, which is how
 // `Object.defineProperties(obj, Math)` came to be handed a Number as a
 // descriptor and throw.
-inline void constant(object_object * table, std::string_view name, value v) {
-    table->define(name, v, attr_none);
-}
-inline void constant(native_object * table, std::string_view name, value v) {
+// `Table` is object_object or native_object; both define(name, value, attrs).
+template <class Table> void constant(Table * table, std::string_view name, value v) {
     table->define(name, v, attr_none);
 }
 
@@ -608,27 +606,17 @@ inline void install_arity(context & cx, native_object * fn, double arity) {
 [[nodiscard]] inline value accessor_fn(context & cx, std::string name, native_fn fn) {
     return value::object(method_native(cx, std::move(name), std::move(fn)));
 }
-inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+// `Table` is an object_object, or a NATIVE: a built-in that is both callable
+// and a namespace - `Object(x)` coerces and `Object.keys` is a static - has to
+// be a native carrying properties, and its statics are installed exactly like
+// a table's.
+template <class Table> void method(context & cx, Table * table, std::string name, native_fn fn) {
     auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
-inline void method(context & cx, object_object * table, std::string name, double arity,
-                   native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
-    install_arity(cx, made, arity);
-    table->define(made->name, value::object(made), attr_builtin);
-}
-// The same, on a NATIVE. A built-in that is both callable and a namespace -
-// `Object(x)` coerces and `Object.keys` is a static - has to be a native
-// carrying properties, and its statics are installed exactly like a table's.
-inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
-    made->define("name", cx.string(made->name), attr_configurable);
-    table->define(made->name, value::object(made), attr_builtin);
-}
-inline void method(context & cx, native_object * table, std::string name, double arity,
-                   native_fn fn) {
+template <class Table>
+void method(context & cx, Table * table, std::string name, double arity, native_fn fn) {
     auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
