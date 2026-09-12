@@ -352,6 +352,11 @@ value context::iterable_values(value v) {
     // diagnosable one instead of a silent freeze.
     if (value * co = obj->find("__co"); co != nullptr && co->is_kind(heap_kind::coroutine)) {
         value out = make_array();
+        // ROOTED ACROSS THE RESUMES: the body can allocate, allocation can
+        // collect, and the list under construction is reachable from nothing
+        // else. (It was freed under the loop and the pushes corrupted the
+        // heap - a SIGSEGV in a later free, nowhere near here.)
+        const rooted keep{*this, out};
         auto * items = static_cast<array_object *>(out.as_heap());
         for (std::size_t guard = 0; guard < 1u << 20; ++guard) {
             const value step = generator_resume(v, value::undefined(), resume_mode::next);
@@ -397,15 +402,27 @@ value context::iterable_values(value v) {
         method.is_callable() && !materialising) {
         materialising_.push_back(v);
         const value iterator = get_iterator(v);
+        const rooted keep_iterator{*this, iterator};
         value out = make_array();
+        const rooted keep{*this, out}; // see the generator branch above
         if (iterator.is_object()) {
             auto * items = static_cast<array_object *>(out.as_heap());
             const value next = lookup_property(iterator, "next");
-            for (std::size_t guard = 0; guard < 1u << 24 && !throw_pending(); ++guard) {
+            const rooted keep_next{*this, next};
+            std::size_t guard = 0;
+            for (; guard < 1u << 20 && !throw_pending(); ++guard) {
                 bool done = false;
                 const value item = iterator_step(iterator, next, done);
                 if (done || throw_pending()) { break; }
                 items->items.push_back(item);
+            }
+            // An iterator that never finishes is an infinite loop under an
+            // eager materialisation; a diagnosable throw beats an
+            // out-of-memory kill (test262's for-of IteratorClose tests are
+            // exactly this shape: `next` never says done and the body breaks).
+            if (guard == 1u << 20 && !throw_pending()) {
+                throw_error("RangeError", "iterator did not finish in 1,048,576 steps - "
+                                          "for-of materialises its source (docs/script.md)");
             }
         }
         materialising_.pop_back();
@@ -443,7 +460,9 @@ value context::get_iterator(value v) {
         }
         const value items = iterable_values(v);
         if (throw_pending()) { return value::undefined(); }
+        const rooted keep{*this, items};
         auto * state = static_cast<object_object *>(make_object().as_heap());
+        const rooted keep_state{*this, value::object(state)};
         state->set("items", items);
         state->set("at", value::number(0));
         const value iterator = make_object();
