@@ -275,7 +275,10 @@ endif()
 # AND THE TWO FIGURES THE COMMENTS CITE, AS A GATE.
 #
 # CTJSOps.td and BytecodeImport.cpp both state that 219 of bootstrap's 1,021
-# capture operands are the placeholder that carries an index. Those had a
+# capture operands are the placeholder that carries an index (1,023 since the
+# ctjs parser of 2026-09-12 - restricted-production ASI and the with
+# statement, gitlink b2b5155 - which reads two more; the 219 did not move).
+# Those had a
 # command but no gate, which in this tree is the same failure as a measurement
 # with neither: the comment is specification, and nothing was checking it had
 # stayed true. `--expect-indexed` is a floor AND a ceiling, so this fails in
@@ -292,7 +295,7 @@ if(TARGET ctjs-translate)
                    -DJS=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js
                    -DCENSUS=${CTBROWSER_MONOREPO_ROOT}/tools/check/capture-census.py
                    -DINDEXED=219
-                   -DOPERANDS=1021
+                   -DOPERANDS=1023
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/capture-census.cmake)
 endif()

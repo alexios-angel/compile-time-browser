@@ -292,11 +292,14 @@ function useSuperCtor(pad, n) { var o = new Kid(n); return "" + o.v + "/" + o.nt
 // what lowering apply as an ordinary call would do - answers "1,2,3/undefined/
 // undefined" instead of "1/2/3".
 //
-// AND A NON-ITERABLE SPREAD YIELDS NOTHING, not one argument: `sum3(...5)` is
-// sum3() and answers three undefineds, where passing 5 along would answer
-// "5/undefined/undefined".
+// AND A NON-ITERABLE SPREAD IS THE TypeError of GetIterator (13.3.8.1
+// ArgumentListEvaluation): `sum3(...5)` throws, which `spreadNonIterable`
+// catches by name - where passing 5 along would answer "5/undefined/undefined"
+// and the old lenient runtime answered three undefineds. The runtime moved to
+// the specification on 2026-09-12 (ctbrowser-wpt, agent J: ed34ced8).
 function sum3(a, b, c) { return "" + a + "/" + b + "/" + c; }
 function spreadCall(pad, xs) { return sum3(...xs); }
+function spreadNonIterable(pad, n) { try { return spreadCall(pad, n); } catch (e) { return e.name; } }
 
 // THE RECEIVER IS A SEPARATE OPERAND from the callee and the array, and only a
 // method call can tell: ct_aot_call_spread takes it third, and passing
@@ -575,7 +578,7 @@ function drive(which) {
   if (which === 27) { OUT = drop(0, { a: 1, b: 2 }, "a"); }
   if (which === 28) { OUT = useSuper(0); }
   if (which === 29) { OUT = useSuperCtor(0, 10); }
-  if (which === 30) { OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadCall(0, 5); }
+  if (which === 30) { OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadNonIterable(0, 5); }
   if (which === 31) { OUT = spreadMethod(0, [7]); }
   if (which === 32) { OUT = spreadNew(0, [1, 2]); }
   if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }

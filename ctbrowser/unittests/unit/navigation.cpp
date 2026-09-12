@@ -86,7 +86,7 @@ void test_url_objects() {
         try { new URL('no-scheme'); } catch (e) { threw = e.name; }
         var plain = '';
         try { URL('http://x/'); } catch (e) { plain = e.name; }
-        console.log([threw, plain, URL.canParse('/x', 'http://y/'), URL.parse('nope'),
+        console.log([threw, plain, URL.canParse('/x', 'http://y/'), String(URL.parse('nope')),
                      URL.parse('/p', 'http://y/').pathname, typeof URL.createObjectURL,
                      u instanceof URL, u.constructor === URL].join('|'));
     </script></body></html>)");

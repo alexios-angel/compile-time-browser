@@ -525,17 +525,22 @@ int main() {
     //
     // Option 3 - weak links only where the SOURCE says `WeakRef` or `WeakMap`
     // - is vacuous here, and the VM is asked rather than told: there is no
-    // `WeakRef` global at all, and `WeakMap`/`WeakSet` are the strong `Map`/
-    // `Set` under other names (builtins/collections/keyed.cpp).
+    // `WeakRef` or `FinalizationRegistry` global at all, and `WeakMap`/
+    // `WeakSet` - their own classes since 34d90ea1 (2026-09-12), refusing a
+    // key that cannot be held weakly - keep the STRONG storage of `Map`/`Set`
+    // (builtins/collections/keyed.cpp, the TODO at its head): an entry is
+    // readable for as long as the map is, and its key is kept alive by it.
     probe_expect("(e) ND-2: typeof WeakRef === \"undefined\"", "typeof WeakRef === \"undefined\"",
                  "true");
-    probe_expect("(e) ND-2: WeakMap === Map", "WeakMap === Map", "true");
-    probe_expect("(e) ND-2: WeakSet === Set", "WeakSet === Set", "true");
-    probe_expect("(e) ND-2: the conjunction the plan pins",
-                 "typeof WeakRef === \"undefined\" && WeakMap === Map && WeakSet === Set", "true");
-    probe_expect("(e) ND-2: a WeakMap entry is a strong Map entry",
+    probe_expect("(e) ND-2: typeof FinalizationRegistry === \"undefined\"",
+                 "typeof FinalizationRegistry === \"undefined\"", "true");
+    probe_expect(
+        "(e) ND-2: the conjunction the plan pins",
+        "typeof WeakRef === \"undefined\" && typeof FinalizationRegistry === \"undefined\"",
+        "true");
+    probe_expect("(e) ND-2: a WeakMap entry is a strong entry",
                  "(function () { var k = {}; var w = new WeakMap(); w.set(k, 1); "
-                 "return w instanceof Map && w.get(k); })()",
+                 "return w instanceof WeakMap && !(w instanceof Map) && w.get(k); })()",
                  "1");
 
     // =======================================================================

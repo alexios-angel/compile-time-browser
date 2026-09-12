@@ -134,11 +134,13 @@ ECMA-262 has `WeakRef`, `FinalizationRegistry`, and the weakly-keyed
 
 * there is no `WeakRef` global and no `FinalizationRegistry` anywhere under
   `ctbrowser/lib/Script` — `typeof WeakRef` is `"undefined"`;
-* `WeakMap` and `WeakSet` **are** `Map` and `Set` — the same heap objects under
-  a second name (`ctbrowser/lib/Script/builtins/collections/keyed.cpp`, the two
-  `define_global` lines at the end of `install_collections`), so
-  `WeakMap === Map` is `true` and an entry keeps its key alive. The engine
-  calls this out itself: *"the difference is a leak, not a wrong answer."*
+* `WeakMap` and `WeakSet` are their own classes since `34d90ea1` (2026-09-12:
+  `WeakMap !== Map`, a key that cannot be held weakly is refused), but their
+  storage is still the STRONG list of `Map`/`Set`
+  (`ctbrowser/lib/Script/builtins/collections/keyed.cpp`, the TODO at its
+  head), so an entry keeps its key alive. The engine calls this out itself:
+  *"That is a leak, not a wrong answer."* (Before that commit they were `Map`
+  and `Set` under a second name, and `Cycle.cpp` pinned `WeakMap === Map`.)
 
 ### What the native backend does about it
 
