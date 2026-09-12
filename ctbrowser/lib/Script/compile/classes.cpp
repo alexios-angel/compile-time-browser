@@ -29,6 +29,24 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     release_to(mark);
 }
 
+void compiler_impl::emit_define_own(std::uint16_t target, std::string_view key, std::uint16_t v,
+                                    bool enumerable) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{define_own_name})));
+    const std::uint16_t object = alloc_reg();
+    proto().emit(instruction{op::move, object, target});
+    const std::uint16_t key_reg = alloc_reg();
+    proto().emit(instruction::with_bx(op::load_string, key_reg, intern_string(std::string{key})));
+    const std::uint16_t held = alloc_reg();
+    proto().emit(instruction{op::move, held, v});
+    const std::uint16_t flag = alloc_reg();
+    proto().emit(instruction{enumerable ? op::load_true : op::load_false, flag});
+    proto().emit(instruction{op::call, callee, 4});
+    release_to(mark);
+}
+
 std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields) {
     const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
     out_.functions[index].name = "<fields>";
@@ -275,8 +293,14 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             compile_expr(m.b, slot);
         }
-        const std::uint16_t name = member_operand(m.text);
-        proto().emit(instruction{op::set_prop, target, name, slot});
+        if ((m.d & 1) != 0 && (m.text == "name" || m.text == "length")) {
+            // A static `name`/`length` shadows the constructor's own
+            // read-only one: DEFINED, not set (see define_own_name).
+            emit_define_own(target, m.text, slot, false);
+        } else {
+            const std::uint16_t name = member_operand(m.text);
+            proto().emit(instruction{op::set_prop, target, name, slot});
+        }
         // Each method remembers where it was WRITTEN. `super.m()` resolves
         // against that, not against `this` - in a three-deep hierarchy the
         // two differ and resolving against `this` calls the same method
@@ -301,7 +325,11 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
         }
-        proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
+        if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
+            emit_define_own(dst, m.text, slot, true); // as above, enumerable: a field
+        } else {
+            proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
+        }
     }
     release_to(mark);
     --class_body_depth_;

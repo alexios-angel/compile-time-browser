@@ -919,6 +919,9 @@ public:
     // The start of a catch clause in a generator - see the definition.
     void emit_catch_filter(std::uint16_t caught);
     // `get [key]() {}` / `set [key](v) {}` on `target` - see define_accessor_name.
+    // A data property DEFINED on `target` through define_own_name.
+    void emit_define_own(std::uint16_t target, std::string_view key, std::uint16_t v,
+                         bool enumerable);
     void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
                                 bool setter);
     // An array pattern over the iterator protocol - see iterator_open_name.

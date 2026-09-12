@@ -235,6 +235,16 @@ void test_implicit_super() {
 // A CLASS EXPRESSION is as ordinary as a function expression. `class` had no
 // case in primary(), so `const X = class {...}` read a global named `class` and
 // the body's members leaked out as top-level statements - silently.
+// A static member named `name` or `length` is DEFINED over the constructor's
+// own read-only one (15.7.14 uses DefineMethodProperty), so it does not trip
+// the strict-mode rejected-store TypeError that a set would.
+void test_static_name_and_length() {
+    expect_result("class C { static name() { return 'm'; } static length = 3; }"
+                  "return C.name() + C.length + Object.keys(C).join(',');",
+                  "m3length");
+    expect_result("class X {} return X.name;", "X");
+}
+
 void test_class_expressions() {
     expect_result("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
     expect_result("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
@@ -585,6 +595,7 @@ void test_object_literal_keys() {
 int main() {
     test_class_fields_are_per_instance();
     test_private_names_are_distinct();
+    test_static_name_and_length();
     test_accessors();
     test_object_descriptors();
     test_symbol();

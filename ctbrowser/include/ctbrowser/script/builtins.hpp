@@ -102,6 +102,11 @@ inline constexpr std::string_view require_object_name = "__ctbrowser_require_obj
 // define_getter/define_setter take a name index, so a key that is only known
 // at run time goes through this one native rather than a new opcode.
 inline constexpr std::string_view define_accessor_name = "__ctbrowser_define_accessor";
+// `define_own(obj, key, value, enumerable)`: [[DefineOwnProperty]] of a
+// writable, configurable data property - what a static class member named
+// `name` or `length` needs, since those are own properties of every function
+// already and a set_prop to them in strict (class) code is the TypeError.
+inline constexpr std::string_view define_own_name = "__ctbrowser_define_own";
 
 // Install the standard library into a context.
 //

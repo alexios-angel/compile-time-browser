@@ -434,6 +434,19 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    cx.define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
+        context::property_descriptor wanted;
+        wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
+        wanted.has_configurable = true;
+        wanted.held = a[2];
+        wanted.writable = wanted.configurable = true;
+        wanted.enumerable = a.size() > 3 && context::truthy(a[3]);
+        if (!c.define_own_property(a[0], c.to_string(a[1]), wanted)) {
+            c.throw_error("TypeError", "Cannot redefine property: " + c.to_string(a[1]));
+        }
+        return value::undefined();
+    });
     cx.define_native(std::string{define_accessor_name}, [](context & c, std::span<value> a) {
         if (a.size() < 4 || !a[0].is_object()) { return value::undefined(); }
         c.define_accessor(a[0], c.to_string(a[1]), a[2], a[3]);
