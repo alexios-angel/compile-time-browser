@@ -910,3 +910,65 @@ next commits take the first three), 482 parse errors at `;` (the
 `for ([a, b] of xs)` and `catch ({x})` heads, 600 files, taken next), 350
 `with`-statement files, ~200 `using` declarations, the private brand checks
 (~150, taken next), `import.defer` (~150), TCO (30).
+
+## Measured at `00b5ab38` — 2026-09-12, night
+
+Same instrument, same corpus, engine at `00b5ab38` on `ctbrowser-wpt`
+(browser gate 540/541 at that commit — the one red is `ctcompile_lit`, repaired
+by Codex's `f57cab15`; `tools/check/test262-baseline.sh` on the devbox, 4
+workers, 10 s timeout, 2 GB cap):
+
+| area | tests | pass at `15f47064` | pass at `00b5ab38` | delta | fail | crash / host |
+|---|---:|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 17,226 | **18,350** | +1,124 | 5,348 | 0 / 6 |
+| `built-ins/Array` | 3,082 | 2,624 | **2,774** | +150 | 280 | 0 / 11 |
+| `built-ins/Object` | 3,411 | 3,128 | **3,275** | +147 | 134 | 0 / 0 |
+| `built-ins/Number` | 340 | 273 | **333** | +60 | 6 | 0 / 0 |
+| `built-ins/Math` | 327 | 279 | **326** | +47 | 1 | 0 / 0 |
+| `built-ins/String` | 1,223 | 975 | **1,096** | +121 | 124 | 0 / 0 |
+| `built-ins/Boolean` | 51 | 42 | **49** | +7 | 1 | 0 / 0 |
+| `built-ins/Function` | 509 | 331 | **410** | +79 | 86 | 0 / 0 |
+| `built-ins/Error` | 93 | 72 | **83** | +11 | 5 | 0 / 0 |
+| `built-ins/JSON` | 165 | 101 | **137** | +36 | 26 | 0 / 0 |
+| **total** | **32,927** | **25,051** | **26,833** | **+1,782** | | |
+
+**26,833 of 32,927 (81.5%), from 76.1% at `15f47064`.** Not one crash left:
+the 30 of the previous row are the fixes named there. The built-ins columns
+are agent G's round two (Date, `encodeURI`/`decodeURI`, `@@toPrimitive`,
+`JSON.rawJSON`, `Number`/`Math` edge cases), merged after the previous
+measurement; `test/language` +1,124 is `15f47064..00b5ab38`: the `for ([a, b]
+of xs)` and `catch ({x})` heads (`99879d88`, the 482 "parse error at `;`"
+files), the early errors of `516e7522` and `00b5ab38`, the private-name brand
+check (`308b8172`), `import()` arity (`11018eea`), `yield` as a name outside a
+generator (`6559e566`).
+
+**53 files went PASS -> FAIL**, two causes, both named so that they are not
+read as noise:
+
+- **12 early errors the new destructuring heads skip** —
+  `statements/for-{in,of}/dstr/{array-elem-target-simple-strict,
+  array-rest-before-elision, obj-id-init-simple-strict, obj-id-simple-strict,
+  obj-rest-before-comma-invalid}.js`, the `for-await-of` twin and
+  `statements/try/early-catch-duplicates.js`: the pattern checks (strict
+  `eval`/`arguments` targets, a rest element before an elision, duplicate
+  catch bindings) ran on declarations and not on a `for` head or a catch
+  parameter. The compiler's, and next.
+- **~40 bitwise and shift files** (`expressions/bitwise-*`, `left-shift`,
+  `right-shift`, `unsigned-right-shift`, `compound-assignment/S11.13.2_A4.*`,
+  `prefix-increment/S11.4.4_A4_T3`): `new String("1") & "1"` is 1 in the
+  specification and is 0 here since `new String()` became a real wrapper
+  object (agent B, `d27d8f36..502c691f`). `binary_op_static` converts with the
+  STATIC `to_int32`, which never runs `valueOf` — a documented deviation
+  carried in `include/ctbrowser/aot/aot_helpers.def` (the non-re-entering
+  family, `may_reenter 0`) as a contract with ctcompile's native backend. The
+  fix is to move the six bitwise opcodes (and `add`) to the re-entering
+  family, which is an ABI change made together with Codex and is proposed in
+  the journal, not made here.
+
+**The next clearest failures** at this commit (test/language, by cause):
+1,326 "negative parse expected" (`identifiers` 114, `literals/regexp` 179,
+class elements ~180, `module-code` 111), 350 `with` files, 139
+`eval-code/direct` "Expected a SyntaxError", the `dynamic-import` parse error
+at `import.` (154), `using`/`await-using` (~130). Built-ins: `Array` 280
+(60 are the BigInt typed arrays being absent, 41 "Expected a TypeError"),
+`Object` 134, `String` 124, `Function` 86.

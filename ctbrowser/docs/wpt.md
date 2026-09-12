@@ -14,6 +14,49 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-12, night
+
+**755 of the 1,090 tests that ran, which is 69.3%**, and still not one crash.
+Same instrument, engine at commit `00b5ab38` on `ctbrowser-wpt` — browser gate
+540/541 at that commit (the one red is `ctcompile_lit`'s `global-maps.test`,
+which Codex's `f57cab15` repairs and which is merged in as `aeb72dfb`); five
+suites one after another on the devbox, 4 workers, `CTBROWSER_GL_DRIVER=deterministic`,
+4 GB cap.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 244 | 53 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 146 | 71 | 2 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 140 | 42 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 144 | 110 | 8 | 0 | 9 | 237 | 508 |
+| **total** | **755** | **283** | **21** | **0** | **31** | **542** | **1,632** |
+
+Subtests: **79,714 PASS, 3,144 FAIL, 67 NOTRUN, 15 TIMEOUT.**
+
+Against `15f47064` (the row below): **+40 files, 1 lost.** Per suite:
+`css/css-values` 125 -> 144 (agent F: `calc-size-parsing`, `calc-mix-computed`,
+`random-item-computed`, `random-serialize`, the three `url-request-modifiers-*`,
+`sibling-function-invalidation`, `inherit-function-invalidation`, `if-conditionals`,
+`calc-angle-values`, `attr-pseudo-elem-invalidation`, the eight
+`viewport-units-gutter-00x`), `html/dom` 135 -> 146 (nine `the-lang-attribute-0xx`
+files and `document-lastModified-01` from `offsetWidth` becoming an accessor
+that flushes layout, `ef1f2464`; `name-content-attribute-and-property` back
+with `common.js` in the corpus), `css/cssom` 133 -> 140 (`CSSStyleRule-set-
+selectorText-namespace`, `computed-style-set-property`, the two
+`cssstyledeclaration-*custom-properties`, `flex-serialization`,
+`getComputedStyle-pseudo-checkmark`, `serialize-custom-props`), `dom/nodes`
+242 -> 244 (`Document-` and `Element-getElementsByTagName`). **The one lost:**
+`css/css-values/lh-unit-003.html` — `width: 10lh` on a ten-line box read
+through the new synchronous `offsetWidth` flush is 50 by 250 where the frame's
+layout, which the old copied number came from, was 250 by 250: the
+synchronous flush and the frame disagree about that box, which is a layout
+question rather than a units one (the second subtest, after the font loads,
+still passes).
+
+test262 at the same commit: **26,833 of 32,927 (81.5%)**, from 76.1% —
+`docs/test262.md`, the `00b5ab38` row, including the 53 files it lost and why.
+
 ## The baseline — 2026-09-12, evening
 
 **716 of the 1,090 tests that ran, which is 65.7%**, and still not one crash.
