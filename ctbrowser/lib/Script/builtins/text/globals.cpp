@@ -61,6 +61,114 @@ void install_base64(context & cx) {
     cx.define_native("atob", [](context & c, std::span<value> a) {
         return c.string(base64_decode(a.empty() ? std::string{} : c.to_string(a[0])));
     });
+    // The other four text-shaped globals, installed alongside.
+    install_uri(cx);
+}
+
+// 19.2.6: encodeURI / encodeURIComponent / decodeURI / decodeURIComponent.
+// Strings here are UTF-8 bytes already, so Encode is a byte loop: an
+// unreserved ASCII byte passes, everything else is %XX. Decode folds %XX
+// back - a malformed escape, or a decoded byte sequence that is not UTF-8,
+// is a URIError - and decodeURI keeps the reserved set encoded.
+void install_uri(context & cx) {
+    static constexpr std::string_view unreserved =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+    static constexpr std::string_view reserved = ";/?:@&=+$,#";
+    const auto encoder = [](std::string_view keep_extra) {
+        return [keep_extra](context & c, std::span<value> a) {
+            const std::string in =
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
+            if (c.throw_pending()) { return value::undefined(); }
+            std::string out;
+            out.reserve(in.size());
+            for (const char ch : in) {
+                const auto byte = static_cast<unsigned char>(ch);
+                if (byte < 0x80 && (unreserved.find(ch) != std::string_view::npos ||
+                                    keep_extra.find(ch) != std::string_view::npos)) {
+                    out += ch;
+                    continue;
+                }
+                out += '%';
+                out += "0123456789ABCDEF"[byte >> 4];
+                out += "0123456789ABCDEF"[byte & 0xF];
+            }
+            return c.string(out);
+        };
+    };
+    const auto decoder = [](std::string_view keep_encoded) {
+        return [keep_encoded](context & c, std::span<value> a) {
+            const std::string in =
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
+            if (c.throw_pending()) { return value::undefined(); }
+            std::string out;
+            out.reserve(in.size());
+            const auto refuse = [&] {
+                c.throw_error("URIError", "URI malformed");
+                return value::undefined();
+            };
+            for (std::size_t i = 0; i < in.size(); ++i) {
+                if (in[i] != '%') {
+                    out += in[i];
+                    continue;
+                }
+                if (i + 2 >= in.size() || hex_value(in[i + 1]) < 0 || hex_value(in[i + 2]) < 0) {
+                    return refuse();
+                }
+                const auto byte =
+                    static_cast<unsigned char>(hex_value(in[i + 1]) * 16 + hex_value(in[i + 2]));
+                if (byte < 0x80) {
+                    if (keep_encoded.find(static_cast<char>(byte)) != std::string_view::npos) {
+                        out.append(in, i, 3);
+                    } else {
+                        out += static_cast<char>(byte);
+                    }
+                    i += 2;
+                    continue;
+                }
+                // A multi-byte sequence: the lead says how many continuation
+                // escapes follow, and each must be one (steps 4.d.vii-x).
+                const int n = (byte & 0xE0) == 0xC0   ? 2
+                              : (byte & 0xF0) == 0xE0 ? 3
+                              : (byte & 0xF8) == 0xF0 ? 4
+                                                      : 0;
+                if (n == 0 || byte < 0xC2 || byte > 0xF4 ||
+                    i + static_cast<std::size_t>(n) * 3 > in.size()) {
+                    return refuse();
+                }
+                std::string bytes{static_cast<char>(byte)};
+                std::uint32_t code = byte & (0xFFu >> (n + 1));
+                for (int k = 1; k < n; ++k) {
+                    const std::size_t at = i + static_cast<std::size_t>(k) * 3;
+                    if (in[at] != '%' || hex_value(in[at + 1]) < 0 || hex_value(in[at + 2]) < 0) {
+                        return refuse();
+                    }
+                    const auto cont = static_cast<unsigned char>(hex_value(in[at + 1]) * 16 +
+                                                                 hex_value(in[at + 2]));
+                    if ((cont & 0xC0) != 0x80) { return refuse(); }
+                    bytes += static_cast<char>(cont);
+                    code = (code << 6) | (cont & 0x3F);
+                }
+                // Overlong, surrogate and out-of-range code points are not UTF-8.
+                static constexpr std::uint32_t floor[5] = {0, 0, 0x80, 0x800, 0x10000};
+                if (code < floor[n] || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
+                    return refuse();
+                }
+                out += bytes;
+                i += static_cast<std::size_t>(n) * 3 - 1;
+            }
+            return c.string(out);
+        };
+    };
+    cx.define_native("encodeURIComponent", encoder(""));
+    cx.define_native("encodeURI", encoder(reserved));
+    cx.define_native("decodeURIComponent", decoder(""));
+    cx.define_native("decodeURI", decoder(reserved));
+    for (const char * name :
+         {"encodeURIComponent", "encodeURI", "decodeURIComponent", "decodeURI"}) {
+        auto * made = static_cast<native_object *>(cx.global(name).as_heap());
+        made->is_constructor = false;
+        detail::install_arity(cx, made, 1);
+    }
 }
 
 void install_structured_clone(context & cx) {

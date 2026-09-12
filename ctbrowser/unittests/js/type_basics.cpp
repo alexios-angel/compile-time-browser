@@ -50,6 +50,10 @@ int main() {
     // name inherited by globalThis resolves - `toString` is Object.prototype's.
     js_expect("typeof toString", "function");
     js_expect("(function () { globalThis.lateGlobal = 3; return lateGlobal; })()", "3");
+    // ...and `delete` reaches the binding (clause 17: every global is configurable).
+    js_expect("(function () { globalThis.gone = 3; delete globalThis.gone; return typeof gone + "
+              "',' + ('gone' in globalThis); })()",
+              "undefined,false");
     js_expect("typeof typeof 1", "string");
     js_expect("typeof void 0", "undefined");
 

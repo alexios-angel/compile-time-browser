@@ -156,6 +156,11 @@ struct native_object final : heap_object {
     // 400 others - has no own entry and still has to answer.
     bool name_erased = false;
     value proto_link = value::null();
+    // IsConstructor (7.2.4) for a native: a built-in METHOD, a getter and a
+    // promise reaction have no [[Construct]], so `new Math.abs()` is a
+    // TypeError. True by default because every native an embedder defines
+    // (`Image`, `DOMParser`, ...) is constructed and has no other way to say so.
+    bool is_constructor = true;
 
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
@@ -327,6 +332,9 @@ public:
     [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
 
     void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
+    // `delete globalThis.x`: the binding is a table entry, and every global
+    // is { configurable: true } (clause 17), so the delete succeeds.
+    bool erase_global(std::string_view name) { return globals_.erase(name) != 0; }
     void define_native(std::string name, native_fn fn) {
         value v = value::object(allocate<native_object>(name, std::move(fn)));
         globals_[std::move(name)] = v;
@@ -531,13 +539,18 @@ public:
             // DOMException. Error.prototype plus an own `name` is the honest
             // fallback: the name is still right and `e instanceof Error` holds.
             table = prototype(proto_kind::error);
-            o->set("name", string(std::string{kind}));
+            o->define("name", string(std::string{kind}), attr_builtin);
         }
-        o->set("message", string(message));
+        // { true, false, true }, as 20.5.1.1 step 3 installs it.
+        o->define("message", string(message), attr_builtin);
         // The frames it happened on, exactly as a constructed Error gets them -
         // a page catching a TypeError the VM raised should be able to report
-        // where as easily as one it threw itself.
-        o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
+        // where as easily as one it threw itself. IN THE [[ErrorData]] SLOT
+        // the Error constructor uses (builtins/objects/errors.cpp's
+        // error_stack_slot): Error.prototype's `stack` accessor answers it,
+        // and Error.isError tests for it.
+        o->define("@#ErrorData", string(std::string{kind} + ": " + message + current_stack()),
+                  attr_none);
         if (table != nullptr) { o->prototype = value::object(table); }
         return made;
     }
@@ -750,6 +763,11 @@ public:
     // parked for rethrow at its call site, or the run has failed outright.
     // Every further `call` would answer undefined without running anything.
     [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
+    // HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
+    // through throw_error is not parked - it has already landed on a handler
+    // by the time the native's next line runs, and throw_pending cannot see
+    // it - so a native that keeps going compares this before and after.
+    [[nodiscard]] std::size_t unwinds() const noexcept { return unwinds_; }
     // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
     // constructor rather than print it (`tools/ct262` on a `negative:` test).
     // Undefined when a run failed WITHOUT a throw (the allocation ceiling, the
@@ -785,6 +803,11 @@ public:
     [[nodiscard]] value construct(value callee, std::span<const value> args);
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
+    // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the
+    // object's @@toPrimitive, then OrdinaryToPrimitive. False means a
+    // TypeError is in flight. to_primitive, to_number_value and
+    // to_primitive_string are this one walk.
+    bool to_primitive_hint(value v, const char * hint, value & out);
     [[nodiscard]] static bool truthy(value v);
 
     // The handler's trap of this name, or undefined when it has none. Public
@@ -2230,5 +2253,9 @@ private:
     bool failed_ = false;
     std::string error_;
 };
+
+// IsConstructor, 7.2.4: a native with [[Construct]], a non-arrow, non-generator
+// closure, or a proxy whose target is one. Defined in vm/call/construct.cpp.
+[[nodiscard]] bool is_constructor(value v);
 
 } // namespace ctbrowser::script

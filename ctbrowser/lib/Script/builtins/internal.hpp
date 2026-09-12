@@ -289,6 +289,15 @@ namespace detail {
 [[nodiscard]] inline bool threw_since(context & cx, const std::string & before) {
     return cx.throw_pending() || cx.current_stack() != before;
 }
+// The same question off context::unwinds(), which costs nothing: a native
+// that has read `length` off a revoked proxy has already thrown and landed,
+// and must not throw a second time over the handler it consumed.
+struct unwind_watch {
+    context & cx;
+    std::size_t before;
+    explicit unwind_watch(context & c) : cx(c), before(c.unwinds()) {}
+    [[nodiscard]] bool threw() const { return cx.throw_pending() || cx.unwinds() != before; }
+};
 [[nodiscard]] inline array_object * dense_array_this(value self); // below
 [[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
     if (self.is_array()) {
@@ -310,6 +319,24 @@ namespace detail {
     if (cx.throw_pending()) { return false; }
     cx.strict_store_check(number_to_string(i));
     return !threw_since(cx, before);
+}
+// CreateDataPropertyOrThrow(A, k, v), 7.3.5 - a DEFINE, not a [[Set]], so a
+// non-writable but configurable slot on a species-made result is overwritten
+// rather than refused; the refusal is a TypeError. A dense array takes
+// put_element's fast path, which is the same operation there.
+[[nodiscard]] inline bool create_element(context & cx, value target, double k, value v) {
+    if (target.is_array() && dense_array_this(target) != nullptr) {
+        return put_element(cx, target, k, v);
+    }
+    context::property_descriptor wanted;
+    wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
+    wanted.held = v;
+    wanted.writable = wanted.enumerable = wanted.configurable = true;
+    if (cx.define_own_property(target, number_to_string(k), wanted)) { return true; }
+    if (!cx.throw_pending()) {
+        cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
+    }
+    return false;
 }
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
@@ -455,7 +482,12 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
         }
         v = p->target;
     }
-    out = v.is_array();
+    // A TYPED ARRAY IS NOT AN Array exotic object (7.2.2 step 2 asks for the
+    // exotic kind), though it is an array_object here: Array.isArray, concat's
+    // spreading and ArraySpeciesCreate all say no to one.
+    out = v.is_array() &&
+          static_cast<const array_object *>(v.as_heap())->elements == element_kind::none &&
+          !static_cast<const array_object *>(v.as_heap())->is_view();
     return true;
 }
 
@@ -477,6 +509,39 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     if (made->set_js_length(len)) { return made; }
     cx.throw_error("RangeError", "Invalid array length");
     return nullptr;
+}
+
+// ArraySpeciesCreate, 10.4.2.3: the object an Array.prototype method fills. A
+// fresh Array of `len` unless the receiver IS an array whose `constructor` -
+// or that constructor's @@species - is some other constructor, which is then
+// constructed with `len`. Undefined means a throw is in flight. (The
+// cross-realm Array test of step 4 has nowhere to apply: one context, one
+// realm.)
+[[nodiscard]] inline value array_species_create(context & cx, value original, double len) {
+    const unwind_watch watch{cx};
+    bool is_array = false;
+    if (!is_array_value(cx, original, is_array) || watch.threw()) { return value::undefined(); }
+    value ctor = value::undefined();
+    if (is_array) {
+        ctor = cx.lookup_property(original, "constructor");
+        if (watch.threw()) { return value::undefined(); }
+        if (ctor.is_object_like()) {
+            ctor = cx.lookup_property(ctor, "@@species");
+            if (watch.threw()) { return value::undefined(); }
+            if (ctor.is_null()) { ctor = value::undefined(); }
+        }
+    }
+    if (ctor.is_undefined() || (ctor.is_heap() && ctor.as_heap() == cx.global("Array").as_heap())) {
+        const value out = cx.make_array();
+        return new_array_of_length(cx, out, len) == nullptr ? value::undefined() : out;
+    }
+    if (!is_constructor(ctor)) {
+        cx.throw_error("TypeError", "Array species constructor is not a constructor");
+        return value::undefined();
+    }
+    const value args[1] = {value::number(len)};
+    const value out = cx.construct(ctor, args);
+    return watch.threw() || !out.is_object_like() ? value::undefined() : out;
 }
 
 [[nodiscard]] inline object_object * new_table(context & cx) {
@@ -537,14 +602,25 @@ inline void install_arity(context & cx, native_object * fn, double arity) {
 // The arity-less form installs `name` and NOT `length`, which is the honest
 // answer for a built-in whose specified arity has not been checked at its
 // install site: an absent property is a gap, a wrong one is a wrong answer.
-inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+// A BUILT-IN METHOD HAS NO [[Construct]] (clause 17): `new Math.abs()` is a
+// TypeError, and isConstructor.js asks Reflect.construct exactly that.
+[[nodiscard]] inline native_object * method_native(context & cx, std::string name, native_fn fn) {
     auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    made->is_constructor = false;
+    return made;
+}
+// A getter or setter, for define_accessor: a function that is not a constructor.
+[[nodiscard]] inline value accessor_fn(context & cx, std::string name, native_fn fn) {
+    return value::object(method_native(cx, std::move(name), std::move(fn)));
+}
+inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, object_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }
@@ -552,13 +628,13 @@ inline void method(context & cx, object_object * table, std::string name, double
 // `Object(x)` coerces and `Object.keys` is a static - has to be a native
 // carrying properties, and its statics are installed exactly like a table's.
 inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
     table->define(made->name, value::object(made), attr_builtin);
 }
 inline void method(context & cx, native_object * table, std::string name, double arity,
                    native_fn fn) {
-    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    auto * made = method_native(cx, std::move(name), std::move(fn));
     install_arity(cx, made, arity);
     table->define(made->name, value::object(made), attr_builtin);
 }
@@ -801,6 +877,9 @@ inline value settle_with(context & cx, value on_ok, value on_err,
 
 // --- JSON -----------------------------------------------------------------
 
+// [[IsRawJSON]] (25.5.3): the private slot JSON.rawJSON's objects carry.
+inline constexpr std::string_view raw_json_slot = "@#IsRawJSON";
+
 // QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
 // of its rows were missing: U+0008 and U+000C have the short forms \b and \f
 // and were being written as the six-character \u0008 and \u000c forms by the
@@ -895,9 +974,35 @@ struct json_writer {
             const value args[2] = {cx.string(key), v};
             v = cx.call(replacer, args, holder);
         }
+        // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
+        // its primitive - through ToNumber / ToString, so a user valueOf or
+        // toString on it runs; a Boolean and a BigInt read the slot.
+        if (const value * slot = primitive_slot(v); slot != nullptr) {
+            if (slot->is_number()) {
+                v = value::number(cx.to_number_value(v));
+            } else if (slot->is_string()) {
+                v = cx.string(cx.to_string(v));
+            } else if (slot->is_boolean() || slot->is_kind(heap_kind::bigint)) {
+                v = *slot;
+            }
+            if (cx.throw_pending()) {
+                failed = true;
+                return false;
+            }
+        }
         if (v.is_null()) {
             out += "null";
             return true;
+        }
+        // 25.5.2.2 step 4.a: a rawJSON object is its text, verbatim.
+        if (v.is_object()) {
+            auto * obj = static_cast<object_object *>(v.as_heap());
+            if (obj->find(raw_json_slot) != nullptr) {
+                if (const value * raw = obj->find("rawJSON"); raw != nullptr && raw->is_string()) {
+                    out += static_cast<const string_object *>(raw->as_heap())->text;
+                    return true;
+                }
+            }
         }
         if (v.is_boolean()) {
             out += v.as_boolean() ? "true" : "false";
@@ -1362,45 +1467,84 @@ struct json_reader {
     }
 };
 
-// InternalizeJSONProperty, 25.5.1.1 - the reviver walk.
+// WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10
+// (getOwnPropertyNames) and 20.1.2.11 (getOwnPropertySymbols) are the same walk
+// filtered two different ways, and 7.3.7/7.3.24 want it unfiltered - a symbol
+// key is copied by Object.assign and read by Object.defineProperties, which is
+// the one place OwnPropertyKeys and EnumerableOwnProperties differ.
+enum class key_filter : std::uint8_t {
+    strings,
+    symbols,
+    all
+};
+// EVERY OWN KEY OF ANY VALUE, including the synthesised ones - and a proxy's
+// ownKeys trap. Defined in objects/operations.cpp.
+[[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
+                                                          key_filter which = key_filter::strings);
+
+// InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
+// object operations so a reviver that grafts a Proxy in sees its traps run.
 //
 // POST-ORDER: a child is revived and written back before its parent is offered
 // to the reviver, so a reviver rebuilding a Date out of a string sees a
 // finished object. A reviver returning `undefined` DELETES the property, which
-// is how one filters, and is why this cannot be a plain map.
-inline value internalize_json(context & cx, value holder, const std::string & key, value held,
-                              value reviver, std::uint32_t depth) {
+// is how one filters, and is why this cannot be a plain map. Undefined with a
+// throw pending is an abrupt completion.
+inline value internalize_json(context & cx, value holder, const std::string & key, value reviver,
+                              std::uint32_t depth) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
-    if (held.is_array()) {
-        auto * arr = static_cast<array_object *>(held.as_heap());
-        for (std::size_t i = 0; i < arr->items.size(); ++i) {
-            const value revived =
-                internalize_json(cx, held, std::to_string(i), arr->items[i], reviver, depth + 1);
-            // A DELETED ELEMENT IS A HOLE, NOT A SHORTER ARRAY: 25.5.1.1 does
-            // [[Delete]] and leaves `length` where it was. An array here has no
-            // holes to write (see context::delete_own_property), so a deleted
-            // element reads back as `undefined`, which is what it would be.
-            if (i < arr->items.size()) { arr->items[i] = revived; }
-        }
-    } else if (held.is_object()) {
-        // The key list is taken BEFORE the walk (step 3.d.i takes OwnPropertyKeys
-        // once): a property the reviver adds must not be visited, and one it
-        // deletes ahead of the cursor must not be either.
-        auto * obj = static_cast<object_object *>(held.as_heap());
-        std::vector<std::string> keys;
-        obj->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
-        for (const std::string & each : keys) {
-            value * slot = obj->find(each);
-            if (slot == nullptr) { continue; } // an earlier round deleted it
-            const value revived = internalize_json(cx, held, each, *slot, reviver, depth + 1);
+    const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
+    if (cx.throw_pending()) { return value::undefined(); }
+    if (held.is_object_like()) {
+        const context::rooted keep{cx, held};
+        // Step 2.b: a deleted child is [[Delete]]d (a refusal is a TypeError);
+        // a revived one is CreateDataProperty'd, its refusal ignored.
+        const auto revive_child = [&](const std::string & k) {
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1);
+            if (cx.throw_pending()) { return false; }
             if (revived.is_undefined()) {
-                (void)obj->erase(each);
+                if (!cx.delete_own_property(held, k)) {
+                    if (!cx.throw_pending()) {
+                        cx.throw_error("TypeError", "Cannot delete property " + k);
+                    }
+                    return false;
+                }
             } else {
-                obj->set(each, revived);
+                const context::rooted keep_revived{cx, revived};
+                context::property_descriptor wanted;
+                wanted.has_value = wanted.has_writable = wanted.has_enumerable =
+                    wanted.has_configurable = true;
+                wanted.held = revived;
+                wanted.writable = wanted.enumerable = wanted.configurable = true;
+                (void)cx.define_own_property(held, k, wanted);
+            }
+            return !cx.throw_pending();
+        };
+        bool is_array = false;
+        if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
+        if (is_array) {
+            const double len = array_like_length(cx, held);
+            if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            for (double i = 0; i < len; i += 1.0) {
+                if (!revive_child(number_to_string(i))) { return value::undefined(); }
+            }
+        } else {
+            // EnumerableOwnProperties: the key list is taken BEFORE the walk
+            // (step 2.c.i takes OwnPropertyKeys once) - a property the reviver
+            // adds is not visited - and each is re-checked for being there and
+            // enumerable as its turn comes.
+            const std::vector<std::string> keys = own_property_names(cx, held, key_filter::strings);
+            if (cx.throw_pending()) { return value::undefined(); }
+            for (const std::string & each : keys) {
+                context::property_descriptor found;
+                const bool present = cx.own_property(held, each, found);
+                if (cx.throw_pending()) { return value::undefined(); }
+                if (!present || !found.enumerable) { continue; }
+                if (!revive_child(each)) { return value::undefined(); }
             }
         }
     }
@@ -1426,6 +1570,7 @@ void install_math(context & cx, std::uint64_t seed);
 void install_array(context & cx);
 void install_string(context & cx);
 void install_base64(context & cx);
+void install_uri(context & cx);
 void install_structured_clone(context & cx);
 void install_boolean(context & cx);
 void install_number(context & cx);

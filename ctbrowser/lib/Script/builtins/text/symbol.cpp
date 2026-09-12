@@ -81,6 +81,7 @@ void install_symbol(context & cx) {
     well_known("search", "@@search");
     well_known("split", "@@split");
     well_known("isConcatSpreadable", "@@isConcatSpreadable"); // read by Array.prototype.concat
+    well_known("species", "@@species"); // read by ArraySpeciesCreate (builtins/internal.hpp)
     // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to
@@ -119,6 +120,7 @@ void install_symbol(context & cx) {
             return made;
         });
     symbol_for->retained.push_back(registry);
+    symbol_for->is_constructor = false;
     symbol->define("for", value::object(symbol_for), attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
     // one that never went through the registry.
@@ -132,6 +134,7 @@ void install_symbol(context & cx) {
             return value::undefined();
         });
     symbol_key_for->retained.push_back(registry);
+    symbol_key_for->is_constructor = false;
     symbol->define("keyFor", value::object(symbol_key_for), attr_builtin);
     // `Symbol.prototype` is reachable from the constructor, like every other
     // built-in's - a page that walks it found undefined.

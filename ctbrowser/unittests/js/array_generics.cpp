@@ -642,5 +642,60 @@ int main() {
     js_expect("Object.prototype.toString.call('a'[Symbol.iterator]())", "[object String Iterator]");
     js_expect("String.prototype[Symbol.iterator].call(null)", "THREW");
 
+    // --- ArraySpeciesCreate, 10.4.2.3 ------------------------------------------
+    // The receiver's `constructor[Symbol.species]` builds the result of map,
+    // filter, slice, splice, concat and flatMap; Array's own says `this`.
+    js_expect("Array[Symbol.species] === Array", "true");
+    js_expect("(function(){ var calls = 0; var a = [1, 2, 3];"
+              "a.constructor = {}; a.constructor[Symbol.species] = function (n) {"
+              "  calls++; this.n = n; };"
+              "var r = a.map(function (x) { return x * 2; });"
+              "return [calls, r.n, r[0], r[1], r[2], r.length].join(); })()",
+              "1,3,2,4,6,");
+    js_expect("(function(){ var a = [1, 2, 3, 4]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.slice(1, 3); return [r.length, r[0], r[1]].join(); })()",
+              "2,2,3");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.filter(function (x) { return x > 1; }); return [r[0], r[1], r.length]"
+              ".join(); })()",
+              "2,3,");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.splice(1, 2); return [r.length, r[0], r[1], a.join()].join(); })()",
+              "2,2,3,1");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.concat([2, 3]); return [r.length, r[0], r[2]].join(); })()",
+              "3,1,3");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = null; return Array.isArray(a.map(x => x)); })()",
+              "true");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = parseInt; return a.map(x => x); })()",
+              "THREW");
+    js_expect("(function(){ var a = [1]; a.constructor = 1; return a.map(x => x); })()", "THREW");
+    // CreateDataPropertyOrThrow DEFINES over a non-writable slot on the species
+    // object; a revoked proxy receiver throws ONCE (the length read) and the
+    // method stops; a typed array is not an Array for species or isArray.
+    js_expect("(function(){ var a = [1, 2]; a.constructor = {}; a.constructor[Symbol.species] = "
+              "function () { Object.defineProperty(this, '0', {value: 'x', writable: false, "
+              "configurable: true}); }; var r = a.map(x => x * 10); return r[0] + ',' + r[1]; })()",
+              "10,20");
+    js_expect("(function(){ var o = Proxy.revocable([], {}); o.revoke(); try { "
+              "Array.prototype.map.call(o.proxy, x => x); return 'no'; } catch (e) { return "
+              "e.constructor.name; } })()",
+              "TypeError");
+    js_expect("(function(){ var ta = new Int32Array([1, 2]); Object.defineProperty(ta, "
+              "'constructor', {get() { throw 'no'; }}); var r = [].flatMap.call(ta, x => x); "
+              "return Array.isArray(r) + ',' + r.join() + ',' + Array.isArray(ta) + ',' + "
+              "[].concat(ta).length; })()",
+              "true,1,2,false,1");
+    js_expect("(function(){ var o = {0: 0, 1: 1, 2: 2, 3: 3, length: 4}; var r = "
+              "Array.prototype.splice.call(o, 0, 3); return r.length + ':' + r.join() + ':' + "
+              "o.length; })()",
+              "3:0,1,2:1");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

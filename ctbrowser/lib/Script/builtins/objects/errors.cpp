@@ -61,8 +61,8 @@ void install_errors(context & cx) {
     // carry an own `stack` from context::make_error, which shadows this.
     error_proto->define_accessor(
         "stack",
-        value::object(cx.allocate<native_object>(
-            "get stack",
+        detail::accessor_fn(
+            cx, "get stack",
             [](context & c, std::span<value>) {
                 const value self = c.current_this();
                 if (!self.is_object_like()) {
@@ -73,9 +73,9 @@ void install_errors(context & cx) {
                 value * trace =
                     static_cast<object_object *>(self.as_heap())->find(error_stack_slot);
                 return trace == nullptr ? value::undefined() : *trace;
-            })),
-        value::object(cx.allocate<native_object>(
-            "set stack",
+            }),
+        detail::accessor_fn(
+            cx, "set stack",
             [](context & c, std::span<value> a) {
                 const value self = c.current_this();
                 if (!self.is_object_like()) {
@@ -101,7 +101,7 @@ void install_errors(context & cx) {
                     c.throw_error("TypeError", "Cannot define property stack");
                 }
                 return value::undefined();
-            })),
+            }),
         attr_configurable);
 
     // One constructor shape, seven names. `parent` is Error's prototype for the

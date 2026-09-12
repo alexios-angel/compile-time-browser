@@ -263,7 +263,7 @@ void install_typed_arrays(context & cx) {
         auto * table = static_cast<native_object *>(array_buffer.as_heap());
         table->set(
             "isView",
-            value::object(cx.allocate<native_object>("isView", [](context &, std::span<value> a) {
+            value::object(detail::method_native(cx, "isView", [](context &, std::span<value> a) {
                 if (a.empty() || !a[0].is_array()) { return value::boolean(false); }
                 const auto * made = static_cast<array_object *>(a[0].as_heap());
                 return value::boolean(made->elements != element_kind::none);

@@ -669,11 +669,21 @@ int main() {
     // is null for anything that did not come from `class` or `Object.create`.
     // That contradicted the engine's own behaviour: lookup_property ends EVERY
     // chain walk at the Object.prototype table, which is why
-    // `({}).hasOwnProperty` resolves at all. THE COST, said out loud: an object
-    // from `Object.create(null)` also inherits Object.prototype here, and now
-    // reports it - which is the truthful answer about the object that was
-    // actually built.
+    // `({}).hasOwnProperty` resolves at all. An EXPLICIT null - Object.create
+    // (null), setPrototypeOf(o, null) - is told apart from the implicit one
+    // (object_object::prototype), so a dictionary object inherits nothing.
     js_expect("Object.getPrototypeOf({}) === Object.prototype", "true");
+    js_expect("Object.getPrototypeOf(Object.create(null))", "null");
+    js_expect("typeof Object.create(null).toString", "undefined");
+    js_expect("'toString' in Object.create(null)", "false");
+    js_expect("Object.create(null) instanceof Object", "false");
+    js_expect("(function(){var o=Object.setPrototypeOf({},null);return typeof o.hasOwnProperty"
+              "+','+Object.getPrototypeOf(o);})()",
+              "undefined,null");
+    js_expect("(function(){var o=Object.create(null);o.__proto__=1;return o.__proto__;})()",
+              "1"); // no B.2.2.1 setter on the chain: a plain own property
+    js_expect("String(Object.create(null))", "THREW"); // 7.1.1.1 step 4
+    js_expect("Object.keys(Object.create(null, {a: {value: 1, enumerable: true}})).join()", "a");
     js_expect("Object.getPrototypeOf(Object.prototype)", "null");
     js_expect("Object.getPrototypeOf([]) === Array.prototype", "true");
     js_expect("Object.getPrototypeOf(Array.prototype) === Object.prototype", "true");
@@ -855,6 +865,31 @@ int main() {
     // HasProperty, not "reads as something other than undefined".
     js_expect("Reflect.has({x: undefined}, 'x')", "true");
     js_expect("Reflect.ownKeys([1]).join(',')", "0,length");
+    // ...and it answers SYMBOLS, the ones the properties were defined with.
+    js_expect("(function(){var s=Symbol('k');var o={a:1};o[s]=1;var ks=Reflect.ownKeys(o);"
+              "return [ks.length, typeof ks[1], ks[1] === s, Object.getOwnPropertySymbols(o)[0] "
+              "=== s].join();})()",
+              "2,symbol,true,true");
+    js_expect("Object.getOwnPropertySymbols(Array.prototype)[0] === Symbol.iterator", "true");
+    // 10.1.11.1: integers, then strings, then symbols, each in creation order.
+    js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;o.b=1;o[2]=1;o.a=1;"
+              "return Reflect.ownKeys(o).map(String).join();})()",
+              "2,b,a,Symbol(k)");
+    js_expect("Object.prototype.toString.call(Math) + Object.prototype.toString.call(JSON)",
+              "[object Math][object JSON]");
+    js_expect("Object.getOwnPropertyNames(Array.prototype).indexOf('@@iterator')", "-1");
+    // 10.5.11: a proxy's ownKeys trap, its list checked and the target's
+    // non-configurable keys required.
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => ['b', 'a']})).join()", "b,a");
+    js_expect("Object.keys(new Proxy({a: 1}, {ownKeys: () => ['a']})).join()", "a");
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => ['a', 'a']}))", "THREW");
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => [1]}))", "THREW");
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "return Reflect.ownKeys(new Proxy(t, {ownKeys: () => []}));})()",
+              "THREW");
+    js_expect("(function(){var t=Object.preventExtensions({x:1});"
+              "return Reflect.ownKeys(new Proxy(t, {ownKeys: () => ['x','y']}));})()",
+              "THREW");
 
     // ================================================================
     // 17. A NATIVE METHOD IS AN ORDINARY FUNCTION OBJECT

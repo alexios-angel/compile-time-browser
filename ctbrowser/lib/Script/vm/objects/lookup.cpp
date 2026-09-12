@@ -175,6 +175,9 @@ value context::lookup_property(value target, const std::string & name) {
             if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
                 return lookup_property(obj->prototype, name);
             }
+            // An EXPLICIT null [[Prototype]] (object_object::prototype): the
+            // chain ends here, with no implicit Object.prototype.
+            if (obj->prototype.is_undefined()) { return value::undefined(); }
             obj = nullptr;
         }
         return from_object_prototype(target, name);
@@ -340,6 +343,11 @@ value context::lookup_property(value target, const std::string & name) {
         // ...then Function.prototype, so `nativeFn.call(...)` works too.
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                return entry->getter.is_callable()
+                           ? call(entry->getter, std::span<const value>{}, target)
+                           : value::undefined();
+            }
         }
         // ...AND THEN Object.prototype, because Function.prototype's own
         // [[Prototype]] is Object.prototype. Without it `f.hasOwnProperty` and
@@ -372,6 +380,13 @@ value context::lookup_property(value target, const std::string & name) {
         if (closure->proto != nullptr) {
             if (name == "name") { return string(closure->proto->display_name()); }
             if (name == "length") { return value::number(closure->proto->param_count); }
+            // A SLOPPY function's `caller` and `arguments` are null (Annex B's
+            // implementation-defined answer, and every browser's); a strict
+            // one reaches Function.prototype's %ThrowTypeError% accessor.
+            if (!closure->proto->is_strict && !closure->proto->is_arrow &&
+                (name == "caller" || name == "arguments")) {
+                return value::null();
+            }
         }
         // `static get w()` on a class - the constructor IS the closure, so its
         // accessors live here rather than on any object.
@@ -406,6 +421,11 @@ value context::lookup_property(value target, const std::string & name) {
         // Function.prototype's own [[Prototype]] - see the native arm above.
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                return entry->getter.is_callable()
+                           ? call(entry->getter, std::span<const value>{}, target)
+                           : value::undefined();
+            }
         }
         return from_object_prototype(target, name);
     }

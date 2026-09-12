@@ -10,10 +10,9 @@
 // kind names, with the primitive in a private-keyed slot - value.hpp's
 // primitive_slot says why a private key is an internal slot here.
 //
-// `new String(x)` is NOT covered: that constructor lives in builtins/async.cpp
-// and still converts. `Object("ab")` builds the String wrapper the same slot
-// would, so the String exotic object's `length` and indices are tested
-// through it.
+// `new String(x)` wraps too (since later on 2026-09-12); `Object("ab")` builds
+// the same String exotic object, and its `length` and indices are tested
+// through both.
 
 #include "js_expect.hpp"
 
@@ -22,6 +21,18 @@ int main() {
     js_expect("typeof new Number(5)", "object");
     js_expect("typeof new Boolean(false)", "object");
     js_expect("typeof Object('ab')", "object");
+    js_expect("typeof new String('ab')", "object");
+    js_expect("new String('ab').length", "2");
+    js_expect("new String('ab')[1]", "b");
+    js_expect("new String('ab') + 'c'", "abc");
+    js_expect("new String(5).valueOf()", "5");
+    js_expect("String(Symbol('d'))", "Symbol(d)");
+    js_expect("(function(){ try { new String(Symbol()); return 'no'; } catch (e) { return e "
+              "instanceof TypeError; } })()",
+              "true");
+    js_expect("JSON.stringify([new Number(3), new String('s'), new Boolean(false)])",
+              "[3,\"s\",false]");
+    js_expect("String.fromCharCode({valueOf: () => 65}, 66.9)", "AB");
     js_expect("typeof Number(5)", "number"); // a CALL still converts
     js_expect("typeof Boolean(0)", "boolean");
     js_expect("new Number(5) instanceof Number", "true");
@@ -57,6 +68,10 @@ int main() {
     js_expect("Object.prototype.toString.call(new Number(1))", "[object Number]");
     js_expect("Object.prototype.toString.call(new Boolean(1))", "[object Boolean]");
     js_expect("Object.prototype.toString.call(Object('x'))", "[object String]");
+    // ...and the three prototypes carry a slot of their own (21.1.3, 22.1.3, 20.3.3).
+    js_expect("Object.prototype.toString.call(Number.prototype)", "[object Number]");
+    js_expect("Object.prototype.toString.call(String.prototype)", "[object String]");
+    js_expect("Object.prototype.toString.call(Boolean.prototype)", "[object Boolean]");
 
     // --- the String exotic object: 10.4.3 --------------------------------------
     js_expect("Object('abc').length", "3");

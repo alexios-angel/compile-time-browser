@@ -256,6 +256,13 @@ struct bigint_object final : heap_object {
         return static_cast<const bigint_object *>(as_heap())->digits ==
                static_cast<const bigint_object *>(o.as_heap())->digits;
     }
+    // A SYMBOL'S IDENTITY IS ITS KEY (see symbol_object): the one
+    // Object.getOwnPropertySymbols rebuilds from a table key is the one the
+    // property was defined with.
+    if (is_kind(heap_kind::symbol) && o.is_kind(heap_kind::symbol)) {
+        return static_cast<const symbol_object *>(as_heap())->key ==
+               static_cast<const symbol_object *>(o.as_heap())->key;
+    }
     return false;
 }
 
@@ -685,6 +692,10 @@ struct accessor_table {
 struct object_object final : heap_object {
     std::vector<std::pair<std::string, value>> props;
     string_flat_map<std::uint32_t> index;
+    // NULL MEANS THE IMPLICIT Object.prototype - every lookup falls through to
+    // it - and UNDEFINED means an EXPLICIT null [[Prototype]]: Object.create
+    // (null), setPrototypeOf(o, null), `__proto__ = null`. The chain walks in
+    // vm/objects/ stop at the second without the fallback.
     value prototype = value::null();
 
     accessor_table accessors;

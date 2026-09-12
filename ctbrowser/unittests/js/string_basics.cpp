@@ -415,5 +415,20 @@ int main() {
     js_expect("'abc'.match(/b/)[0]", "b"); // a real RegExp is unchanged
     js_expect("'a-b'.split('-').length", "2");
 
+    // --- 19.2.6 the URI functions (node's answers) ---------------------------
+    js_expect("encodeURIComponent('a b&c/d?é')", "a%20b%26c%2Fd%3F%C3%A9");
+    js_expect("encodeURI('http://x/a b?q=1&r=é#f')", "http://x/a%20b?q=1&r=%C3%A9#f");
+    js_expect("encodeURIComponent(\"-_.!~*'()\")", "-_.!~*'()");
+    js_expect("decodeURIComponent('a%20b%26c%2F%C3%A9')", "a b&c/é");
+    js_expect("decodeURI('a%20b%26c%2F%C3%A9')", "a b%26c%2Fé");
+    js_expect("decodeURIComponent('%E2%82%AC')", "€");
+    js_expect("decodeURIComponent('%')", "THREW");
+    js_expect("decodeURIComponent('%zz')", "THREW");
+    js_expect("decodeURIComponent('%C0%80')", "THREW");    // overlong
+    js_expect("decodeURIComponent('%ED%A0%80')", "THREW"); // a surrogate
+    js_expect("decodeURIComponent('%E2%82')", "THREW");    // truncated
+    js_expect("encodeURIComponent()", "undefined");
+    js_expect("[encodeURI.length, decodeURIComponent.name].join()", "1,decodeURIComponent");
+
     REPORT("string_basics");
 }

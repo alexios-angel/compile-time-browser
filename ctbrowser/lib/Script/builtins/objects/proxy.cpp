@@ -62,6 +62,7 @@ void install_proxy(context & cx) {
         if (!proxy.is_kind(heap_kind::proxy)) { return value::undefined(); }
         const context::rooted keep{c, proxy};
         native_object * revoke = detail::cx_native(c, "", native_fn{});
+        revoke->is_constructor = false;
         revoke->fn = [revoke](context &, std::span<value>) {
             // `revoke` is alive for the duration of its own call; the pointer
             // is to the object being called.
@@ -105,10 +106,34 @@ void install_proxy(context & cx) {
     method(cx, reflect, "has", 2, [](context & c, std::span<value> a) {
         return value::boolean(c.has_property(arg_at(a, 0), arg_at(a, 1)));
     });
+    // 28.1.2: target and newTarget must both be constructors, and the
+    // argument list must be an object (CreateListFromArrayLike step 2).
     method(cx, reflect, "construct", 2, [](context & c, std::span<value> a) {
+        if (!is_constructor(arg_at(a, 0))) {
+            c.throw_error("TypeError", "Reflect.construct: target is not a constructor");
+            return value::undefined();
+        }
+        if (a.size() > 2 && !is_constructor(a[2])) {
+            c.throw_error("TypeError", "Reflect.construct: newTarget is not a constructor");
+            return value::undefined();
+        }
+        if (!arg_at(a, 1).is_object_like()) {
+            c.throw_error("TypeError", "Reflect.construct: arguments list must be an object");
+            return value::undefined();
+        }
         std::vector<value> args;
-        if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
-        return c.construct(arg_at(a, 0), args);
+        if (a[1].is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
+        const value made = c.construct(a[0], args);
+        // GetPrototypeFromConstructor off newTarget (10.1.14): context::construct
+        // takes none, so an ordinary object a built-in made is re-parented
+        // afterwards - what `Reflect.construct(Error, [], NewTarget)` observes.
+        if (a.size() > 2 && !a[2].strict_equals(a[0]) && made.is_object() && !c.throw_pending()) {
+            const value proto = c.lookup_property(a[2], "prototype");
+            if (proto.is_object_like()) {
+                static_cast<object_object *>(made.as_heap())->prototype = proto;
+            }
+        }
+        return made;
     });
     method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         std::vector<value> args;
@@ -123,8 +148,12 @@ void install_proxy(context & cx) {
         // symbols as well as names, and an array's indices as well as a plain
         // object's keys. It answered `[]` for everything that was not an
         // object_object.
-        for (const std::string & key : own_property_names(c, arg_at(a, 0), key_filter::all)) {
-            result->items.push_back(c.string(key));
+        if (!arg_at(a, 0).is_object_like()) {
+            c.throw_error("TypeError", "Reflect.ownKeys called on non-object");
+            return value::undefined();
+        }
+        for (const std::string & key : own_property_names(c, a[0], key_filter::all)) {
+            result->items.push_back(detail::key_value(c, key));
         }
         return out;
     });

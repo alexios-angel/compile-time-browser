@@ -331,6 +331,13 @@ void install_object(context & cx) {
             tag = "Error";
         } else if (inherits_from(c, self, c.prototype(context::proto_kind::regexp))) {
             tag = "RegExp";
+        } else if (self.is_object() && self.as_heap() == c.prototype(context::proto_kind::number)) {
+            tag = "Number"; // 21.1.3: Number.prototype has [[NumberData]] +0
+        } else if (self.is_object() && self.as_heap() == c.prototype(context::proto_kind::string)) {
+            tag = "String"; // 22.1.3: [[StringData]] ""
+        } else if (self.is_object() &&
+                   self.as_heap() == c.prototype(context::proto_kind::boolean)) {
+            tag = "Boolean"; // 20.3.3: [[BooleanData]] false
         }
         // 20.1.3.6 step 15: a STRING @@toStringTag replaces the built-in tag,
         // and anything else is ignored rather than stringified. This is the
@@ -457,35 +464,36 @@ void install_object(context & cx) {
     // member is.
     object_proto->define_accessor(
         "__proto__",
-        value::object(cx.allocate<native_object>(
-            "get __proto__",
-            [](context & c, std::span<value>) {
-                const value self = c.current_this();
-                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
-                    return value::undefined();
-                }
-                return prototype_of(c, self);
-            })),
-        value::object(cx.allocate<native_object>(
-            "set __proto__",
-            [](context & c, std::span<value> a) {
-                const value self = c.current_this();
-                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
-                    return value::undefined();
-                }
-                // B.2.2.1.2 steps 2-3: a non-object prototype and a primitive
-                // receiver are each a silent no-op, NOT the TypeError
-                // Object.setPrototypeOf raises - and an object literal's
-                // `__proto__: 5` relies on the first.
-                const value proto = arg_at(a, 0);
-                if (!proto.is_object_like() && !proto.is_null()) { return value::undefined(); }
-                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
-                if (!set_prototype_of(c, self, proto)) {
-                    c.throw_error("TypeError",
-                                  "Cyclic __proto__ value or object is not extensible");
-                }
-                return value::undefined();
-            })),
+        detail::accessor_fn(cx, "get __proto__",
+                            [](context & c, std::span<value>) {
+                                const value self = c.current_this();
+                                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                                    return value::undefined();
+                                }
+                                return prototype_of(c, self);
+                            }),
+        detail::accessor_fn(cx, "set __proto__",
+                            [](context & c, std::span<value> a) {
+                                const value self = c.current_this();
+                                if (!object_coercible(c, self, "Object.prototype.__proto__")) {
+                                    return value::undefined();
+                                }
+                                // B.2.2.1.2 steps 2-3: a non-object prototype and a primitive
+                                // receiver are each a silent no-op, NOT the TypeError
+                                // Object.setPrototypeOf raises - and an object literal's
+                                // `__proto__: 5` relies on the first.
+                                const value proto = arg_at(a, 0);
+                                if (!proto.is_object_like() && !proto.is_null()) {
+                                    return value::undefined();
+                                }
+                                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
+                                if (!set_prototype_of(c, self, proto)) {
+                                    c.throw_error(
+                                        "TypeError",
+                                        "Cyclic __proto__ value or object is not extensible");
+                                }
+                                return value::undefined();
+                            }),
         attr_configurable);
     cx.set_prototype(context::proto_kind::object, object_proto);
 
@@ -594,8 +602,9 @@ void install_object(context & cx) {
         }
         object_object * out = new_table(c);
         // Any object - a function or an array too, which lookup_property now
-        // walks through (see its object arm).
-        if (proto.is_object_like()) { out->prototype = proto; }
+        // walks through (see its object arm). null is the EXPLICIT null, which
+        // object_object::prototype spells as undefined.
+        out->prototype = proto.is_object_like() ? proto : value::undefined();
         const value made = value::object(out);
         // A ROOT WHILE THE DESCRIPTORS RUN. Each one is read through [[Get]],
         // which can call a page's getter, which can collect - and `out` lives
@@ -675,13 +684,7 @@ void install_object(context & cx) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         for (const std::string & key : own_property_names(c, a[0], key_filter::symbols)) {
-            // The KEY is the identity, so a symbol rebuilt from it is `===` to
-            // the one the property was defined with, which is what a caller
-            // that feeds the result back to getOwnPropertyDescriptor needs.
-            // The description is the tail of "@@sym:<n>:<description>".
-            const std::size_t at = key.find(':', symbol_key_prefix.size());
-            result->items.push_back(value::object(c.allocate<symbol_object>(
-                at == std::string::npos ? std::string{} : key.substr(at + 1), key)));
+            result->items.push_back(detail::key_value(c, key));
         }
         return out;
     });

@@ -362,6 +362,7 @@ bool context::assign_through_accessor(value target, const std::string & name, va
             store_rejected_ = true;
             return true;
         }
+        if (obj->prototype.is_undefined()) { return false; } // an explicit null [[Prototype]]
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
     }

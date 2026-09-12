@@ -11,25 +11,16 @@
 
 namespace ctbrowser::script::detail {
 
-// WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10
-// (getOwnPropertyNames) and 20.1.2.11 (getOwnPropertySymbols) are the same walk
-// filtered two different ways, and 7.3.7/7.3.24 want it unfiltered - a symbol
-// key is copied by Object.assign and read by Object.defineProperties, which is
-// the one place OwnPropertyKeys and EnumerableOwnProperties differ.
-enum class key_filter : std::uint8_t {
-    strings,
-    symbols,
-    all
-};
+// key_filter and own_property_names are declared in ../internal.hpp: the JSON
+// reviver walk needs OwnPropertyKeys too.
 
 // A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
 // FromPropertyDescriptor).
 [[nodiscard]] object_object * descriptor_object(context & cx,
                                                 const context::property_descriptor & from);
 
-// EVERY OWN KEY OF ANY VALUE, including the synthesised ones.
-[[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
-                                                          key_filter which = key_filter::strings);
+// A property key as the value it names: a string, or the symbol rebuilt from it.
+[[nodiscard]] value key_value(context & cx, const std::string & key);
 
 // [[GetPrototypeOf]], FOR EVERY KIND OF VALUE.
 [[nodiscard]] value prototype_of(context & cx, value of);
