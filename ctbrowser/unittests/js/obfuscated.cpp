@@ -176,5 +176,21 @@ int main() {
     js_expect("\"\\101\"", "101"); // V8: "A"
     js_expect("017", "17");        // V8: 15
 
+    // UNICODE ESCAPES IN IDENTIFIERS (12.7.1): `\u{6F}bj` IS `obj`, in
+    // declarations, references, property names and private names. The lexer
+    // decodes such an identifier into the ast's `decoded` arena; test262
+    // spells hundreds of class-element names this way.
+    js_expect("(function(){var \\u{6F}bj = 7; return obj;})()", "7");
+    js_expect("(function(){var obj = 8; return \\u006Fbj;})()", "8");
+    js_expect("(function(){var o = {\\u{6F}: 1}; return o.o;})()", "1");
+    js_expect("(function(){class C { static #\\u{6F} = 3; static o() { return this.#\\u{6F}; } } "
+              "return C.o();})()",
+              "3");
+    js_expect("(function(){class C { static #o = 4; static o() { return this.#\\u{6F}; } } "
+              "return C.o();})()",
+              "4");
+    js_expect("(function(){var \\u2118 = 'wp'; return \u2118;})()", "wp");
+    js_expect("(function(){var ZW_\\u200C_NJ = 'z'; return ZW_\u200C_NJ;})()", "z");
+
     REPORT("obfuscated");
 }
