@@ -6,43 +6,96 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Caller payload progress; final gate pending, 2026-09-12
+## Caller scalar-field payloads and decimal BigInt indices, 2026-09-12
 
 Continued clean **ee4b2a57**, the **14:25:57 UTC** journal and
-`/tmp/ctcompile-output-next.md`; the old WIP branch was already an ancestor.
-Three agents split the caller ownership, native lifetime and independent escape work.
+`/tmp/ctcompile-output-next.md`. The promised caller-payload proof was the next
+unfinished step; `codex-wip-20260907` was already an ancestor. Three agents split
+escape, ownership and native lifetime checks; root integrated and gated them.
 
-**5ea064b0** proves scalar-field caller leaves, stable aliases and mixed object/scalar
-actuals without granting primitive authority. The corrected **321-step rebuild** and
-ownership CTest pass (**236.28s**), including 13 source / 13 prepared caller rows.
-**63206007** executes four new caller programs **6/6 native** in both modes. The
-60-source cohort passes **28 native / 32 refusals**, **139 typed observations /
-149 mutations** in **57.37s**, both layouts, GCC/Clang, no-Script and lifetime sanitizers.
-All 46 historical source bodies remain unchanged.
+**5ea064b0** admits caller leaves with definitely initialized scalar own fields,
+including stable global aliases and strict identity uses. It checks every alias/use,
+source order and SSA dominance. A formal may receive objects and supported scalars
+across its complete call census; it gains no primitive-only authority. Existing
+`object_value` and identity-field carriers suffice. Cycles, missing/prototype fields,
+unknown consumers, method-formal field access and object returns remain refused.
+Thirteen source and thirteen prepared ownership rows pass, with forged self-cycles,
+late key/comparison operands and bounded incomplete proofs. Fourteen historical
+expectations were corrected without changing their 120 source fragments.
 
-**a78ab38d** proves original decimal BigInt array indices: **54 rows / six live states /
-914 retention cutoffs**. All 11 escape CTests pass; the source oracle measures
-**828 sites / 33 unclaimed / zero violations / precision 16/157**. The old 28,451-byte
-fixture remains an exact prefix. Stable22 passes 800 files; bundled23 has the same
-nine baseline files / 28 diagnostics. Browser/parser inputs are unchanged.
+**63206007** adds four straight-line caller witnesses, each **6/6 native** in
+both optimization modes: field **c3b36e07**, alias **96bc9f68**, mixed Number first
+**90b799ff** and last **b3f10a06**. The original 46 nested source bodies remain
+byte-identical; the first four conditional-entry probes remain explicit **0/6**
+refusals. The cohort passes **28 native programs / 32 refusals**, **139 typed Node/VM
+observations / 149 distinguishing mutations** in **57.37s**. Both C++ layouts pass
+GCC/Clang, no-Script and ASan/UBSan/leak checks through **128 future calls**, saved
+field-bearing owners after delete/clear, entry reexecution and final release.
+Measured complete budgets/cutoffs: **15329/31** and **21452/30**.
 
-**Full gate pending.** The 55-source historical caller cohort has three measured
-4/4 native field promotions and six owner-only promotions. Its first execution gate
-stopped at a test spelling mismatch: generated field writes use the existing setter
-helper, not the inline assignment the assertion expected. The one-line test correction
-is frozen; all 55 source bodies are unchanged. The serialized workflow
-`/tmp/ctcompile-caller-final-gate.sh` reruns that cohort, commits its three test paths
-only on success, then runs the standard full CTest gate. Logs:
-`/tmp/ctcompile-caller-object-keys-final.log` and `/tmp/ctcompile-caller-full.log`.
-Finish this gate and replace this checkpoint before choosing another implementation.
+**e7760ba4** updates the historical caller cohort without altering any of its
+55 JavaScript bodies. Field **698def06**, global field write **194d9834** and payload
+field **5442abee** now execute **4/4 native**; six mixed-key/category controls prove
+ownership but still refuse native emission. Preparation preserves each actual's
+original allocation/global-load/literal origin. The checker rejects 20 distinguishing
+mutations. The corrected cohort passes **22 native programs and their controls** in **46.35s**,
+both C++ layouts, GCC/Clang and no-Script; payload-field budget/cutoffs **1869/29**.
+The initial harness assertion expected an inline assignment; its one-line correction
+counts the actual existing field setter. Generated behavior did not change.
 
-Exact Data **8359592c** remains **0/7 native**, both modes. Preserve its 2,522 bytes.
-Next: independently prove mixed scalar/object child-Map contents, owning object returns
-and identity, then the original recorder callback. See
-`/tmp/ctcompile-caller-next-session.md`; independent escape candidate is dense-array
-`.length` in `/tmp/ctcompile-bigint-indices-next.md` (VM verdicts unmeasured).
-Claude's pending ToNumeric/reentry ABI work was accepted at **15:10:59 UTC**; reread
-AGENT-SYNC and re-gate the oracle after integration. Nothing was pushed.
+**a78ab38d** proves original canonical decimal BigInt array indices with existing
+origin/bounds/budget checks. The old escape fixture remains an exact **28,451-byte
+prefix**. Five appended witnesses cover twelve literal sites: five confined and seven
+retained. The matrix passes **54 rows / six live states / 914 retention cutoffs**;
+all 11 escape CTests pass. The full oracle measures **828 sites / 33 unclaimed /
+zero violations / precision 16/157**. Computed, noncanonical and object-loaded keys,
+sparse/missing elements and ordinary-object/prototype effects remain conservative.
+The importer spelling comment now correctly says that bytecode already stripped `n`.
+
+The full standard run at **e7760ba4** passed **532/534 CTests**, including all
+**162 browser tests**, in **858.88s**. It exposed four obsolete host-contract
+expectations and one lit control whose mixed key now proves ownership but still
+has no native carrier. **ded4eb06** fixes the host expectations with all **116 input
+fragments / 41 rows** unchanged; its CTest passes **40.07s**. **f6caaadd** fixes
+only the native control's evidence and summary. All **230 tail source bodies** are
+unchanged; a two-policy census has zero errors, preserves 28 existing ownership-only
+routes and identifies exactly one new ownership-only row. Its checker passes eight
+measured/forged pairs, rejects 20 mutations, and its complete focused pipeline passes
+**0.53s**. The corrected **ctcompile_lit** CTest passes **168/168 cases in
+648.84s** (CTest **648.93s**). Together these runs cover all **534 CTests**.
+Only three test files differ from the full run. All **1,368 frozen production,
+browser, parser and test inputs** match the final local/remote snapshot; production,
+browser and parser bytes are identical between the full run and corrected reruns.
+Fresh Bootstrap stays **19/574 native** in both policies; Data stays **0/7 CommonJS,
+0/7 browser and 0/8 AMD**.
+Stable clang-format22 passes all **800 files**; bundled23 retains exactly the same
+**nine baseline files / 28 diagnostics**. No browser/runtime or parser changes were
+included. The parser remains **8eb3375**.
+
+Next: independently prove mixed scalar/object child-Map contents, owning object
+returns and identity, then Data's original recorder callback (`Array.from(s.keys())`
+and its template diagnostic). See `/tmp/ctcompile-caller-next-session.md`.
+The next independent escape candidate is dense-array `.length`; its proposed witness
+is Node-measured only, with VM/PCs still unmeasured. See
+`/tmp/ctcompile-bigint-indices-next.md`.
+Preserve exact Data's **2,522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+The current probe remains **0/7** in both modes; new caller witnesses are bounded
+proofs, not native Bootstrap. Component/DOM ownership must use ctbrowser's public API.
+
+Evidence: `/tmp/ctcompile-caller-{native.log,repair-gate.log,object-keys-final.log}`,
+`/tmp/ctcompile-caller-complete-summary.json`,
+`/tmp/ctcompile-caller-full-{detail.log,frozen.json,revision.json,summary.json}`,
+`/tmp/ctcompile-caller-{host-unit.log,lit-final.log,lit-final-detail.log,final-frozen.json}`,
+`/tmp/ctcompile-caller-tail-{audit.json,measured/results.json}`,
+`/tmp/ctcompile-caller-probe-measured/results.json`,
+`/tmp/ctcompile-caller-key-{preparation-measured,checker-mutations}.json` and
+`/tmp/ctcompile-caller-focused-detail.log`.
+Claude's pending isolated runtime work includes the **15:08:14 UTC** ToNumeric ABI
+proposal, accepted in the **15:10:59 UTC** journal. The **16:10:57 UTC**
+journal also records pending RegExp/String protocol and Function.toString changes.
+Re-read the latest journal and re-gate the differential oracle after integration.
+Nothing was pushed.
 
 ## Native nullable output and canonical String indices, 2026-09-12
 
