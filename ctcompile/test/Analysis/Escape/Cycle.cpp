@@ -520,22 +520,24 @@ int main() {
     }
 
     // =======================================================================
-    // E. ND-2: no weak references exist in this engine. Gate 4(e).
+    // E. ND-2: weak collection classes still use strong storage. Gate 4(e).
     // =======================================================================
     //
-    // Option 3 - weak links only where the SOURCE says `WeakRef` or `WeakMap`
-    // - is vacuous here, and the VM is asked rather than told: there is no
-    // `WeakRef` global at all, and `WeakMap`/`WeakSet` are the strong `Map`/
-    // `Set` under other names (builtins/collections/keyed.cpp).
+    // WeakMap/WeakSet are distinct classes with strong __entries storage
+    // (builtins/collections/keyed.cpp; vm/objects/gc.cpp). These probes check
+    // absent weak-reference globals, class identity and lookup. They do not
+    // force GC or establish key retention.
     probe_expect("(e) ND-2: typeof WeakRef === \"undefined\"", "typeof WeakRef === \"undefined\"",
                  "true");
-    probe_expect("(e) ND-2: WeakMap === Map", "WeakMap === Map", "true");
-    probe_expect("(e) ND-2: WeakSet === Set", "WeakSet === Set", "true");
-    probe_expect("(e) ND-2: the conjunction the plan pins",
-                 "typeof WeakRef === \"undefined\" && WeakMap === Map && WeakSet === Set", "true");
-    probe_expect("(e) ND-2: a WeakMap entry is a strong Map entry",
+    probe_expect("(e) ND-2: typeof FinalizationRegistry === \"undefined\"",
+                 "typeof FinalizationRegistry === \"undefined\"", "true");
+    probe_expect(
+        "(e) ND-2: the conjunction the plan pins",
+        "typeof WeakRef === \"undefined\" && typeof FinalizationRegistry === \"undefined\"",
+        "true");
+    probe_expect("(e) ND-2: a WeakMap has its own class and supports lookup",
                  "(function () { var k = {}; var w = new WeakMap(); w.set(k, 1); "
-                 "return w instanceof Map && w.get(k); })()",
+                 "return w instanceof WeakMap && !(w instanceof Map) && w.get(k); })()",
                  "1");
 
     // =======================================================================
