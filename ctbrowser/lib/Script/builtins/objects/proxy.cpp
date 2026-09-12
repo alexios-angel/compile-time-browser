@@ -137,8 +137,12 @@ void install_proxy(context & cx) {
         // symbols as well as names, and an array's indices as well as a plain
         // object's keys. It answered `[]` for everything that was not an
         // object_object.
-        for (const std::string & key : own_property_names(c, arg_at(a, 0), key_filter::all)) {
-            result->items.push_back(c.string(key));
+        if (!arg_at(a, 0).is_object_like()) {
+            c.throw_error("TypeError", "Reflect.ownKeys called on non-object");
+            return value::undefined();
+        }
+        for (const std::string & key : own_property_names(c, a[0], key_filter::all)) {
+            result->items.push_back(detail::key_value(c, key));
         }
         return out;
     });

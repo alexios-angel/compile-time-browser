@@ -676,13 +676,7 @@ void install_object(context & cx) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         for (const std::string & key : own_property_names(c, a[0], key_filter::symbols)) {
-            // The KEY is the identity, so a symbol rebuilt from it is `===` to
-            // the one the property was defined with, which is what a caller
-            // that feeds the result back to getOwnPropertyDescriptor needs.
-            // The description is the tail of "@@sym:<n>:<description>".
-            const std::size_t at = key.find(':', symbol_key_prefix.size());
-            result->items.push_back(value::object(c.allocate<symbol_object>(
-                at == std::string::npos ? std::string{} : key.substr(at + 1), key)));
+            result->items.push_back(detail::key_value(c, key));
         }
         return out;
     });

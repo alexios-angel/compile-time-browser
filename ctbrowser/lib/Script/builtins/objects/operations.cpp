@@ -21,11 +21,29 @@ namespace {
 
 [[nodiscard]] inline bool wanted_key(key_filter which, const std::string & key) {
     if (is_private_key(key)) { return false; } // a private name is not a property key
-    const bool symbol = key.starts_with(symbol_key_prefix);
+    const bool symbol = key.starts_with("@@"); // "@@sym:<n>:" or a well-known "@@iterator"
     return which == key_filter::all || (which == key_filter::symbols) == symbol;
 }
 
 } // namespace
+
+// A PROPERTY KEY AS A VALUE: the string, or the symbol rebuilt from its key -
+// which IS its identity (value.hpp), so it is `===` to the one the property
+// was defined with. Object.getOwnPropertySymbols and Reflect.ownKeys share it.
+[[nodiscard]] value key_value(context & cx, const std::string & key) {
+    if (key.starts_with(symbol_key_prefix)) {
+        const std::size_t at = key.find(':', symbol_key_prefix.size());
+        return value::object(cx.allocate<symbol_object>(
+            at == std::string::npos ? std::string{} : key.substr(at + 1), key));
+    }
+    if (key.starts_with("@@for:")) {
+        return value::object(cx.allocate<symbol_object>(key.substr(6), key));
+    }
+    if (key.starts_with("@@")) {
+        return value::object(cx.allocate<symbol_object>(key.substr(2), key));
+    }
+    return cx.string(key);
+}
 
 // A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
 // FromPropertyDescriptor). Four callers needed the same object and each built
@@ -47,7 +65,65 @@ namespace {
                                                           key_filter which) {
     std::vector<std::string> out;
     if (of.is_kind(heap_kind::proxy)) {
-        return own_property_names(cx, static_cast<proxy_object *>(of.as_heap())->target, which);
+        auto * p = static_cast<proxy_object *>(of.as_heap());
+        const value trap = cx.proxy_trap(of, "ownKeys");
+        if (!trap.is_callable()) { return own_property_names(cx, p->target, which); }
+        // 10.5.11 [[OwnPropertyKeys]]: the trap's list, each a String or a
+        // Symbol and none twice (steps 7-8), then the invariants against the
+        // target - every non-configurable key is reported, and a
+        // non-extensible target's keys are reported exactly (steps 9-23).
+        const value args[1] = {p->target};
+        const value listed = cx.call(trap, args, p->handler);
+        if (cx.throw_pending()) { return out; }
+        if (!listed.is_object_like()) {
+            cx.throw_error("TypeError", "ownKeys trap result must be an object");
+            return out;
+        }
+        std::vector<std::string> keys;
+        const double n = array_like_length(cx, listed);
+        if (cx.throw_pending()) { return out; }
+        for (double i = 0; i < n; i += 1.0) {
+            const value k = element_at(cx, listed, i);
+            if (cx.throw_pending()) { return out; }
+            std::string key;
+            if (k.is_string()) {
+                key = static_cast<string_object *>(k.as_heap())->text;
+            } else if (k.is_kind(heap_kind::symbol)) {
+                key = static_cast<symbol_object *>(k.as_heap())->key;
+            } else {
+                cx.throw_error("TypeError",
+                               "ownKeys trap result must contain only strings and symbols");
+                return out;
+            }
+            if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+                cx.throw_error("TypeError", "ownKeys trap result contains duplicate entries");
+                return out;
+            }
+            keys.push_back(std::move(key));
+        }
+        const bool extensible = cx.is_extensible(p->target);
+        std::vector<std::string> target_keys = own_property_names(cx, p->target, key_filter::all);
+        std::size_t matched = 0;
+        for (const std::string & key : target_keys) {
+            const bool reported = std::find(keys.begin(), keys.end(), key) != keys.end();
+            if (reported) { ++matched; }
+            if (reported && extensible) { continue; }
+            context::property_descriptor found;
+            const bool configurable = !cx.own_property(p->target, key, found) || found.configurable;
+            if (!reported && (!configurable || !extensible)) {
+                cx.throw_error("TypeError", "ownKeys trap result must include '" + key + "'");
+                return out;
+            }
+        }
+        if (!extensible && matched != keys.size()) {
+            cx.throw_error("TypeError", "ownKeys trap result must not add keys to a "
+                                        "non-extensible target");
+            return out;
+        }
+        for (const std::string & key : keys) {
+            if (wanted_key(which, key)) { out.push_back(key); }
+        }
+        return out;
     }
     if (of.is_object()) {
         // A String wrapper's indices and `length` come first (10.4.3.3), as

@@ -256,6 +256,13 @@ struct bigint_object final : heap_object {
         return static_cast<const bigint_object *>(as_heap())->digits ==
                static_cast<const bigint_object *>(o.as_heap())->digits;
     }
+    // A SYMBOL'S IDENTITY IS ITS KEY (see symbol_object): the one
+    // Object.getOwnPropertySymbols rebuilds from a table key is the one the
+    // property was defined with.
+    if (is_kind(heap_kind::symbol) && o.is_kind(heap_kind::symbol)) {
+        return static_cast<const symbol_object *>(as_heap())->key ==
+               static_cast<const symbol_object *>(o.as_heap())->key;
+    }
     return false;
 }
 

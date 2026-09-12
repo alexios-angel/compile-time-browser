@@ -855,6 +855,25 @@ int main() {
     // HasProperty, not "reads as something other than undefined".
     js_expect("Reflect.has({x: undefined}, 'x')", "true");
     js_expect("Reflect.ownKeys([1]).join(',')", "0,length");
+    // ...and it answers SYMBOLS, the ones the properties were defined with.
+    js_expect("(function(){var s=Symbol('k');var o={a:1};o[s]=1;var ks=Reflect.ownKeys(o);"
+              "return [ks.length, typeof ks[1], ks[1] === s, Object.getOwnPropertySymbols(o)[0] "
+              "=== s].join();})()",
+              "2,symbol,true,true");
+    js_expect("Object.getOwnPropertySymbols(Array.prototype)[0] === Symbol.iterator", "true");
+    js_expect("Object.getOwnPropertyNames(Array.prototype).indexOf('@@iterator')", "-1");
+    // 10.5.11: a proxy's ownKeys trap, its list checked and the target's
+    // non-configurable keys required.
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => ['b', 'a']})).join()", "b,a");
+    js_expect("Object.keys(new Proxy({a: 1}, {ownKeys: () => ['a']})).join()", "a");
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => ['a', 'a']}))", "THREW");
+    js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => [1]}))", "THREW");
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "return Reflect.ownKeys(new Proxy(t, {ownKeys: () => []}));})()",
+              "THREW");
+    js_expect("(function(){var t=Object.preventExtensions({x:1});"
+              "return Reflect.ownKeys(new Proxy(t, {ownKeys: () => ['x','y']}));})()",
+              "THREW");
 
     // ================================================================
     // 17. A NATIVE METHOD IS AN ORDINARY FUNCTION OBJECT

@@ -27,6 +27,9 @@ enum class key_filter : std::uint8_t {
 [[nodiscard]] object_object * descriptor_object(context & cx,
                                                 const context::property_descriptor & from);
 
+// A property key as the value it names: a string, or the symbol rebuilt from it.
+[[nodiscard]] value key_value(context & cx, const std::string & key);
+
 // EVERY OWN KEY OF ANY VALUE, including the synthesised ones.
 [[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
                                                           key_filter which = key_filter::strings);
