@@ -67,9 +67,10 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
     CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
     CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
-    // Two infinities that cancel for any basis are a NaN, and so zero.
+    // Two infinities that cancel for any basis are a NaN, and so zero - a
+    // plain zero length, with nothing left for a basis to resolve.
     CHECK_EQ(fold_math("calc(infinity * 1px - infinity * 1%)", ctx, math_context::length).text,
-             std::string{"0%"});
+             std::string{"0px"});
     CHECK_EQ(fold_math("calc(infinity * 1px + infinity * 1%)", ctx, math_context::length).text,
              std::string{"calc(33554432% + 33554432px)"});
     // ...and only when computed: `el.style` reads the calc() back.
