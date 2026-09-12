@@ -146,7 +146,7 @@ class Function:
     params: int
     frame: int
     name: str
-    allocs: list[tuple[int, str]] = field(default_factory=list)
+    allocs: set[tuple[int, str]] = field(default_factory=set)
     sites: dict[tuple[int, str], Site] = field(default_factory=dict)
 
 
@@ -211,35 +211,49 @@ def read_recording(path: str) -> Recording:
                 pass
             elif tag == "program":
                 program = Program(parts[1], int(parts[3]), int(parts[5]), parts[7])
+                if program.source_hash in rec.programs:
+                    raise SystemExit(f"{path}: duplicate program {program.source_hash}")
                 rec.programs[program.source_hash] = program
                 function = None
             elif tag == "fn":
                 assert program is not None, "an `fn` line before any `program` line"
                 function = Function(int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7]), parts[9])
+                if function.index in program.functions:
+                    raise SystemExit(f"{path}: duplicate function {function.index}")
                 program.functions[function.index] = function
             elif tag == "r":
                 assert function is not None, "an `r` line before any `fn` line"
             elif tag == "alloc":
                 assert function is not None, "an `alloc` line before any `fn` line"
+                if len(parts) != 4 or parts[2] != "kind" or not parts[1].isdigit():
+                    raise SystemExit(f"{path}: malformed allocation: {line.strip()}")
                 kind = parts[3]
                 if kind not in KINDS:
                     raise SystemExit(f"{path}: unknown kind `{kind}` in an alloc line")
-                function.allocs.append((int(parts[1]), kind))
+                allocation = (int(parts[1]), kind)
+                if allocation in function.allocs:
+                    raise SystemExit(f"{path}: duplicate allocation {allocation} in {function.name}")
+                function.allocs.add(allocation)
             elif tag == "site":
                 assert function is not None, "a `site` line before any `fn` line"
                 # site <pc> kind <k> made <m> confined <c> escaped <e> unresolved <u>
                 #      unchecked <x> routes <label>:<n>[,...]|-
+                if (len(parts) != 16 or parts[2:15:2] !=
+                        ["kind", "made", "confined", "escaped", "unresolved", "unchecked", "routes"] or
+                        not all(n.isdigit() for n in parts[5:14:2]) or
+                        (parts[1] != "prologue" and not parts[1].isdigit())):
+                    raise SystemExit(f"{path}: malformed site line: {line.strip()}")
                 site = Site(parse_pc(parts[1]), parts[3], int(parts[5]), int(parts[7]), int(parts[9]),
                             int(parts[11]), int(parts[13]))
                 if site.kind not in KINDS:
                     raise SystemExit(f"{path}: unknown kind `{site.kind}` in a site line")
-                if parts[14] != "routes":
-                    raise SystemExit(f"{path}: malformed site line: {line.strip()}")
                 if parts[15] != "-":
                     for item in parts[15].split(","):
                         label, count = item.split(":")
                         if label not in ROOT_LABELS:
                             raise SystemExit(f"{path}: unknown root label `{label}` - GCRoots.def moved?")
+                        if label in site.routes or not count.isdigit():
+                            raise SystemExit(f"{path}: malformed or duplicate root route `{item}`")
                         site.routes[label] = int(count)
                 # THE LINE MUST ACCOUNT FOR ITSELF.
                 if site.made != site.confined + site.escaped + site.unresolved + site.unchecked:
@@ -248,6 +262,8 @@ def read_recording(path: str) -> Recording:
                     raise SystemExit(f"{path}: site {site.pc} {site.kind} of {function.name}: routes != escaped")
                 if site.made == 0:
                     raise SystemExit(f"{path}: a site line with made 0 (they are not written)")
+                if (site.pc, site.kind) in function.sites:
+                    raise SystemExit(f"{path}: duplicate site {site.pc} {site.kind} in {function.name}")
                 function.sites[(site.pc, site.kind)] = site
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
@@ -315,8 +331,41 @@ def read_claims(path: str):
             elif verdict != "confined":
                 if not verdict.startswith("escapes:") or verdict[8:] not in REASONS:
                     raise SystemExit(f"{path}:{number}: unknown verdict `{verdict}`")
-            claims[(parts[1], int(parts[2]), parse_pc(parts[3]), kind)] = verdict
+            key = (parts[1], int(parts[2]), parse_pc(parts[3]), kind)
+            if key in claims:
+                raise SystemExit(f"{path}:{number}: duplicate claim at {key}")
+            claims[key] = verdict
     return claims, flags, uncheckable
+
+
+def dump_recording(rec: Recording, claims: dict) -> str:
+    """Lossless allocation/observation/claim join, including unobserved and implicit sites."""
+    remaining = {}
+    for (phash, index, pc, kind), verdict in claims.items():
+        remaining.setdefault((phash, index), {})[(pc, kind)] = verdict
+    rows = []
+    for phash, program in sorted(rec.programs.items()):
+        rows.append(f"program {phash}")
+        for index, fn in sorted(program.functions.items()):
+            rows.append(f"fn {index} {fn.name}")
+            claimed = remaining.pop((phash, index), {})
+            allocs = fn.allocs
+            for pc, kind in sorted(allocs | fn.sites.keys() | claimed.keys()):
+                site = fn.sites.get((pc, kind))
+                tag = "alloc" if (pc, kind) in allocs else "site" if site else "claim"
+                observation = "unobserved"
+                if site:
+                    routes = ",".join(f"{k}:{n}" for k, n in sorted(site.routes.items())) or "-"
+                    observation = (f"{site.made} {site.confined} {site.escaped} "
+                                   f"{site.unresolved} {site.unchecked} {routes}")
+                coordinate = "prologue" if pc == PROLOGUE else str(pc)
+                verdict = claimed.get((pc, kind), "unclaimed")
+                rows.append(f"{tag} {coordinate} {kind} {observation} {verdict}")
+    # Claims outside the recording must also change the snapshot.
+    for (phash, index), claimed in sorted(remaining.items()):
+        for (pc, kind), verdict in sorted(claimed.items()):
+            rows.append(f"unrecorded {phash} {index} {pc} {kind} {verdict}")
+    return "\n".join(rows) + "\n"
 
 
 def main() -> int:
@@ -324,6 +373,7 @@ def main() -> int:
     ap.add_argument("--recording", required=True)
     ap.add_argument("--infer", choices=sorted(STUBS), help="use a built-in stub inference")
     ap.add_argument("--claims", help="a claims file from a real inference")
+    ap.add_argument("--dump", metavar="FILE", help="write a deterministic allocation/observation/claim join")
     ap.add_argument("--name", default="", help="what to call this corpus in the report")
     ap.add_argument("--max-report", type=int, default=10, help="violations to name (0 = all)")
     for what in ("violations", "observed", "unobserved", "sound", "partial", "pending",
@@ -346,6 +396,9 @@ def main() -> int:
                     claims[(phash, index, pc, kind)] = stub(phash, index, pc, kind)
     else:
         claims, flags, uncheckable = read_claims(args.claims)
+    if args.dump:
+        with open(args.dump, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(dump_recording(rec, claims))
 
     observed = sum(len(fn.sites) for p in rec.programs.values() for fn in p.functions.values())
     counts = {k: 0 for k in ("unobserved", "violations", "sound", "partial", "pending",
