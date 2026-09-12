@@ -593,6 +593,8 @@ void dom_bindings::run_activation_behavior(context & cx, node_id target) {
 
 bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
     (void)type; // the event carries it; initEvent can have changed it since
+    if (cx_ == nullptr) { return false; }
+    const script::context::rooted keep{*cx_, event}; // see fire_at
     return dispatch_to(event, target ? path_step{target, listen_on::node}
                                      : path_step{node_id{}, listen_on::document});
 }
@@ -899,6 +901,15 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
 }
 
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
+    // THE EVENT IS ROOTED FOR THE CALL. An event the ENGINE made - a sheet's
+    // load from browser::tick, an image's from the registry - lives only in
+    // a C++ local while its listeners run, and a listener that allocates
+    // enough runs the collector; the object was freed under the second
+    // listener and read back as whatever took its slot (paint_timing saw an
+    // element where `bubbles` should have been). A page-made event is held
+    // by its register too, so this costs it nothing.
+    if (cx_ == nullptr) { return; }
+    const script::context::rooted keep{*cx_, event};
     // A LISTENER THAT THREW IS REPORTED TO THE PAGE, and not only to the
     // embedder.
     //
