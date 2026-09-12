@@ -360,6 +360,55 @@ void install_string(context & cx) {
     // names a RangeError, and that half of the method IS answerable without
     // Unicode tables - it is what tells a page that asked for "NFKC1" it made a
     // typo, rather than handing the string back and letting the typo live.
+    // 22.1.3.10 isWellFormed and 22.1.3.33 toWellFormed. A JS string here is
+    // UTF-8 bytes, and a LONE SURROGATE - `"\uD83D"` on its own - is stored
+    // as the three-byte WTF-8 form (ED A0..BF xx) the literal decoder emits.
+    // That form is exactly what these two look for: an unpaired one is
+    // ill-formed, and a lead immediately followed by a trail is the pair the
+    // concatenation `lead + trail` made, which toWellFormed joins into the one
+    // four-byte code point it should always have been.
+    const auto wtf8_surrogate = [](const std::string & s, std::size_t at) -> std::uint32_t {
+        if (at + 3 > s.size() || static_cast<unsigned char>(s[at]) != 0xEDu) { return 0; }
+        const auto b1 = static_cast<unsigned char>(s[at + 1]);
+        const auto b2 = static_cast<unsigned char>(s[at + 2]);
+        if ((b1 & 0xE0u) != 0xA0u || (b2 & 0xC0u) != 0x80u) { return 0; }
+        return 0xD000u | (static_cast<std::uint32_t>(b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
+    };
+    text("isWellFormed", 0,
+         [wtf8_surrogate](context &, const std::string & s, std::span<value>) -> value {
+             for (std::size_t i = 0; i < s.size(); ++i) {
+                 const std::uint32_t cu = wtf8_surrogate(s, i);
+                 if (cu == 0) { continue; }
+                 const std::uint32_t next = cu <= 0xDBFFu ? wtf8_surrogate(s, i + 3) : 0;
+                 if (cu > 0xDBFFu || next < 0xDC00u) { return value::boolean(false); }
+                 i += 5;
+             }
+             return value::boolean(true);
+         });
+    text("toWellFormed", 0,
+         [wtf8_surrogate](context & c, const std::string & s, std::span<value>) -> value {
+             std::string out;
+             for (std::size_t i = 0; i < s.size(); ++i) {
+                 const std::uint32_t cu = wtf8_surrogate(s, i);
+                 if (cu == 0) {
+                     out += s[i];
+                     continue;
+                 }
+                 const std::uint32_t next = cu <= 0xDBFFu ? wtf8_surrogate(s, i + 3) : 0;
+                 if (cu > 0xDBFFu || next < 0xDC00u) {
+                     out += "\xEF\xBF\xBD"; // U+FFFD
+                     i += 2;
+                     continue;
+                 }
+                 const std::uint32_t cp = 0x10000u + ((cu - 0xD800u) << 10) + (next - 0xDC00u);
+                 out += static_cast<char>(0xF0u | (cp >> 18));
+                 out += static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu));
+                 out += static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
+                 out += static_cast<char>(0x80u | (cp & 0x3Fu));
+                 i += 5;
+             }
+             return c.string(out);
+         });
     text("normalize", 0, [](context & c, const std::string & s, std::span<value> a) -> value {
         if (has_index(a, 0) && !stringable_arg(c, a[0])) { return value::undefined(); }
         const std::string form = has_index(a, 0) ? c.to_string(a[0]) : std::string{"NFC"};
