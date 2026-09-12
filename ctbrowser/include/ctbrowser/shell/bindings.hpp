@@ -1976,6 +1976,12 @@ public:
 
 public:
     void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
+
+private:
+    // DOM 5, Range - bindings/document/range.cpp. `Range` the global and its
+    // prototype, and the document's `createRange`.
+    void install_range(context & cx);
+    [[nodiscard]] value create_range(context & cx);
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

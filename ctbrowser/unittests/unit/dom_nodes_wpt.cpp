@@ -164,7 +164,33 @@ void test_outer_html_both_ways() {
 
 } // namespace
 
+// DOM 5's Range, the shape MutationObserver-childList.html uses it in:
+// boundaries, toString, deleteContents across a text edge, extractContents
+// into a fragment, insertNode splitting a text node, surroundContents.
+void test_a_range_cuts_moves_and_wraps() {
+    is("(function () { var d = document.getElementById('outer');"
+       " d.innerHTML = '<b>ab</b>cd<i>ef</i>'; var r = document.createRange();"
+       " r.setStart(d.firstChild.firstChild, 1); r.setEnd(d.childNodes[1], 1);"
+       " var s = r.toString(); r.deleteContents();"
+       " return s + '|' + d.innerHTML + '|' + r.collapsed + '|' + (r.startContainer === d)"
+       " + r.startOffset; })()",
+       "bc|<b>a</b>d<i>ef</i>|true|true1");
+    is("(function () { var d = document.getElementById('outer');"
+       " d.innerHTML = '<b>ab</b><u>cd</u><i>ef</i>'; var r = new Range();"
+       " r.setStartBefore(d.childNodes[1]); r.setEndAfter(d.childNodes[1]);"
+       " var f = r.extractContents(); return f.childNodes.length + f.firstChild.tagName + '|'"
+       " + d.innerHTML + '|' + r.commonAncestorContainer.id; })()",
+       "1U|<b>ab</b><i>ef</i>|outer");
+    is("(function () { var d = document.getElementById('outer'); d.textContent = 'abcd';"
+       " var r = document.createRange(); r.setStart(d.firstChild, 2); r.collapse(true);"
+       " r.insertNode(document.createElement('br')); var out = d.innerHTML + '|' + r.endOffset;"
+       " r.selectNodeContents(d); r.surroundContents(document.createElement('s'));"
+       " return out + '|' + d.innerHTML; })()",
+       "ab<br>cd|2|<s>ab<br>cd</s>");
+}
+
 int main() {
+    test_a_range_cuts_moves_and_wraps();
     test_the_document_element_has_a_parent_and_siblings();
     test_a_write_that_changes_nothing_still_queues_a_record();
     test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed();

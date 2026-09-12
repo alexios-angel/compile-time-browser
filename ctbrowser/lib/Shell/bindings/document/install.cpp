@@ -312,6 +312,7 @@ void dom_bindings::install_document(context & cx) {
     // NOTHING HERE SETS THE INITIALISED FLAG. Leaving it clear is the point:
     // an event `createEvent` made and `initEvent` has not touched must not be
     // dispatchable.
+    method("createRange", [this](context & c, std::span<value>) { return create_range(c); });
     method("createEvent", [this](context & c, std::span<value> args) {
         const std::string want = ascii_lower_copy(arg_string(c, args, 0));
         struct alias {
