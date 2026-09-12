@@ -1896,6 +1896,12 @@ private:
     [[nodiscard]] std::string outer_html(node_id target) const;
     void set_outer_html(context & cx, node_id target, std::string_view markup);
     [[nodiscard]] std::string serialize_html(node_id target, bool outer) const;
+    // "Validate and extract" for an ELEMENT name, DOM 4.9, shared by
+    // createElementNS and createDocument: false having thrown the
+    // InvalidCharacterError or NamespaceError the pair earns.
+    [[nodiscard]] bool validate_and_extract_element(context & cx, std::string_view where,
+                                                    const std::string & ns,
+                                                    const std::string & qualified);
 };
 
 } // namespace ctbrowser::shell

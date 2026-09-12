@@ -70,40 +70,10 @@ void dom_bindings::install_document(context & cx) {
             given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
         const std::string qualified =
             args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
-        const qualified_name split = split_qualified(qualified);
-        // VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the
-        // shape of the name is decided BEFORE the namespace is looked at, so
-        // `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and
-        // not the NamespaceError its namespace would otherwise earn. Both
-        // orderings throw; only one of them throws what the suite asserts.
-        //
-        // A prefix is checked for being writable and non-empty and NOTHING
-        // ELSE - `createElementNS(ns, "0:a")` is legal and `"a:0"` is not,
-        // because it is the LOCAL name that has to be a name and the prefix is
-        // only ever a label in front of it.
-        const bool prefixed = split.has_colon;
-        const bool prefix_writable =
-            !split.prefix.empty() &&
-            split.prefix.find_first_of(element_name_breaks) == std::string_view::npos;
-        if ((prefixed && !prefix_writable) || !is_valid_element_local_name(split.local)) {
-            throw_dom_exception(c, "InvalidCharacterError",
-                                "createElementNS: '" + qualified + "' is not a qualified name");
+        if (!validate_and_extract_element(c, "createElementNS", ns, qualified)) {
             return value::undefined();
         }
-        const auto fail = [this, &c](const std::string & why) {
-            throw_dom_exception(c, "NamespaceError", "createElementNS: " + why);
-            return value::undefined();
-        };
-        if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
-        if (split.prefix == "xml" && ns != xml_namespace) {
-            return fail("the xml prefix belongs to the XML namespace");
-        }
-        if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
-            return fail("xmlns belongs to the XMLNS namespace");
-        }
-        if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
-            return fail("the XMLNS namespace is only for xmlns");
-        }
+        const bool prefixed = split_qualified(qualified).has_colon;
         const node_ns kind = ns == html_namespace  ? node_ns::html
                              : ns == svg_namespace ? node_ns::svg
                                                    : node_ns::other;
@@ -783,22 +753,33 @@ void dom_bindings::install_document(context & cx) {
                     const std::string ns = given.is_null() || given.is_undefined()
                                                ? std::string{}
                                                : c.to_string(given);
+                    // [LegacyNullToEmptyString]: null is "", and undefined is
+                    // the eight letters - `createDocument(null, undefined)` has
+                    // an <undefined> document element.
                     const value name = arg(args, 1);
                     const std::string qualified =
-                        name.is_null() || name.is_undefined() ? std::string{} : c.to_string(name);
-                    // THE DOCTYPE, DOM 4.5.1 step 5. A DocumentType
-                    // node or nothing - WebIDL refuses anything else
-                    // with a TypeError before the document is made.
+                        name.is_null() ? std::string{} : c.to_string(name);
+                    // THE DOCTYPE, DOM 4.5.1 step 5. A DocumentType node of ANY
+                    // document in the realm or nothing - WebIDL refuses anything
+                    // else with a TypeError before the document is made.
                     const value given_doctype = arg(args, 2);
+                    dom_bindings * doctype_owner = nullptr;
                     node_id doctype;
                     if (!given_doctype.is_nullish()) {
-                        doctype = handle_of(given_doctype);
-                        if (!doctype || doc_->read().kind(doctype).value_or(node_kind::comment) !=
-                                            node_kind::document_type) {
+                        doctype_owner = owner_of(given_doctype);
+                        doctype =
+                            doctype_owner ? doctype_owner->handle_of(given_doctype) : node_id{};
+                        if (!doctype || doctype_owner->doc_->read().kind(doctype).value_or(
+                                            node_kind::comment) != node_kind::document_type) {
                             c.throw_error("TypeError", "createDocument: the third argument "
                                                        "is not a DocumentType");
                             return value::undefined();
                         }
+                    }
+                    // Step 2: "validate and extract", before anything is made.
+                    if (!qualified.empty() &&
+                        !validate_and_extract_element(c, "createDocument", ns, qualified)) {
+                        return value::undefined();
                     }
                     const value made = make_xml_document(c, ns, qualified);
                     if (!doctype || secondary_documents_.empty()) { return made; }
@@ -916,6 +897,46 @@ void dom_bindings::install_document(context & cx) {
 // once because the node never changes; these cannot - a title is rewritten by
 // script and the focused element changes on every click - so they are pushed
 // again whenever the wrappers are, exactly as location.href is.
+// VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the shape
+// of the name is decided BEFORE the namespace is looked at, so
+// `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and not the
+// NamespaceError its namespace would otherwise earn. Both orderings throw;
+// only one of them throws what the suite asserts.
+//
+// A prefix is checked for being writable and non-empty and NOTHING ELSE -
+// `createElementNS(ns, "0:a")` is legal and `"a:0"` is not, because it is the
+// LOCAL name that has to be a name and the prefix is only ever a label in
+// front of it.
+bool dom_bindings::validate_and_extract_element(context & cx, std::string_view where,
+                                                const std::string & ns,
+                                                const std::string & qualified) {
+    const qualified_name split = split_qualified(qualified);
+    const bool prefixed = split.has_colon;
+    const bool prefix_writable =
+        !split.prefix.empty() &&
+        split.prefix.find_first_of(element_name_breaks) == std::string_view::npos;
+    if ((prefixed && !prefix_writable) || !is_valid_element_local_name(split.local)) {
+        throw_dom_exception(cx, "InvalidCharacterError",
+                            std::string{where} + ": '" + qualified + "' is not a qualified name");
+        return false;
+    }
+    const auto fail = [&](const std::string & why) {
+        throw_dom_exception(cx, "NamespaceError", std::string{where} + ": " + why);
+        return false;
+    };
+    if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
+    if (split.prefix == "xml" && ns != xml_namespace) {
+        return fail("the xml prefix belongs to the XML namespace");
+    }
+    if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
+        return fail("xmlns belongs to the XMLNS namespace");
+    }
+    if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
+        return fail("the XMLNS namespace is only for xmlns");
+    }
+    return true;
+}
+
 void dom_bindings::refresh_document() {
     auto * doc = document_object();
     if (doc == nullptr || cx_ == nullptr) { return; }
