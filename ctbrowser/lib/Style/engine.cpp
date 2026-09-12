@@ -240,6 +240,13 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     enter_level(txn, top, 0);
     scope_ = scope ? scope : root;
 
+    // ONLY THE PATH TO THE ROOT IS WALKED ABOVE IT. Every element on the way down
+    // is visited - a sibling combinator needs the earlier siblings at each level -
+    // but a subtree that does not contain the root holds nothing the query can
+    // answer with, and descending into it made `el.querySelectorAll` cost the
+    // whole document. `:has()` runs one of these per subject, and paid that
+    // per element.
+    const auto toward_root = [&](node_id node) { return root && txn.is_ancestor_of(node, root); };
     // Returns false to unwind the whole walk, which is how first_only stops.
     const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
@@ -248,6 +255,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
             // still BE the root - a ShadowRoot is a fragment - and its children
             // are the descendants a subtree search collects.
             const bool below = collect || node == root;
+            if (!below && !toward_root(node)) { return true; }
             for (const node_id child : txn.children(node)) {
                 if (!self(self, child, depth, below)) { return false; }
             }
@@ -273,7 +281,10 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
                 break;
             }
         }
-        if (keep_going) {
+        // A subtree search collects from BELOW the root, never the root itself:
+        // `element.querySelectorAll(s)` is over descendants.
+        const bool below = collect || node == root;
+        if (keep_going && (below || toward_root(node))) {
             // Read back from levels_ rather than from `my_facts`: matches() may have
             // grown the vector and moved it, exactly as resolve_subtree warns.
             const visited_element & me = levels_[depth][path_[depth]];
@@ -282,9 +293,6 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
             const boost::container::small_vector<atom, 4> my_classes = me.facts.classes;
             ancestors.push(my_tag, my_id, my_classes);
             enter_level(txn, node, depth + 1);
-            // A subtree search collects from BELOW the root, never the root itself:
-            // `element.querySelectorAll(s)` is over descendants.
-            const bool below = collect || node == root;
             for (const node_id child : txn.children(node)) {
                 if (!self(self, child, depth + 1, below)) {
                     keep_going = false;
