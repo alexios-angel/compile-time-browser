@@ -362,7 +362,15 @@ void dom_bindings::install_document(context & cx) {
     // the only thing it refuses is text that is not a selector at all. An
     // UNSUPPORTED selector - `:has()`, `ns|div` - still returns null, which is a
     // missing answer rather than a wrong one.
-    method("querySelector", [this](context & c, std::span<value> args) {
+    // ONE REQUIRED ARGUMENT for both: `document.querySelector()` is a
+    // TypeError, not a search for "undefined".
+    const auto needs_selector = [](context & c, std::span<value> args, const char * who) {
+        if (!args.empty()) { return true; }
+        c.throw_error("TypeError", std::string{who} + ": 1 argument required, but only 0 present");
+        return false;
+    };
+    method("querySelector", [this, needs_selector](context & c, std::span<value> args) {
+        if (!needs_selector(c, args, "querySelector")) { return value::undefined(); }
         bool invalid = false;
         const std::string selector = arg_string(c, args, 0);
         const std::vector<node_id> found = query(selector, node_id{}, &invalid, true);
@@ -372,7 +380,8 @@ void dom_bindings::install_document(context & cx) {
         }
         return found.empty() ? value::null() : wrap(c, found.front());
     });
-    method("querySelectorAll", [this](context & c, std::span<value> args) {
+    method("querySelectorAll", [this, needs_selector](context & c, std::span<value> args) {
+        if (!needs_selector(c, args, "querySelectorAll")) { return value::undefined(); }
         bool invalid = false;
         const std::string selector = arg_string(c, args, 0);
         const std::vector<node_id> found = query(selector, node_id{}, &invalid);
