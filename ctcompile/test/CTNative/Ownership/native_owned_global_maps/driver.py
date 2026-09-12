@@ -348,19 +348,42 @@ def main():
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
-    # Primitive ownership does not make a nullable result a definite observation.
-    # The historical Boolean result is executed above with its actual Bool type.
+    # Preserve the historical source and observe its actual Undefined tag.
     for name, body in {
         "nullable_result": "state.set('x', 1); return state.get('missing');",
     }.items():
-        js, rejected, _ = boundary.prepare(args, name, SOURCE.replace("return state.size;", body))
+        js, rejected, count = boundary.prepare(args, name, SOURCE.replace("return state.size;", body))
+        expected = "trace=undefined\n"
+        reference_result = host.run([str(reference), str(js)])
+        if (count != 4 or host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected
+                or reference_result.stdout != expected
+                or "(0 number, 0 boolean, 0 string, 0 null, 1 undefined)" not in reference_result.stderr):
+            raise RuntimeError(f"{name}: lost the exact nullable source observation")
         fresh = contract(args, rejected, name)
-        result = owned.lower(args, rejected, name, fresh, cleanup=False)
-        text = methods.census(result, 4, name)
-        if ("ctnative.host_owner_proved = true" not in text
-                or re.search(r"\bemitc\.func @main\(", text)
-                or not boundary.REFUSAL.search(text)):
-            raise RuntimeError(f"{name}: ownership supplied an unsupported native carrier\n{text}")
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            label = name + "-" + mode
+            result = owned.lower(args, rejected, label, fresh, options=options)
+            text = methods.census(result, count, label, admitted=count)
+            if "ctnative.host_owner_proved = true" not in text:
+                raise RuntimeError(f"{label}: nullable output lost its independent owner proof")
+            owned.standalone(args, result, label, expected, compilers, nm)
+            expected_cpp = comparable_provenance(
+                host.run([args.translate, "--mlir-to-cpp", str(result)]).stdout, rejected)
+            for payload in ("bool", "string", "nullable_string"):
+                forged_name = label + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_map_presence(rejected.read_text(), payload))
+                stale = methods.refused(args, forged, forged_name + "-stale", fresh,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                forged_config = contract(args, forged, forged_name)
+                checked = owned.lower(args, forged, forged_name, forged_config, options=options)
+                forged_text = methods.census(checked, count, forged_name, admitted=count)
+                if ("ctnative.host_owner_proved = true" not in forged_text
+                        or comparable_provenance(
+                            host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout,
+                            forged) != expected_cpp):
+                    raise RuntimeError(f"{forged_name}: forged result facts changed nullable output")
 
     shared_refusals = {
         "shared_uncalled": SHARED.replace("host.slot.set(); ", ""),
@@ -776,7 +799,7 @@ def main():
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources()) - 1} source refusals and contract/rerun/budget controls pass; "
-          f"one nullable carrier refusal and {len(shared_refusals)} shared-method refusals; "
+          f"one exact native Undefined observation and {len(shared_refusals)} shared-method refusals; "
           "the historical five-call Boolean result retains its bool() callable and exact Boolean output; "
           f"{len(parameter_refusals())} argument refusals preserve current call operands; "
           "typed parameterized setters 5/5 with changing source and saved-callable keys; "

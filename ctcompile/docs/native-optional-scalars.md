@@ -16,10 +16,12 @@ undefined. Array indexing retains the interpreter's numeric-key rule: null,
 undefined and boolean keys do not become numeric indices.
 
 Globals use the same tagged storage so a read before the first store remains
-undefined. The standalone output convention still requires definite numeric
-stores. Its `global_number` check rejects an unwritten global instead of
-mistaking it for a computed NaN. The differential harness's numeric mutation
-preserves this storage contract.
+undefined. The standalone output convention preserves exact scalar and nullable
+String tags after joining every source store. Definite Number, Boolean and String
+observations still check their tags; `global_number` rejects an unwritten definite
+output instead of mistaking it for a computed NaN. Unsupported String/scalar unions
+and object observations remain refused. `global-undefined.mlir` and its executable
+regression cover these boundaries.
 
 `ctcompile/test/CTNative/Fixtures/Scalars/optional-scalars.js` has 29 functions and 52 numeric
 observations. All 52 agree with the interpreter in a standalone native binary

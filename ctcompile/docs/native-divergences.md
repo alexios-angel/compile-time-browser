@@ -515,8 +515,8 @@ probe.
 
 ## ND-7 — optional scalar tags distinguish absence from NaN
 
-**Status:** internal scalar observations are exact; optional global output
-remains refused. The earlier NaN/false representation was replaced by the
+**Status:** internal and global scalar observations preserve their exact tags.
+The earlier NaN/false representation was replaced by the
 [tagged optional scalar carrier](native-optional-scalars.md).
 
 A tag distinguishes undefined, null, numbers and booleans. A present NaN
@@ -535,19 +535,18 @@ Calls, returns, fields, shared cells and control-flow edges preserve these
 values. Equality and `typeof` now lower. `void` and bitwise operations still
 have their own admission boundaries.
 
-The standalone numeric output convention remains narrower than the internal
-carrier. `admission::printable()` refuses a store that *"may be null or
-undefined; native global observations require a definite number"*. Globals
-start with the undefined tag, and the output boundary checks that a generated
-store produced a number. A missing store therefore cannot pass as a computed
-NaN. Dominance narrowing for fields and shared cells still proves definite
-numeric stores where the program permits it; general global narrowing needs
-closed-world mutation information.
+Global storage joins every source store, including writes in callees. A closed
+scalar or nullable String carrier preserves its actual output tag. Definite
+Number, Boolean and String observations retain their tag checks, so an unwritten
+definite numeric output cannot imitate a computed NaN. Object output and mixed
+String/scalar stores still refuse; output admission does not infer Map membership
+or narrow a return type.
 
 `ctcompile/test/CTNative/Fixtures/Scalars/optional-scalars.js` checks all these observations, including
 Map/array misses versus stored NaNs and a retained Data-like table whose
-`get` returns null on a miss. `global-undefined.mlir` retains the refused
-output cases. The older arithmetic, ordering and truthiness witnesses in
+`get` returns null on a miss. `global-undefined.mlir` and its execution driver
+check exact optional output, saved early reads and unsupported store unions.
+The older arithmetic, ordering and truthiness witnesses in
 `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` remain differential regressions.
 
 ---

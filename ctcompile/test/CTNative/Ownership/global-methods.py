@@ -198,6 +198,10 @@ def standalone(args, output, name, expected, compilers, nm, *, result_type="js_n
                 or "ctnative::invoke_callable(" not in cpp
                 or not re.search(r"ctnative::nullable_string\s+g_trace\s*;", cpp)):
             raise RuntimeError(f"{name}/{mode}: missing owning String call/observation\n{cpp}")
+        if result_type == "ctnative::nullable_scalar" and (
+                "ctnative::print_scalar(" not in cpp or "ctnative::invoke_callable(" not in cpp
+                or not re.search(r"ctnative::nullable_scalar\s+g_trace\s*;", cpp)):
+            raise RuntimeError(f"{name}/{mode}: missing tagged nullable call/observation\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -379,17 +383,34 @@ def main():
     if not rollback or completed is None:
         raise RuntimeError("preparation budget control did not exercise rollback and completion")
 
-    # An owner and callable identity cannot authorize an unsupported field
-    # result at the definite Number/Boolean/String observation boundary. Refusal must
-    # close over the entire prepared component, including the retained getter.
+    # The original nullish getters now keep their exact tag through the owning
+    # callable and global observation, under both optimization policies.
     for name, literal in (("null", "null"), ("undefined", "void 0")):
-        _, typed, count = boundary.prepare(args, f"typed-{name}",
-                                          SOURCE.replace("return 42;", f"return {literal};"))
+        js, typed, count = boundary.prepare(args, f"typed-{name}",
+                                           SOURCE.replace("return 42;", f"return {literal};"))
+        if count != 3:
+            raise RuntimeError(f"typed-{name}: changed source denominator")
+        expected = f"trace={name}\n"
+        node_driver = BOOLEAN_NODE.replace("typeof trace !== 'boolean'", f"trace !== {literal}")
+        if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
+            raise RuntimeError(f"typed-{name}: Node source oracle mismatch")
+        interpreted = host.run([str(reference), str(js)])
+        tags = ", ".join(f"{int(tag == name)} {tag}" for tag in
+                         ("number", "boolean", "string", "null", "undefined"))
+        if interpreted.stdout != expected or f"1 globals printed ({tags})" not in interpreted.stderr:
+            raise RuntimeError(f"typed-{name}: interpreter lost the exact nullish tag")
         fresh = owned.contract(args, typed, f"typed-{name}")
-        rejected = owned.lower(args, typed, f"typed-{name}", fresh, cleanup=False)
-        text = census(rejected, count, f"typed-{name}", admitted=0)
-        if "ctnative.host_owner_proved = true" not in text:
-            raise RuntimeError(f"typed-{name}: did not reach native type/component admission")
+        prepared_text, manifest_text = typed.read_text(), fresh.read_text()
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            label = f"typed-{name}-{mode}"
+            native = owned.lower(args, typed, label, fresh, options=options)
+            text = census(native, count, label, admitted=3)
+            if "ctnative.host_owner_proved = true" not in text:
+                raise RuntimeError(f"{label}: admitted without a live owner report\n{text}")
+            standalone(args, native, label, expected, compilers, nm,
+                       result_type="ctnative::nullable_scalar")
+        if typed.read_text() != prepared_text or fresh.read_text() != manifest_text:
+            raise RuntimeError(f"typed-{name}: preparation rewrote the supplied IR or manifest")
 
     # Proof-preserving internal preparation must validate the input fingerprint
     # before it rewrites anything. A changed literal still has a valid owner
@@ -447,9 +468,9 @@ def main():
             if "fingerprint mismatch" in first.read_text():
                 raise RuntimeError("fresh forgery did not reach live source-graph reanalysis")
             refused(args, first, "forged-fresh-rerun", checked)
-    print(f"native owned global methods: {len(POSITIVES)} complete 3/3 programs; "
+    print(f"native owned global methods: {len(POSITIVES) + 2} complete 3/3 programs; "
           "Node/interpreter and explicit/deduced GCC/Clang agree; post-entry owner/table/callable "
-          "lifetime sanitizers; no-manifest 1/3; "
+          "lifetime sanitizers; null/undefined outputs agree under both policies; no-manifest 1/3; "
           f"{len(sources)} source refusals and stale/forged/rerun/budget controls pass; "
           f"preparation rolls back at {rollback}, completes at {completed}")
 
