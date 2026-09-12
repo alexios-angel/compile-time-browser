@@ -359,9 +359,57 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
 // ONE WRITE THROUGH THE DECLARATION BLOCK, the same functions `el.style`
 // writes through: an invalid value is a no-op, an empty one removes, and a
 // shorthand lands as its longhands. Answers whether the block changed.
+// THE TWO `@page` DESCRIPTORS WITH A GRAMMAR OF THEIR OWN, CSS Paged Media 3
+// §7.1-7.2: `size` is `<length>{1,2} | auto | [ <page-size> || [ portrait |
+// landscape ] ]` and `page-orientation` is three keywords. They are not
+// properties, so the property table does not know them and a value is
+// checked here: the canonical form (keywords lowercased) or nothing.
+[[nodiscard]] std::string page_descriptor_value(std::string_view name, std::string_view text) {
+    if (name == "page-orientation") {
+        const std::string word = ascii_lower_copy(trim(text, html_whitespace));
+        return word == "upright" || word == "rotate-left" || word == "rotate-right" ? word
+                                                                                    : std::string{};
+    }
+    if (name != "size") { return std::string{text}; }
+    static constexpr std::string_view sizes[] = {"a3",     "a4",     "a5",     "b4",    "b5",
+                                                 "jis-b4", "jis-b5", "letter", "legal", "ledger"};
+    const std::vector<std::string_view> parts = split_top_level(text, " \t\n\r\f");
+    if (parts.empty() || parts.size() > 2) { return {}; }
+    std::string out;
+    int lengths = 0, keywords = 0, orientations = 0;
+    for (const std::string_view part : parts) {
+        const std::string word = ascii_lower_copy(part);
+        if (word == "portrait" || word == "landscape") {
+            ++orientations;
+        } else if (word == "auto" ||
+                   std::find(std::begin(sizes), std::end(sizes), word) != std::end(sizes)) {
+            ++keywords;
+        } else {
+            const style::css::value_check checked =
+                check_declaration("outline-offset", part, false);
+            if (!checked.valid) { return {}; }
+            ++lengths;
+            out += out.empty() ? "" : " ";
+            out += checked.serialized;
+            continue;
+        }
+        out += out.empty() ? "" : " ";
+        out += word;
+    }
+    const bool ok = (lengths == static_cast<int>(parts.size())) ||
+                    (lengths == 0 && keywords <= 1 && orientations <= 1);
+    return ok ? out : std::string{};
+}
+
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
                        std::string_view text, bool important) {
     if (!declaration_allowed(rule, css_name)) { return false; }
+    if (rule.type == page_rule && (css_name == "size" || css_name == "page-orientation") &&
+        !trim(text, html_whitespace).empty()) {
+        const std::string canonical = page_descriptor_value(css_name, text);
+        if (canonical.empty()) { return false; }
+        return style::css::set_declaration(rule.declarations, css_name, canonical, important);
+    }
     return style::css::set_declaration(rule.declarations, css_name, text, important);
 }
 
@@ -376,6 +424,12 @@ void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_v
                                        name);
         },
         &rule);
+    if (rule.type != page_rule) { return; }
+    std::erase_if(rule.declarations, [](style::css::declaration & d) {
+        if (d.name != "size" && d.name != "page-orientation") { return false; }
+        d.value = page_descriptor_value(d.name, d.value);
+        return d.value.empty();
+    });
 }
 
 void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
