@@ -53,11 +53,12 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     //    NotFoundError."
     if (!ref_arg.is_nullish()) {
         const node_id before = handle_of(ref_arg);
-        if (!before) {
+        // Another document's node is a Node that is no child of this parent.
+        if (!before && owner_of(ref_arg) == nullptr && !is_a_document(ref_arg)) {
             cx.throw_error("TypeError", "the reference node is not a Node");
             return false;
         }
-        if (txn.parent(before) != parent) {
+        if (!before || txn.parent(before) != parent) {
             throw_dom_exception(cx, "NotFoundError",
                                 "the reference node is not a child of the parent");
             return false;

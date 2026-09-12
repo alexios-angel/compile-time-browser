@@ -620,11 +620,14 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         out = node_id{};
         if (ref.is_nullish()) { return true; }
         out = handle_of(ref);
-        if (!out) {
+        // ANOTHER DOCUMENT'S NODE is a Node that is not a child of this one -
+        // a NotFoundError, not a TypeError - and the specification checks it
+        // (step 3) before it looks at what is being inserted.
+        if (!out && owner_of(ref) == nullptr && !is_a_document(ref)) {
             c.throw_error("TypeError", "the reference node is not a Node");
             return false;
         }
-        if (!is_document_child(doc_->read(), out)) {
+        if (!out || !is_document_child(doc_->read(), out)) {
             throw_dom_exception(c, "NotFoundError",
                                 "the reference node is not a child of the document");
             return false;
