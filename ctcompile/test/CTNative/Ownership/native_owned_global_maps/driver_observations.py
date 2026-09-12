@@ -1,3 +1,7 @@
+import hashlib
+import os
+import subprocess
+
 from .driver_common import (
     LEAF_ABSENCE_LIFETIMES,
     LEAF_CLEAR_LIFETIMES,
@@ -7,6 +11,7 @@ from .driver_common import (
     boundary,
     check_call_preservation,
     check_prepared_result_calls,
+    comparable_provenance,
     constant_global_cases,
     contract,
     forge_map_presence,
@@ -54,6 +59,7 @@ from .driver_object_maps import (
     check_leaf_readback_observations,
     check_primitive_absence_observations,
 )
+from .harness_objects import instrument_leaf_objects
 
 def check_numeric_entry_observations(args, node, reference):
     cases = {**numeric_entry_cases(), **scalar_global_cases(), **constant_global_cases()}
@@ -160,7 +166,144 @@ def check_leaf_clear_observations(args, node, reference):
                 raise RuntimeError(f"{name}: clear observer cannot distinguish {replacement}")
 
 
-def check_nullable_host_result_refusals(args, positives, node, reference, *, names=None):
+def nullable_foreign_observer(source):
+    return source + '''
+(function() {
+    const get = host.slot.get, set = host.slot.set, size = host.slot.size;
+    host = {};
+    let ok = size() === 2;
+    for (const key of [null, undefined, '', 'null', 'undefined']) {
+        if (set(key) !== undefined) { ok = false; }
+    }
+    ok = ok && size() === 6;
+    for (let i = 0; i < 128; ++i) {
+        const before = size(), key = 'caller-' + i;
+        const result = set(key);
+        if (result !== undefined || set(result) !== undefined || size() !== before + 1 ||
+            get(false) !== 'future' || get(true) !== null) { ok = false; }
+    }
+    trace = ok && size() === 134 ? 1 : 0;
+})();
+'''
+
+
+def nullable_foreign_lifetime_cpp(cpp):
+    return instrument_leaf_objects(cpp, allocations=0) + r'''
+int main() {
+    using Key = ctnative::nullable_string;
+    using Result = ctnative::nullable_scalar;
+    using Map = ctnative::map_storage<Key, std::variant<bool, Key>>;
+    const auto undefined = [](Result result) { return result.tag == Result::kind::undefined; };
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 4) { return 285; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    auto size = table->m_size;
+    static_assert(std::is_same_v<decltype(get), std::function<Key(bool)>>);
+    static_assert(std::is_same_v<decltype(set), std::function<Result(Key)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || size() != 2) { return 286; }
+    auto state = std::const_pointer_cast<Map>(
+        std::static_pointer_cast<const Map>(ctn_test_maps[0].lock()));
+    if (!state) { return 287; }
+    Key null_key;
+    null_key.tag = Key::kind::null_value;
+    for (const auto & key : {null_key, Key{}, Key{std::string{}},
+                            Key{std::string{"null"}}, Key{std::string{"undefined"}}}) {
+        if (!undefined(set(key))) { return 288; }
+        const auto stored = std::get<Key>(state->at(key));
+        if (stored.tag != key.tag || stored.value != key.value) { return 289; }
+    }
+    if (size() != 6) { return 290; }
+    for (int index = 0; index < 128; ++index) {
+        const auto before = size();
+        const auto allocations = ctn_test_maps.size();
+        const std::string text = "caller-" + std::to_string(index);
+        auto key = Key{text};
+        const auto saved = set(key);
+        key.value.assign(text.size(), 'x');
+        if (!undefined(saved) || !undefined(set(ctnative::to_nullable_string(saved))) ||
+            size() != before + 1 || std::get<Key>(state->at(Key{text})).value != text ||
+            get(false).value != "future" || get(true).tag != Key::kind::null_value ||
+            ctn_test_maps.size() != allocations + 2 || !ctn_test_maps.back().expired()) {
+            return 291;
+        }
+    }
+    if (size() != 134) { return 292; }
+    for (std::size_t index = 1; index < ctn_test_maps.size(); ++index) {
+        if (!ctn_test_maps[index].expired()) { return 293; }
+    }
+    const auto fresh = ctn_test_maps.size();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != fresh + 4 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[fresh].lock() ||
+        size() != 134 || g_host->slot->m_size() != 2) { return 294; }
+    state.reset(); get = {}; set = {};
+    if (ctn_test_maps[0].expired()) { return 295; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[fresh].expired()) { return 296; }
+    g_host.reset();
+    for (const auto & map : ctn_test_maps) {
+        if (!map.expired()) { return 297; }
+    }
+    return 0;
+}
+'''
+
+
+def check_nullable_foreign_empty(args, output, source, node, reference, compilers, nm):
+    name = 'nullable_nested_foreign'
+    if hashlib.sha256(source.encode()).hexdigest() != (
+            '85aa6fa6356df6be5742dca004da0da8b5db5de4c816f8371d510f89974dc759'):
+        raise RuntimeError('changed the historical foreign-empty source')
+    observed = args.work / f'{name}-future.js'
+    observed.write_text(nullable_foreign_observer(source))
+    result = host.run([str(reference), str(observed)])
+    if (host.run([node, '-e', boundary.NODE, str(observed)]).stdout != 'trace=1\n'
+            or result.stdout != 'trace=1\n'
+            or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
+        raise RuntimeError('foreign empty Map: future Undefined result observation changed')
+    for index, (old, replacement) in enumerate((
+            ('return new Map().get(key);', 'return state.get(key);'),
+            ('return new Map().get(key);', 'return null;'),
+            ('return new Map().get(key);', "return '';"),
+            ('state.set(key, key);', 'state.has(key);'))):
+        assert source.count(old) == 1
+        blind = args.work / f'{name}-future-blinded-{index}.js'
+        blind.write_text(nullable_foreign_observer(source.replace(old, replacement)))
+        if host.run([node, '-e', boundary.NODE, str(blind)]).stdout == 'trace=1\n':
+            raise RuntimeError(f'foreign empty Map: observer cannot distinguish {replacement}')
+    deduced = args.work / f'{name}.deduced.mlir'
+    host.run([args.opt, str(output), '--ctnative-print-deduced', '-o', str(deduced)])
+    for mode, ir in (('explicit', output), ('deduced', deduced)):
+        cpp = host.run([args.translate, '--mlir-to-cpp', str(ir)]).stdout
+        if owned.VM.search(cpp):
+            raise RuntimeError('foreign empty Map: generated a VM dependency')
+        generated = args.work / f'{name}.{mode}.cpp'
+        generated.write_text(cpp)
+        native = args.work / f'{name}.{mode}.lifetime.cpp'
+        native.write_text(nullable_foreign_lifetime_cpp(cpp))
+        for index, compiler in enumerate(compilers):
+            binary = native.with_suffix(f'.{index}').resolve()
+            host.run([compiler, *owned.FLAGS, str(native), '-o', str(binary)])
+            if (owned.VM.search(host.run([nm, '-C', str(binary)]).stdout)
+                    or host.run([str(binary)]).stdout != 'trace=2\n' * 2):
+                raise RuntimeError('foreign empty Map: standalone lifetime/result mismatch')
+        binary = native.with_suffix('.sanitized').resolve()
+        host.run([compilers[1], *owned.FLAGS, '-O1', '-g', '-fno-omit-frame-pointer',
+            '-fsanitize=address,undefined', '-fsanitize-address-use-after-scope',
+            str(native), '-o', str(binary)])
+        result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+            env={**os.environ, 'ASAN_OPTIONS': 'detect_stack_use_after_return=1:detect_leaks=1',
+                 'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1'})
+        if result.returncode or result.stdout != 'trace=2\n' * 2 or result.stderr:
+            raise RuntimeError(f'foreign empty Map: sanitized lifetime failed\n'
+                               f'{result.returncode}: {result.stdout}{result.stderr}')
+
+
+def check_nullable_host_result_refusals(args, positives, node, reference, compilers, nm, *, names=None):
     controls = {name: (*row[:4], "nullable_host_result_both" if name.endswith("deleted")
                       else "nullable_host_result", 16 if name.endswith(("deleted", "aliasing")) else 15)
                 for name, row in nullable_host_result_refusals().items()}
@@ -189,10 +332,20 @@ def check_nullable_host_result_refusals(args, positives, node, reference, *, nam
             raise RuntimeError(f"{name}: missing the discriminating repaired observation")
         fresh = contract(args, rejected, name)
         restored_config = contract(args, restored_ir, name + "-restored")
+        promoted = name == 'nullable_nested_foreign'
+        promoted_output = None
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             mode_name = name + "-" + mode
 
-            def reject_live(input_ir, label, current_config):
+            def check_live(input_ir, label, current_config):
+                if promoted:
+                    # Its distinct fresh Map is empty, independently of the
+                    # captured Map write. Keep the original Undefined result.
+                    checked = owned.lower(args, input_ir, label, current_config, options=options)
+                    text = methods.census(checked, 6, label, admitted=6)
+                    if 'ctnative.host_owner_proved = true' not in text:
+                        raise RuntimeError(f'{label}: fresh empty Map lost ownership')
+                    return checked
                 if name != "nullable_nested_sibling":
                     failed = methods.refused(args, input_ir, label, current_config,
                                              options=options, admitted=0)
@@ -209,7 +362,13 @@ def check_nullable_host_result_refusals(args, positives, node, reference, *, nam
                 check_prepared_result_calls(text, input_ir.read_text(), name)
                 return failed
 
-            failed = reject_live(rejected, mode_name, fresh)
+            failed = check_live(rejected, mode_name, fresh)
+            if promoted:
+                expected_cpp = comparable_provenance(
+                    host.run([args.translate, '--mlir-to-cpp', str(failed)]).stdout, rejected)
+                if promoted_output and failed.read_text() != promoted_output.read_text():
+                    raise RuntimeError('foreign empty Map: proof depends on optimization policy')
+                promoted_output = failed
             repaired = owned.lower(args, restored_ir, mode_name + "-restored", restored_config,
                                    options=options)
             repaired_text = methods.census(repaired, 6, mode_name + "-restored", admitted=6)
@@ -223,12 +382,25 @@ def check_nullable_host_result_refusals(args, positives, node, reference, *, nam
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
                 forged_config = contract(args, forged, forged_name)
-                failed = reject_live(forged, forged_name, forged_config)
+                failed = check_live(forged, forged_name, forged_config)
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent host payload reanalysis")
+                if promoted:
+                    if comparable_provenance(
+                            host.run([args.translate, '--mlir-to-cpp', str(failed)]).stdout,
+                            forged) != expected_cpp:
+                        raise RuntimeError(f'{forged_name}: forged tag changed empty Map output')
+                    rerun = owned.lower(args, failed, forged_name + '-rerun', forged_config,
+                                        options=options, cleanup=False)
+                    text = methods.census(rerun, 6, forged_name + '-rerun', admitted=6)
+                    if 'ctnative.host_owner_proved = false' not in text or 'fingerprint mismatch' not in text:
+                        raise RuntimeError(f'{forged_name}: emitted result reused source authority')
+                    continue
                 rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
                                         options=options, admitted=0)
                 check_call_preservation(failed.read_text(), rerun.read_text(), forged_name + "-rerun")
+        if promoted:
+            check_nullable_foreign_empty(args, promoted_output, source, node, reference, compilers, nm)
 
 
 def check_shortcircuit_nullable_refusal(args, node, reference):
