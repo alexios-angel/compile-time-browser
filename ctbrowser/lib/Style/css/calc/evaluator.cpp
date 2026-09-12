@@ -1045,8 +1045,6 @@ private:
 
 } // namespace
 
-namespace detail {
-
 // THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
 // the same every time the same KEY asks for it, so a page reflows to the same
 // random layout it first had. The key is what the sharing options say -
@@ -1091,6 +1089,8 @@ namespace detail {
     hash ^= hash >> 32;
     return static_cast<double>(hash >> 11) / 9007199254740992.0; // 2^53
 }
+
+namespace detail {
 
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,

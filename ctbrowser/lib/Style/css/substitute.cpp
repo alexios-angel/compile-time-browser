@@ -31,6 +31,7 @@ struct call {
     bool is_attr = false;
     bool is_if = false;
     bool is_ident = false;
+    bool is_random_item = false;
     // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
     // which is read only once that function has been substituted.
     bool name_is_call = false;
@@ -58,11 +59,14 @@ struct call {
         const bool is_if = !is_var && !is_attr && is_function_named(s, s.tokens[i], "if");
         const bool is_ident =
             !is_var && !is_attr && !is_if && is_function_named(s, s.tokens[i], "ident");
-        if (!is_var && !is_attr && !is_if && !is_ident) { continue; }
+        const bool is_random_item = !is_var && !is_attr && !is_if && !is_ident &&
+                                    is_function_named(s, s.tokens[i], "random-item");
+        if (!is_var && !is_attr && !is_if && !is_ident && !is_random_item) { continue; }
         out = call{};
         out.is_attr = is_attr;
         out.is_if = is_if;
         out.is_ident = is_ident;
+        out.is_random_item = is_random_item;
         out.open = i;
         int depth = 1;
         std::size_t j = i + 1;
@@ -91,7 +95,7 @@ struct call {
             }
             if (depth != 1) { continue; }
             if (out.comma_at == 0 && t.type == token_type::comma) { out.comma_at = j; }
-            if (is_attr || is_if || is_ident || out.comma_at != 0) { continue; }
+            if (is_attr || is_if || is_ident || is_random_item || out.comma_at != 0) { continue; }
             // `var( <custom-property-name> , <declaration-value>? )`: the name is
             // the FIRST token and nothing but whitespace may follow it before
             // the comma. `var(--foo type(*))` names no property and is invalid,
@@ -111,7 +115,7 @@ struct call {
         out.close = j < s.tokens.size() ? j : s.tokens.size() - 1;
         if (out.comma_at == 0) { out.comma_at = out.close; }
         // The argument list is read after substitution.
-        if (is_attr || is_if || is_ident) { return true; }
+        if (is_attr || is_if || is_ident || is_random_item) { return true; }
         if (!have_name || after_name) { return false; } // `var()` with no name is invalid
         return true;
     }
@@ -513,6 +517,8 @@ public:
             if (!conditional(s, found, depth, expansion)) { return false; }
         } else if (found.is_ident) {
             if (!identifier(s, found, depth, expansion)) { return false; }
+        } else if (found.is_random_item) {
+            if (!random_item(s, found, depth, expansion)) { return false; }
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
@@ -773,6 +779,73 @@ private:
         if (check.size() != 1 || check.front().first != token_type::ident) { return false; }
         expansion = std::move(made);
         return true;
+    }
+
+    // --- random-item(), CSS Values 5 §random-item -----------------------------
+    //
+    //   random-item( <random-key> , [ <declaration-value>? ]# )
+    //   <random-key> = [ auto | <dashed-ident> | fixed <number> ] || element-scoped
+    //
+    // One of the items, chosen by the same base `random()` uses - `fixed`
+    // picks by index outright, `auto` is per element and property, a name is
+    // shared - and substituted only once chosen, so an item nobody picked may
+    // hold a var() nothing resolves. `{a, b}` braces keep a comma inside one
+    // item and come off with it.
+    [[nodiscard]] bool random_item(const token_stream & outer, const call & found, int depth,
+                                   std::string & expansion) {
+        if (found.comma_at >= found.close) { return false; } // no items at all
+        std::string key;
+        if (!run(text_between(outer, found.open + 1, found.comma_at), key, depth + 1)) {
+            return false;
+        }
+        // The key: `fixed <number>`, or the sharing words `random_base` reads.
+        double base = 0.0;
+        const std::string_view trimmed = trim(key, html_whitespace);
+        if (ascii_istarts_with(trimmed, "fixed")) {
+            const math_answer given = evaluate_math(trimmed.substr(5), length_context{});
+            if (given.outcome != math_outcome::resolved || !given.value.is_number) { return false; }
+            base = std::min(std::max(given.value.px, 0.0), 1.0 - 1e-9);
+        } else {
+            for (const std::string_view word : split_top_level(trimmed, " \t\n\r\f")) {
+                if (!word.starts_with("--") && !ascii_iequals(word, "auto") &&
+                    !ascii_iequals(word, "element-scoped")) {
+                    return false;
+                }
+            }
+            length_context ctx = conditions_ != nullptr ? conditions_->lengths : length_context{};
+            if (conditions_ != nullptr) { ctx.property = conditions_->property; }
+            // `auto` is scoped to the element like a bare `element-scoped`: the
+            // base is keyed on the element either way, and a name alone is not.
+            std::string options{trimmed};
+            if (ascii_iequals(trimmed, "auto") || trimmed.empty()) { options.clear(); }
+            base = random_base(options, ctx);
+        }
+        // The items, split at the top-level commas after the key.
+        std::vector<std::pair<std::size_t, std::size_t>> items;
+        std::size_t start = found.comma_at + 1;
+        int block = 0;
+        for (std::size_t i = start; i < found.close; ++i) {
+            const css_token & t = outer.tokens[i];
+            if (t.type == token_type::function || t.type == token_type::open_paren ||
+                t.type == token_type::open_square || t.type == token_type::open_curly) {
+                ++block;
+            } else if (t.type == token_type::close_paren || t.type == token_type::close_square ||
+                       t.type == token_type::close_curly) {
+                --block;
+            } else if (block == 0 && t.type == token_type::comma) {
+                items.emplace_back(start, i);
+                start = i + 1;
+            }
+        }
+        items.emplace_back(start, found.close);
+        const std::size_t pick = std::min(
+            items.size() - 1, static_cast<std::size_t>(base * static_cast<double>(items.size())));
+        std::string_view chosen =
+            trim(text_between_view(outer, items[pick].first, items[pick].second), html_whitespace);
+        if (chosen.size() >= 2 && chosen.front() == '{' && chosen.back() == '}') {
+            chosen = trim(chosen.substr(1, chosen.size() - 2), html_whitespace);
+        }
+        return run(chosen, expansion, depth + 1);
     }
 
     // --- if(), CSS Values 5 §if-notation ------------------------------------
@@ -1206,6 +1279,10 @@ bool may_have_var(std::string_view value) noexcept {
         const bool boundary = i == 0 || !name_char(value[i - 1]);
         if (boundary && ascii_iequals(value.substr(i, 3), "if(")) { return true; }
         if (boundary && i + 6 <= value.size() && ascii_iequals(value.substr(i, 6), "ident(")) {
+            return true;
+        }
+        if (boundary && i + 12 <= value.size() &&
+            ascii_iequals(value.substr(i, 12), "random-item(")) {
             return true;
         }
     }

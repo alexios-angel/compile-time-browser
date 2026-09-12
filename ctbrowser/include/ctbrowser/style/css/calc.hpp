@@ -280,6 +280,13 @@ struct folded_value {
 [[nodiscard]] std::optional<float> length_text_to_px(std::string_view text,
                                                      const length_context & ctx);
 
+// `random()`'S BASE for a set of sharing options against a context, CSS
+// Values 5 §random-caching: a number in [0, 1) that is the same every time the
+// same key asks. The key is the options' - a `--name`, `element-scoped`,
+// `property-index-scoped` - over the context's element, property and
+// position. Public because `random-item()` shares it.
+[[nodiscard]] double random_base(std::string_view options, const length_context & ctx);
+
 // A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)`, `90deg`,
 // `0.5s` - or, for a number answer, the bare number with no unit at all: `0.5`,
 // `6`, `-8`.

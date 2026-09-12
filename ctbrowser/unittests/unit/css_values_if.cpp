@@ -126,6 +126,21 @@ void test_ident_and_argument_lists() {
     CHECK_EQ(s.sub("var(--p, 3px)", "--p"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("attr(var(--head))"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("var(--x type(*))"), std::string{"<invalid>"});
+    // random-item-computed, random-item-nested: one item by the base, chosen
+    // before it is substituted, braces keeping a comma inside an item.
+    CHECK_EQ(s.sub("random-item(fixed 0, a, b, c)"), std::string{"a"});
+    CHECK_EQ(s.sub("random-item(fixed 0.5, a, b, c)"), std::string{"b"});
+    CHECK_EQ(s.sub("random-item(fixed 1, a, b, c)"), std::string{"c"});
+    CHECK_EQ(s.sub("random-item(fixed calc(1 / 4), a, b, c)"), std::string{"a"});
+    CHECK_EQ(s.sub("random-item(fixed 0, {Times, serif}, {Arial, sans-serif})"),
+             std::string{"Times, serif"});
+    CHECK_EQ(s.sub("random-item(fixed 0, random-item(fixed 0.999, red, rgb(1, 2, 3)), blue)"),
+             std::string{"rgb(1, 2, 3)"});
+    CHECK_EQ(s.sub("random-item(fixed 0, var(--x), var(--missing))"), std::string{"3"});
+    CHECK_EQ(s.sub("random-item(bogus, a, b)"), std::string{"<invalid>"});
+    const std::string picked = s.sub("random-item(--key, a, b, c)");
+    CHECK(picked == "a" || picked == "b" || picked == "c");
+    CHECK_EQ(s.sub("random-item(--key, a, b, c)"), picked);
 }
 
 void test_style_queries() {
