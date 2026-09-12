@@ -131,6 +131,7 @@ inline constexpr std::uint32_t font_feature_values_rule = 14;
 
 // --- shared helpers, defined in source.cpp -----------------------------------
 
+[[nodiscard]] std::size_t scan_to(std::string_view text, std::size_t from, std::string_view stop);
 [[nodiscard]] std::size_t brace_at(std::string_view text);
 [[nodiscard]] std::size_t block_end(std::string_view text, std::size_t open);
 [[nodiscard]] std::string_view next_component(std::string_view text, std::size_t & at);

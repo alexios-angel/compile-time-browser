@@ -10,58 +10,59 @@ using namespace detail;
 
 namespace detail {
 
-// --- splitting one rule into a prelude and a block -------------------------
+// --- the one scanner over a rule's bytes -------------------------------------
 //
-// QUOTE-AWARE AND NOTHING ELSE, which is the whole trick: `[title="{"]` is a
-// selector with a brace in it, and a scanner that did not know about strings
-// would cut the rule in half there. That is the same defect the CSS front end
-// was written to fix (a `;` inside a string ending a declaration), answered the
-// same way one level up.
+// STRING-, COMMENT- AND BRACKET-AWARE, which is the whole trick: `[title="{"]`
+// is a selector with a brace in it, `@media (a:1);` has a semicolon inside
+// parentheses, and `a { /* } */ }` has a brace in a comment. A scanner that did
+// not know about the three would cut a rule in half at each - the same defect
+// the CSS front end was written to fix one level down, answered the same way
+// one level up. Five questions are asked of a rule's bytes (where its block
+// opens and closes, where a prelude's component ends, where a query list's
+// commas are, where the next top-level rule starts) and all five have the
+// same answer to "which one": not the one inside a string, a comment or a
+// bracket. So one scanner, and the five are a stop set each.
+//
+// The first byte of `stop` at or after `from` that is at nesting depth zero,
+// or `text.size()` when there is none. `\` escapes the byte after it, in a
+// string or out (`\{` in a selector is an ident character, not a block).
 
-[[nodiscard]] std::size_t brace_at(std::string_view text) {
+[[nodiscard]] std::size_t scan_to(std::string_view text, std::size_t from, std::string_view stop) {
+    std::size_t depth = 0;
     char quote = '\0';
-    for (std::size_t i = 0; i < text.size(); ++i) {
+    for (std::size_t i = from; i < text.size(); ++i) {
         const char c = text[i];
-        if (quote != '\0') {
-            if (c == '\\') {
-                ++i;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (c == '"' || c == '\'') {
+        if (c == '\\') {
+            ++i;
+        } else if (quote != '\0') {
+            if (c == quote) { quote = '\0'; }
+        } else if (c == '"' || c == '\'') {
             quote = c;
-        } else if (c == '{') {
+        } else if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+            const std::size_t close = text.find("*/", i + 2);
+            if (close == std::string_view::npos) { return text.size(); }
+            i = close + 1;
+        } else if (depth == 0 && stop.find(c) != std::string_view::npos) {
             return i;
+        } else if (c == '(' || c == '[' || c == '{') {
+            ++depth;
+        } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
+            --depth;
         }
     }
-    return std::string_view::npos;
+    return text.size();
+}
+
+// --- splitting one rule into a prelude and a block -------------------------
+
+[[nodiscard]] std::size_t brace_at(std::string_view text) {
+    const std::size_t at = scan_to(text, 0, "{");
+    return at < text.size() ? at : std::string_view::npos;
 }
 
 [[nodiscard]] std::size_t block_end(std::string_view text, std::size_t open) {
-    char quote = '\0';
-    std::size_t depth = 0;
-    for (std::size_t i = open; i < text.size(); ++i) {
-        const char c = text[i];
-        if (quote != '\0') {
-            if (c == '\\') {
-                ++i;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            quote = c;
-        } else if (c == '{') {
-            ++depth;
-        } else if (c == '}') {
-            --depth;
-            if (depth == 0) { return i; }
-        }
-    }
-    return std::string_view::npos;
+    const std::size_t at = scan_to(text, open + 1, "}");
+    return at < text.size() ? at : std::string_view::npos;
 }
 
 // --- an at-rule's prelude ---------------------------------------------------
@@ -78,27 +79,7 @@ namespace detail {
 [[nodiscard]] std::string_view next_component(std::string_view text, std::size_t & at) {
     while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
     const std::size_t start = at;
-    std::size_t depth = 0;
-    char quote = '\0';
-    while (at < text.size()) {
-        const char c = text[at];
-        if (quote != '\0') {
-            if (c == '\\') {
-                ++at;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-        } else if (c == '"' || c == '\'') {
-            quote = c;
-        } else if (c == '(' || c == '[') {
-            ++depth;
-        } else if ((c == ')' || c == ']') && depth > 0) {
-            --depth;
-        } else if (depth == 0 && html_whitespace.find(c) != std::string_view::npos) {
-            break;
-        }
-        ++at;
-    }
+    at = scan_to(text, at, html_whitespace);
     return text.substr(start, at - start);
 }
 
@@ -195,12 +176,6 @@ namespace detail {
 // Splitting here and handing each span to `parse_one_rule` gives a sheet and
 // `insertRule` ONE answer to what a rule is - the same reason `insertRule` does
 // not have a parser of its own.
-//
-// COMMENT-, STRING- AND BRACKET-AWARE, which is the whole trick: `[title="{"]`
-// is a selector with a brace in it and `@media (a:1);` has a semicolon inside
-// parentheses. A scanner that knew about none of the three would cut a rule in
-// half at each, which is the same defect the CSS front end was written to fix
-// one level down.
 [[nodiscard]] std::vector<std::string_view> split_top_level_rules(std::string_view css) {
     std::vector<std::string_view> out;
     std::size_t at = 0;
@@ -230,50 +205,9 @@ namespace detail {
         // block - so treating one as a terminator would split `a;b { }` into two
         // rules where the sheet parser sees one bad one.
         const bool at_rule = css[start] == '@';
-        char quote = '\0';
-        std::size_t brackets = 0;
-        std::size_t braces = 0;
-        bool block = false;
-        std::size_t end = css.size();
-        for (std::size_t i = start; i < css.size(); ++i) {
-            const char c = css[i];
-            if (quote != '\0') {
-                if (c == '\\') {
-                    ++i;
-                } else if (c == quote) {
-                    quote = '\0';
-                }
-                continue;
-            }
-            if (c == '/' && i + 1 < css.size() && css[i + 1] == '*') {
-                const std::size_t close = css.find("*/", i + 2);
-                i = close == std::string_view::npos ? css.size() : close + 1;
-                continue;
-            }
-            if (c == '"' || c == '\'') {
-                quote = c;
-            } else if (c == '\\') {
-                ++i;
-            } else if (c == '(' || c == '[') {
-                ++brackets;
-            } else if ((c == ')' || c == ']') && brackets > 0) {
-                --brackets;
-            } else if (brackets > 0) {
-                continue;
-            } else if (c == '{') {
-                ++braces;
-                block = true;
-            } else if (c == '}') {
-                if (braces > 0) { --braces; }
-                if (braces == 0 && block) {
-                    end = i + 1;
-                    break;
-                }
-            } else if (c == ';' && at_rule && braces == 0) {
-                end = i + 1;
-                break;
-            }
-        }
+        std::size_t end = scan_to(css, start, at_rule ? "{;" : "{");
+        if (end < css.size() && css[end] == '{') { end = scan_to(css, end + 1, "}"); }
+        end = std::min(end + 1, css.size());
         out.push_back(trim(css.substr(start, end - start), html_whitespace));
         at = end;
     }

@@ -359,34 +359,16 @@ namespace detail {
 // The top-level commas of a media query list. Top-level because a feature's
 // parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
 // `url()` in a `@supports` prelude does, and this splitter is used for both.
+// EMPTY PARTS ARE KEPT - `"screen,"` is two queries and the second serialises
+// as `not all` - which is why this is not core's split_top_level.
 [[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text) {
     std::vector<std::string_view> out;
-    std::size_t depth = 0;
-    std::size_t start = 0;
-    char quote = '\0';
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        if (quote != '\0') {
-            if (c == '\\') {
-                ++i;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            quote = c;
-        } else if (c == '(') {
-            ++depth;
-        } else if (c == ')' && depth != 0) {
-            --depth;
-        } else if (c == ',' && depth == 0) {
-            out.push_back(text.substr(start, i - start));
-            start = i + 1;
-        }
+    for (std::size_t start = 0;;) {
+        const std::size_t comma = scan_to(text, start, ",");
+        out.push_back(text.substr(start, comma - start));
+        if (comma >= text.size()) { return out; }
+        start = comma + 1;
     }
-    out.push_back(text.substr(start));
-    return out;
 }
 
 } // namespace detail
