@@ -76,6 +76,18 @@ int main() {
     js_expect("var s = Object('ab'); s.extra = 1; s.extra", "1"); // still extensible
     js_expect("Object.keys(Object('ab')).concat(Object.keys(Object(5))).length", "2");
 
+    // --- Symbol and BigInt box the same way (Object(x) only; both refuse new)
+    js_expect("typeof Object(Symbol('s'))", "object");
+    js_expect("Object(Symbol('s')).toString()", "Symbol(s)");
+    js_expect("Object(Symbol('s')).valueOf() === Object(Symbol('s')).valueOf()", "false");
+    js_expect("var y = Symbol(); Object(y).valueOf() === y", "true");
+    js_expect("Object(5n) instanceof BigInt", "true");
+    js_expect("Object(5n).valueOf()", "5");
+    js_expect("Object(255n).toString(16)", "ff");
+    js_expect("Object.prototype.toString.call(Object(Symbol()))", "[object Symbol]");
+    js_expect("Symbol.prototype.toString.call(1)", "THREW");
+    js_expect("BigInt.prototype.valueOf.call(1)", "THREW");
+
     // --- brand checks: a method on the wrong receiver refuses -------------
     js_expect("Number.prototype.valueOf.call({})", "THREW");
     js_expect("Number.prototype.toString.call('1')", "THREW");
