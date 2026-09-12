@@ -487,19 +487,17 @@ value context::get_iterator(value v) {
         state->set("at", value::number(0));
         const value iterator = make_object();
         auto * it = static_cast<object_object *>(iterator.as_heap());
-        it->set("next", value::object(allocate<native_object>("next", [state](context & c,
-                                                                              std::span<value>) {
-                    const value list = *state->find("items");
-                    auto * arr = static_cast<array_object *>(list.as_heap());
-                    const auto at = static_cast<std::size_t>(state->find("at")->as_number());
-                    value out = c.make_object();
-                    auto * record = static_cast<object_object *>(out.as_heap());
-                    const bool done = at >= arr->items.size();
-                    record->set("value", done ? value::undefined() : arr->items[at]);
-                    record->set("done", value::boolean(done));
-                    if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
-                    return out;
-                })));
+        it->set(
+            "next",
+            value::object(allocate<native_object>("next", [state](context & c, std::span<value>) {
+                const value list = *state->find("items");
+                auto * arr = static_cast<array_object *>(list.as_heap());
+                const auto at = static_cast<std::size_t>(state->find("at")->as_number());
+                const bool done = at >= arr->items.size();
+                const value out = c.iter_result(done ? value::undefined() : arr->items[at], done);
+                if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
+                return out;
+            })));
         it->set("state", value::object(state)); // keeps the list reachable
         return iterator;
     }

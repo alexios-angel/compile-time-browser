@@ -164,17 +164,10 @@ value context::return_marker_value(value marker) const {
 }
 
 value context::generator_resume(value generator, value sent, resume_mode how) {
-    const auto record = [&](value v, bool done) {
-        value out = make_object();
-        auto * obj = static_cast<object_object *>(out.as_heap());
-        obj->set("value", v);
-        obj->set("done", value::boolean(done));
-        return out;
-    };
-    if (!generator.is_object()) { return record(value::undefined(), true); }
+    if (!generator.is_object()) { return iter_result(value::undefined(), true); }
     value * held = static_cast<object_object *>(generator.as_heap())->find("__co");
     if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     }
     auto * saved = static_cast<coroutine_object *>(held->as_heap());
 
@@ -183,7 +176,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // each other's locals; the spec makes it a TypeError and so does this.
     if (saved->running) {
         throw_error("TypeError", "this generator is already running");
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     }
     // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
     // not an error and must not run the body again.
@@ -199,9 +192,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         if (how == resume_mode::thrown) {
             thrown_ = sent;
             if (!unwind_to_handler()) { raise("uncaught exception from a finished generator"); }
-            return record(value::undefined(), true);
+            return iter_result(value::undefined(), true);
         }
-        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+        return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
     // `.throw()` / `.return()` BEFORE THE BODY EVER RAN never enter it: there is
     // no `yield` to throw at, so the generator simply finishes.
@@ -211,7 +204,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             thrown_ = sent;
             if (!unwind_to_handler()) { raise("uncaught exception from a generator"); }
         }
-        return record(how == resume_mode::returned ? sent : value::undefined(), true);
+        return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
     // A `yield*` IN PROGRESS (sync only): `.throw(e)` and `.return(v)` go to
     // the inner iterator first (14.4.14 steps 7.b and 7.c), and only what
@@ -303,7 +296,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // async generator still finishes on the spot.
     if (how == resume_mode::returned && saved->async_gen) {
         saved->done = true;
-        return record(sent, true);
+        return iter_result(sent, true);
     }
     if (how == resume_mode::returned) {
         sent = make_return_marker(sent);
@@ -373,10 +366,10 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         saved->done = true;
         saved->delegate = value::undefined();
         registers_.resize(base);
-        if (is_return_marker(thrown)) { return record(return_marker_value(thrown), true); }
+        if (is_return_marker(thrown)) { return iter_result(return_marker_value(thrown), true); }
         thrown_ = thrown;
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
-        return record(value::undefined(), true);
+        return iter_result(value::undefined(), true);
     };
     const auto pop_fence = [&] {
         if (fenced && handlers_.size() >= fence_mark) { handlers_.resize(fence_mark - 1); }
@@ -396,7 +389,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             registers_.resize(base);
             saved->running = false;
             saved->done = true;
-            return record(value::undefined(), true);
+            return iter_result(value::undefined(), true);
         }
         if (fence_took()) {
             const value thrown = fence_thrown_;
@@ -422,7 +415,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         if (!saved->async_gen && saved->delegate.is_object() && produced.is_object()) {
             return produced;
         }
-        return record(produced, false);
+        return iter_result(produced, false);
     }
     saved->delegate = value::undefined();
     // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
@@ -437,7 +430,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // those finish the generator; a further `.next()` answers done for ever.
     saved->done = true;
     registers_.resize(base);
-    return record(produced, true);
+    return iter_result(produced, true);
 }
 
 // --- async generators ---------------------------------------------------------
@@ -505,12 +498,7 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
         return;
     }
     value record = outcome;
-    if (raw_return) {
-        record = make_object();
-        auto * obj = static_cast<object_object *>(record.as_heap());
-        obj->set("value", outcome);
-        obj->set("done", value::boolean(true));
-    }
+    if (raw_return) { record = iter_result(outcome, true); }
     if (record.is_object()) {
         if (value * v = static_cast<object_object *>(record.as_heap())->find("value")) {
             if (value * reason = rejection_of(*v)) {
@@ -601,10 +589,7 @@ void context::resume(value coroutine, value with, bool rejected) {
         if (failed_) { return; }
         if (yielded_) {
             yielded_ = false;
-            value record = make_object();
-            auto * obj = static_cast<object_object *>(record.as_heap());
-            obj->set("value", returned);
-            obj->set("done", value::boolean(false));
+            const value record = iter_result(returned, false);
             settle_async_generator(saved, record, /*raw_return*/ false);
         } else {
             saved->done = true;

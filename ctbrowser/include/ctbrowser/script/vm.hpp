@@ -330,6 +330,14 @@ public:
     }
     [[nodiscard]] value make_object() { return value::object(allocate<object_object>()); }
     [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
+    // CreateIterResultObject (7.4.14): `{value, done}`, in that order.
+    [[nodiscard]] value iter_result(value v, bool done) {
+        const value out = make_object();
+        auto * obj = static_cast<object_object *>(out.as_heap());
+        obj->set("value", v);
+        obj->set("done", value::boolean(done));
+        return out;
+    }
 
     void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
     // `delete globalThis.x`: the binding is a table entry, and every global

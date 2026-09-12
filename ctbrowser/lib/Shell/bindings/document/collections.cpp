@@ -344,9 +344,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                            [kind](context & inner, std::span<value>) {
                                const value self = inner.current_this();
                                auto * result = static_cast<script::object_object *>(
-                                   inner.make_object().as_heap());
-                               result->set("value", value::undefined());
-                               result->set("done", value::boolean(true));
+                                   inner.iter_result(value::undefined(), true).as_heap());
                                if (!self.is_object()) { return value::object(result); }
                                auto * state = static_cast<script::object_object *>(self.as_heap());
                                const value * held = state->find("@@sym:ctbrowser:iterated");
