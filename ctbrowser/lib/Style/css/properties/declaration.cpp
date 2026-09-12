@@ -186,6 +186,9 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and it answers only about the functions it implements, so a `calc-size()`
     // is left alone rather than guessed at.
     if (!math_syntax_ok(text)) { return {}; }
+    // ...AND SO DOES A NON-INTEGER LITERAL IN AN <integer> SLOT, in the handful
+    // of freeform properties that have one (grammar.cpp).
+    if (!integer_slots_ok(property, ts)) { return {}; }
 
     // ...AND A WELL FORMED ONE IS SIMPLIFIED WHEREVER IT SITS. CSS Values 4
     // §10.12 says a math function's specified value is its simplified form; it

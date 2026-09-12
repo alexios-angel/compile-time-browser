@@ -933,6 +933,20 @@ void test_steps_takes_an_integer() {
     bad("animation-timing-function", "steps(1e1)");
     bad("animation-timing-function", "steps(10.1)");
     bad("transition-timing-function", "steps(1.1e1, start)");
+    // ...and so do the <integer> slots of the freeform properties: a counter's
+    // step, a grid line, repeat()'s count, a feature tag's value, and the
+    // second value of initial-letter - but not its first, which is a <number>.
+    ok("counter-increment", "foo 10", "foo 10");
+    CHECK(check_declaration("counter-increment", "foo calc(1e1)").valid);
+    bad("counter-increment", "foo 1e1");
+    bad("counter-reset", "foo 10.1");
+    bad("font-feature-settings", "\"liga\" 1.1e1");
+    bad("grid-row", "1e1");
+    ok("grid-template-rows", "repeat(10, 10px)", "repeat(10, 10px)");
+    bad("grid-template-rows", "repeat(10.1, 10px)");
+    ok("initial-letter", "1.1 10", "1.1 10");
+    bad("initial-letter", "1.1 10.1");
+    bad("text-combine-upright", "digits 1e1");
 }
 
 // A three-channel colour function takes three or four components.
