@@ -52,18 +52,7 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
         const std::string_view fragment = std::string_view{location_hash_}.substr(1);
         fresh = find_by_id(std::string{fragment});
         if (!fresh && fragment.find('%') != std::string_view::npos) {
-            std::string decoded;
-            for (std::size_t i = 0; i < fragment.size(); ++i) {
-                if (fragment[i] == '%' && i + 2 < fragment.size() &&
-                    hex_value(fragment[i + 1]) >= 0 && hex_value(fragment[i + 2]) >= 0) {
-                    decoded += static_cast<char>(hex_value(fragment[i + 1]) * 16 +
-                                                 hex_value(fragment[i + 2]));
-                    i += 2;
-                } else {
-                    decoded += fragment[i];
-                }
-            }
-            fresh = find_by_id(decoded);
+            fresh = find_by_id(percent_decode(fragment));
         }
     }
     if (fresh == target_element_) { return; }

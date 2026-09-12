@@ -545,20 +545,8 @@ void dom_bindings::run_activation_behavior(context & cx, node_id target) {
     // behavior <a href>" is two nested `javascript:` anchors and expects the
     // inner one's script, once.
     if (!javascript_url.empty()) {
-        std::string source;
-        source.reserve(javascript_url.size());
-        for (std::size_t i = 0; i < javascript_url.size(); ++i) {
-            if (javascript_url[i] == '%' && i + 2 < javascript_url.size() &&
-                hex_value(javascript_url[i + 1]) >= 0 && hex_value(javascript_url[i + 2]) >= 0) {
-                source.push_back(static_cast<char>(hex_value(javascript_url[i + 1]) * 16 +
-                                                   hex_value(javascript_url[i + 2])));
-                i += 2;
-            } else {
-                source.push_back(javascript_url[i]);
-            }
-        }
-        script::program compiled =
-            script::compiler::compile("return (function () {\n" + source + "\n});");
+        script::program compiled = script::compiler::compile(
+            "return (function () {\n" + percent_decode(javascript_url) + "\n});");
         if (compiled.ok) {
             const value body = cx.run_nested(cx.own_program(std::move(compiled)));
             if (body.is_callable()) { (void)add_timer(body, 0, false); }
