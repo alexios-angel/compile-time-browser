@@ -33,6 +33,9 @@
 
 namespace ctbrowser::script {
 
+// Defined in lookup.cpp beside the read that needs it most.
+object_object * typed_array_prototype(context & cx, element_kind kind);
+
 value context::own_keys(value source) {
     // A PROXY ENUMERATES ITS TARGET: no handler here defines ownKeys or
     // getOwnPropertyDescriptor, and an absent trap is the target's own
@@ -270,6 +273,18 @@ bool context::instance_of(value target, value ctor) {
     if (subject.is_object_like()) {
         for (object_object * table : implicit_prototypes(subject)) {
             if (table != nullptr && table == wanted.as_heap()) { return true; }
+        }
+    }
+    // A TYPED ARRAY's chain starts at its kind's own prototype (23.2.7),
+    // which is not one of the implicit tables.
+    if (subject.is_array()) {
+        auto * arr = static_cast<array_object *>(subject.as_heap());
+        for (object_object * table = typed_array_prototype(*this, arr->elements);
+             table != nullptr;) {
+            if (table == wanted.as_heap()) { return true; }
+            table = table->prototype.is_object()
+                        ? static_cast<object_object *>(table->prototype.as_heap())
+                        : nullptr;
         }
     }
     return false;

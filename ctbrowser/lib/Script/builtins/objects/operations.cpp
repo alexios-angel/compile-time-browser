@@ -10,6 +10,11 @@
 
 #include "internal.hpp"
 
+namespace ctbrowser::script {
+// Defined in vm/objects/lookup.cpp; see the note there.
+object_object * typed_array_prototype(context & cx, element_kind kind);
+} // namespace ctbrowser::script
+
 namespace ctbrowser::script::detail {
 
 namespace {
@@ -197,7 +202,14 @@ namespace {
     if (of.is_string()) { return table(context::proto_kind::string); }
     if (of.is_number()) { return table(context::proto_kind::number); }
     if (of.is_boolean()) { return table(context::proto_kind::boolean); }
-    if (of.is_array()) { return table(context::proto_kind::array); }
+    if (of.is_array()) {
+        // A typed array's is its kind's own prototype object (23.2.7).
+        auto * arr = static_cast<array_object *>(of.as_heap());
+        if (object_object * own = typed_array_prototype(cx, arr->elements)) {
+            return value::object(own);
+        }
+        return table(context::proto_kind::array);
+    }
     if (of.is_kind(heap_kind::symbol)) { return table(context::proto_kind::symbol); }
     if (of.is_kind(heap_kind::bigint)) { return table(context::proto_kind::bigint); }
     return value::null();

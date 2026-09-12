@@ -155,6 +155,18 @@ void install_typed_arrays(context & cx) {
             return out;
         });
         detail::constant(ctor, "BYTES_PER_ELEMENT", value::number(each.bytes));
+        // 23.2.7: each constructor has a `prototype` OBJECT of its own, chained
+        // to %TypedArray%.prototype, with `constructor` and BYTES_PER_ELEMENT.
+        // Without one `class S extends Uint8Array {}` read
+        // `Uint8Array.prototype.constructor` off undefined and died, and
+        // Object.getPrototypeOf(new Uint8Array()) was Array.prototype.
+        // context::lookup_property and prototype_of reach it through the
+        // global (value.hpp, typed_array_global_name).
+        object_object * own_proto = new_table(cx);
+        own_proto->prototype = value::object(typed_proto);
+        detail::constant(own_proto, "BYTES_PER_ELEMENT", value::number(each.bytes));
+        detail::constant(ctor, "prototype", value::object(own_proto));
+        link_constructor(cx, own_proto, each.name, 3, value::object(ctor));
 
         // `Float32Array.from` and `.of`, WHICH ARE NOT THE SAME FUNCTIONS AS
         // `Array.from` and `.of`: they coerce into this view's element kind, so

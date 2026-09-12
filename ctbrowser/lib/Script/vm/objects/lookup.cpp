@@ -33,6 +33,22 @@
 
 namespace ctbrowser::script {
 
+// `Uint8Array.prototype` for u8: the constructor's own prototype object, found
+// through the global it is installed as (value.hpp, typed_array_global_name),
+// or null before install_typed_arrays has run. A free function with external
+// linkage - vm.hpp is not widened for it - declared again by the two other
+// files that ask (chain.cpp's instance_of, builtins/objects/operations.cpp's
+// prototype_of).
+object_object * typed_array_prototype(context & cx, element_kind kind) {
+    const char * name = typed_array_global_name(kind);
+    if (name == nullptr) { return nullptr; }
+    const value ctor = cx.global(name);
+    if (!ctor.is_kind(heap_kind::native)) { return nullptr; }
+    value * proto = static_cast<native_object *>(ctor.as_heap())->find("prototype");
+    return proto != nullptr && proto->is_object() ? static_cast<object_object *>(proto->as_heap())
+                                                  : nullptr;
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -201,6 +217,20 @@ value context::lookup_property(value target, const std::string & name) {
         // object's - which is the chain JavaScript actually has, and the reason
         // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.
         if (arr->elements != element_kind::none) {
+            // The kind's own prototype (23.2.7, reached through its global),
+            // then %TypedArray%.prototype behind it.
+            for (object_object * table = typed_array_prototype(*this, arr->elements);
+                 table != nullptr;) {
+                if (value * found = table->find(name)) { return *found; }
+                if (accessor_entry * entry = table->find_accessor(name)) {
+                    return entry->getter.is_callable()
+                               ? call(entry->getter, std::span<const value>{}, target)
+                               : value::undefined();
+                }
+                table = table->prototype.is_object()
+                            ? static_cast<object_object *>(table->prototype.as_heap())
+                            : nullptr;
+            }
             if (object_object * table = prototype(proto_kind::typed_array)) {
                 if (value * found = table->find(name)) { return *found; }
             }

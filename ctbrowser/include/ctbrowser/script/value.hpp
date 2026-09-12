@@ -305,6 +305,25 @@ enum class element_kind : std::uint8_t {
     f64
 };
 
+// THE GLOBAL THAT CONSTRUCTS THIS KIND - `Uint8Array` for u8 - and therefore
+// where its own `prototype` object lives, which lookup and [[GetPrototypeOf]]
+// reach through the global rather than through a table of their own.
+[[nodiscard]] constexpr const char * typed_array_global_name(element_kind k) noexcept {
+    switch (k) {
+    case element_kind::i8: return "Int8Array";
+    case element_kind::u8: return "Uint8Array";
+    case element_kind::u8_clamped: return "Uint8ClampedArray";
+    case element_kind::i16: return "Int16Array";
+    case element_kind::u16: return "Uint16Array";
+    case element_kind::i32: return "Int32Array";
+    case element_kind::u32: return "Uint32Array";
+    case element_kind::f32: return "Float32Array";
+    case element_kind::f64: return "Float64Array";
+    case element_kind::none: return nullptr;
+    }
+    return nullptr;
+}
+
 // Coerce a number the way a store into that element type does.
 [[nodiscard]] inline double coerce_element(element_kind kind, double v) {
     const auto wrap = [](double x, double modulus) {
