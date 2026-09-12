@@ -282,7 +282,42 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
         getter(*proto, "sheet", [this](context & c, std::span<value>) {
             return sheet_object_of(c, handle_of(c.current_this()));
         });
-        if (name != "HTMLLinkElement") { continue; }
+        if (name == "HTMLStyleElement") {
+            // `HTMLStyleElement.disabled` is the SHEET's flag, not an attribute:
+            // false while the element has no sheet, and a write then does
+            // nothing (style-sheet-interfaces-001, "disabled attribute
+            // getter/setter").
+            const auto owned = [this](context & c) -> css_sheet_record * {
+                sync_style_sheets(c);
+                const auto it = css_sheet_by_owner_.find(pack(handle_of(c.current_this())));
+                if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size()) {
+                    return nullptr;
+                }
+                css_sheet_record * sheet = css_sheets_[it->second].get();
+                return sheet->attached ? sheet : nullptr;
+            };
+            proto->define_accessor("disabled",
+                                   value::object(cx.allocate<script::native_object>(
+                                       "get disabled",
+                                       [owned](context & c, std::span<value>) {
+                                           const css_sheet_record * sheet = owned(c);
+                                           return value::boolean(sheet != nullptr &&
+                                                                 sheet->disabled);
+                                       })),
+                                   value::object(cx.allocate<script::native_object>(
+                                       "set disabled",
+                                       [this, owned](context & c, std::span<value> a) {
+                                           css_sheet_record * sheet = owned(c);
+                                           const bool wanted = !a.empty() && context::truthy(a[0]);
+                                           if (sheet != nullptr && sheet->disabled != wanted) {
+                                               sheet->disabled = wanted;
+                                               style_sheets_changed();
+                                           }
+                                           return value::undefined();
+                                       })),
+                                   script::attr_configurable);
+            continue;
+        }
         // `HTMLLinkElement.disabled`, HTML 4.2.4: it reflects the attribute,
         // and REMOVING the attribute is what sets the element's "explicitly
         // enabled" flag - the one thing that makes an `alternate stylesheet`
