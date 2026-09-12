@@ -295,7 +295,9 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
     log = tempfile.TemporaryFile(mode="w+b")
     process = subprocess.Popen(
         ["/bin/sh", "-c", LIMIT_WRAPPER, "ctwpt", str(memory_mb * 1024),
-         str(driver), str(plan.page), "--port", "0"],
+         # ABSOLUTE: the driver runs from the page's directory, so a relative
+         # `--driver build/tools/ctdrive` would be looked for beside the test.
+         str(driver.resolve()), str(plan.page), "--port", "0"],
         cwd=str(plan.page.parent), env=env, stdout=log, stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL)
 
