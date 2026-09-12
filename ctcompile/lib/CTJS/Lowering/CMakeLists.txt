@@ -35,8 +35,4 @@ target_link_libraries(ctcompile-ctjs-lowering
     MLIRControlFlowToSCF
     MLIRTransforms)
 
-target_include_directories(ctcompile-ctjs-lowering SYSTEM
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
-
 add_library(ctcompile::ctjs-lowering ALIAS ctcompile-ctjs-lowering)
