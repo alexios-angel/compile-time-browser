@@ -2,15 +2,11 @@
 """Check empty private Map paths without specializing reusable method bodies."""
 
 import argparse
-import importlib.util
 from pathlib import Path
 import re
 
-spec = importlib.util.spec_from_file_location(
-    "prefix", Path(__file__).resolve().parent.parent / "prefix.py"
-)
-prefix = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(prefix)
+from CTNative.HostContract import prefix
+
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true"
 

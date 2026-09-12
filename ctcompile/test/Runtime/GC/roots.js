@@ -1,7 +1,7 @@
 // THE GC-ROOTS FIXTURE, AND THE ONLY COPY OF IT.
 //
 // It held just the compiled bodies until the drivers lived in a C++ raw string
-// in GCRoots.cpp - two DIFFERENT programs, with a comment asking that they stay
+// in GC/Roots.cpp - two DIFFERENT programs, with a comment asking that they stay
 // identical. They could not be, because one had functions the other did not.
 //
 // That is not cosmetic, and it is the same defect differential.js already had:

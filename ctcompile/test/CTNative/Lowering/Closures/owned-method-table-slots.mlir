@@ -1,5 +1,5 @@
 // RUN: split-file %s %t
-// RUN: python3 %S/owned-method-table-slots.py --translate ctjs-translate --opt ctjs-opt --specimen %S/../../Fixtures/Closures/owned-method-table-slot.js --fixtures %t --work %t.executables
+// RUN: python3 %S/owned-method-table-slots.py --translate ctjs-translate --opt ctjs-opt --specimen %S/../../Fixtures/Closures/owned-method-table-slot.js --fixtures %t --work %t.executables --reference %native_reference
 
 // The independent checker runs the exact six-function specimen and this
 // lifetime program through admission, explicit/deduced C++, both compilers,

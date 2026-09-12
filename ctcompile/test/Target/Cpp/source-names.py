@@ -8,22 +8,8 @@ function/global/type/macro shadowing, fallback collisions and nested scopes.
 
 import argparse
 from pathlib import Path
-import shutil
-import subprocess
 
-
-def run(command):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    if result.returncode:
-        raise SystemExit(
-            "source names failed: "
-            + " ".join(map(str, command))
-            + "\n"
-            + result.stdout
-            + result.stderr
-        )
-    return result.stdout
-
+from harness import FLAGS, find_compilers, run
 
 NAMED_MAIN = """
 int main() {
@@ -69,23 +55,9 @@ def main():
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
-    compilers = []
-    for candidates in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in candidates if shutil.which(name)), None)
-        if not compiler:
-            raise SystemExit("source name test requires " + " or ".join(candidates))
-        compilers.append(compiler)
+    compilers = find_compilers()
     args.work.mkdir(parents=True, exist_ok=True)
-    flags = [
-        "-std=c++23",
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-pedantic",
-        "-Wconversion",
-        "-ffp-contract=off",
-    ]
+    flags = FLAGS
     for name, harness in [
         ("named", NAMED_MAIN),
         ("loops", LOOP_MAIN),

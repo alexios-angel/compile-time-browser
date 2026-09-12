@@ -1,5 +1,5 @@
 // RUN: split-file %s %t
-// RUN: python3 %S/map-representation.py --fixtures %t --work %t/run --translate ctjs-translate --opt ctjs-opt
+// RUN: python3 %S/map-representation.py --fixtures %t --work %t/run --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference
 
 //--- associative.js
 function numericKeys() {

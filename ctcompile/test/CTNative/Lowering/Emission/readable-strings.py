@@ -5,9 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
-def run(command, **kwargs):
-    return subprocess.run(command, check=True, text=True, capture_output=True, **kwargs).stdout
+from CTNative.harness import run
 
 
 def main():
@@ -45,10 +43,10 @@ ctjs.func @literal${index}(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %value
 }}
 """)
-    lowered = run([args.opt, "--ctnative-lower-to-emitc"], input="\n".join(functions))
+    lowered = run([args.opt, "--ctnative-lower-to-emitc"], input_text="\n".join(functions)).stdout
     if "ctnative.not_native" in lowered or "ctjs.func" in lowered:
         raise AssertionError(f"literal functions must lower completely:\n{lowered}")
-    cpp = run([args.translate, "--mlir-to-cpp"], input=lowered)
+    cpp = run([args.translate, "--mlir-to-cpp"], input_text=lowered).stdout
     for _, spelling in cases:
         if spelling is not None and spelling not in cpp:
             raise AssertionError(f"missing readable spelling: {spelling}\n{cpp}")

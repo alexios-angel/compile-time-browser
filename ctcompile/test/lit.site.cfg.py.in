@@ -12,6 +12,13 @@ config.ctcompile_tools_dirs = "@CTCOMPILE_TOOLS_DIRS@".split(";")
 config.host_cxx = "@CMAKE_CXX_COMPILER@"
 config.ctbrowser_include = "@CTBROWSER_MONOREPO_ROOT@/ctbrowser/include"
 
+# THE ORACLES THE CTNative PYTHON DRIVERS COMPARE AGAINST: the Node CMake found
+# for the Bootstrap data probes (BootstrapData.cmake, REQUIRED) and the
+# interpreter reference (Native.cmake). Passed on the RUN lines as %node and
+# %native_reference rather than rediscovered by walking up from ctjs-opt.
+config.node = "@CTCOMPILE_BOOTSTRAP_NODE@"
+config.native_reference = "@CTCOMPILE_BINARY_DIR@/test/ctcompile-test-native-reference"
+
 import lit.llvm
 lit.llvm.initialize(lit_config, config)
 

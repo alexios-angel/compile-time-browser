@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
+
+from CTNative.harness import find_compilers
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -179,15 +180,12 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
-    compilers = [
-        next((shutil.which(c) for c in choices if shutil.which(c)), None)
-        for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]
-    ]
+    node, reference = args.node, args.reference
+    compilers = find_compilers()
     nm = shutil.which("nm")
     assert all(compilers) and nm
     source = (args.fixtures / "mixed.js").read_text()

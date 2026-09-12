@@ -814,9 +814,10 @@ the default full workflow is unchanged. Current full matrix: **425 positives /
 compilations plus ten sanitizer builds**. Run on the devbox under the build lock:
 
 ```sh
-python3 ctcompile/test/CTNative/Ownership/global-maps.py \
+PYTHONPATH=ctcompile/test python3 ctcompile/test/CTNative/Ownership/global-maps.py \
   --translate build/ctcompile/tools/ctjs-translate/ctjs-translate \
   --opt build/ctcompile/tools/ctjs-opt/ctjs-opt \
+  --node "$(command -v node)" --reference build/ctcompile/test/ctcompile-test-native-reference \
   --work /tmp/ctcompile-object-keys --group object-keys
 ```
 

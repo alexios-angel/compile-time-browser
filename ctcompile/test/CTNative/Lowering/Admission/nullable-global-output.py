@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Ownership"))
 from native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE, boundary, host, owned
 
+from CTNative.harness import find_compilers
+
 SOURCE = r"""function scalar(which) {
     return which === 0 ? void 0 : which === 1 ? null : which === 2 ? -0 :
         which === 3 ? 0 / 0 : which === 4 ? false : true;
@@ -90,15 +92,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = [
-        next((shutil.which(c) for c in choices if shutil.which(c)), None)
-        for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))
-    ]
-    reference, node = boundary.reference_tool(args.opt), boundary.node_executable(args)
+    compilers = find_compilers()
+    reference, node = args.reference, args.node
     nm = shutil.which("nm")
     assert all(compilers) and nm and owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
     js, prepared, count = boundary.prepare(args, "nullable-global-output", SOURCE)

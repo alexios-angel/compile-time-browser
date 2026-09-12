@@ -13,7 +13,7 @@
 // the message. main() only has to make sure the entry is not discarded.
 //
 // It deliberately does not CALL it. Running generated code against the runtime
-// is GCRoots.cpp's job and needs a context, a program and a frame; this needs
+// is GC/Roots.cpp's job and needs a context, a program and a frame; this needs
 // none of that, and keeping the two apart means a link failure and a wrong
 // answer never look like each other.
 #include <cstdint>

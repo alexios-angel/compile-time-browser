@@ -4,8 +4,8 @@
 import argparse
 from pathlib import Path
 import re
-import shutil
-import subprocess
+
+from harness import FLAGS, find_compilers, run
 
 MAIN = """
 int main() {
@@ -36,17 +36,6 @@ int main() {
 """
 
 
-def run(command, *, failure_site=None):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    diagnostic = result.stdout + result.stderr
-    if failure_site is not None:
-        if result.returncode == 0 or failure_site not in diagnostic:
-            raise RuntimeError(f"expected pin failure at {failure_site}: {command!r}\n{diagnostic}")
-    elif result.returncode:
-        raise RuntimeError(f"constexpr binding test failed: {command!r}\n{diagnostic}")
-    return result.stdout
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
@@ -55,24 +44,8 @@ def main():
     parser.add_argument("--opt", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = []
-    for candidates in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in candidates if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("constexpr binding test requires " + " or ".join(candidates))
-        compilers.append(compiler)
-    flags = [
-        "-std=c++23",
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-pedantic",
-        "-Wconversion",
-        "-ffp-contract=off",
-        "-I",
-        str(args.fixtures.resolve()),
-    ]
+    compilers = find_compilers()
+    flags = [*FLAGS, "-I", str(args.fixtures.resolve())]
 
     def compile_and_run(label, text, harness="", *, defines=(), expected=""):
         source = args.work / f"{label}.cpp"

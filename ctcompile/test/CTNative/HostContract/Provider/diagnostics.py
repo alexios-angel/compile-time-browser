@@ -3,23 +3,14 @@
 
 import argparse
 from dataclasses import dataclass, field
-import importlib.util
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
-import sys
 from urllib.parse import quote
 
-sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location(
-    "provider_mutations", Path(__file__).with_name("mutations.py")
-)
-mutations = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mutations
-spec.loader.exec_module(mutations)
+from CTNative.HostContract.Provider import mutations
+
 prefix, host = mutations.prefix, mutations.host
 BASE = mutations.OPTIONS
 DIAGNOSTICS = BASE + " follow-provider-diagnostics=true"
@@ -389,27 +380,6 @@ def cases():
     return result
 
 
-def build_path(opt, relative):
-    executable = Path(shutil.which(opt) or opt).resolve()
-    for parent in executable.parents:
-        candidate = parent / relative
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(f"cannot locate {relative} beside {opt}")
-
-
-def node_executable(args):
-    node = args.node or os.environ.get("CTCOMPILE_NODE") or shutil.which("node")
-    if node:
-        return node
-    if args.opt:
-        cache = build_path(args.opt, "CMakeCache.txt").read_text()
-        match = re.search(r"^CTCOMPILE_BOOTSTRAP_NODE:FILEPATH=(.+)$", cache, re.M)
-        if match and Path(match[1]).is_file():
-            return match[1]
-    raise RuntimeError("provider diagnostic regression requires independent Node; pass --node")
-
-
 def oracle(node, folder, case, js):
     driver = folder / "node.cjs"
     request = folder / "node-input.json"
@@ -699,20 +669,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate")
     parser.add_argument("--opt")
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
-    if not args.oracle_only and (not args.translate or not args.opt):
-        parser.error("compiler checks require --translate and --opt")
+    if not args.oracle_only and not (args.translate and args.opt and args.reference):
+        parser.error("compiler checks require --translate, --opt and --reference")
     args.work.mkdir(parents=True, exist_ok=True)
-    node = node_executable(args)
-    reference = (
-        None
-        if args.oracle_only
-        else args.reference or build_path(args.opt, "test/ctcompile-test-native-reference")
-    )
+    node, reference = args.node, args.reference
     prepared, evidence = {}, {}
     for case in cases():
         folder = args.work / case.name

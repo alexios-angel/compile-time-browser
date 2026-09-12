@@ -12,12 +12,15 @@ from .driver_map_sizes import *
 from .driver_object_keys import *
 from .driver_nested_maps import check_nested_maps
 
+from CTNative.harness import find_compilers
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--group", choices=("all", "object-keys", "nested-maps"), default="all")
     parser.add_argument(
@@ -30,12 +33,8 @@ def main():
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
     args.work.mkdir(parents=True, exist_ok=True)
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
-    compilers = [
-        next((shutil.which(c) for c in choices if shutil.which(c)), None)
-        for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))
-    ]
+    node, reference = args.node, args.reference
+    compilers = find_compilers()
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if (
         not all(compilers)

@@ -2,16 +2,11 @@
 """Require immediate materialization before a Map iterator becomes a native array."""
 
 import argparse
-import importlib.util
 from pathlib import Path
 import re
 
-spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).resolve().parents[2] / "Exports/boundary.py"
-)
-boundary = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(boundary)
-run = boundary.host.run
+from CTNative.Exports import boundary
+from CTNative.harness import run
 
 
 def lower(args, source, name, count, passes, *, admitted=0):
@@ -49,12 +44,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
+    node, reference = args.node, args.reference
     base = "function probe() { const map = new Map(); map.set(1, 10); "
     cases = {
         "raw_length": ("const it = map.keys(); return +(it.length === undefined);", 1),

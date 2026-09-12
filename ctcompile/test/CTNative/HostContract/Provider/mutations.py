@@ -3,21 +3,15 @@
 
 import argparse
 from dataclasses import dataclass, field
-import importlib.util
 import json
 import math
 from pathlib import Path
 import re
 import struct
 import subprocess
-import sys
 
-sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location(
-    "prefix", Path(__file__).resolve().parent.parent / "prefix.py"
-)
-prefix = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(prefix)
+from CTNative.HostContract import prefix
+
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true follow-provider-mutations=true"
 UNDEFINED = {"kind": "undefined"}

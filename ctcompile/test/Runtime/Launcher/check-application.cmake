@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.20)
 
 foreach(required VM AOT WORK)
   if(NOT DEFINED ${required})
-    message(FATAL_ERROR "check-launcher.cmake: -D${required}= is required")
+    message(FATAL_ERROR "check-application.cmake: -D${required}= is required")
   endif()
 endforeach()
 
@@ -43,7 +43,7 @@ function(run_arm which binary out_stdout out_stderr)
     OUTPUT_FILE "${WORK}/launcher-${which}.out"
     ERROR_VARIABLE complaints)
   if(NOT code EQUAL 0)
-    message(FATAL_ERROR "check-launcher.cmake: the ${which} arm exited ${code}\n${complaints}")
+    message(FATAL_ERROR "check-application.cmake: the ${which} arm exited ${code}\n${complaints}")
   endif()
   file(READ "${WORK}/launcher-${which}.out" produced)
   set(${out_stdout} "${produced}" PARENT_SCOPE)
@@ -57,7 +57,7 @@ function(counter report name into)
   string(REPLACE "+" "\\+" pattern "${name}")
   if(NOT report MATCHES "transition \"${pattern}\" = ([0-9]+)")
     message(FATAL_ERROR
-      "check-launcher.cmake: no counter named ${name} in this arm's report:\n${report}")
+      "check-application.cmake: no counter named ${name} in this arm's report:\n${report}")
   endif()
   set(${into} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
@@ -68,12 +68,12 @@ run_arm(aot "${AOT}" aot_out aot_err)
 # ---- the transcripts ---------------------------------------------------------
 if(NOT vm_out STREQUAL aot_out)
   message(FATAL_ERROR
-    "check-launcher.cmake: the generated application does not print what the interpreted one "
+    "check-application.cmake: the generated application does not print what the interpreted one "
     "prints.\n  interpreted:\n${vm_out}\n  compiled:\n${aot_out}")
 endif()
 string(LENGTH "${vm_out}" transcript_bytes)
 if(transcript_bytes EQUAL 0)
-  message(FATAL_ERROR "check-launcher.cmake: both arms printed nothing, so they agree vacuously")
+  message(FATAL_ERROR "check-application.cmake: both arms printed nothing, so they agree vacuously")
 endif()
 
 # ---- did the compiled arm install anything? ----------------------------------
@@ -83,19 +83,19 @@ endif()
 # what makes this a STRICT build rather than a hybrid one that happened to
 # compile most of it.
 if(NOT aot_err MATCHES "installed ([0-9]+) of ([0-9]+), interpreted ([0-9]+)")
-  message(FATAL_ERROR "check-launcher.cmake: the aot arm did not report an install:\n${aot_err}")
+  message(FATAL_ERROR "check-application.cmake: the aot arm did not report an install:\n${aot_err}")
 endif()
 set(installed ${CMAKE_MATCH_1})
 set(functions ${CMAKE_MATCH_2})
 set(left ${CMAKE_MATCH_3})
 if(NOT left EQUAL 0)
   message(FATAL_ERROR
-    "check-launcher.cmake: ${left} of ${functions} functions were left interpreted - "
+    "check-application.cmake: ${left} of ${functions} functions were left interpreted - "
     "install_strict was supposed to refuse to start")
 endif()
 if(installed LESS 2)
   message(FATAL_ERROR
-    "check-launcher.cmake: the aot arm installed ${installed} entr(y/ies). A single-entry "
+    "check-application.cmake: the aot arm installed ${installed} entr(y/ies). A single-entry "
     "application cannot cross AOT -> AOT and this test would be asserting nothing.")
 endif()
 
@@ -109,7 +109,7 @@ foreach(never "C++ -> VM" "VM -> AOT" "AOT -> VM")
   counter("${aot_err}" "${never}" seen)
   if(NOT seen EQUAL 0)
     message(FATAL_ERROR
-      "check-launcher.cmake: the aot arm crossed ${never} ${seen} time(s), so the interpreter "
+      "check-application.cmake: the aot arm crossed ${never} ${seen} time(s), so the interpreter "
       "ran. This is not an AOT-only application.\n${aot_err}")
   endif()
 endforeach()
@@ -117,13 +117,13 @@ endforeach()
 counter("${aot_err}" "C++ -> AOT" entered)
 if(NOT entered EQUAL ${EXPECTED_CXX_TO_AOT})
   message(FATAL_ERROR
-    "check-launcher.cmake: the aot arm was entered from C++ ${entered} time(s), expected "
+    "check-application.cmake: the aot arm was entered from C++ ${entered} time(s), expected "
     "${EXPECTED_CXX_TO_AOT}")
 endif()
 counter("${aot_err}" "AOT -> AOT" chained)
 if(NOT chained EQUAL ${EXPECTED_AOT_TO_AOT})
   message(FATAL_ERROR
-    "check-launcher.cmake: one compiled body called another ${chained} time(s), expected "
+    "check-application.cmake: one compiled body called another ${chained} time(s), expected "
     "${EXPECTED_AOT_TO_AOT}. If launcher.js changed, this number changes with it; if it did "
     "not, a call fell back to the interpreter.")
 endif()
@@ -137,14 +137,14 @@ foreach(never "C++ -> AOT" "VM -> AOT" "AOT -> AOT" "AOT -> VM")
   counter("${vm_err}" "${never}" seen)
   if(NOT seen EQUAL 0)
     message(FATAL_ERROR
-      "check-launcher.cmake: the arm with NO generated code crossed ${never} ${seen} time(s) - "
+      "check-application.cmake: the arm with NO generated code crossed ${never} ${seen} time(s) - "
       "the counters are not measuring compiled dispatch:\n${vm_err}")
   endif()
 endforeach()
 counter("${vm_err}" "C++ -> VM" ran_interpreted)
 if(ran_interpreted LESS 1)
   message(FATAL_ERROR
-    "check-launcher.cmake: the interpreted arm never entered the interpreter:\n${vm_err}")
+    "check-application.cmake: the interpreted arm never entered the interpreter:\n${vm_err}")
 endif()
 
 message("ok ctcompile_launcher: ${installed}/${functions} functions compiled, "

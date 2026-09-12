@@ -21,12 +21,9 @@
 // test exists to prevent. The build passes the driver, instruction-dispatch
 // and operator-table paths, so moving dispatch into a helper keeps it visible.
 //
-// IT IS A RATCHET, NOT A GATE. Three non-suspending opcodes are unhandled
-// today and the Phase 13 gate is that none are, so a test demanding zero would
-// simply be red. Instead the pending list below must match EXACTLY: an opcode
-// that stops being handled fails, a newly added opcode fails, and an opcode
-// that BECOMES handled fails until its line is deleted. The list can only
-// shrink, and the failure message is the work list.
+// IT IS A GATE: every non-suspending opcode in the table must be dispatched.
+// A new opcode fails here until the importer handles it or the .def marks it
+// `may_suspend`; an opcode that stops being handled fails the same way.
 #include <ctbrowser/script/bytecode.hpp>
 
 #include <algorithm>
@@ -37,7 +34,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace {
 
@@ -55,47 +51,6 @@ constexpr row table[] = {
 };
 
 #undef CT_OPCODE
-
-// WHAT IS NOT IMPORTED YET, WITH WHY - and the why matters, because these are
-// not one backlog. One of them is another phase's work and would be wrong to
-// pull forward; the rest are Phase 13's own.
-//
-// THE FOUR ES-MODULE ROWS ARE GONE, which is what the ratchet is for: making
-// load_import, bind_export, load_namespace and dyn_import dispatched meant
-// deleting their lines in the same commit or this test goes red.
-struct pending {
-    std::string_view opcode;
-    std::string_view why;
-};
-
-constexpr pending not_yet[] = {
-    // ---- Phase 13's own work list ----------------------------------------
-    // EMPTY. Every non-suspending opcode outside the later phases below is
-    // imported. That is Phase 13's gate.
-
-    // ---- NOT Phase 13. Listed so the gap is visible, not so it is worked. --
-    // EMPTY, AND THAT IS THE GATE.
-    //
-    // Two tracks emptied it from opposite ends and the merge is the proof:
-    // wrap_promise was Phase 14's - "only non-suspending because the WRAP is",
-    // which turned out to be exactly why it could land alone, since an async
-    // function with no `await` carries it and no await_value at all - and the
-    // four module rows were Phases 15-16's. Every non-suspending opcode in the
-    // table is now dispatched by the importer.
-    //
-    // THE LIST IS KEPT RATHER THAN DELETED because the ratchet still works in
-    // the other direction: an opcode ADDED to bytecode_opcodes.def with no
-    // importer case fails this test until someone writes one or writes down
-    // why not.
-    //
-    // AND THE SENTINEL IS HERE BECAUSE C++ HAS NO ZERO-LENGTH ARRAY. Its
-    // opcode is the empty string, which matches no opcode, so it is skipped
-    // everywhere below - and the next person to add a real row can just type it
-    // above this one and delete nothing.
-    {"", "not an opcode - see above"},
-};
-
-int failures = 0;
 
 // A DISPATCH SITE, NOT A MENTION. The importer reaches an opcode two ways - a
 // `case op::x:` label in its switch, and a `{op::x, ...}` row in one of its two
@@ -160,56 +115,19 @@ int main() {
         return 1;
     }
 
-    std::vector<std::string_view> missing;
+    std::size_t missing = 0;
     for (const row & each : table) {
-        if (each.may_suspend) { continue; }
-        if (!dispatches(source, each.name)) { missing.push_back(each.name); }
-    }
-
-    const auto listed = [](std::string_view name) {
-        return std::any_of(std::begin(not_yet), std::end(not_yet), [&](const pending & p) {
-            return !p.opcode.empty() && p.opcode == name;
-        });
-    };
-
-    // A GAP NOBODY DECLARED. Either an opcode was added to the table with no
-    // importer case, or one stopped being dispatched.
-    for (const std::string_view name : missing) {
-        if (!listed(name)) {
-            std::printf("FAIL %.*s is a non-suspending opcode the importer does not dispatch, and "
-                        "it is not in the pending list. Add a case for it, or add a line saying "
-                        "why not.\n",
-                        static_cast<int>(name.size()), name.data());
-            ++failures;
-        }
-    }
-
-    // AND A LINE THAT IS NO LONGER TRUE, which matters just as much: a stale
-    // entry makes the list stop being a measurement.
-    for (const pending & each : not_yet) {
-        if (each.opcode.empty()) { continue; }
-        const bool still_missing =
-            std::find(missing.begin(), missing.end(), each.opcode) != missing.end();
-        if (!still_missing) {
-            std::printf("FAIL %.*s IS dispatched now - delete its line from not_yet, or this list "
-                        "stops being a measurement of anything.\n",
-                        static_cast<int>(each.opcode.size()), each.opcode.data());
-            ++failures;
-        }
+        if (each.may_suspend || dispatches(source, each.name)) { continue; }
+        std::printf("FAIL %.*s is a non-suspending opcode the importer does not dispatch. Add a "
+                    "case for it, or mark it may_suspend in bytecode_opcodes.def.\n",
+                    static_cast<int>(each.name.size()), each.name.data());
+        ++missing;
     }
 
     const auto suspending = static_cast<std::size_t>(std::count_if(
         std::begin(table), std::end(table), [](const row & r) { return r.may_suspend; }));
-    std::printf("%zu opcodes: %zu suspending, %zu imported, %zu pending\n", std::size(table),
-                suspending, std::size(table) - suspending - missing.size(), missing.size());
+    std::printf("%zu opcodes: %zu suspending, %zu imported, %zu missing\n", std::size(table),
+                suspending, std::size(table) - suspending - missing, missing);
 
-    if (failures == 0 && !missing.empty()) {
-        std::printf("\nPhase 13 is complete when this list is empty:\n");
-        for (const pending & each : not_yet) {
-            if (each.opcode.empty()) { continue; }
-            std::printf("  %-16.*s %.*s\n", static_cast<int>(each.opcode.size()),
-                        each.opcode.data(), static_cast<int>(each.why.size()), each.why.data());
-        }
-    }
-    return failures == 0 ? 0 : 1;
+    return missing == 0 ? 0 : 1;
 }

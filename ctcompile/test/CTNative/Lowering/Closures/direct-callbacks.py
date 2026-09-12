@@ -7,13 +7,7 @@ import re
 import shutil
 import subprocess
 
-
-def run(command):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result.stdout
-
+from CTNative.harness import run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = (
@@ -208,7 +202,7 @@ def main():
             ]
         )
         for mode, module in [("explicit", output), ("deduced", deduced)]:
-            cpp = run([args.translate, "--mlir-to-cpp", str(module)])
+            cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
             if "ctbrowser::" in cpp:
                 raise RuntimeError(f"{name}/{mode}: output reaches the boxed runtime")
             file = args.work / f"{name}.{mode}.cpp"
@@ -231,7 +225,7 @@ def main():
                         str(binary),
                     ]
                 )
-                observed = run([str(binary)])
+                observed = run([str(binary)]).stdout
                 if observed != expected:
                     raise RuntimeError(f"{name}/{mode}: {observed!r} != {expected!r}")
 
@@ -239,7 +233,7 @@ def main():
     for name, (source, reason) in guard_cases(base).items():
         file = args.work / f"{name}.mlir"
         file.write_text(source)
-        output = run([args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false"])
+        output = run([args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false"]).stdout
         if (
             'ctnative.callback_refusal = "' + reason + '"' not in output
             or "ctnative.not_native" not in output

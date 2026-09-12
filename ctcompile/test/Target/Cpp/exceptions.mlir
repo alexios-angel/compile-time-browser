@@ -9,17 +9,17 @@
 // RUN: FileCheck %s --check-prefixes=COMMON,DEDUCED < %t/deduced.cpp
 // RUN: ctjs-translate --mlir-to-cpp --declare-variables-at-top %t/deduced.mlir > %t/hoisted.cpp
 // RUN: FileCheck %s --check-prefix=HOISTED < %t/hoisted.cpp
-// RUN: g++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/explicit.cpp -o %t/explicit-gcc
+// RUN: %gxx %t/explicit.cpp -o %t/explicit-gcc
 // RUN: %t/explicit-gcc
-// RUN: clang++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/explicit.cpp -o %t/explicit-clang
+// RUN: %clangxx %t/explicit.cpp -o %t/explicit-clang
 // RUN: %t/explicit-clang
-// RUN: g++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/deduced.cpp -o %t/deduced-gcc
+// RUN: %gxx %t/deduced.cpp -o %t/deduced-gcc
 // RUN: %t/deduced-gcc
-// RUN: clang++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/deduced.cpp -o %t/deduced-clang
+// RUN: %clangxx %t/deduced.cpp -o %t/deduced-clang
 // RUN: %t/deduced-clang
-// RUN: g++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/hoisted.cpp -o %t/hoisted-gcc
+// RUN: %gxx %t/hoisted.cpp -o %t/hoisted-gcc
 // RUN: %t/hoisted-gcc
-// RUN: clang++ -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic %t/hoisted.cpp -o %t/hoisted-clang
+// RUN: %clangxx %t/hoisted.cpp -o %t/hoisted-clang
 // RUN: %t/hoisted-clang
 // RUN: not ctjs-opt %t/empty-region.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY-REGION
 // RUN: not ctjs-opt %t/empty-block.mlir 2>&1 | FileCheck %s --check-prefix=EMPTY-BLOCK

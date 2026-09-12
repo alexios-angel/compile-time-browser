@@ -4,14 +4,8 @@ import argparse
 from pathlib import Path
 import re
 import shutil
-import subprocess
 
-
-def run(command):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result.stdout
+from CTNative.harness import run
 
 
 def main():
@@ -52,7 +46,7 @@ def main():
     )
     outputs = []
     for label, ir in [("plain", module), ("deduced", deduced)]:
-        cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
+        cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         assert "using js_num = double;" in cpp, cpp
         assert re.search(r"js_num observePrice_\d+\([^\n]* const catalog\)", cpp), cpp
         sharing = cpp.split("// ctcompile: function observeSharing,", 1)[1]
@@ -103,7 +97,7 @@ def main():
                     str(binary),
                 ]
             )
-            assert run([str(binary)]) == expected
+            assert run([str(binary)]).stdout == expected
     assert outputs[0] == outputs[1], outputs
     print(
         "native source names: 8 observations agree under GCC and Clang, plain and deduced; js_num remains double"

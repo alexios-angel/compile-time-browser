@@ -6,15 +6,15 @@
 // RUN: ctjs-opt %t/valid.mlir --ctnative-print-deduced --mlir-print-debuginfo -o %t/deduced.mlir
 // RUN: ctjs-translate --mlir-to-cpp %t/deduced.mlir > %t/deduced.cpp
 // RUN: ctjs-translate --mlir-to-cpp --declare-variables-at-top %t/deduced.mlir > %t/hoisted.cpp
-// RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/explicit.cpp -o %t/explicit-gcc && %t/explicit-gcc
-// RUN: clang++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/explicit.cpp -o %t/explicit-clang && %t/explicit-clang
-// RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/deduced.cpp -o %t/deduced-gcc && %t/deduced-gcc
-// RUN: clang++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/deduced.cpp -o %t/deduced-clang && %t/deduced-clang
-// RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/hoisted.cpp -o %t/hoisted-gcc && %t/hoisted-gcc
-// RUN: clang++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic %t/hoisted.cpp -o %t/hoisted-clang && %t/hoisted-clang
-// RUN: clang++ -std=c++23 -O1 -g -Wall -Wextra -Werror -Wconversion -pedantic -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope %t/explicit.cpp -o %t/asan-explicit
+// RUN: %gxx -O2 %t/explicit.cpp -o %t/explicit-gcc && %t/explicit-gcc
+// RUN: %clangxx -O2 %t/explicit.cpp -o %t/explicit-clang && %t/explicit-clang
+// RUN: %gxx -O2 %t/deduced.cpp -o %t/deduced-gcc && %t/deduced-gcc
+// RUN: %clangxx -O2 %t/deduced.cpp -o %t/deduced-clang && %t/deduced-clang
+// RUN: %gxx -O2 %t/hoisted.cpp -o %t/hoisted-gcc && %t/hoisted-gcc
+// RUN: %clangxx -O2 %t/hoisted.cpp -o %t/hoisted-clang && %t/hoisted-clang
+// RUN: %clangxx -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope %t/explicit.cpp -o %t/asan-explicit
 // RUN: env ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 %t/asan-explicit
-// RUN: clang++ -std=c++23 -O1 -g -Wall -Wextra -Werror -Wconversion -pedantic -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope %t/deduced.cpp -o %t/asan-deduced
+// RUN: %clangxx -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope %t/deduced.cpp -o %t/asan-deduced
 // RUN: env ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 %t/asan-deduced
 // RUN: not ctjs-opt %t/borrowed-catch.mlir 2>&1 | FileCheck %s --check-prefix=CATCH
 // RUN: not ctjs-opt %t/borrowed-throw.mlir 2>&1 | FileCheck %s --check-prefix=THROW
