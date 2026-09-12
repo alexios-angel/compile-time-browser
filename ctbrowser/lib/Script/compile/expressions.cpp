@@ -966,6 +966,11 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         }
         if (prop.c == 3) {
             // An accessor, not a data property. `d` bit2 says which half.
+            if ((prop.d & 1) != 0 && prop.a >= 0) {
+                emit_computed_accessor(dst, prop.a, prop.b, (prop.d & 4) != 0);
+                release_to(mark);
+                continue;
+            }
             const std::uint16_t fnreg = alloc_reg();
             compile_expr(prop.b, fnreg);
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));

@@ -11,6 +11,24 @@
 
 namespace ctbrowser::script::detail {
 
+void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t key,
+                                           std::int32_t fn_node, bool setter) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee,
+                                      intern_name(std::string{define_accessor_name})));
+    const std::uint16_t object = alloc_reg();
+    proto().emit(instruction{op::move, object, target});
+    const std::uint16_t key_reg = alloc_reg();
+    compile_expr(key, key_reg);
+    const std::uint16_t getter = alloc_reg();
+    const std::uint16_t setter_reg = alloc_reg();
+    proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
+    compile_expr(fn_node, setter ? setter_reg : getter);
+    proto().emit(instruction{op::call, callee, 4});
+    release_to(mark);
+}
+
 std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields) {
     const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
     out_.functions[index].name = "<fields>";
@@ -189,6 +207,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const vp::node & m = at(member);
         if (m.text == "constructor" && m.c == 1) { continue; }
         if (m.c == 0) { continue; } // fields: instance ones above, static ones below
+        const bool computed = (m.d & 2) != 0 && m.a >= 0;
         if (m.c == 2) {
             // An accessor. It goes on the prototype like a method - or on
             // the constructor when static - and `d` bit2 says which half.
@@ -196,9 +215,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             // Installing it as a DATA property, which is what happened
             // before, made `obj.v` be the function rather than call it, and
             // a `set` of the same name overwrote the getter outright.
+            const std::uint16_t target = (m.d & 1) != 0 ? dst : prototype_reg;
+            if (computed) {
+                // `get [k]() {}` - the key is a value, so the definition is
+                // the native's (see define_accessor_name).
+                emit_computed_accessor(target, m.a, m.b, (m.d & 4) != 0);
+                continue;
+            }
             compile_expr(m.b, slot);
             const std::uint16_t name = name_operand(std::string{m.text});
-            const std::uint16_t target = (m.d & 1) != 0 ? dst : prototype_reg;
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
             continue;
@@ -213,6 +238,22 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         //
         // ONLY FOR c == 1. A STATIC FIELD reaches this line too and its `b` is
         // an arbitrary expression rather than a function.
+        // A static member goes on the constructor; everything else on the
+        // prototype, where instances find it.
+        const std::uint16_t target = (m.d & 1) != 0 ? dst : prototype_reg;
+        if (m.c == 1 && computed) {
+            // `[k]() {}` (15.4.5 step 1: the key is evaluated before the
+            // method is made): key first, closure second, set_index.
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(m.a, key);
+            const std::uint32_t index = compile_function_body(m.b, "");
+            proto().emit(instruction::with_bx(op::closure, slot, index));
+            proto().emit(instruction{op::set_index, target, key, slot});
+            proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
+            release_to(mark);
+            continue;
+        }
         if (m.c == 1) {
             const std::uint32_t index = compile_function_body(m.b, std::string{m.text});
             proto().emit(instruction::with_bx(op::closure, slot, index));
@@ -220,9 +261,6 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             compile_expr(m.b, slot);
         }
         const std::uint16_t name = name_operand(std::string{m.text});
-        // A static member goes on the constructor; everything else on the
-        // prototype, where instances find it.
-        const std::uint16_t target = (m.d & 1) != 0 ? dst : prototype_reg;
         proto().emit(instruction{op::set_prop, target, name, slot});
         // Each method remembers where it was WRITTEN. `super.m()` resolves
         // against that, not against `this` - in a three-deep hierarchy the

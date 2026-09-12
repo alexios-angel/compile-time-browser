@@ -64,6 +64,11 @@ inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close"
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";
+// An accessor under a COMPUTED key - `get [k]() {}` in a class or a literal:
+// (target, key, getter, setter), the halves undefined when absent.
+// define_getter/define_setter take a name index, so a key that is only known
+// at run time goes through this one native rather than a new opcode.
+inline constexpr std::string_view define_accessor_name = "__ctbrowser_define_accessor";
 
 // Install the standard library into a context.
 //

@@ -877,6 +877,9 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // `get [key]() {}` / `set [key](v) {}` on `target` - see define_accessor_name.
+    void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
+                                bool setter);
     // An array pattern over the iterator protocol - see iterator_open_name.
     // `elements` are the pattern's children; `bind` binds one element node to
     // the register holding its value (a binding pattern and an assignment

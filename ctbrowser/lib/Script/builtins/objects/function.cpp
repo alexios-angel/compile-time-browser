@@ -359,6 +359,11 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    cx.define_native(std::string{define_accessor_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 4 || !a[0].is_object()) { return value::undefined(); }
+        c.define_accessor(a[0], c.to_string(a[1]), a[2], a[3]);
+        return value::undefined();
+    });
     cx.define_native(std::string{iterator_close_name}, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::undefined(); }
         auto * record = static_cast<object_object *>(a[0].as_heap());

@@ -208,6 +208,32 @@ void test_class_expressions() {
                   "5");
 }
 
+// A COMPUTED KEY ON A METHOD OR AN ACCESSOR (15.4.5 step 1: the key is
+// evaluated, then the function is made) - `[k]() {}`, `get [k]() {}`, and a
+// Symbol as the key. Every one compiled to a member named "" before
+// 2026-09-12, so `new C()[k]` was undefined.
+void test_computed_member_keys() {
+    expect_result(
+        "const k = 'dyn'; class C { [k]() { return 1; } static ['s' + 1]() { return 2; } }"
+        "return new C().dyn() + C.s1();",
+        "3");
+    expect_result("const s = Symbol('t'); class C { [s]() { return 'sym'; } } return new C()[s]();",
+                  "sym");
+    expect_result(
+        "let n = 0; class C { get ['g' + ++n]() { return n; } set ['w'](v) { this.got = v; } }"
+        "const c = new C(); c.w = 9; return c.g1 + ',' + c.got;",
+        "1,9");
+    expect_result(
+        "const k = 'a'; const o = { get [k]() { return 4; }, set [k + 'x'](v) { this.v = v; } };"
+        "o.ax = 2; return o.a + o.v;",
+        "6");
+    // Methods stay non-enumerable and reach `super` from where they were written.
+    expect_result("class B { [('m')]() { return 'b'; } } class D extends B { ['m']() { return "
+                  "super.m() + 'd'; } }"
+                  "return new D().m() + Object.keys(D.prototype).length;",
+                  "bd0");
+}
+
 // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
 // `let X = class Inner { static m() { return Inner; } }` - `Inner` inside those
 // methods is the class, not any outer binding. It is how p5.js declares itself
@@ -531,6 +557,7 @@ int main() {
     test_new_target();
     test_implicit_super();
     test_class_expressions();
+    test_computed_member_keys();
     test_named_class_expression_binds_itself();
     test_class_declaration_survives_the_statement();
     test_proxy();
