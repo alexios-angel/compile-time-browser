@@ -32,10 +32,11 @@ var trace = host.slot.get(41);
     rows = {}
 
     def add(name, source, calls, *, admitted=False, functions=4, children=1, retained=False,
-            reused=False, separate=False):
+            reused=False, separate=False, repeated=False):
         rows['nested_map_' + name] = dict(source=source, functions=functions, calls=calls,
             sha256=hashlib.sha256(source.encode()).hexdigest(), admitted=admitted,
-            children=children, retained=retained, reused=reused, separate=separate, expected_trace=41)
+            children=children, retained=retained, reused=reused, separate=separate, repeated=repeated,
+            expected_trace=41)
 
     add('retained', base, 8, admitted=True, retained=True)
     add('saved_delete', base.replace("        child.set('value', value);",
@@ -104,6 +105,9 @@ var trace = host.slot.get();
         if rows['nested_map_' + name]['sha256'] != digest:
             raise RuntimeError(f'{name}: changed the historical child Map source')
     conditional = rows['nested_map_conditional_initialize']['source']
+    add('repeated_lookup', conditional.replace("        return saved.get('value');",
+        "        const again = t.get(1);\n        return again.get('value');"), 9,
+        admitted=True, retained=True, reused=True, repeated=True)
     mixed = "mix(value) { t.set(1, value); return value; }"
     add('conditional_mixed_before', conditional.replace('return { get(value) {',
         'return { ' + mixed + ', get(value) {') + 'host.slot.mix(0);\n', 10, functions=5)
@@ -116,6 +120,13 @@ var trace = host.slot.get();
         "        t.has(2) || t.set(2, new Map);\n        const other = t.get(2);\n"
         "        other.delete('value');\n        return saved.get('value');"), 12, children=2)
     cross = rows['nested_map_cross_invocation']['source']
+    inverted = cross.replace("if (t.has(1)) { return t.get(1).get('value'); } return 0;",
+        "if (!t.has(1)) { return 0; } return t.get(1).get('value');")
+    add('cross_inverted_guard', inverted, 9, functions=5, admitted=True, retained=True,
+        separate=True)
+    add('cross_inverted_wrong_key', inverted.replace('!t.has(1)', '!t.has(2)'), 9,
+        functions=5)
+    rows['nested_map_cross_inverted_wrong_key']['expected_trace'] = 0
     for name, mutation, calls in (
         ('unseeded', "t.set(1, new Map);", 11),
         ('delete', "if (t.has(1)) { t.get(1).delete('value'); }", 13),
@@ -163,6 +174,8 @@ def nested_map_observer(source, row):
 '''
     distinct = '' if row['children'] == 1 else '''ok = ok && seen[0][2] !== seen[1][2] &&
         seen[1][2] === seen[2][2] && seen[stride + 1][2] === seen[stride + 2][2];'''
+    if row['repeated']:
+        distinct = 'ok = ok && seen[0][2] === seen[1][2] && seen[2][2] === seen[3][2];'
     reused = row['reused']
     recreate = '''const outer = seen[0][0], saved = seen[0][2];
     outer.clear(); saved.set('value', 47);
@@ -178,7 +191,8 @@ def nested_map_observer(source, row):
     outer.clear(); saved.set('value', 47);
     ok = ok && get() === 0 && set(19) === 19 && get() === 19 && outer.size === 1 &&
          outer.get(1) !== saved && saved.get('value') === 47;'''
-    return observed.replace('STRIDE', str(1 if row['children'] == 1 else 3)).replace(
+    stride = 2 if row['repeated'] else 1 if row['children'] == 1 else 3
+    return observed.replace('STRIDE', str(stride)).replace(
         'OUTER_SIZE', '1' if row['retained'] else '0').replace('DISTINCT', distinct).replace(
         'METHOD', 'get' if reused else 'set').replace('ITEM', 'result' if reused else 'value').replace(
         'IDENTITY', '===' if reused else '!==').replace('FIRST_VALUE', '-3' if reused else '17').replace(
@@ -326,17 +340,21 @@ def check_nested_maps(args, node, reference, compilers, nm):
         observed = nested_map_observer(row['source'], row)
         observe(name + '-future', observed, 1)
         observations += 1
-        replacements = [("t.get(1).get('value')" if row['separate'] else "saved.get('value')", '41'),
+        readback = "again.get('value')" if row['repeated'] else "saved.get('value')"
+        replacements = [("t.get(1).get('value')" if row['separate'] else readback, '41'),
                         (".set('value', value);", ".set('value', 0);")]
         if row['children'] == 2:
             replacements.append(('second = new Map;', 'second = first;'))
         if row['retained']:
             replacements.append(('t.set(1, child);', 't.set(1, child); t.clear();') if row['separate']
-                                else ('return saved.get', 't.clear(); return saved.get'))
+                                else ('return ' + readback, 't.clear(); return ' + readback))
         if row['separate']:
             replacements.append(('return value;', 'return 0;'))
         if row['reused']:
             replacements.append(('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);'))
+        if row['repeated']:
+            replacements.append(('const again = t.get(1);',
+                                 't.set(1, new Map); const again = t.get(1);'))
         for index, (old, replacement) in enumerate(replacements):
             assert row['source'].count(old) == 1, (name, old)
             blinded = args.work / f'{name}-blinded-{index}.js'
@@ -415,7 +433,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 raise RuntimeError(f'{name}/{mode}: sanitized child lifetime failed\n'
                                    f'{result.returncode}: {result.stdout}{result.stderr}')
         if name in {'nested_map_retained', 'nested_map_distinct_saved',
-                    'nested_map_conditional_initialize', 'nested_map_cross_invocation'}:
+                    'nested_map_conditional_initialize', 'nested_map_cross_invocation',
+                    'nested_map_repeated_lookup', 'nested_map_cross_inverted_guard'}:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
