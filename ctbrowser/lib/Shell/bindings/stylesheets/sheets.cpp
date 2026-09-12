@@ -238,6 +238,10 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         std::string title;
         std::string media;
         std::string text;
+        // The <style>'s child nodes, as ids: HTML §4.2.6 re-creates the sheet
+        // on ANY child change, and css-style-reparse asks that an appended
+        // empty text node drop the rules insertRule added, text or no text.
+        std::string children;
     };
     std::vector<found_sheet> found;
     {
@@ -271,6 +275,7 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                     if (is_style) {
                         for (const node_id child : txn.children(at)) {
                             made.text += txn.text(child);
+                            made.children += std::to_string(pack(child)) + ',';
                         }
                     }
                     found.push_back(std::move(made));
@@ -353,11 +358,12 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 record.source = std::move(text);
                 parse_sheet_rules(at, record.source);
             }
-        } else if (fresh || record.source != each.text) {
+        } else if (fresh || record.source != each.text || record.children != each.children) {
             // EDITING A `<style>` REPLACES ITS SHEET, which is what the source
-            // comparison is for. An insertRule does NOT change the element's
-            // text, so the CSSOM's own mutations survive this.
+            // and child-list comparisons are for. An insertRule does NOT change
+            // the element's children, so the CSSOM's own mutations survive this.
             record.source = each.text;
+            record.children = each.children;
             parse_sheet_rules(at, record.source);
         }
         if (order != nullptr) { order->push_back(at); }

@@ -899,8 +899,9 @@ public:
         std::size_t owner_rule = static_cast<std::size_t>(-1);
         std::string href;
         std::string title;
-        std::string media;  // the `media` ATTRIBUTE as last seen on the owner
-        std::string source; // what was last parsed, so a <style> edit re-parses
+        std::string media;    // the `media` ATTRIBUTE as last seen on the owner
+        std::string source;   // what was last parsed, so a <style> edit re-parses
+        std::string children; // the <style>'s child ids when last parsed
         bool disabled = false;
         bool constructed = false;
         // CSSOM 6.3 "origin-clean flag": false for a `<link>` fetched from
