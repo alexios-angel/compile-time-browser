@@ -232,6 +232,34 @@ void install_dynamic_function(context & cx) {
     }
 }
 
+// See class_defined_name: the class's own members, made non-enumerable.
+void install_class_defined(context & cx) {
+    cx.define_native(std::string{class_defined_name}, [](context &, std::span<value> a) {
+        if (a.empty() || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
+        auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        for (std::size_t i = 0; i < ctor->props.size(); ++i) {
+            const std::string & key = ctor->props[i].first;
+            ctor->set_attrs(key, static_cast<std::uint8_t>(ctor->attrs_of(key) & ~attr_enumerable));
+        }
+        for (accessor_entry & entry : ctor->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_enumerable);
+        }
+        value * proto = ctor->find("prototype");
+        if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
+        auto * table = static_cast<object_object *>(proto->as_heap());
+        std::vector<std::pair<std::string, std::uint8_t>> entries;
+        table->each_own_entry(
+            [&](const std::string & key, std::uint8_t attrs) { entries.emplace_back(key, attrs); });
+        for (const auto & [key, attrs] : entries) {
+            table->set_attrs(key, static_cast<std::uint8_t>(attrs & ~attr_enumerable));
+        }
+        for (accessor_entry & entry : table->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_enumerable);
+        }
+        return value::undefined();
+    });
+}
+
 // `.next(v)`, `.throw(e)`, `.return(v)` - the iterator protocol, for every
 // generator object at once. On a prototype for the same reason a promise's
 // then/catch/finally are: three natives for the whole program rather than

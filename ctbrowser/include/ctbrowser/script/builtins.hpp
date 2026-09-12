@@ -39,6 +39,13 @@ inline constexpr std::string_view regexp_factory_name = "__ctbrowser_regexp";
 // fence returns `__ctbrowser_reject(e)` for a throw an async body did not
 // catch. See compile_function_body.
 inline constexpr std::string_view promise_reject_name = "__ctbrowser_reject";
+// Called once per class, after its methods and accessors are installed and
+// before its static fields are: makes every own property of the constructor
+// and of its prototype NON-ENUMERABLE, which is what ClassDefinitionEvaluation
+// (15.7.14) gives a method, an accessor, `prototype` and `constructor`.
+// op::set_prop has no attribute operand and a new opcode is an ABI change, so
+// this is one native call rather than one per method.
+inline constexpr std::string_view class_defined_name = "__ctbrowser_class_defined";
 
 // Install the standard library into a context.
 //

@@ -767,5 +767,32 @@ int main() {
     js_expect("(function(){var f=Math.max;return f.call(null,3,4);})()", "4");
     js_expect("(function(){var f=Math.max.bind(null,5);return f(1);})()", "5");
 
+    // ================================================================
+    // CLASS MEMBERS ARE NOT ENUMERABLE (15.7.14): a method, an accessor,
+    // `constructor`, a static method - while an instance field and a static
+    // FIELD are. verifyProperty in test262 asks every one of these, 460 files.
+    // ================================================================
+    js_expect(
+        "(function(){class C { m() {} get a() { return 1; } static s() {} static f = 3; x = 1; }"
+        "var d = Object.getOwnPropertyDescriptor(C.prototype, 'm');"
+        "return [d.enumerable, d.writable, d.configurable].join();})()",
+        "false,true,true");
+    js_expect(
+        "(function(){class C { m() {} get a() { return 1; } static s() {} static f = 3; x = 1; }"
+        "return Object.getOwnPropertyDescriptor(C.prototype, 'a').enumerable;})()",
+        "false");
+    js_expect("(function(){class C { m() {} static s() {} static f = 3; x = 1; }"
+              "return Object.keys(C.prototype).length + '/' + Object.keys(C).join() + '/' +"
+              "  Object.keys(new C()).join();})()",
+              "0/f/x");
+    js_expect("(function(){class C { constructor() {} }"
+              "return Object.getOwnPropertyDescriptor(C.prototype, 'constructor').enumerable;})()",
+              "false");
+    // A static initialiser runs after every method is defined, whatever the
+    // source order, and `static x;` exists with the value undefined.
+    js_expect("(function(){class C { static v = C.make(); static make() { return 7; } static w; }"
+              "return C.v + '/' + ('w' in C) + '/' + C.w;})()",
+              "7/true/undefined");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
