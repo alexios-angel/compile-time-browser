@@ -19,10 +19,10 @@ namespace {
 // `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
 // function: this file cannot evaluate it, and a name here is a promise to try.
 constexpr std::string_view math_names[] = {
-    "sibling-index(", "sibling-count(", "progress(", "clamp(", "atan2(", "hypot(",
-    "round(",         "sqrt(",          "asin(",     "acos(",  "atan(",  "sign(",
-    "calc(",          "min(",           "max(",      "mod(",   "rem(",   "abs(",
-    "pow(",           "log(",           "exp(",      "sin(",   "cos(",   "tan("};
+    "sibling-index(", "sibling-count(", "progress(", "random(", "clamp(", "atan2(", "hypot(",
+    "round(",         "sqrt(",          "asin(",     "acos(",   "atan(",  "sign(",  "calc(",
+    "min(",           "max(",           "mod(",      "rem(",    "abs(",   "pow(",   "log(",
+    "exp(",           "sin(",           "cos(",      "tan("};
 
 } // namespace
 
@@ -319,22 +319,44 @@ bool math_uses_percentage(std::string_view value) {
     return false;
 }
 
-folded_value fold_math(std::string_view value, const length_context & ctx, math_context accepts) {
+folded_value fold_math(std::string_view value, const length_context & given, math_context accepts) {
     std::string out;
     bool ok = true;
     std::size_t at = 0;
+    // WHERE IN THE VALUE A FUNCTION SITS, for `random()`: its position is the
+    // top-level component it is in - `margin: random(..) random(..)` is two
+    // positions, `a, random(..)` puts one at the second - so two elements with
+    // the same declaration share by position and two positions never share.
+    length_context ctx = given;
+    int depth = 0;
+    std::uint32_t position = 0;
+    bool in_component = false;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
+            in_component = true;
             continue;
         }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
-            out.push_back(value[at]);
+            const char c = value[at];
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            const bool separator =
+                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
+            if (separator) {
+                if (in_component) { ++position; }
+                in_component = false;
+            } else {
+                in_component = true;
+            }
+            out.push_back(c);
             ++at;
             continue;
         }
+        in_component = true;
+        ctx.random_index = position;
         const function_span span = span_of(value, at, name);
         const std::string_view whole = value.substr(at, span.end - at);
         const bool is_calc = ascii_iequals(name, "calc(");
@@ -430,6 +452,60 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
             const std::size_t from = at + name.size();
             const std::string_view inner =
                 value.substr(from, span.end - from - (span.closed ? 1 : 0));
+            // A `random()` THAT WAITS FOR A BASIS KEEPS ITS BASE. `random(10%,
+            // 100%)` in `translate` has no answer until layout, and CSS Values
+            // 5 §random says its computed value is `random(fixed 0.5, 10%,
+            // 100%)`: the base is decided now and written into the value, so
+            // the used value is the same one every time it is asked.
+            if (ascii_iequals(name, "random(")) {
+                const std::vector<std::string_view> arguments = top_level_arguments(inner);
+                std::string_view options;
+                std::size_t first = 0;
+                // The options are the first argument when it is one: a name,
+                // a scope keyword, `auto` or `fixed`.
+                if (!arguments.empty()) {
+                    const std::string_view head = trim(arguments.front(), html_whitespace);
+                    if (head.starts_with("--") || ascii_istarts_with(head, "fixed") ||
+                        ascii_iequals(head, "auto") || ascii_iequals(head, "element-scoped") ||
+                        ascii_iequals(head, "property-index-scoped") ||
+                        head.find("-scoped") != std::string_view::npos) {
+                        options = head;
+                        first = 1;
+                    }
+                }
+                // A `fixed` base is written out clamped to [0, 1) too, so
+                // `fixed random(-2, -1)` reads back as `fixed 0`.
+                std::optional<double> fixed_base;
+                bool already_plain = false;
+                if (ascii_istarts_with(options, "fixed")) {
+                    const std::string_view rest = trim(options.substr(5), html_whitespace);
+                    const token_stream given_tokens = tokenize(rest);
+                    already_plain = given_tokens.tokens.size() == 2 &&
+                                    given_tokens.tokens.front().type == token_type::number;
+                    const math_answer given = evaluate_math(rest, ctx);
+                    if (given.outcome == math_outcome::resolved && given.value.is_number) {
+                        fixed_base = std::min(std::max(given.value.px, 0.0), 1.0 - 1e-9);
+                    }
+                }
+                if (!ascii_istarts_with(options, "fixed") || (fixed_base && !already_plain)) {
+                    std::string rewritten = "random(fixed ";
+                    calc_result base;
+                    base.px = fixed_base ? *fixed_base : random_base(options, ctx);
+                    base.is_number = true;
+                    base.type = numeric_type::number;
+                    rewritten += serialize_calc(base);
+                    for (std::size_t i = first; i < arguments.size(); ++i) {
+                        rewritten += ", ";
+                        rewritten += trim(arguments[i], html_whitespace);
+                    }
+                    rewritten += ')';
+                    const folded_value again = fold_math(rewritten, ctx, accepts);
+                    out.append(again.text);
+                    ok = ok && again.ok;
+                    at = span.end;
+                    continue;
+                }
+            }
             out.append(rewritten_arguments(name, inner, [&](std::string_view one) {
                 const math_answer arg = evaluate_math(one, ctx);
                 if (arg.outcome == math_outcome::resolved) {

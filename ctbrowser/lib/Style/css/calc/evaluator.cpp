@@ -247,6 +247,26 @@ enum class round_to : std::uint8_t {
     return std::min(std::max(how_far, 0.0), 1.0);
 }
 
+// CSS Values 5 §random: the value between A and B the random base picks, on
+// a grid of `step` when there is one. The corners are the specification's
+// and `random-computed` reads every one of them: a NaN anywhere is a NaN, an
+// out-of-order range is A, an infinite A is that infinity, an infinite B (or
+// an infinite step) has no answer but A's side, and a step that is not
+// positive is no step at all.
+[[nodiscard]] double random_one(double base, double a, double b, std::optional<double> step) {
+    if (std::isnan(a) || std::isnan(b) || (step && std::isnan(*step))) { return std::nan(""); }
+    if (std::isinf(a)) { return a; }
+    if (std::isinf(b)) { return std::nan(""); }
+    if (b < a) { return a; }
+    if (step && *step > 0.0) {
+        if (std::isinf(*step)) { return a; }
+        const double count = std::floor((b - a) / *step) + 1.0; // the multiples that fit
+        const double pick = std::floor(base * count);
+        return std::min(b, a + pick * *step);
+    }
+    return a + base * (b - a);
+}
+
 // WHAT A DIMENSION IS MEASURED AGAINST. Two answers, and the second is what a
 // SPECIFIED value needs: there are no bases yet when one is written, so `1em`
 // and `1cqw` are terms in their own right rather than numbers of pixels.
@@ -578,6 +598,7 @@ private:
         if (named("abs(")) { return sign_or_abs(false); }
         if (named("sign(")) { return sign_or_abs(true); }
         if (named("progress(")) { return progress_of(); }
+        if (named("random(")) { return random_of(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -831,6 +852,87 @@ private:
         return out;
     }
 
+    // random( <random-value-sharing>? , A, B, [by]? step? ), CSS Values 5
+    // §random. The sharing options come first and end at the first comma:
+    // `fixed <number>` names the base outright, otherwise a `<dashed-ident>`,
+    // `element-scoped` and `property-index-scoped` say what the base is keyed
+    // on and `random_base` derives it. Then two values of one type, and an
+    // optional step of the same type.
+    [[nodiscard]] std::optional<term> random_of() {
+        ++at_; // the function token, `(` included
+        // The options: everything before the first comma, read as tokens.
+        std::string options;
+        bool fixed = false;
+        double base = 0.0;
+        skip_whitespace();
+        for (;;) {
+            skip_whitespace();
+            const css_token & tok = peek();
+            if (tok.type == token_type::comma || at_close()) { break; }
+            if (tok.type == token_type::ident) {
+                const std::string_view word = t_.text_of(tok);
+                if (ascii_iequals(word, "fixed")) {
+                    ++at_;
+                    const std::optional<term> given = sum();
+                    if (!given || !given->is_number() || given->has_percent ||
+                        !given->symbols.empty()) {
+                        return fail();
+                    }
+                    fixed = true;
+                    // Clamped to [0, 1), so a base that overshoots picks the
+                    // top of the range without landing exactly on it.
+                    base = std::min(std::max(given->value, 0.0), 1.0 - 1e-9);
+                    continue;
+                }
+                if (word.starts_with("--") || ascii_iequals(word, "element-scoped") ||
+                    ascii_iequals(word, "property-index-scoped") || ascii_iequals(word, "auto")) {
+                    if (!options.empty()) { options += ' '; }
+                    options += word;
+                    ++at_;
+                    continue;
+                }
+                // `NaN`, `infinity`, `pi`: the first argument, with no options.
+                if (!options.empty()) { return fail(); }
+                break;
+            }
+            // A number or a dimension: the first argument, with no options.
+            if (!options.empty() || fixed) { return fail(); }
+            break;
+        }
+        if (!options.empty() || fixed) {
+            skip_whitespace();
+            if (peek().type != token_type::comma) { return fail(); }
+            ++at_;
+        }
+        if (!fixed) { base = random_base(options, ctx_); }
+        // A, B, and the optional step - which may be spelled `by <step>`.
+        std::vector<term> args;
+        for (;;) {
+            skip_whitespace();
+            if (args.size() == 2 && peek().type == token_type::ident &&
+                ascii_iequals(t_.text_of(peek()), "by")) {
+                ++at_;
+            }
+            const std::optional<term> one = sum();
+            if (!one) { return std::nullopt; }
+            args.push_back(*one);
+            skip_whitespace();
+            if (peek().type == token_type::comma) {
+                ++at_;
+                continue;
+            }
+            break;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        if (args.size() < 2 || args.size() > 3) { return fail(); }
+        if (!uniform(args)) { return std::nullopt; }
+        const std::optional<double> step =
+            args.size() == 3 ? std::optional<double>{scalar_of(args[2])} : std::nullopt;
+        return with_scalar(args.front(),
+                           random_one(base, scalar_of(args[0]), scalar_of(args[1]), step));
+    }
+
     [[nodiscard]] std::optional<term> hypot_of() {
         ++at_;
         const std::optional<std::vector<term>> args = arguments(1, ~std::size_t{0});
@@ -944,6 +1046,51 @@ private:
 } // namespace
 
 namespace detail {
+
+// THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
+// the same every time the same KEY asks for it, so a page reflows to the same
+// random layout it first had. The key is what the sharing options say -
+//
+//   nothing                 this element, this property, this position
+//   property-index-scoped   this property and position, on every element
+//   --name                  the name alone, everywhere
+//   --name element-scoped   the name, on this element
+//
+// - hashed (FNV-1a) into the mantissa of a double. Deterministic on purpose:
+// the render goldens are byte-compared and `Math.random` is seeded for the
+// same reason.
+[[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
+    std::string name;
+    bool element_scoped = false;
+    bool property_scoped = false;
+    for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
+        if (word.starts_with("--")) {
+            name = std::string{word};
+        } else if (ascii_iequals(word, "element-scoped")) {
+            element_scoped = true;
+        } else if (ascii_iequals(word, "property-index-scoped")) {
+            property_scoped = true;
+        }
+    }
+    std::string key;
+    if (!name.empty()) {
+        key = name;
+        if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    } else {
+        key = std::string{ctx.property} + '|' + std::to_string(ctx.random_index);
+        if (!property_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    }
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const char c : key) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 1099511628211ull;
+    }
+    // A final mix so a one-character difference reaches every bit.
+    hash ^= hash >> 29;
+    hash *= 0xbf58476d1ce4e5b9ull;
+    hash ^= hash >> 32;
+    return static_cast<double>(hash >> 11) / 9007199254740992.0; // 2^53
+}
 
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,

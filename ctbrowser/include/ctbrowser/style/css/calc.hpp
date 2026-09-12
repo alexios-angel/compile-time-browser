@@ -55,6 +55,14 @@ struct length_context {
     // can say so before the basis exists (round-mod-rem-computed,
     // signs-abs-computed, hypot-pow-sqrt-computed).
     std::optional<float> percent_basis;
+    // WHAT `random()` IS RANDOM PER (CSS Values 5 §random-caching): a value
+    // with no name is shared by nothing - it differs per element, per property
+    // and per position in the value - and the caller says which element and
+    // which property this is. `random_index` is the position, counted by the
+    // fold as it walks the value; zero everywhere else.
+    std::uint64_t element_key = 0;
+    std::string_view property;
+    std::uint32_t random_index = 0;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2

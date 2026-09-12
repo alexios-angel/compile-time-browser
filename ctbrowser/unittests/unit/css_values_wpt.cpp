@@ -215,6 +215,46 @@ void test_typed_arithmetic() {
     CHECK(!check_declaration("width", "calc(2px * 1px)").valid);
 }
 
+// random-computed: random() picks between its bounds on a base that is fixed
+// per key, so the same declaration lands on the same value, and the corners
+// of its range are the specification's.
+void test_random() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.property = "width";
+    ctx.element_key = 7;
+    const auto fold = [&](std::string_view v) { return fold_math(v, ctx).text; };
+    CHECK_EQ(fold("random(fixed 0.5, 1px, 3px)"), std::string{"2px"});
+    CHECK_EQ(fold("random(fixed 0.5, 0, 10, 5)"), std::string{"5"});
+    CHECK_EQ(fold("random(fixed 0.99, 0, 10, by 5)"), std::string{"10"});
+    CHECK_EQ(fold("random(100, 10)"), std::string{"100"});
+    CHECK_EQ(fold("random(NaN, 100)"), std::string{"0"});
+    CHECK_EQ(fold("random(infinity, 100)"), std::string{"33554432"});
+    CHECK_EQ(fold("random(10, infinity)"), std::string{"0"});
+    CHECK_EQ(fold("random(10, 100, infinity)"), std::string{"10"});
+    CHECK_EQ(fold("random(fixed random(-2, -1), 10%, 100%)"),
+             std::string{"random(fixed 0, 10%, 100%)"});
+    // Deterministic per key: the same again is the same, another element or
+    // another position is not, and a shared name or scope is shared.
+    const std::string one = fold("random(0, 1000000)");
+    CHECK_EQ(fold("random(0, 1000000)"), one);
+    CHECK(fold("random(0, 1000000) random(0, 1000000)") != one + " " + one);
+    CHECK_EQ(fold("random(property-index-scoped, 0, 1000000)"),
+             fold("random(property-index-scoped, 0, 1000000)"));
+    ctx.element_key = 8;
+    CHECK(fold("random(0, 1000000)") != one);
+    CHECK_EQ(fold("random(--k, 0, 1000000)"), [&] {
+        length_context other = ctx;
+        other.element_key = 9;
+        other.property = "height";
+        return fold_math("random(--k, 0, 1000000)", other).text;
+    }());
+    const std::string waiting = fold("random(10%, 100%)");
+    CHECK(waiting.starts_with("random(fixed 0.") && waiting.ends_with(", 10%, 100%)"));
+    CHECK_EQ(fold(waiting), waiting);
+}
+
 // tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
 // files: sibling-index() and sibling-count() resolve in the cascade, where the
 // element is, and nowhere else.
@@ -399,6 +439,7 @@ int main() {
     test_a_clamp_with_an_absent_bound_is_a_comparison();
     test_the_range_of_a_property_is_applied_when_computed();
     test_typed_arithmetic();
+    test_random();
     test_the_tree_counting_functions();
     test_attr_substitution();
     test_what_a_page_reads_back();

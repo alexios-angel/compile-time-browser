@@ -653,6 +653,7 @@ public:
         // `:nth-child`, handed to every math function this element folds.
         sibling_index_ = self.sibling_index;
         sibling_count_ = self.sibling_count;
+        element_key_ = key_of(node);
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
         collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -1137,8 +1138,10 @@ public:
                 // answers with numbers and only the cascade knows whether one is a
                 // value here: `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)`
                 // is a syntax error.
+                css::length_context math_bases = lengths_for(d.property);
+                math_bases.property = property;
                 css::folded_value done =
-                    css::fold_math(value, lengths_for(d.property), css::math_context_of(property));
+                    css::fold_math(value, math_bases, css::math_context_of(property));
                 if (!done.ok) {
                     // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
                     // declaration is invalid. WHICH KIND of invalid depends on where
@@ -1258,6 +1261,7 @@ public:
         ctx.viewport_height = environment_.viewport_height;
         ctx.sibling_index = sibling_index_;
         ctx.sibling_count = sibling_count_;
+        ctx.element_key = element_key_;
         return ctx;
     }
 
@@ -1801,6 +1805,8 @@ private:
     // functions. Zero outside a resolve, which leaves them unresolved.
     std::uint32_t sibling_index_ = 0;
     std::uint32_t sibling_count_ = 0;
+    // ...and which element it is, for what `random()` is random per.
+    std::uint64_t element_key_ = 0;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;
