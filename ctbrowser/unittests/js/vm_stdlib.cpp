@@ -414,10 +414,10 @@ void test_array_iterators() {
 // function". p5 exposes day()/month()/year()/hour() and every one builds a
 // Date, so a sketch showing a clock failed on its first line.
 //
-// UTC only and no string parsing - that is a timezone database and a different
-// project. `new Date()` with no argument is the epoch, deliberately: the clock
-// is fixed here for the same reason Math.random is seeded, so a page that draws
-// from either can have a golden.
+// UTC only - a timezone database is a different project - so the local and
+// UTC methods agree. `new Date()` with no argument is the epoch, deliberately:
+// the clock is fixed here for the same reason Math.random is seeded, so a page
+// that draws from either can have a golden.
 void test_date() {
     expect_result("const d = new Date(0);"
                   "return [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()].join(',');",
@@ -438,7 +438,10 @@ void test_date() {
     // The two formatters, pinned byte-for-byte on a known instant, and a month
     // past December rolling into the next year.
     expect_result("return new Date(1234567890123).toISOString();", "2009-02-13T23:31:30.123Z");
-    expect_result("return new Date(1234567890123).toString();", "2009-02-13 23:31:30");
+    expect_result("return new Date(1234567890123).toString();",
+                  "Fri Feb 13 2009 23:31:30 GMT+0000 (Coordinated Universal Time)");
+    expect_result("return new Date(1234567890123).toUTCString();", "Fri, 13 Feb 2009 23:31:30 GMT");
+    expect_result("return new Date(1234567890123).toDateString();", "Fri Feb 13 2009");
     expect_result("return new Date(2024, 12, 1).toISOString();", "2025-01-01T00:00:00.000Z");
     expect_result("return Date.UTC(1970, 0, 2);", "86400000");
     expect_result("return new Date(0) instanceof Date;", "true");
@@ -446,6 +449,44 @@ void test_date() {
     // exists.
     expect_result("return typeof (new Date(5000) - new Date(2000));", "number");
     expect_result("return new Date(5000) - new Date(2000);", "3000");
+    // 21.4.4.45 @@toPrimitive: `+` takes the string, `-` the number.
+    expect_result("return new Date(0) + '';",
+                  "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)");
+    // Date.parse and the string constructor: the ISO format, with and without
+    // a time and an offset, and the two forms the engine itself prints.
+    expect_result("return Date.parse('2009-02-13T23:31:30.123Z');", "1234567890123");
+    expect_result("return Date.parse('2009-02-13T23:31:30.123+01:00');", "1234564290123");
+    expect_result("return new Date('2009-02-13').getTime();", "1234483200000");
+    expect_result("return new Date('2009').getTime();", "1230768000000");
+    expect_result("return Date.parse('Fri Feb 13 2009 23:31:30 GMT+0000 (UTC)');", "1234567890000");
+    expect_result("return Date.parse('Fri, 13 Feb 2009 23:31:30 GMT');", "1234567890000");
+    expect_result("return Date.parse('nonsense');", "NaN");
+    expect_result("return String(new Date(NaN));", "Invalid Date");
+    expect_result("return new Date(NaN).getFullYear();", "NaN");
+    expect_result("try { new Date(NaN).toISOString(); } catch (e) { return e.constructor.name; }",
+                  "RangeError");
+    expect_result("return new Date(8.64e15 + 1).getTime();", "NaN");
+    expect_result("return JSON.stringify({d: new Date(0)});",
+                  "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
+    // The setters rebuild through MakeDate, normalising an overflow; the
+    // UTC twins are the same functions under this engine's one zone.
+    expect_result("const d = new Date(0); d.setFullYear(2000, 1, 29); return d.toISOString();",
+                  "2000-02-29T00:00:00.000Z");
+    expect_result("const d = new Date(0); d.setMonth(13); return d.toISOString();",
+                  "1971-02-01T00:00:00.000Z");
+    expect_result("const d = new Date(0); d.setUTCHours(25, 61); return d.toISOString();",
+                  "1970-01-02T02:01:00.000Z");
+    expect_result("const d = new Date(0); return d.setTime(5) + ',' + d.getTime();", "5,5");
+    expect_result("const d = new Date(0); d.setDate(0); return d.toISOString();",
+                  "1969-12-31T00:00:00.000Z");
+    expect_result("return new Date(99, 0).getFullYear();", "1999");
+    expect_result("return new Date(-1).getUTCMilliseconds();", "999");
+    expect_result("return new Date(Date.UTC(-100000, 0, 1)).toISOString();",
+                  "-100000-01-01T00:00:00.000Z");
+    expect_result("return typeof Date();", "string");
+    expect_result(
+        "try { Date.prototype.getTime.call({}); } catch (e) { return e.constructor.name; }",
+        "TypeError");
 }
 
 // AN ARRAYBUFFER IS SHARED STORAGE.
