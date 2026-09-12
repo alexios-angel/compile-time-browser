@@ -237,6 +237,12 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         if (fn().is_async && fn().is_generator && n.a >= 0) {
             proto().emit(instruction{op::await_value, r, r});
         }
+        // A DERIVED CONSTRUCTOR'S RETURN is checked - see emit_derived_return -
+        // unless a finally is open, which takes the value as it is.
+        if (!fn().derived_flag.empty() && finallies_.empty()) {
+            emit_derived_return(r);
+            break;
+        }
         // AN OPEN `finally` GETS IT FIRST. Returning straight out of a try
         // block skipped the finally entirely - see compile_try_with_finally.
         if (!route_return_through_finally(r)) {

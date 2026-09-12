@@ -881,7 +881,51 @@ void test_call_bind_this() {
                   "length,name");
 }
 
+// A DERIVED CLASS'S CONSTRUCTOR binds `this` only when `super()` returns
+// (10.2.1.3): `this` before it, a return without it, and a second `super()`
+// are ReferenceErrors; a returned primitive is the TypeError; a returned
+// object replaces the instance. An arrow inside the constructor shares the
+// binding. Tracked by a hidden local the compiler keeps - see
+// frame::derived_flag - so a plain function or a base class pays nothing.
+void test_derived_constructors() {
+    expect_result("class A {} class B extends A { constructor() { super(); this.x = 1; } }"
+                  "return new B().x;",
+                  "1");
+    expect_result("class A {} class B extends A { constructor() { this.x = 1; super(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() {} }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() { super(); super(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "ReferenceError");
+    expect_result("class A {} class B extends A { constructor() { return 1; } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("class A {} class B extends A { constructor() { return {y: 2}; } }"
+                  "return new B().y;",
+                  "2");
+    expect_result("class A {} class B extends A { constructor() { const f = () => super(); f();"
+                  " this.x = 3; } } return new B().x;",
+                  "3");
+    expect_result(
+        "class A {} class B extends A { constructor() { const g = () => this; try { g(); }"
+        " catch (e) { super(); return; } } } new B(); return 'caught';",
+        "caught");
+    // `super.x = v` lands on `this`, and a frozen prototype refuses it.
+    expect_result("class C { m() { super.x = 8; return this.x; } } return new C().m();", "8");
+    expect_result("class C { m() { super.x = 8; return C.prototype.hasOwnProperty('x'); } }"
+                  "return new C().m();",
+                  "false");
+    // `super[k]` reads through the parent prototype.
+    expect_result("class A { get k() { return 'a'; } } class B extends A { get k() { return 'b'; }"
+                  " m() { return super['k'] + this.k; } } return new B().m();",
+                  "ab");
+}
+
 int main() {
+    test_derived_constructors();
     test_default_parameters();
     test_rest_parameters();
     test_nested_function_declarations_are_local();

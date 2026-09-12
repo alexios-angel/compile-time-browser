@@ -160,7 +160,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // Named after the CLASS. A constructor is a function expression, so
         // it had no name of its own and every stack trace through one said
         // `<anonymous>` - which in a 4.5 MB bundle is no answer at all.
+        derived_ctor_pending_ = n.a >= 0; // see frame::derived_flag
         const std::uint32_t index = compile_function_body(constructor_body, std::string{n.text});
+        derived_ctor_pending_ = false;
         proto().emit(instruction::with_bx(op::closure, dst, index));
     } else if (n.a >= 0) {
         // A DERIVED class with no constructor gets `constructor(...args) {

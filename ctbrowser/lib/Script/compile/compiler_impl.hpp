@@ -114,6 +114,12 @@ public:
         bool is_async = false;     // `return v` hands back a settled promise of v
         bool is_generator = false; // `function*` - calling it does not run it
         bool is_strict = false;    // see function_proto::is_strict
+        // THE CONSTRUCTOR OF A DERIVED CLASS: the hidden boxed local that says
+        // whether `super()` has run - `this` before it, a second `super()`,
+        // and a return without it are the ReferenceErrors of 10.2.1.3 /
+        // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
+        // the constructor asks its nearest non-arrow frame (derived_flag()).
+        std::string derived_flag;
         // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
         // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
         // names a function mentions. The index lives HERE rather than on the
@@ -537,6 +543,24 @@ public:
     std::size_t tdz_frame_ = static_cast<std::size_t>(-1);
     // `throw new <kind>(message)`, through the global constructor.
     void emit_throw(std::string_view kind, std::string message);
+
+    // --- derived constructors --------------------------------------------------
+    // Set by compile_class for the constructor it is about to compile; the
+    // body consumes it (see frame::derived_flag).
+    bool derived_ctor_pending_ = false;
+    // The flag of the derived constructor `this` resolves to from here, or
+    // nothing: this frame's, or through any number of arrows, the nearest
+    // non-arrow frame's.
+    [[nodiscard]] const std::string * derived_flag();
+    // `this` / a return / a `super()` with the flag still false is the
+    // ReferenceError; `super()` with it true is one too (`again`).
+    void emit_super_check(const std::string & flag, bool again);
+    // `super()` returned: the flag goes true.
+    void emit_super_done(const std::string & flag);
+    // The tail of a `return v` in a derived constructor: an object is
+    // returned, undefined returns `this` (once super() ran), anything else is
+    // the TypeError (10.2.2 [[Construct]] steps 10-13).
+    void emit_derived_return(std::uint16_t value);
 
     // --- `with` ---------------------------------------------------------------
     //

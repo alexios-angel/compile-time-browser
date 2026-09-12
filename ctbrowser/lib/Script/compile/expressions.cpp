@@ -84,7 +84,13 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         break;
     case vp::nk::index: {
         const std::uint32_t mark = reg_mark();
-        compile_expr(n.a, dst);
+        // `super[k]`, like `super.x` above (13.3.7.1: the base first, then the
+        // key).
+        if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
+            emit_super_base(dst);
+        } else {
+            compile_expr(n.a, dst);
+        }
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, dst, key});
@@ -100,7 +106,12 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         proto().emit(instruction::with_bx(op::closure, dst, index));
         break;
     }
-    case vp::nk::this_lit: proto().emit(instruction{op::load_this, dst}); break;
+    case vp::nk::this_lit:
+        // In a derived constructor (or an arrow in one), `this` before
+        // `super()` is the ReferenceError - see frame::derived_flag.
+        if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
+        proto().emit(instruction{op::load_this, dst});
+        break;
     // `new.target` - a meta-property, so it takes no operands and reads the
     // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
     // built on it) and Babylon.js uses it in its decorator metadata; it
@@ -513,10 +524,23 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.name = name_operand(std::string{target.text});
         return out;
     }
+    // `super.x = v` and `super[k] = v`: a Super Reference is PUT with `this`
+    // as the receiver (13.3.7.1 MakeSuperPropertyReference, 6.2.5.6 step
+    // 4), so a data property lands on `this` and a frozen prototype is the
+    // TypeError. The store goes to `this` - which also finds an inherited
+    // setter, since `this` sits below the home object. (A read starts above
+    // the home object; a compound assignment reads from `this`, a deviation
+    // that only a setter or shadowing property on the home object itself can
+    // observe.)
+    const bool on_super = target.a >= 0 && at(target.a).kind == vp::nk::super_lit;
     if (target.kind == vp::nk::member) {
         out.what = reference::kind::member;
         out.reg = alloc_reg();
-        compile_expr(target.a, out.reg);
+        if (on_super) {
+            proto().emit(instruction{op::load_this, out.reg});
+        } else {
+            compile_expr(target.a, out.reg);
+        }
         out.name = member_operand(target.text);
         return out;
     }
@@ -524,7 +548,11 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.what = reference::kind::index;
         out.reg = alloc_reg();
         out.key = alloc_reg();
-        compile_expr(target.a, out.reg);
+        if (on_super) {
+            proto().emit(instruction{op::load_this, out.reg});
+        } else {
+            compile_expr(target.a, out.reg);
+        }
         compile_expr(target.b, out.key);
         return out;
     }
@@ -904,8 +932,11 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     // `super(...)` - NOT `super.m(...)` - carries new.target into the base
     // constructor. Babylon reads it there to hang decorator metadata off
     // the class actually being constructed, and got undefined.
+    const std::string * flag = callee.kind == vp::nk::super_lit ? derived_flag() : nullptr;
+    if (flag != nullptr) { emit_super_check(*flag, true); } // see compile_call
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
+    if (flag != nullptr) { emit_super_done(*flag); }
     proto().emit(instruction{op::move, dst, target});
     release_to(mark);
 }
@@ -928,10 +959,15 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t self = receiver ? alloc_reg() : base;
     compile_call_target(n, base, self);
     for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
+    // A second `super()` is the ReferenceError, judged after the arguments
+    // (10.2.1.3 BindThisValue, reached after the parent constructor ran).
+    const std::string * flag = callee.kind == vp::nk::super_lit ? derived_flag() : nullptr;
+    if (flag != nullptr) { emit_super_check(*flag, true); }
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{receiver ? op::call_receiver : op::call, base,
                              static_cast<std::uint16_t>(args.size()),
                              receiver ? self : std::uint16_t{0}});
+    if (flag != nullptr) { emit_super_done(*flag); }
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
