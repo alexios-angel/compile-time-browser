@@ -30,22 +30,13 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "ratchet.hpp"
 
 using ctbrowser::shell::input_event;
 
-namespace {
+using ctbrowser_test::ask;
 
-[[nodiscard]] std::string ask(ctbrowser::shell::browser & page, const std::string & expression) {
-    const std::size_t before = page.bindings().console_output().size();
-    (void)page.run_script("try { console.log('=' + String(" + expression +
-                          ")); } catch (e) { console.log('=threw: ' + (e && e.message ? "
-                          "e.message : e)); }");
-    const auto & said = page.bindings().console_output();
-    for (std::size_t i = said.size(); i-- > before;) {
-        if (said[i].starts_with("=")) { return said[i].substr(1); }
-    }
-    return "<no answer>";
-}
+namespace {
 
 // Every pixel of the canvas, in scan order, as one number. What "the picture
 // changed" means, and the only thing that can tell an orbit from a still frame:

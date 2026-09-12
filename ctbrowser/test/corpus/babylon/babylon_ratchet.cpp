@@ -26,6 +26,11 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "ratchet.hpp"
+
+using ctbrowser_test::ask;
+using ctbrowser_test::measurement;
+using ctbrowser_test::recorded;
 
 namespace {
 
@@ -62,49 +67,6 @@ enum rung : int {
     case rung_gui: return "the GUI draws";
     default: return "?";
     }
-}
-
-struct measurement {
-    int level = rung_none;
-    std::string blocker;
-    bool stopped = false;
-
-    void fail_at(int at, std::string why) {
-        if (stopped) { return; }
-        level = at - 1;
-        const std::size_t newline = why.find('\n');
-        blocker = newline == std::string::npos ? std::move(why) : why.substr(0, newline);
-        stopped = true;
-    }
-    void reached(int at) {
-        if (!stopped) { level = at; }
-    }
-};
-
-[[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
-    for (std::size_t at = 0; at < text.size();) {
-        const std::size_t end = text.find('\n', at);
-        const std::string_view line{text.data() + at,
-                                    (end == std::string::npos ? text.size() : end) - at};
-        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') {
-            return std::string{line.substr(key.size() + 1)};
-        }
-        if (end == std::string::npos) { break; }
-        at = end + 1;
-    }
-    return {};
-}
-
-[[nodiscard]] std::string ask(ctbrowser::shell::browser & page, const std::string & expression) {
-    const std::size_t before = page.bindings().console_output().size();
-    (void)page.run_script("try { console.log('=' + String(" + expression +
-                          ")); } catch (e) { console.log('=threw: ' + (e && e.message ? "
-                          "e.message : e)); }");
-    const auto & said = page.bindings().console_output();
-    for (std::size_t i = said.size(); i-- > before;) {
-        if (said[i].starts_with("=")) { return said[i].substr(1); }
-    }
-    return "<no answer>";
 }
 
 // WHAT IS ON THE CANVAS, as a histogram. Two sampled pixels cannot tell "the

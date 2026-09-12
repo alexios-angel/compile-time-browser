@@ -21,11 +21,16 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "ratchet.hpp"
 
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
+
+using ctbrowser_test::ask;
+using ctbrowser_test::measurement;
+using ctbrowser_test::recorded;
 
 namespace {
 
@@ -58,51 +63,6 @@ enum rung {
     case rung_scene: return "Babylon renders a scene to the pixels";
     default: return "?";
     }
-}
-
-struct measurement {
-    int level = rung_none;
-    std::string blocker;
-    bool stopped = false;
-
-    void fail_at(int at, std::string why) {
-        if (stopped) { return; }
-        level = at - 1;
-        const std::size_t newline = why.find('\n');
-        blocker = newline == std::string::npos ? std::move(why) : why.substr(0, newline);
-        stopped = true;
-    }
-    void reached(int at) {
-        if (!stopped) { level = at; }
-    }
-};
-
-// The recorded floor: `key=value` lines, the same shape the other two records
-// use.
-[[nodiscard]] std::string recorded(const std::string & text, std::string_view key) {
-    for (std::size_t at = 0; at < text.size();) {
-        const std::size_t end = text.find('\n', at);
-        const std::string_view line{text.data() + at,
-                                    (end == std::string::npos ? text.size() : end) - at};
-        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') {
-            return std::string{line.substr(key.size() + 1)};
-        }
-        if (end == std::string::npos) { break; }
-        at = end + 1;
-    }
-    return {};
-}
-
-[[nodiscard]] std::string ask(ctbrowser::shell::browser & page, const char * expression) {
-    const std::size_t before = page.bindings().console_output().size();
-    (void)page.run_script(std::string{"try { console.log('=' + String("} + expression +
-                          ")); } catch (e) { console.log('=threw: ' + (e && e.message ? "
-                          "e.message : e)); }");
-    const auto & said = page.bindings().console_output();
-    for (std::size_t i = said.size(); i-- > before;) {
-        if (said[i].starts_with("=")) { return said[i].substr(1); }
-    }
-    return "<no answer>";
 }
 
 // DOES BABYLON EVEN RUN? Reported beside the ladder rather than inside it,
@@ -546,33 +506,7 @@ int main() {
 
     std::printf("     babylon: %s\n", babylon_verdict().c_str());
 
-    // THE PAWL, identical in rule to the other two: the level may not go down,
-    // and at the same level the blocker may not change. Only
-    // tools/corpus/webgl2-ratchet.py --advance writes the record.
-    const std::string record = read_file("test/corpus/webgl2/webgl2-ratchet.txt");
-    if (record.empty()) {
-        std::printf("     (no test/corpus/webgl2/webgl2-ratchet.txt yet - run "
-                    "tools/corpus/webgl2-ratchet.py --advance to record this)\n");
-        REPORT("webgl2_ratchet");
-    }
-    const std::string want_level = recorded(record, "level");
-    const std::string want_blocker = recorded(record, "blocker");
-    if (!want_level.empty()) {
-        const int floor_level = std::stoi(want_level);
-        if (m.level < floor_level) {
-            std::printf("FAIL webgl2 went BACKWARDS: %d, recorded %d (%s)\n", m.level, floor_level,
-                        rung_name(floor_level));
-            ++ctbrowser_test_failures;
-        } else if (m.level == floor_level && m.blocker != want_blocker) {
-            std::printf("FAIL webgl2 is stuck at %d but the blocker CHANGED\n"
-                        "  was: %s\n  now: %s\n",
-                        m.level, want_blocker.c_str(), m.blocker.c_str());
-            ++ctbrowser_test_failures;
-        } else if (m.level > floor_level) {
-            std::printf("     AHEAD of the record (%d > %d) - run "
-                        "tools/corpus/webgl2-ratchet.py --advance\n",
-                        m.level, floor_level);
-        }
-    }
+    ctbrowser_test::ratchet_pawl("webgl2", "test/corpus/webgl2/webgl2-ratchet.txt",
+                                 "tools/corpus/webgl2-ratchet.py", m, rung_name);
     REPORT("webgl2_ratchet");
 }
