@@ -39,5 +39,10 @@ int main() {
               "1");
     js_expect("(function(){ class C {} return Reflect.construct(C, []) instanceof C; })()", "true");
     js_expect("new (new Proxy(Array, {}))(2).length", "2");
+    // GetPrototypeFromConstructor: the instance sits on newTarget's prototype.
+    js_expect("(function(){ function N() {} N.prototype = {mark: 1}; return "
+              "Reflect.construct(Error, ['m'], N).mark + ',' + Reflect.construct(Error, ['m'], "
+              "N).message; })()",
+              "1,m");
     REPORT("is_constructor");
 }

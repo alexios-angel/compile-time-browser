@@ -123,7 +123,17 @@ void install_proxy(context & cx) {
         }
         std::vector<value> args;
         if (a[1].is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
-        return c.construct(a[0], args);
+        const value made = c.construct(a[0], args);
+        // GetPrototypeFromConstructor off newTarget (10.1.14): context::construct
+        // takes none, so an ordinary object a built-in made is re-parented
+        // afterwards - what `Reflect.construct(Error, [], NewTarget)` observes.
+        if (a.size() > 2 && !a[2].strict_equals(a[0]) && made.is_object() && !c.throw_pending()) {
+            const value proto = c.lookup_property(a[2], "prototype");
+            if (proto.is_object_like()) {
+                static_cast<object_object *>(made.as_heap())->prototype = proto;
+            }
+        }
+        return made;
     });
     method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         std::vector<value> args;
