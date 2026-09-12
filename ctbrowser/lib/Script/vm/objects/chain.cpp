@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 // The VM's implementation.
@@ -50,9 +51,31 @@ value context::own_keys(value source) {
         // enumerates STRING keys only, and ENUMERABLE ones only: 13.7.5.15
         // filters on [[Enumerable]], which is why a built-in method never turns
         // up in a `for (k in Math)`.
-        static_cast<object_object *>(source.as_heap())
-            ->each_own_enumerable_key(
-                [&](const std::string & name) { keys->items.push_back(string(name)); });
+        auto * obj = static_cast<object_object *>(source.as_heap());
+        obj->each_own_enumerable_key(
+            [&](const std::string & name) { keys->items.push_back(string(name)); });
+        // ...AND THE PROTOTYPE CHAIN (14.7.5.9 EnumerateObjectProperties): an
+        // inherited enumerable key is visited once, unless an own or nearer
+        // property of the same name shadows it - a non-enumerable one shadows
+        // too. `for (k in body)` reaching the Window-forwarded handlers on
+        // HTMLBodyElement.prototype is the case a page notices.
+        std::unordered_set<std::string> seen;
+        const auto shadow = [&](object_object * table) {
+            table->each_own_entry(
+                [&](const std::string & name, std::uint8_t) { seen.insert(name); });
+        };
+        shadow(obj);
+        for (value up = obj->prototype; up.is_object();) {
+            auto * parent = static_cast<object_object *>(up.as_heap());
+            std::vector<std::string> fresh;
+            parent->each_own_enumerable_key([&](const std::string & name) {
+                if (seen.find(name) == seen.end()) { fresh.push_back(name); }
+            });
+            for (const std::string & name : fresh) { keys->items.push_back(string(name)); }
+            shadow(parent);
+            up = parent->prototype;
+            if (seen.size() > 1u << 16) { break; } // a cyclic chain is a page's own bug
+        }
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::size_t n = arr->items.size();

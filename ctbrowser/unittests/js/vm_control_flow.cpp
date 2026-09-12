@@ -341,6 +341,17 @@ void test_for_in() {
     expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
     expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;",
                   "3");
+    // INHERITED ENUMERABLE KEYS TOO (14.7.5.9), own first, a shadowed name
+    // once, and a non-enumerable own property shadows an inherited one.
+    expect_result("var p = { inherited: 1, get acc() { return 2; } };"
+                  "var o = Object.create(p); o.own = 3; o.inherited = 4;"
+                  "Object.defineProperty(o, 'acc', { value: 0, enumerable: false });"
+                  "var keys = []; for (var k in o) keys.push(k); return keys.join(',');",
+                  "own,inherited");
+    expect_result("class A { m() {} } var a = new A(); Object.defineProperty(A.prototype, 'e',"
+                  " { value: 1, enumerable: true }); var ks = []; for (var k in a) ks.push(k);"
+                  " return ks.join(',');",
+                  "e");
 }
 
 void test_switch() {
