@@ -95,7 +95,14 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
                     }
                     return element;
                 }
-                return make_live_collection(c, [this, name] { return named_document_items(name); });
+                if (const auto held = named_collections_.find(name);
+                    held != named_collections_.end()) {
+                    return held->second;
+                }
+                const value made =
+                    make_live_collection(c, [this, name] { return named_document_items(name); });
+                named_collections_.emplace(name, made);
+                return made;
             }
             return value::undefined();
         }));

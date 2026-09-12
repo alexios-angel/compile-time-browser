@@ -1988,6 +1988,10 @@ private:
     // `template.content` after the contents were adopted - must answer the
     // same object. Marked as roots; see wrap().
     flat_map<std::uint64_t, script::object_object *> adopted_away_;
+    // `document.x` for several elements of one name is ONE live collection
+    // per name (HTML 3.1.5), so `document.a === document.a` even as the
+    // members change. Marked as roots.
+    flat_map<std::string, value> named_collections_;
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the
