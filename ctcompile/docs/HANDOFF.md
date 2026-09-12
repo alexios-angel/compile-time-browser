@@ -53,10 +53,15 @@ python3 ctcompile/test/CTNative/Ownership/global-maps.py \
 The final **255-step rebuild** and **4/4 focused CTests in 1.71 seconds** pass.
 Stable clang-format **22.1.8** passes **795 files**; bundled 23 has the same nine
 pre-existing differences, byte-identical to the previous gate. All **1238
-frozen input hashes** match locally and remotely. The full **530-test** standard
-monorepo gate is running; a full pass is not yet claimed.
+frozen input hashes** match locally and remotely before and after the gate.
+The full standard gate passes **530/530 CTests in 2379.99 seconds**, including
+all **158 browser CTests** and **168/168 lit cases** (lit **1544.74 seconds**).
+Full Bootstrap still measures **19/574 native functions** in both optimization
+modes; broader ownership work remains.
 Evidence: `/tmp/ctcompile-global-key-final.log`,
+`/tmp/ctcompile-global-key-full-{detail.log,summary.json}`,
 `/tmp/ctcompile-global-key-{frozen,matrix}.json`,
+`/tmp/ctcompile-global-key-measured/`,
 `/tmp/ctcompile-global-key-test-static.json`.
 
 **Next: one immutable global alias**, tracked **abbf4b9c**
@@ -162,7 +167,7 @@ before type, identity, Map and typed-global emission consume it. Early loads,
 second stores including late ones, fields, unknown consumers, payload/return
 escapes and incompatible later arguments remain refusals. **600b8fb6** adds
 aliases and two identities and remains a later extension. Both original
-true-global sources now have measured refusals in both modes, including stale
+true-global sources had measured refusals in both modes, including stale
 and fresh forgeries and reruns; they are distinct from the admitted block consts.
 Full native Bootstrap, field/nested-Map ownership, and direct browser API
 integration remain unfinished.
