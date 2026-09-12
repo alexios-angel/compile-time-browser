@@ -338,6 +338,14 @@ int main() {
     // records no arity - and it is now installed at each call site from the
     // specification's clause for that method. `Object.keys.length` is 1.
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').writable", "false");
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').configurable", "true");
 
@@ -426,6 +434,14 @@ int main() {
     js_expect("Array.prototype.reduce.length", "1");
     js_expect("Object.defineProperty.length", "3");
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     js_expect("Math.max.length", "2");
     js_expect("Math.floor.length", "1");
     js_expect("Math.random.length", "0");
@@ -846,6 +862,14 @@ int main() {
     js_expect("typeof Object.keys.bind", "function");
     js_expect("Object.keys.name", "keys");
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     // ...and Object.prototype behind it, which is Function.prototype's own
     // [[Prototype]]. `assert_own_property` in WPT's harness is exactly this
     // call on an arbitrary object.

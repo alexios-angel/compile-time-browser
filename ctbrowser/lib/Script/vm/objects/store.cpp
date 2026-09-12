@@ -294,7 +294,8 @@ void context::store_property(value target, const std::string & name, value v) {
                 store_rejected_ = true;
                 return;
             }
-        } else if (!fn->extensible) {
+        } else if (!fn->extensible || (name == "name" && !fn->name_erased)) {
+            // ...and a native's synthesised `name` is non-writable too.
             store_rejected_ = true;
             return;
         }
@@ -314,6 +315,13 @@ void context::store_property(value target, const std::string & name, value v) {
                     return;
                 }
             } else if (!closure->extensible) {
+                store_rejected_ = true;
+                return;
+            } else if ((name == "length" || name == "name") && closure->proto != nullptr) {
+                // The SYNTHESISED `length` and `name` (own_property answers
+                // them off the compiled function, { false, false, true }) are
+                // not writable: the write is refused, not shadowed by a new
+                // own entry. defineProperty still redefines them.
                 store_rejected_ = true;
                 return;
             }
