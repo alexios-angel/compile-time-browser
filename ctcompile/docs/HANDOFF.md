@@ -70,9 +70,15 @@ The same focused cohort passes with eight workers in **26.30 seconds**, and
 all **1251 artifacts** still match serial/two-worker results. The rebuild,
 **4/4 concurrent focused CTests in 1.33 seconds**, and lit's **8-slot reservation**
 check pass. The output-path audit found no collisions or missing dependency.
-**The new full parallel gate is running against 1240 frozen inputs; its result
-is pending.** Evidence: `/tmp/ctcompile-all-cores-{focused,full}.log`,
-`/tmp/ctcompile-all-cores-{comparison,frozen}.json` and
+The final parallel gate passes **530/530 CTests in 767.76 seconds**, including
+all **158 browser tests** and **168/168 lit cases in 519.55 seconds**. The same
+530-test matrix dropped from **28m 39s to 12m 48s**: **55.3% less wall time /
+2.24× faster**, saving **15m 52s**. All **1240 frozen input hashes** match locally
+and remotely before/after; fresh full Bootstrap and exact Data counts remain
+unchanged. The working code is committed and no browser/runtime source changed.
+Evidence: `/tmp/ctcompile-all-cores-{focused,full}.log`,
+`/tmp/ctcompile-all-cores-full-{detail.log,summary.json}`,
+`/tmp/ctcompile-all-cores-{comparison,frozen,speedup}.json` and
 `/tmp/ctcompile-devbox-parallel-probe.log`.
 Evidence: `/tmp/ctcompile-key-alias-focused-fixed.log`,
 `/tmp/ctcompile-key-alias-{full.log,frozen.json,matrix.json}`,
