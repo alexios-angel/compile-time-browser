@@ -906,6 +906,22 @@ struct json_writer {
             const value args[2] = {cx.string(key), v};
             v = cx.call(replacer, args, holder);
         }
+        // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
+        // its primitive - through ToNumber / ToString, so a user valueOf or
+        // toString on it runs; a Boolean and a BigInt read the slot.
+        if (const value * slot = primitive_slot(v); slot != nullptr) {
+            if (slot->is_number()) {
+                v = value::number(cx.to_number_value(v));
+            } else if (slot->is_string()) {
+                v = cx.string(cx.to_string(v));
+            } else if (slot->is_boolean() || slot->is_kind(heap_kind::bigint)) {
+                v = *slot;
+            }
+            if (cx.throw_pending()) {
+                failed = true;
+                return false;
+            }
+        }
         if (v.is_null()) {
             out += "null";
             return true;

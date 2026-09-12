@@ -153,19 +153,10 @@ value context::construct(value callee, std::span<const value> args) {
         }();
         current_this_ = saved;
         if (rethrow_pending()) { return value::undefined(); } // see context::call
-        // A CONVERSION UNDER `new` KEEPS ITS VALUE. `new Number(5)` used to
-        // evaluate to the fresh empty instance, because a native returning a
-        // primitive looks exactly like a constructor that returned nothing - so
-        // the 5 was thrown away and `n + 1` was "[object Object]1". Silently.
-        //
-        // The DEVIATION, said plainly: the spec builds a wrapper OBJECT here, so
-        // `typeof new Number(5)` is "object" in a browser and "number" here.
-        // Every operation on it is right, which is the opposite of what happened
-        // before, and no page relies on the wrapper - every style guide in
-        // existence tells you not to write this. The flag is set only on the
-        // three conversions in install_globals, so a page's own constructor
-        // returning a primitive still evaluates to its instance per spec.
-        if (nat->find("__conversion") != nullptr) { return produced; }
+        // A native returning a primitive looks exactly like a constructor
+        // that returned nothing: `new Number(5)` evaluates to the receiver,
+        // which the three wrapper constructors fill through
+        // detail::wrap_primitive (values.cpp, async.cpp).
         return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its

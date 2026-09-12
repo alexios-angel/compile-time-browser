@@ -570,28 +570,32 @@ void install_promise(context & cx) {
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.
     {
-        auto * string_ctor = cx.allocate<native_object>("String", [](context & c,
-                                                                     std::span<value> a) {
-            // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
-            // conversion the specification allows on a symbol (22.1.1.1
-            // step 2) and it yields "Symbol(description)". Everything else
-            // here goes through `to_string`, which for a symbol returns its
-            // internal KEY - that is deliberate and load-bearing, because
-            // computed property access resolves `o[sym]` through the same
-            // call, so it cannot be changed without separating
-            // ToPropertyKey from ToString. Special-casing the explicit
-            // conversion is the part that can be had cheaply.
-            if (!a.empty() && a[0].is_kind(heap_kind::symbol)) {
-                return c.string("Symbol(" +
-                                static_cast<symbol_object *>(a[0].as_heap())->description + ")");
-            }
-            return c.string(a.empty() ? std::string{} : c.to_string(a[0]));
-        });
-        // A CONVERSION, not a constructor of wrappers - see context::construct. `new
-        // String(x)` evaluates to the converted value here rather than to a wrapper
-        // object; before the flag it evaluated to an empty object and the value was
-        // gone.
-        detail::constant(string_ctor, "__conversion", value::boolean(true));
+        auto * string_ctor =
+            cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
+                // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
+                // conversion the specification allows on a symbol (22.1.1.1
+                // step 2) and it yields "Symbol(description)". Everything else
+                // here goes through `to_string`, which for a symbol returns its
+                // internal KEY - that is deliberate and load-bearing, because
+                // computed property access resolves `o[sym]` through the same
+                // call, so it cannot be changed without separating
+                // ToPropertyKey from ToString. Special-casing the explicit
+                // conversion is the part that can be had cheaply.
+                const value self = c.current_this();
+                const bool constructing = detail::constructing_this(self);
+                value made = c.string(std::string{});
+                if (!a.empty() && a[0].is_kind(heap_kind::symbol) && !constructing) {
+                    made =
+                        c.string("Symbol(" +
+                                 static_cast<symbol_object *>(a[0].as_heap())->description + ")");
+                } else if (!a.empty()) {
+                    made = c.string(string_arg(c, a[0]));
+                    if (c.throw_pending()) { return value::undefined(); }
+                }
+                // 22.1.1.1 step 3: a call converts, `new` wraps - the same String
+                // exotic object `Object("ab")` builds, see detail::wrap_primitive.
+                return constructing ? detail::wrap_primitive(c, self, made) : made;
+            });
         // detail::method, not `set`: clause 17 makes every one of these
         // { writable: true, enumerable: FALSE, configurable: true }, and `set`
         // gave them the default attributes - so `Object.keys(String)` listed
@@ -622,7 +626,11 @@ void install_promise(context & cx) {
         stat("fromCharCode", 1, [encode](context & c, std::span<value> a) {
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
-                encode(out, static_cast<std::uint32_t>(context::to_uint32(a[i]) & 0xFFFFu));
+                // ToUint16 of ToNumber (22.1.2.1): an object's valueOf runs.
+                if (!numeric_arg(c, a[i])) { return value::undefined(); }
+                const double n = c.to_number_value(a[i]);
+                if (c.throw_pending()) { return value::undefined(); }
+                encode(out, context::to_uint32(value::number(n)) & 0xFFFFu);
             }
             return c.string(out);
         });
