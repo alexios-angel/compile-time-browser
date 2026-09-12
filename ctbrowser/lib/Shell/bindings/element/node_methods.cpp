@@ -653,7 +653,10 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id fresh = insertable(c, node_arg);
         const node_id stale = handle_of(child_arg);
         // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
-        if ((!fresh && !is_a_document(node_arg)) || (!stale && !is_a_document(child_arg))) {
+        // Another document's node is a Node; pre_insert_valid says what is
+        // wrong with it, in the specification's order.
+        if ((!fresh && !is_a_document(node_arg)) ||
+            (!stale && !is_a_document(child_arg) && owner_of(child_arg) == nullptr)) {
             c.throw_error("TypeError", "replaceChild: the argument is not a Node");
             return value::undefined();
         }
