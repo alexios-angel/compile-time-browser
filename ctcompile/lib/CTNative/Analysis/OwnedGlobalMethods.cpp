@@ -101,6 +101,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
+                         edge.capturedMap->childLeafContents != capture->childLeafContents ||
                          edge.capturedMap->childEntries != capture->childEntries ||
                          edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
@@ -161,7 +162,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     llvm::DenseSet<mlir::Operation *> childMaps;
     if (capture && (!capture->childMaps.empty() || !capture->returnedChildMaps.empty() ||
                     !capture->childEntries.empty() || capture->childMapContents ||
-                    capture->childScalarContents.known)) {
+                    capture->childScalarContents.known || capture->childLeafContents)) {
         mlir::DominanceInfo dominance(module);
         llvm::DenseSet<mlir::Value> outers, children, constructedChildren, returnedChildren;
         llvm::DenseMap<mlir::Value, ctjs::ConstructOp> childOrigins;
@@ -238,6 +239,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         };
         PrimitiveAlternatives scalarContents;
         bool childWrite = false, childPublication = false;
+        if (capture->childLeafContents && !capture->childMapContents) {
+            reject("owned child leaf contents lack their complete outer Map census");
+            return;
+        }
         if (capture->childScalarContents.known &&
             (!capture->childMapContents || !capture->childScalarContents.tag() ||
              !(capture->childScalarContents == capture->childScalarContents.categories()))) {
@@ -292,6 +297,25 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                         childWrite = true;
                     }
                 }
+                if (capture->childLeafContents) {
+                    if (outers.contains(call.getReceiver())) {
+                        childPublication = true;
+                    } else {
+                        const auto value = call.getArgs()[1];
+                        bool leaf = scalar(value).known;
+                        if (auto made = value.getDefiningOp<ctjs::CreateObjectOp>()) {
+                            leaf |= llvm::is_contained(capture->leafObjects, made);
+                        }
+                        for (const auto & method : capture->parameters) {
+                            if (!spend()) { return; }
+                            leaf |= llvm::is_contained(method.objectKeys, value);
+                        }
+                        if (!leaf) {
+                            reject("owned child leaf contents have an unproved write");
+                            return;
+                        }
+                    }
+                }
                 (outers.contains(call.getReceiver()) ? outers : children).insert(call.getResult());
                 if (constructedChildren.contains(call.getReceiver())) {
                     constructedChildren.insert(call.getResult());
@@ -311,6 +335,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             (!childPublication || !childWrite ||
              !(scalarContents == capture->childScalarContents))) {
             reject("owned child scalar contents disagree with the complete write census");
+            return;
+        }
+        if (capture->childLeafContents && !childPublication) {
+            reject("owned child leaf contents lack a checked publication");
             return;
         }
         if (!capture->childEntries.empty()) {

@@ -585,7 +585,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     PrimitiveAlternatives childScalar;
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
     bool childEntryProved = !primitiveContents, childPublished = false;
-    bool childScalarProved = !primitiveContents;
+    bool childScalarProved = !primitiveContents, childLeafProved = !primitiveContents;
     for (auto [index, parameters] : llvm::enumerate(result.parameters)) {
         auto member = parameters.function;
         auto & memberBody = member.getBody().front();
@@ -593,11 +593,12 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         // An invariant may not use the result of the invocation it authorizes.
         // All actual categories must close with no family results available.
         HostMethodParameters independent{member, {}};
-        if ((childEntryProved || childScalarProved) &&
+        if ((childEntryProved || childScalarProved || childLeafProved) &&
             !capturedMapParameters(member, prepared, familyCalls[index], familyInvocations,
                                    noResults, independent)) {
             childEntryProved = false;
             childScalarProved = false;
+            childLeafProved = false;
         }
         const auto mapOrigin = [&](auto && self, mlir::Value value,
                                    unsigned depth = 0) -> mlir::Value {
@@ -658,6 +659,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 childWrites.emplace_back(invoke, receiver);
                 auto key = invoke.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
                 PrimitiveAlternatives alternatives;
+                bool leaf =
+                    static_cast<bool>(invoke.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>());
                 if (auto value = invoke.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()) {
                     alternatives = PrimitiveAlternatives::forTag(value.getValue().getTypeID());
                 } else if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(invoke.getArgs()[1]);
@@ -667,7 +670,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                     if (position < independent.alternatives.size()) {
                         alternatives = independent.alternatives[position].categories();
                     }
+                    leaf |= llvm::is_contained(independent.objectKeys, argument);
                 }
+                childLeafProved &= leaf || alternatives.known;
                 // Category closure does not require initialization or a fixed key.
                 // Deletion and empty publication cannot introduce another category.
                 if (!alternatives.tag()) {
@@ -714,6 +719,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     if (result.childMapContents && childScalarProved && childPublished && childScalar.known) {
         result.childScalarContents = childScalar;
     }
+    result.childLeafContents = result.childMapContents && childLeafProved && childPublished;
     // Establish invocation results before joining the complete method census.
     // Two calls to one method may have an acyclic result dependency even when
     // a method-level worklist would wait for its own unpublished result. Each
@@ -740,6 +746,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 scratch.childMapContents = result.childMapContents;
                 scratch.childEntries = result.childEntries;
                 scratch.childScalarContents = result.childScalarContents;
+                scratch.childLeafContents = result.childLeafContents;
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives)) {

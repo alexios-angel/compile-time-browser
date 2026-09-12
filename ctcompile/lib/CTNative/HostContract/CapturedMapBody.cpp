@@ -23,6 +23,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
     llvm::DenseSet<mlir::Value> primitives, flags;
+    // Closed scalar/leaf alternatives permit non-coercing observations, never
+    // an own-field receiver or a primitive category without separate evidence.
+    llvm::DenseSet<mlir::Value> leafValues;
     llvm::DenseMap<mlir::Value, mlir::Value> maps;
     const auto capturedOrigin = body.getArgument(prepared ? 3 : 2);
     llvm::DenseSet<mlir::Operation *> constructors, allocations, mapStores;
@@ -334,7 +337,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     }
     for (mlir::BlockArgument parameter : body.getArguments().drop_front(offset)) {
         if (!step()) { return false; }
-        if (llvm::is_contained(parameters.objectKeys, parameter)) { continue; }
+        if (llvm::is_contained(parameters.objectKeys, parameter)) {
+            leafValues.insert(parameter);
+            continue;
+        }
         primitives.insert(parameter);
         alternatives.try_emplace(parameter,
                                  parameters.alternatives[parameter.getArgNumber() - offset]);
@@ -451,9 +457,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                 if (compare.getKind() != ctjs::CompareKind::StrictEq ||
                     (!primitives.contains(compare.getLhs()) &&
-                     !objects.contains(compare.getLhs())) ||
+                     !objects.contains(compare.getLhs()) &&
+                     !leafValues.contains(compare.getLhs())) ||
                     (!primitives.contains(compare.getRhs()) &&
-                     !objects.contains(compare.getRhs()))) {
+                     !objects.contains(compare.getRhs()) &&
+                     !leafValues.contains(compare.getRhs()))) {
                     return false;
                 }
                 identities.insert(compare);
@@ -463,7 +471,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
                 if (unary.getKind() != ctjs::UnaryKind::Not ||
-                    !primitives.contains(unary.getOperand())) {
+                    (!primitives.contains(unary.getOperand()) &&
+                     !leafValues.contains(unary.getOperand()))) {
                     return false;
                 }
                 primitives.insert(unary.getResult());
@@ -471,7 +480,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     unary.getResult(),
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
             } else if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                if (!primitives.contains(truthy.getValue())) { return false; }
+                if (!primitives.contains(truthy.getValue()) &&
+                    !leafValues.contains(truthy.getValue())) {
+                    return false;
+                }
                 flags.insert(truthy.getResult());
             } else if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 const bool hasElse = !branch.getElseRegion().empty();
@@ -633,8 +645,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     if (!step()) { return false; }
                     const auto left = thenYield.getOperand(index),
                                right = elseYield.getOperand(index);
-                    if (!primitives.contains(left) || !primitives.contains(right)) { return false; }
+                    if ((!primitives.contains(left) && !leafValues.contains(left)) ||
+                        (!primitives.contains(right) && !leafValues.contains(right))) {
+                        return false;
+                    }
                     auto value = branch.getResult(index);
+                    if (leafValues.contains(left) || leafValues.contains(right)) {
+                        leafValues.insert(value);
+                        continue;
+                    }
                     primitives.insert(value);
                     const auto joinedValue =
                         thenAlternatives.lookup(left).joined(alternatives.lookup(right));
@@ -828,6 +847,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 result.childScalarContents.joined(PrimitiveAlternatives::forTag(
                                     mlir::TypeID::get<ctjs::UndefinedAttr>())));
                         }
+                        if (origin != capturedOrigin && result.childLeafContents &&
+                            !primitives.contains(invoke.getResult()) &&
+                            !objects.contains(invoke.getResult())) {
+                            leafValues.insert(invoke.getResult());
+                        }
                         if (maps.lookup(invoke.getResult()) == invoke.getResult()) {
                             auto & child = mapStates[invoke.getResult()];
                             for (const auto & entry : result.childEntries) {
@@ -846,7 +870,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
                 if (depth == 0 || &operation != &block.back()) { return false; }
                 for (mlir::Value value : yield.getOperands()) {
-                    if (!step() || !primitives.contains(value)) { return false; }
+                    if (!step() || (!primitives.contains(value) && !leafValues.contains(value))) {
+                        return false;
+                    }
                 }
             } else if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
                 const auto count = enter->getAttrOfType<mlir::IntegerAttr>("reg_count");
@@ -894,6 +920,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         for (mlir::OpOperand & use : parameter.getUses()) {
             if (!step() || !dominance.dominates(parameter, use.getOwner())) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (identities.contains(use.getOwner()) ||
+                llvm::isa<ctjs::TruthyOp, ctjs::UnaryOp, mlir::scf::YieldOp>(use.getOwner())) {
+                continue;
+            }
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                              : ctjs::GetPropertyOp{};
@@ -948,7 +978,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // Scalar read-time facts, including an absent get's Undefined result,
     // cannot cross their source scope through malformed live SSA edits. The
     // same requirement protects primitive key evidence and branch conditions.
-    for (const auto * values : {&primitives, &flags}) {
+    for (const auto * values : {&primitives, &flags, &leafValues}) {
         for (mlir::Value value : *values) {
             for (mlir::OpOperand & use : value.getUses()) {
                 if (!step() || !dominance.dominates(value, use.getOwner())) { return false; }

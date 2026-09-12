@@ -116,6 +116,9 @@ struct HostCapturedMap {
     // Every child write has this scalar category, independently of membership.
     // Empty publication, delete and clear preserve it; reads may be Undefined.
     PrimitiveAlternatives childScalarContents{};
+    // Every child write is a supported scalar or a checked scalar-field leaf.
+    // Reads may be Undefined; this gives no primitive, field or identity facts.
+    bool childLeafContents = false;
 };
 
 // Evidence for this actual call, not a promise about future exported callers
