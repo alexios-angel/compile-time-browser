@@ -1286,6 +1286,20 @@ public:
                     known != nullptr && known->nonnegative) {
                     value = css::non_negative(value);
                 }
+                // ...AND A SUBSTITUTED VALUE IS VALIDATED once its math has an
+                // answer, as the path without math was above: `font-style:
+                // attr(data-foo type(<angle>), calc(10 + 20))` falls back to
+                // the number 30, which font-style cannot take, and is invalid
+                // at computed-value time (attr-all-types). A value that is
+                // still a function - `min(10px, 5%)` - is valid as it stands.
+                if (had_var && !css::may_have_math(value)) {
+                    const css::value_check checked = css::check_declaration(property, value);
+                    if (!checked.valid) {
+                        unset();
+                        return;
+                    }
+                    value = std::move(checked.serialized);
+                }
             }
             // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
             // every `em` in every other declaration needed the answer first. Emit

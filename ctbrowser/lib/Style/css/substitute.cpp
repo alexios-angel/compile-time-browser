@@ -195,7 +195,7 @@ struct syntax_alternative {
 constexpr std::string_view syntax_types[] = {
     "length", "number", "percentage", "length-percentage",  "color",        "integer",
     "angle",  "time",   "resolution", "transform-function", "custom-ident", "transform-list",
-    "string", "image"};
+    "string", "image",  "frequency"};
 
 // `*`, or alternatives of `<type>` and keywords separated by `|`. Nothing may
 // sit between the brackets and the name - `< string>` and `<string >` are both
@@ -384,6 +384,7 @@ struct item {
     if (type == "angle") { return dimension_of(numeric_type::angle); }
     if (type == "time") { return dimension_of(numeric_type::time); }
     if (type == "resolution") { return dimension_of(numeric_type::resolution); }
+    if (type == "frequency") { return dimension_of(numeric_type::frequency); }
     if (type == "string") {
         if (single && t.type == token_type::string) { return text; }
         return std::nullopt;
@@ -785,6 +786,16 @@ private:
             expansion = "\"\"";
             return true;
         }
+        // AN ATTRIBUTE ALREADY BEING SUBSTITUTED IS A CYCLE however it is read
+        // again - through `type(*)`, or as the raw string a bare attr() makes
+        // of it: `data-foo="attr(data-bar type(*))"` with `data-bar="attr(
+        // data-foo)"` is a ring, and every attr() in it is invalid, fallbacks
+        // included; only the attr() the declaration itself wrote takes its
+        // fallback (attr-cycle 3, 28, 29).
+        if (std::ranges::find(attrs_resolving_, name) != attrs_resolving_.end()) {
+            attr_cycle_ = true;
+            return false;
+        }
         std::optional<std::string> value;
         switch (type) {
         case kind::raw: value = quoted(*held); break;
@@ -814,10 +825,6 @@ private:
             // declaration itself wrote takes its fallback (attr-cycle 3, 8, 12,
             // 17, 28, 29; attr-all-types 75-79 read one attribute through
             // another without a cycle).
-            if (std::ranges::find(attrs_resolving_, name) != attrs_resolving_.end()) {
-                attr_cycle_ = true;
-                return false;
-            }
             attrs_resolving_.push_back(name);
             std::string substituted;
             const bool ok = run(*held, substituted, depth + 1);

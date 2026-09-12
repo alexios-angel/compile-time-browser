@@ -373,6 +373,10 @@ void test_attr_substitution() {
         if (name == "data-nested") { return "attr(data-foo type(*), 2px)"; }
         if (name == "data-ring") { return "attr(data-ring2 type(*), 2px)"; }
         if (name == "data-ring2") { return "attr(data-ring type(*), 3px)"; }
+        if (name == "data-raw-ring") { return "attr(data-raw-ring2 type(*))"; }
+        if (name == "data-raw-ring2") { return "attr(data-raw-ring)"; }
+        if (name == "data-unclosed") { return "attr(data-unclosed"; }
+        if (name == "data-hz") { return "3kHz"; }
         return std::nullopt;
     };
     const auto sub = [&](std::string_view value) {
@@ -384,6 +388,12 @@ void test_attr_substitution() {
     CHECK_EQ(sub("attr(data-nested type(*), 1px)"), std::string{"10"});
     CHECK_EQ(sub("attr(data-ring type(*), 1px)"), std::string{"1px"});
     CHECK_EQ(sub("attr(data-ring type(*))"), std::string{"<invalid>"});
+    // ...and a ring closed by a BARE attr(), which reads the attribute as a
+    // string, is a ring all the same - as is an attribute naming itself in
+    // an attr() the tokenizer has to close for it (attr-cycle 3, 28).
+    CHECK_EQ(sub("attr(data-raw-ring type(*))"), std::string{"<invalid>"});
+    CHECK_EQ(sub("attr(data-unclosed type(*), abc)"), std::string{"abc"});
+    CHECK_EQ(sub("attr(data-hz type(<frequency>))"), std::string{"3khz"});
     // No type: a string, whatever the text says.
     CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
     CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});
