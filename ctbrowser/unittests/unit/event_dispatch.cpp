@@ -7,7 +7,7 @@
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
 // the order it had; the helpers more than one of the eight needs are in
-// page_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -20,7 +20,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "page_probe.hpp"
+#include "chrome_probe.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
