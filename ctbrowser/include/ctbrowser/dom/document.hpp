@@ -388,4 +388,12 @@ private:
     return id == txn.root() && txn.kind(id).value_or(node_kind::document) == node_kind::element;
 }
 
+// THE PARENT AS THE DOM SEES IT: the Document node for every child of the
+// document, the document element included - whose own pointer is empty, see
+// above. `parentNode`, the sibling walks and anything else a page observes
+// asks this; the engine's walks keep asking `parent()`.
+[[nodiscard]] inline node_id dom_parent(const read_txn & txn, node_id id) noexcept {
+    return is_document_child(txn, id) ? txn.document_node() : txn.parent(id);
+}
+
 } // namespace ctbrowser

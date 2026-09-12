@@ -958,6 +958,9 @@ void dom_bindings::install_node_methods(context & cx) {
                                          ? (contains | preceding)
                                          : (disconnected | implementation_specific | preceding));
             }
+            if (const unsigned foreign = foreign_document_position(given); foreign != 0) {
+                return value::number(foreign);
+            }
             c.throw_error("TypeError", "compareDocumentPosition: the argument is not a Node");
             return value::undefined();
         }

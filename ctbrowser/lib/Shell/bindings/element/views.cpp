@@ -533,9 +533,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             property, value::object(cx.allocate<script::native_object>(property, std::move(fn))),
             value::undefined());
     };
+    // `dom_parent`, not `parent()`: the document element's parent is the
+    // Document, which `wrap` hands back as the page's own `document`.
     navigate("parentNode", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
-        return wrap(c, txn.parent(id));
+        return wrap(c, dom_parent(txn, id));
     });
     // `parentElement` IS NOT `parentNode`. It is null when the parent is not an
     // element, which is exactly the case a tree-walking page tests to know it
@@ -614,7 +616,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     const auto sibling = [this, element_children](context & c, node_id self, bool forward,
                                                   bool elements_only) {
         const auto txn = doc_->read();
-        const node_id parent = txn.parent(self);
+        const node_id parent = dom_parent(txn, self);
         if (!parent) { return value::null(); }
         const std::vector<node_id> kids =
             elements_only

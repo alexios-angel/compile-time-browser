@@ -157,6 +157,22 @@ dom_bindings * dom_bindings::owner_of(value v) {
     return nullptr;
 }
 
+unsigned dom_bindings::foreign_document_position(value given) {
+    dom_bindings * owner = owner_of(given);
+    if (owner == nullptr) {
+        dom_bindings * top = primary_ == nullptr ? this : primary_;
+        if (top->is_the_document(given)) { owner = top; }
+        for (const auto & made : top->secondary_documents_) {
+            if (made->is_the_document(given)) { owner = made.get(); }
+        }
+    }
+    if (owner == nullptr || owner == this) { return 0; }
+    constexpr unsigned disconnected = 0x01, preceding = 0x02, following = 0x04,
+                       implementation_specific = 0x20;
+    return disconnected | implementation_specific |
+           (std::less<const dom_bindings *>{}(owner, this) ? preceding : following);
+}
+
 bool dom_bindings::is_a_document(value v) const {
     if (is_the_document(v)) { return true; }
     const dom_bindings * top = primary_ == nullptr ? this : primary_;

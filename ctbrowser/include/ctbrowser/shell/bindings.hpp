@@ -1881,6 +1881,11 @@ private:
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+    // `compareDocumentPosition` against a node or Document of ANOTHER document
+    // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
+    // direction the specification only asks to be consistent taken from the
+    // order of the two bindings. Zero when `given` is not one of those.
+    [[nodiscard]] unsigned foreign_document_position(value given);
 };
 
 } // namespace ctbrowser::shell

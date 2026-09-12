@@ -412,6 +412,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (is_the_document(given)) { return value::number(0); }
         const node_id other = handle_of(given);
         if (!other) {
+            if (const unsigned foreign = foreign_document_position(given); foreign != 0) {
+                return value::number(foreign);
+            }
             // A non-nullable Node in the IDL, so anything else fails argument
             // conversion before the method runs - a TypeError, not a 0 that
             // says "these are the same node".
