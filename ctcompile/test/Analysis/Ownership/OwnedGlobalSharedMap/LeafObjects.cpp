@@ -214,6 +214,44 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
     };
+    const auto checkLeafContents = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query,
+                                       const char * message) {
+        const auto contract = requested(module);
+        HostContractAnalysis host(module, contract);
+        check(host.proved() && query.proved() && !host.exhausted() && !query.exhausted() &&
+                  query.roots().size() == 1 && host.callables().size() == 4 &&
+                  scalarReadsEmpty(module, host) && scalarReadsEmpty(module, query),
+              message);
+        if (!host.proved() || !query.proved() || query.roots().empty()) { return; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(table.methods.size() == 2 && table.calls.size() == 4 && capture.childMapContents &&
+                  capture.childLeafContents && !capture.childMaps.empty() &&
+                  !capture.returnedChildMaps.empty() && capture.childEntries.empty() &&
+                  !capture.childScalarContents.known,
+              "complete child ownership grants neither a scalar category nor required membership");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap && edge.capturedMap->childMapContents &&
+                      edge.capturedMap->childLeafContents &&
+                      !edge.capturedMap->childScalarContents.known &&
+                      edge.capturedMap->childEntries.empty() &&
+                      edge.capturedMap->childMaps == capture.childMaps &&
+                      edge.capturedMap->returnedChildMaps == capture.returnedChildMaps &&
+                      edge.capturedMap->leafObjects == capture.leafObjects &&
+                      edge.capturedMap->reads == capture.reads &&
+                      edge.capturedMap->calls == capture.calls,
+                  "every current call retains the same complete leaf ownership and effects");
+        }
+        check(hostContractFingerprint(module) == contract.moduleSha256,
+              "leaf-only ownership preserves all historical source operations");
+    };
+    const auto leafOwner = [&](const std::string & program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared leaf-only child owner fixture parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        checkLeafContents(*module, query, message);
+    };
     const auto branchOrigins =
         replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
                  R"MLIR(
@@ -272,7 +310,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                         "%childReader = ctjs.get_property %saved[%readKey]");
     unseeded = replaced(unseeded, "%loaded = ctjs.call %childReader(%childWritten, %entryKey)",
                         "%loaded = ctjs.call %childReader(%saved, %entryKey)");
-    refuse(unseeded, "child kind and outer membership cannot grant a prior child's contents");
+    leafOwner(unseeded, "an unseeded child stays owned without scalar or member authority");
     auto priorSeed =
         replaced(unseeded, "      %written = ctjs.call %setter(%state, %entryKey, %value)",
                  R"MLIR(
@@ -355,8 +393,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                   "forged reports never replace independent child-entry ownership proof");
         }
     }
-    refuse(replaced(cross, seed, ""),
-           "a separate getter cannot infer membership from an unseeded publication");
+    leafOwner(replaced(cross, seed, ""),
+              "a separate getter owns an unseeded child without proving its contents");
     auto lateSeed = replaced(cross, seed, "");
     lateSeed = replaced(lateSeed, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
                         "    %written = ctjs.call %setter(%state, %entryKey, %value)\n" + seed);
@@ -368,10 +406,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                              (action == "delete" ? ", %seedKey)\n" : ")\n");
         nullableLegacy.push_back(replaced(cross, seed, seed + erasure));
     }
-    refuse(replaced(cross, seed,
-                    seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
-                           "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
-           "mixed child payload categories revoke the getter's Number authority");
+    leafOwner(replaced(cross, seed,
+                       seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
+                              "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
+              "mixed child payloads retain ownership while revoking the getter's Number authority");
     const auto poison = [&](const std::string & payload) {
         return replaced(conditional, "    %size = ctjs.get_property %state[%key]",
                         R"MLIR(
@@ -406,7 +444,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %different = ctjs.constant #ctjs.boolean<true>
     %otherMutation = ctjs.call %otherSetter(%other, %entryKey, %different)
     %childReader = ctjs.get_property)MLIR");
-    refuse(possibleAlias, "unknown returned children can alias and revoke a saved Number payload");
+    leafOwner(possibleAlias,
+              "possibly aliased children stay owned without a saved Number payload guarantee");
     auto aliasClear =
         replaced(possibleAlias, "    %otherSetter = ctjs.get_property %other[%setKey]",
                  "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
@@ -459,7 +498,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     }
     unsigned nullableRows = 0;
     const auto nullable = [&](const std::string & program, bool expected, const char * label,
-                              bool reverse = false, bool exhaustive = false, int scalarRead = -1) {
+                              bool reverse = false, bool exhaustive = false, int scalarRead = -1,
+                              bool leafOnly = false) {
         ++nullableRows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "source/prepared nullable child fixture parses");
@@ -498,6 +538,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         }
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "nullable child proof preserves every source operation");
+        if (leafOnly) {
+            checkLeafContents(*module, query, label);
+            return;
+        }
         if (!expected || !query.proved() || query.roots().empty()) { return; }
         const auto & table = *query.roots().front().methodTable;
         const auto & capture = *table.capturedMap;
@@ -588,8 +632,9 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             "the original seeded, late and deleted child sources retain only nullable contents",
             false, false, 0);
     }
-    nullable(withoutScalarRead(unseeded), false,
-             "no scalar writes means no prior child scalar category authority");
+    nullable(withoutScalarRead(unseeded), true,
+             "no scalar writes leaves child ownership without a scalar category", false, false, 0,
+             true);
     const auto removal = replaced(prior, "    %childSetter = ctjs.get_property", R"MLIR(
     %deleteKey = ctjs.constant #ctjs.string<"delete">
     %deleter = ctjs.get_property %state[%deleteKey]
@@ -624,10 +669,11 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                                        replaced(sibling, "BAD_VALUE", payload) +
                                            "    %size = ctjs.get_property %state[%key]");
         for (bool reverse : {false, true}) {
-            nullable(poisoned, false,
-                     "an incompatible or opaque sibling write defeats nullable authority in "
-                     "either complete family order",
-                     reverse);
+            const bool closed = llvm::StringRef(payload) != "ctjs.load_global \"external\"";
+            nullable(poisoned, closed,
+                     closed ? "mixed sibling writes retain only leaf ownership in either order"
+                            : "an opaque sibling write defeats complete child ownership",
+                     reverse, false, -1, closed);
         }
     }
     nullable(prior, true, "the homogeneous proof is independent of sibling order", true);
@@ -641,9 +687,189 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     check(nullableRows == 21, "all nullable child category, absence and sibling controls ran");
 }
 
+void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & source,
+                             bool prepared) {
+    using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    auto fixture =
+        replaced(source, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %value: !ctjs.value)");
+    fixture = replaced(fixture, "    %value = ctjs.create_object\n", "");
+    const std::string initialization =
+        "    %payload = ctjs.create_object\n"
+        "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
+        "    %fieldValue = ctjs.constant #ctjs.number<4634204016564240384>\n"
+        "    ctjs.set_property %payload[%fieldKey], %fieldValue\n";
+    fixture = replaced(fixture, "    %putResult =", initialization + "    %putResult =");
+    for (unsigned call = 0; call < 2; ++call) {
+        fixture = replaced(fixture, ", %actual)", ", %actual, %payload)");
+    }
+    fixture = replaced(fixture, ", %future)", ", %future, %payload)");
+    const std::string observation = "    ctjs.store_global \"trace\", %answer\n";
+    const std::string inspected = "    %loaded = ctjs.get_property %payload[%fieldKey]\n"
+                                  "    %same = ctjs.compare strict_eq %payload, %payload\n";
+    const auto observed = replaced(fixture, observation, inspected + observation);
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & text, bool expected, const char * message,
+                             unsigned objects = 3) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "source/prepared caller payload fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
+                  !owner.exhausted(),
+              message);
+        if (host.proved() != expected || owner.proved() != expected) {
+            std::fprintf(stderr, "caller payload %s row %u: host=%s owner=%s\n",
+                         prepared ? "prepared" : "source", rows, host.reason().str().c_str(),
+                         owner.reason().str().c_str());
+        }
+        if (!expected) {
+            check(host.callables().empty() && empty(*module, owner),
+                  "an unsafe caller payload publishes no partial family");
+        } else if (host.proved() && owner.proved()) {
+            const auto & table = *owner.roots().front().methodTable;
+            const auto & capture = *table.capturedMap;
+            auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+            const auto parameter = setter.getBody().front().getArgument(prepared ? 5 : 4);
+            unsigned actualObjects = 0, calls = 0;
+            bool complete = table.methods.size() == 2 && table.calls.size() == 4 &&
+                            capture.childScalarContents == Alternatives{} &&
+                            capture.leafObjects.empty();
+            for (const auto & edge : table.calls) {
+                if (edge.function != setter) { continue; }
+                ++calls;
+                complete &= edge.arguments.size() == 2 && edge.capturedMap.has_value();
+                if (edge.arguments.size() != 2 || !edge.capturedMap) { continue; }
+                const auto & argument = edge.arguments.back();
+                auto made = argument.object;
+                actualObjects += static_cast<unsigned>(static_cast<bool>(made));
+                complete &= argument.parameter == parameter &&
+                            argument.actual == edge.call->getOperand(prepared ? 5 : 3) &&
+                            argument.alternatives == Alternatives{} &&
+                            (!made || made.getResult() == argument.actual);
+                const auto family = llvm::find_if(
+                    capture.parameters, [&](const auto & item) { return item.function == setter; });
+                complete &= family != capture.parameters.end() &&
+                            family->objectKeys == std::vector{parameter} &&
+                            family->alternatives.size() == 2 &&
+                            family->alternatives.back() == Alternatives{};
+            }
+            check(complete && calls == 3 && actualObjects == objects,
+                  "caller objects keep exact actual/formal identities without scalar or local "
+                  "leaf authority across the complete invocation family");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "caller ownership preserves every field write and invocation");
+    };
+    variant(fixture, true, "a caller-owned scalar field can be retained as a Map payload");
+    variant(observed, true, "a checked caller alias permits initialized field and identity reads");
+    variant(replaced(observed, observation,
+                     "    ctjs.set_property %payload[%fieldKey], %u\n" + observation),
+            true, "a later scalar write participates in the complete caller field census");
+    const auto distinct = replaced(fixture, "    %laterPutter =",
+                                   "    %different = ctjs.create_object\n"
+                                   "    ctjs.set_property %different[%fieldKey], %fieldValue\n"
+                                   "    %laterPutter =");
+    variant(replaced(distinct, ", %future, %payload)", ", %future, %different)"), true,
+            "distinct caller payloads retain separate allocations in the same family");
+    variant(replaced(observed, ", %actual, %payload)", ", %actual, %fieldValue)"), true,
+            "a Number call before object calls grants no primitive formal authority", 2);
+    variant(replaced(observed, ", %future, %payload)", ", %future, %fieldValue)"), true,
+            "a Number call after object calls grants no primitive formal authority", 2);
+    for (const char * value : {"%payload", "%owned"}) {
+        variant(replaced(fixture, "ctjs.set_property %payload[%fieldKey], %fieldValue",
+                         std::string("ctjs.set_property %payload[%fieldKey], ") + value),
+                false, "a caller field cannot retain itself or the method table");
+    }
+    variant(replaced(fixture, "#ctjs.string<\"value\">", "#ctjs.string<\"__proto__\">"), false,
+            "a prototype field does not become an own scalar field");
+    variant(replaced(observed, "%payload[%fieldKey]\n", "%payload[%putKey]\n"), false,
+            "an uninitialized field read has no caller own-data authority");
+    variant(replaced(observed, "ctjs.set_property %payload[%fieldKey]",
+                     "ctjs.set_property %payload[%this]"),
+            false, "an unknown field key cannot claim ordinary scalar initialization");
+    variant(replaced(fixture, observation, "    %escaped = ctjs.call %payload(%u)\n" + observation),
+            false, "a checked payload cannot be called as an opaque function");
+    variant(
+        replaced(fixture, "    ctjs.return %size\n  }\n}\n", "    ctjs.return %value\n  }\n}\n"),
+        false, "a payload formal still cannot escape through an owning result");
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(observed, &context);
+    check(static_cast<bool>(module), "caller payload mutation fixture parses");
+    if (!module) { return; }
+    OwnedGlobalRoots owner(*module, requested(*module));
+    if (!owner.proved()) { return; }
+    ctjs::SetPropertyOp field;
+    auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
+    entry.walk([&](ctjs::SetPropertyOp write) {
+        if (write.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
+            write.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+            field = write;
+        }
+    });
+    check(static_cast<bool>(field), "the caller proof retains its actual source scalar write");
+    if (!field) { return; }
+    ctjs::GetPropertyOp read;
+    ctjs::CompareOp compare;
+    entry.walk([&](ctjs::GetPropertyOp operation) {
+        if (operation.getObject() == field.getObject()) { read = operation; }
+    });
+    entry.walk([&](ctjs::CompareOp operation) { compare = operation; });
+    check(read && compare, "the caller keeps its field read and strict identity operation");
+    if (!read || !compare) { return; }
+    mlir::OpBuilder attributes(&context);
+    attributes.setInsertionPoint(entry.getBody().front().getTerminator());
+    auto lateKey = ctjs::ConstantOp::create(
+        attributes, field.getLoc(), field.getKey().getDefiningOp<ctjs::ConstantOp>().getValue());
+    field->setAttr("ctnative.object_schema", attributes.getStringAttr("scalar"));
+    (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+    const auto contract = requested(*module);
+    const auto mutation = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
+        const auto saved = operation->getOperand(operand);
+        operation->setOperand(operand, value);
+        OwnedGlobalRoots stale(*module, contract);
+        HostContractAnalysis freshHost(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale) &&
+                  !freshHost.proved() && freshHost.callables().empty() && !fresh.proved() &&
+                  empty(*module, fresh),
+              "stale and forged reports cannot authorize a caller cycle or out-of-scope operand");
+        operation->setOperand(operand, saved);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the caller operand restores independent ownership");
+    };
+    mutation(field, 2, field.getObject());
+    mutation(field, 1, lateKey.getResult());
+    mutation(read, 1, lateKey.getResult());
+    mutation(compare, 1, lateKey.getResult());
+    OwnedGlobalRoots restored(*module, contract);
+    check(restored.proved(), "restoring the caller field restores independent ownership");
+    const unsigned completion = restored.steps();
+    check(completion > 2 && completion < 20000, "caller ownership stays within its work bound");
+    if (completion <= 2 || completion >= 20000) { return; }
+    for (unsigned budget : {0u, 1u, 2u, completion / 2, completion - 1}) {
+        OwnedGlobalRoots limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  empty(*module, limited),
+              "an incomplete caller use census withholds the entire owning family");
+    }
+    OwnedGlobalRoots exact(*module, contract, completion);
+    check(exact.proved() && exact.steps() == completion,
+          "the exact caller proof budget reproduces the complete family");
+    std::printf("caller payload %s: %u rows, 5 incomplete budgets, %u steps\n",
+                prepared ? "prepared" : "source", rows, completion);
+}
+
 } // namespace
 
 void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
+    checkCallerPayloadOwner(context, source, lifted);
     checkChildMapOwner(context, source, lifted);
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     const auto requested = [](mlir::ModuleOp module) {

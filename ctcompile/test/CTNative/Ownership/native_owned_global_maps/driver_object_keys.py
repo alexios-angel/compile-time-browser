@@ -286,21 +286,52 @@ def check_object_argument_preparation(text, original, name):
         re.M,
     )
     entry = text.split("\n  }", 1)[0]
-    objects = set(re.findall(r"(%[-\w.$]+) = ctjs\.create_object", entry))
+    original_entry = original.split("\n  }", 1)[0]
+    original_calls = re.findall(
+        r"^\s*(%[-\w.$]+) = ctjs\.call %[-\w.$]+\(" r"%[-\w.$]+, (%[-\w.$]+)\)",
+        original_entry,
+        re.M,
+    )
     receivers = dict(re.findall(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[", entry))
     captures = dict(re.findall(r"(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]", entry))
-    if len(calls) != row["source"].count("host.slot.get("):
+    if (
+        not calls
+        or len(calls) != len(original_calls)
+        or len(calls) != row["source"].count("host.slot.get(")
+    ):
         raise RuntimeError(f"{name}: preparation changed the published call census")
-    for result, operands in calls:
+    arguments = []
+    for _, operands in calls:
         actuals = operands.split(", ")
         if (
             len(actuals) != 5
-            or actuals[-1] not in objects
             or receivers.get(actuals[2]) != actuals[0]
             or captures.get(actuals[3]) != actuals[2]
-            or f'ctjs.store_global "trace", {result}' not in entry
         ):
-            raise RuntimeError(f"{name}: lost the original Object actual, receiver or capture")
+            raise RuntimeError(f"{name}: lost the current receiver or capture")
+        arguments.append(actuals[-1])
+
+    def origins(body, actuals):
+        objects = re.findall(r"(%[-\w.$]+) = ctjs\.create_object", body)
+        loads = re.findall(r'(%[-\w.$]+) = ctjs\.load_global "([^"\n]+)"', body)
+        values = {value: ("object", index) for index, value in enumerate(objects)}
+        values.update(
+            {value: ("global", index, binding) for index, (value, binding) in enumerate(loads)}
+        )
+        values.update(
+            {
+                value: ("constant", literal.strip())
+                for value, literal in re.findall(r"(%[-\w.$]+) = ctjs\.constant ([^\n{]+)", body)
+            }
+        )
+        if any(value not in values for value in actuals):
+            raise RuntimeError(f"{name}: unsupported current caller argument origin")
+        return [values[value] for value in actuals]
+
+    if origins(entry, arguments) != origins(
+        original_entry, [value for _, value in original_calls]
+    ) or re.findall(r'ctjs\.store_global "trace", (%[-\w.$]+)', entry) != [calls[-1][0]]:
+        raise RuntimeError(f"{name}: changed source actual identities, categories or final result")
 
 
 def check_object_argument_controls(args, saved):

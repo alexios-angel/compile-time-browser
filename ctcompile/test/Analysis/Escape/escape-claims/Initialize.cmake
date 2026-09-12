@@ -1,90 +1,3 @@
-  # R3's composed publication cases need both halves of the evidence, not just
-  # the absence of a soundness violation. Assert the actual lifetime counts and
-  # globals route alongside the independent claim, joining by source coordinate.
-  # The two conditional sites deliberately mix retained and confined instances.
-  file(STRINGS "${_rec}" _recording_lines)
-  file(READ "${_claims}" _claim_text)
-  set(_publication_rows "")
-  set(_spread_rows "")
-  set(_array_frame_rows "")
-  set(_canonical_string_rows "")
-  set(_canonical_string_literal_pcs "")
-  set(_object_deletion_rows "")
-  set(_object_copy_rows "")
-  set(_object_copy_path_rows "")
-  set(_object_switch_selector_rows "")
-  set(_object_negation_rows "")
-  set(_object_total_unary_rows "")
-  set(_object_static_binary_rows "")
-  set(_object_arithmetic_unary_rows "")
-  set(_object_loose_equality_rows "")
-  set(_object_relational_rows "")
-  set(_object_arithmetic_binary_rows "")
-  set(_object_add_concat_rows "")
-  set(_object_bigint_equality_rows "")
-  set(_object_bigint_relational_rows "")
-  set(_object_bigint_unary_rows "")
-  set(_object_bigint_binary_rows "")
-  set(_object_bigint_static_rows "")
-  set(_object_bigint_shift_rows "")
-  set(_object_bigint_shift_error_rows "")
-  set(_object_bigint_shift_literal_pcs "")
-  set(_object_bigint_divmod_rows "")
-  set(_object_bigint_divmod_error_rows "")
-  set(_object_bigint_divmod_literal_pcs "")
-  set(_primitive_plus_rows "")
-  set(_primitive_plus_error_rows "")
-  set(_primitive_plus_literal_pcs "")
-  set(_primitive_plus_error_pc_Early "24")
-  set(_primitive_plus_error_pc_Retained "28")
-  set(_primitive_plus_error_pc_Opaque "17")
-  set(_primitive_mixed_sub_rows "")
-  set(_primitive_mixed_sub_error_rows "")
-  set(_primitive_mixed_sub_literal_pcs "")
-  set(_primitive_mixed_sub_error_pc_Early "25")
-  set(_primitive_mixed_sub_error_pc_Retained "29")
-  set(_primitive_mixed_sub_error_pc_Opaque "18")
-  set(_primitive_mixed_mul_rows "")
-  set(_primitive_mixed_mul_error_rows "")
-  set(_primitive_mixed_mul_literal_pcs "")
-  set(_primitive_mixed_mul_error_pc_Early "25")
-  set(_primitive_mixed_mul_error_pc_Retained "29")
-  set(_primitive_mixed_mul_error_pc_Opaque "18")
-  set(_primitive_mixed_div_rows "")
-  set(_primitive_mixed_div_error_rows "")
-  set(_primitive_mixed_div_literal_pcs "")
-  set(_primitive_mixed_div_error_pc_Early "25")
-  set(_primitive_mixed_div_error_pc_Retained "29")
-  set(_primitive_mixed_div_error_pc_Opaque "18")
-  set(_primitive_mixed_mod_rows "")
-  set(_primitive_mixed_mod_error_rows "")
-  set(_primitive_mixed_mod_literal_pcs "")
-  set(_primitive_mixed_mod_error_pc_Early "25")
-  set(_primitive_mixed_mod_error_pc_Retained "29")
-  set(_primitive_mixed_mod_error_pc_Opaque "18")
-  set(_primitive_ushr_rows "")
-  set(_primitive_ushr_error_rows "")
-  set(_primitive_ushr_literal_pcs "")
-  set(_primitive_ushr_error_pc_Early "24")
-  set(_primitive_ushr_error_pc_Retained "29")
-  set(_primitive_ushr_error_pc_Opaque "11")
-  set(_primitive_mixedstatic_rows "")
-  set(_primitive_mixedstatic_error_rows "")
-  set(_primitive_mixedstatic_literal_pcs "")
-  set(_primitive_mixedstatic_error_pc_Early "24")
-  set(_primitive_mixedstatic_error_pc_Retained "29")
-  set(_primitive_mixedstatic_error_pc_Opaque "11")
-  set(_primitive_mixedadd_rows "")
-  set(_primitive_mixedadd_error_rows "")
-  set(_primitive_mixedadd_literal_pcs "")
-  set(_primitive_mixedadd_error_pc_Early "24")
-  set(_primitive_mixedadd_error_pc_Retained "29")
-  set(_primitive_mixedadd_error_pc_Opaque "11")
-  set(_object_bigint_pow_rows "")
-  set(_object_bigint_pow_error_rows "")
-  set(_object_bigint_pow_literal_pcs "")
-  set(_pow_error_pc_Negative "26")
-  set(_pow_error_pc_Cap "25")
   # This source-backed RangeError is allocated by the VM at the signed shift,
   # not by a source object literal. Pin the exact body and measured bytecode pc
   # independently from every literal site's mandatory compiler claim below.
@@ -123,6 +36,11 @@
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "decimalBigIntReleased f572b6ce1760bdda19f8c9bcaab6043bf9aecb62aca33c6bedf702429d81013d"
+      "decimalBigIntSaved 4ffb288368bcc26312f52a0387b0ee49327abc27279d902b1ea49d8a0a713199"
+      "decimalBigIntSecond cf024a9f32b6cc1a7774107154d9c40c0c700f12225c92f28a98c0e746c35840"
+      "decimalBigIntLoaded eb43913617979c03f7a2ae3394c7a93e833625b6a7d0cd78d018b90697506f1b"
+      "decimalBigIntNegative 447b85cdff1f2d012161929777762175355283f7e339bdbdc8d24741fe7052ea"
       "canonicalStringReleased 54ce66cbdf8d8962681af9bd3eacf21bfb258aef66c803a2d098184e011583b8"
       "canonicalStringSaved 31ec0d6b6ea32c80b0b36f3644f7a3b2940d98cc04c8fbdd5e0cd7202e37a161"
       "canonicalStringLookalike e880b2767d14f1325c77a108a7fe0f99ab3e39e61ba2db91ad0b3c10c4a9f9eb"

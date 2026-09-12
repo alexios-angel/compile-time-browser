@@ -140,9 +140,17 @@ template <class T, class K, class... V> T map_get_present_as(
         else { std::terminate(); }
     }, found->second);
 }
+// Map keys use CanonicalizeKeyedCollectionKey; payloads retain their sign.
+template <class K> const K & map_normalize_key(const K & key) { return key; }
+inline js_num map_normalize_key(js_num key) { return key == 0 ? 0.0 : key; }
+template <class... T> std::variant<T...> map_normalize_key(const std::variant<T...> & key) {
+    return std::visit([](const auto & value) -> std::variant<T...> {
+        return map_normalize_key(value);
+    }, key);
+}
 template <class K, class V> std::shared_ptr<map_storage<K, V>> map_set(
     const std::shared_ptr<map_storage<K, V>> & map, const K & key, const V & value) {
-    map->insert_or_assign(key, value);
+    map->insert_or_assign(map_normalize_key(key), value);
     return map;
 }
 template <class K, class V> bool map_delete(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {

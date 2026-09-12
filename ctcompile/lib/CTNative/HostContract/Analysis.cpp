@@ -109,7 +109,7 @@ bool analyzer::capturedMapParameters(
     ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
     const llvm::DenseSet<mlir::Operation *> & familyCalls,
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
-    HostMethodParameters & result) {
+    HostMethodParameters & result, HostCapturedMap * capture) {
     const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
     std::optional<std::vector<PrimitiveAlternatives>> found;
     std::vector<mlir::BlockArgument> objectKeys;
@@ -118,7 +118,6 @@ bool analyzer::capturedMapParameters(
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
         const auto args = direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
         std::vector<PrimitiveAlternatives> tags;
-        std::vector<mlir::BlockArgument> objects;
         for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
             if (!step()) { return false; }
             const auto categories = entryCategories(actual, results, operation);
@@ -147,10 +146,25 @@ bool analyzer::capturedMapParameters(
                         initializations.insert(edge.initialization);
                     }
                 }
-                // Every use must be an explicit argument in this Map's exact
-                // invocation census. Every sibling body independently permits
-                // object formals only as keys or payloads, so the Map can retain
-                // them but they cannot retain the Map or acquire outgoing edges.
+                // Caller leaves may hold only scalar own fields. Census every
+                // alias before accepting reads; the method bodies independently
+                // limit these formals to Map keys/payloads, never outgoing edges.
+                llvm::SmallVector<ctjs::SetPropertyOp> writes;
+                for (mlir::Value alias : aliases) {
+                    for (mlir::OpOperand & use : alias.getUses()) {
+                        if (!step()) { return false; }
+                        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                        if (!write) { continue; }
+                        const auto payload = entryCategories(write.getValue(), results, write);
+                        if (use.getOperandNumber() != 0 || write->getParentOp() != entry ||
+                            !dominance.dominates(alias, write) ||
+                            !dominance.dominates(write.getKey(), write) ||
+                            !ordinaryKey(keyOf(write.getKey())) || !payload.tag()) {
+                            return false;
+                        }
+                        writes.push_back(write);
+                    }
+                }
                 for (mlir::Value alias : aliases) {
                     for (mlir::OpOperand & use : alias.getUses()) {
                         if (!step() || !dominance.dominates(alias, use.getOwner())) {
@@ -162,6 +176,42 @@ bool analyzer::capturedMapParameters(
                              llvm::cast<ctjs::StoreGlobalOp>(use.getOwner()).getValue() == alias)) {
                             continue;
                         }
+                        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner())) {
+                            if (!llvm::is_contained(writes, write)) { return false; }
+                            if (capture && !llvm::is_contained(capture->leafWrites, write)) {
+                                capture->leafWrites.push_back(write);
+                            }
+                            continue;
+                        }
+                        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
+                            if (use.getOperandNumber() != 0 || read->getParentOp() != entry ||
+                                !dominance.dominates(read.getKey(), read) ||
+                                !ordinaryKey(keyOf(read.getKey()))) {
+                                return false;
+                            }
+                            bool initialized = false;
+                            for (ctjs::SetPropertyOp write : writes) {
+                                if (!step()) { return false; }
+                                if (keyOf(write.getKey()) == keyOf(read.getKey()) &&
+                                    dominance.properlyDominates(write.getOperation(), read)) {
+                                    initialized = true;
+                                }
+                            }
+                            if (!initialized) { return false; }
+                            if (capture && !llvm::is_contained(capture->leafReads, read)) {
+                                capture->leafReads.push_back(read);
+                            }
+                            continue;
+                        }
+                        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(use.getOwner());
+                            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+                            compare->getParentOp() == entry) {
+                            if (!dominance.dominates(compare.getLhs(), compare) ||
+                                !dominance.dominates(compare.getRhs(), compare)) {
+                                return false;
+                            }
+                            continue;
+                        }
                         auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                         auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                         if ((!directUse && !callUse) ||
@@ -171,19 +221,19 @@ bool analyzer::capturedMapParameters(
                         }
                     }
                 }
-                objects.push_back(function.getBody().front().getArgument(
-                    (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size())));
+                const auto parameter = function.getBody().front().getArgument(
+                    (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
+                if (!llvm::is_contained(objectKeys, parameter)) { objectKeys.push_back(parameter); }
             }
             tags.push_back(categories);
         }
         if (found) {
-            if (found->size() != tags.size() || objectKeys != objects) { return false; }
+            if (found->size() != tags.size()) { return false; }
             for (unsigned index = 0; index < tags.size(); ++index) {
                 if (!step()) { return false; }
                 tags[index] = tags[index].joined((*found)[index]);
             }
         }
-        objectKeys = std::move(objects);
         found = std::move(tags);
     }
     // An uncalled zero-argument sibling can still have its effects checked;
@@ -212,6 +262,9 @@ bool analyzer::capturedMapParameters(
         }
     }
     result.alternatives = found ? std::move(*found) : std::vector<PrimitiveAlternatives>{};
+    // Canonical ordering makes every call expose the same complete family.
+    llvm::sort(objectKeys,
+               [](auto lhs, auto rhs) { return lhs.getArgNumber() < rhs.getArgNumber(); });
     result.objectKeys = std::move(objectKeys);
     return true;
 }
@@ -268,12 +321,12 @@ std::string analyzer::environmentProblem() {
     }
     module.walk([&](mlir::Operation * operation) {
         if (!step()) { return; }
-        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+        if (llvm::isa<ctjs::BinaryOp, ctjs::CompareOp, ctjs::UnaryOp, ctjs::TruthyOp>(operation)) {
             // Even an inactive source arm must have real SSA operands. A
             // selected-arm effect anchor cannot export its local definitions.
-            for (mlir::Value operand : binary->getOperands()) {
+            for (mlir::Value operand : operation->getOperands()) {
                 if (!step() || !dominance.dominates(operand, operation)) {
-                    reject("numeric provider operand is outside its source scope");
+                    reject("provider operand is outside its source scope");
                     return;
                 }
             }

@@ -10,7 +10,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
         contract.initialIntrinsics = {"Map"};
         return contract;
     };
-    const auto variant = [&](const std::string & text, bool expected, const char * message) {
+    const auto variant = [&](const std::string & text, bool expected, const char * message,
+                             unsigned fields = 0) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "retained sibling key fixture parses");
         if (!module) { return; }
@@ -29,7 +30,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
         } else if (owner.proved()) {
             const auto & table = *owner.roots().front().methodTable;
             check(table.methods.size() == 2 && table.calls.size() == 2 && table.capturedMap &&
-                      table.capturedMap->parameters.size() == 2,
+                      table.capturedMap->parameters.size() == 2 &&
+                      table.capturedMap->leafWrites.size() == fields,
                   "the complete two-method family owns one captured Map");
             if (table.calls.size() == 2) {
                 const auto & first = table.calls[0].arguments;
@@ -38,6 +40,16 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
                           second[0].object && first[0].alternatives == PrimitiveAlternatives{} &&
                           second[0].alternatives == PrimitiveAlternatives{},
                       "both siblings independently prove their actual object identity");
+                if (fields == 1 && table.capturedMap && table.capturedMap->leafWrites.size() == 1 &&
+                    first.size() == 1) {
+                    auto write = table.capturedMap->leafWrites.front();
+                    auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+                    check(write.getObject() == first[0].actual &&
+                              write->getParentOp() ==
+                                  module->lookupSymbol<ctjs::FuncOp>("script$0") &&
+                              value && llvm::isa<ctjs::UndefinedAttr>(value.getValue()),
+                          "the late caller scalar write retains its exact receiver and value");
+                }
             }
         }
         check(hostContractFingerprint(*module) == contract.moduleSha256,
@@ -47,7 +59,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     const std::string observation = "    ctjs.store_global \"trace\", %answer\n";
     variant(
         replaced(source, observation, "    ctjs.set_property %actual[%key], %u\n" + observation),
-        false, "a later key write invalidates the complete family owner");
+        true, "a later scalar key field write participates in the complete family owner", 1);
     variant(replaced(source, observation,
                      "    ctjs.store_global \"escapedKey\", %actual\n" + observation),
             false, "a named object still requires a separate global owner");

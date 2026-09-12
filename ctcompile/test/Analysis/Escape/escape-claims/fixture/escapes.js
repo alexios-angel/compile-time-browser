@@ -565,3 +565,104 @@ if (canonicalStringNormal[0] !== 9 || typeof canonicalStringNormal[0] !== "numbe
     canonicalStringNamed["00"] !== 9 || canonicalStringNamed.length !== 1 ||
     canonicalStringForwarded[0][0] !== 9 || typeof canonicalStringForwarded[0][0] !== "number" ||
     canonicalStringForwarded[1] !== true) throw "canonical String index and saved identity witness";
+
+// --- DECIMAL BIGINT INDICES: exact dense slots, saved identity, literal origins ---
+function decimalBigIntReleased() {
+    var child = {}, items = [child];
+    items[0n] = 9;
+    return items;
+}
+function decimalBigIntSaved() {
+    var child = {}, items = [child], saved = items[0n];
+    items[0n] = 9;
+    return saved;
+}
+function decimalBigIntSecond() {
+    var child = {}, items = [0, child];
+    items[1n] = 9;
+    return items;
+}
+function decimalBigIntLoaded() {
+    var child = {}, items = [child], keys = [0n];
+    var key = keys[0], saved = items[key];
+    items[key] = 9;
+    return [items, saved === child];
+}
+function decimalBigIntNegative() {
+    var child = {}, items = [child];
+    items[-1n] = 9;
+    return items;
+}
+var decimalBigIntNormal = decimalBigIntReleased();
+var decimalBigIntRetained = decimalBigIntSaved();
+var decimalBigIntOne = decimalBigIntSecond();
+var decimalBigIntForwarded = decimalBigIntLoaded();
+var decimalBigIntNamed = decimalBigIntNegative();
+H.push(decimalBigIntNormal); H.push(decimalBigIntRetained); H.push(decimalBigIntOne);
+H.push(decimalBigIntForwarded); H.push(decimalBigIntNamed);
+if (decimalBigIntNormal[0] !== 9 || typeof decimalBigIntNormal[0] !== "number" ||
+    typeof decimalBigIntRetained !== "object" || decimalBigIntRetained === null ||
+    Array.isArray(decimalBigIntRetained) ||
+    decimalBigIntOne[0] !== 0 || decimalBigIntOne[1] !== 9 || decimalBigIntOne.length !== 2 ||
+    decimalBigIntForwarded[0][0] !== 9 || typeof decimalBigIntForwarded[0][0] !== "number" ||
+    decimalBigIntForwarded[1] !== true ||
+    typeof decimalBigIntNamed[0] !== "object" || decimalBigIntNamed[0] === null ||
+    decimalBigIntNamed["-1"] !== 9 || decimalBigIntNamed.length !== 1)
+    throw "decimal BigInt index and saved identity witness";
+
+// --- DENSE ARRAY LENGTH: independent Numbers, saved children and exact keys ---
+function denseLengthReleased() {
+    var child = {}, items = [child];
+    var before = items.length;
+    items[0] = 9;
+    return [items, before];
+}
+function denseLengthSaved() {
+    var child = {}, items = [child], saved = items[0];
+    var before = items.length;
+    items[0] = 9;
+    return [items, saved, before];
+}
+function denseLengthLoaded() {
+    var child = {}, items = [child], keys = ["length"];
+    var key = keys[0], before = items[key];
+    keys[0] = "0"; items[0] = 9;
+    return [items, before, keys[0]];
+}
+function denseLengthEmpty() {
+    var child = {}, empty = [], items = [child];
+    var before = empty.length;
+    items[0] = 9;
+    return [items, before];
+}
+function denseLengthIndexed() {
+    var child = {}, items = [child];
+    var before = items.length;
+    items[before - 1] = 9;
+    return [items, before];
+}
+function denseLengthChanged() {
+    var child = {}, items = [child];
+    var before = items.length;
+    items.length = 0;
+    return [items, before];
+}
+var denseLengthNormal = denseLengthReleased();
+var denseLengthRetained = denseLengthSaved();
+var denseLengthForwarded = denseLengthLoaded();
+var denseLengthZero = denseLengthEmpty();
+var denseLengthComputed = denseLengthIndexed();
+var denseLengthWritten = denseLengthChanged();
+H.push(denseLengthNormal); H.push(denseLengthRetained); H.push(denseLengthForwarded);
+H.push(denseLengthZero); H.push(denseLengthComputed); H.push(denseLengthWritten);
+if (denseLengthNormal[0][0] !== 9 || denseLengthNormal[1] !== 1 ||
+    typeof denseLengthNormal[1] !== "number" ||
+    denseLengthRetained[0][0] !== 9 || denseLengthRetained[2] !== 1 ||
+    typeof denseLengthRetained[1] !== "object" || denseLengthRetained[1] === null ||
+    Array.isArray(denseLengthRetained[1]) ||
+    denseLengthForwarded[0][0] !== 9 || denseLengthForwarded[1] !== 1 ||
+    denseLengthForwarded[2] !== "0" ||
+    denseLengthZero[0][0] !== 9 || denseLengthZero[1] !== 0 ||
+    denseLengthComputed[0][0] !== 9 || denseLengthComputed[1] !== 1 ||
+    denseLengthWritten[0].length !== 0 || denseLengthWritten[1] !== 1)
+    throw "dense array length and saved child witness";

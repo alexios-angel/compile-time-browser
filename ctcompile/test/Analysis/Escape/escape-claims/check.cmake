@@ -133,9 +133,14 @@ if(NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_2 OR NOT CMAKE_MATCH_3 EQUAL CMAKE_MATCH_
   message(FATAL_ERROR "${NAME}: candidate provenance lost live reads, sinks or function classification")
 endif()
 
+set(_dump_args "")
+if(STRICT)
+  set(_dump "${WORK}/escape-claims-${NAME}.txt")
+  set(_dump_args --dump "${_dump}")
+endif()
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${_rec}" --claims "${_claims}"
-          --name "${NAME}" --max-report 0 --expect-violations 0
+          --name "${NAME}" --max-report 0 --expect-violations 0 ${_dump_args}
   OUTPUT_VARIABLE _pyout ERROR_VARIABLE _pyerr RESULT_VARIABLE _pyrc)
 message(STATUS "${_pyout}${_pyerr}")
 
@@ -183,9 +188,14 @@ if(STRICT)
   endif()
 
   include("${CMAKE_CURRENT_LIST_DIR}/Initialize.cmake")
-  include("${CMAKE_CURRENT_LIST_DIR}/Observe.cmake")
-  include("${CMAKE_CURRENT_LIST_DIR}/ExpectedCore.cmake")
-  include("${CMAKE_CURRENT_LIST_DIR}/ExpectedBigInt.cmake")
+  execute_process(
+    COMMAND "${PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/check-dump.py" "${SCRIPT}"
+            "${_dump}" "${CMAKE_CURRENT_LIST_DIR}/expected.txt"
+    OUTPUT_VARIABLE _dumpout ERROR_VARIABLE _dumperr RESULT_VARIABLE _dumprc)
+  message(STATUS "${_dumpout}${_dumperr}")
+  if(NOT _dumprc EQUAL 0)
+    message(FATAL_ERROR "${NAME}: escape snapshot/checker controls failed")
+  endif()
 
 endif()
 if(NOT _pyrc EQUAL 0)

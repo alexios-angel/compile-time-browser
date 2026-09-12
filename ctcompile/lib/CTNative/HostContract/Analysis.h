@@ -43,7 +43,7 @@ struct analyzer {
                                llvm::ArrayRef<mlir::Operation *> calls,
                                const llvm::DenseSet<mlir::Operation *> & familyCalls,
                                const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
-                               HostMethodParameters & result);
+                               HostMethodParameters & result, HostCapturedMap * capture = nullptr);
     PrimitiveAlternatives entryCategories(
         mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
         mlir::Operation * consumer = nullptr, unsigned depth = 0,

@@ -1385,7 +1385,11 @@ var trace = host.slot.get({});
         ("field", "{value: 1}"),
         ("array", "[]"),
     ):
-        add(name, base.replace("host.slot.get({})", "host.slot.get(" + actual + ")"))
+        add(
+            name,
+            base.replace("host.slot.get({})", "host.slot.get(" + actual + ")"),
+            admitted=name == "field",
+        )
     add(
         "global",
         base.replace(
@@ -1483,7 +1487,11 @@ var trace = host.slot.get({});
         functions=5,
     )
     add("global_alias_unused", aliased.replace("host.slot.get(alias)", "host.slot.get(key)"))
-    add("global_field_write", named.replace("var trace =", "key.value = 1; var trace ="))
+    add(
+        "global_field_write",
+        named.replace("var trace =", "key.value = 1; var trace ="),
+        admitted=True,
+    )
     add(
         "global_unknown_consumer",
         "function consume(value) { return 0; }\n"
@@ -1550,7 +1558,8 @@ var trace = host.slot.get({});
         global_key=True, object_payload=True, payload_only=True
     )
     retained = rows["object_argument_global_object_payload"]["source"]
-    add("payload_field", retained.replace("var key = {};", "var key = {value: 1};"), 5, 1)
+    add("payload_field", retained.replace("var key = {};", "var key = {value: 1};"), 5, 1, True)
+    rows["object_argument_payload_field"].update(global_key=True, object_payload=True)
     add("payload_field_write", retained.replace("t.set(e, e);", "e.value = 1; t.set(e, e);"), 5, 1)
     add("payload_cycle", retained.replace("t.set(e, e);", "e.self = e; t.set(e, e);"), 5, 1)
     add(
@@ -1583,6 +1592,15 @@ var trace = host.slot.get({});
         6,
         1,
     )
+    for name in (
+        "global_later_number",
+        "global_later_object",
+        "later_object",
+        "later_number",
+        "payload_later_number",
+        "payload_later_object",
+    ):
+        rows["object_argument_" + name]["owner"] = True
     siblings = base.replace(
         "return { get(e) { return t.has(e) ? 1 : 0; } };",
         """return {

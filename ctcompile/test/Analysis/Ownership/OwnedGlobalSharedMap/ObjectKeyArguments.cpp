@@ -26,7 +26,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
         bool complete = table.methods.size() == 1 && table.calls.size() == calls &&
                         host.callables().size() == calls &&
                         table.capturedMap->parameters.size() == 1 &&
-                        table.capturedMap->leafObjects.empty();
+                        table.capturedMap->leafObjects.empty() &&
+                        table.capturedMap->childScalarContents == Alternatives{};
         mlir::Operation * previous = nullptr;
         for (const auto & edge : table.calls) {
             const auto * checked = host.callable(edge.call);
@@ -40,21 +41,24 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
             }
             const auto & argument = edge.arguments.front();
             auto object = argument.object;
+            auto constant = argument.actual.getDefiningOp<ctjs::ConstantOp>();
             const auto & family = edge.capturedMap->parameters.front();
-            complete &= object && object->getParentOp() == entry &&
-                        object.getResult() == argument.actual &&
-                        object->isBeforeInBlock(edge.call) && argument.parameter == parameter &&
-                        argument.actual == edge.call->getOperand(prepared ? 4 : 2) &&
-                        argument.alternatives == Alternatives{} &&
-                        checked->arguments.front().object == object &&
-                        checked->arguments.front().actual == argument.actual &&
-                        family.function == getter && family.objectKeys == std::vector{parameter} &&
-                        family.alternatives == std::vector{Alternatives{}} &&
-                        edge.capturedMap->allocation == table.capturedMap->allocation &&
-                        edge.capturedMap->parameters == table.capturedMap->parameters;
+            complete &=
+                (object ? object->getParentOp() == entry && object.getResult() == argument.actual &&
+                              object->isBeforeInBlock(edge.call)
+                        : constant && llvm::isa<ctjs::NumberAttr>(constant.getValue())) &&
+                argument.parameter == parameter &&
+                argument.actual == edge.call->getOperand(prepared ? 4 : 2) &&
+                argument.alternatives == Alternatives{} &&
+                checked->arguments.front().object == object &&
+                checked->arguments.front().actual == argument.actual && family.function == getter &&
+                family.objectKeys == std::vector{parameter} &&
+                family.alternatives == std::vector{Alternatives{}} &&
+                edge.capturedMap->allocation == table.capturedMap->allocation &&
+                edge.capturedMap->parameters == table.capturedMap->parameters;
         }
-        check(complete, "each object actual retains its own allocation and formal without a "
-                        "primitive category or method-local payload identity");
+        check(complete, "object actuals retain their exact allocations; mixed scalar calls gain "
+                        "no object identity, primitive formal category or child contents");
     };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message,
@@ -99,16 +103,16 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     variant(repeat("%actual", ""), true, "repeated calls retain the same actual identity", 2);
     variant(repeat("%other", "    %other = ctjs.create_object\n"), true,
             "distinct empty actuals keep separate identities in one complete object census", 2);
-    variant(repeat("%other", "    %other = ctjs.constant #ctjs.number<0>\n"), false,
-            "a later Number actual cannot borrow an earlier object's argument proof");
+    variant(repeat("%other", "    %other = ctjs.constant #ctjs.number<0>\n"), true,
+            "a later Number actual retains no object or primitive formal proof", 2);
     variant(replaced(repeat("%other", "    %other = ctjs.create_object\n"), allocation,
                      "    %actual = ctjs.constant #ctjs.number<0>\n"),
-            false, "an earlier Number actual cannot authorize a later object actual");
+            true, "an earlier Number actual cannot authorize a later object actual", 2);
     variant(replaced(source, allocation, allocation + "    ctjs.set_property %actual[%key], %u\n"),
-            false, "an initialized own field is outside the empty-object argument proof");
+            true, "a scalar own field participates in the complete caller argument proof");
     variant(
         replaced(source, observation, "    ctjs.set_property %actual[%key], %u\n" + observation),
-        false, "a later object mutation participates in the complete use census");
+        true, "a later scalar object mutation participates in the complete use census");
     variant(
         replaced(source, allocation, allocation + "    ctjs.store_global \"namedKey\", %actual\n"),
         false, "a named global object needs an independent ordinary owner");

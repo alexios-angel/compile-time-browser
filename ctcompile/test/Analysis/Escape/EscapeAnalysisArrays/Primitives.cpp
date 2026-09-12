@@ -351,9 +351,9 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             auto constant = number.getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            // This shared constant is also the later array index. Independent
-            // BigInt results or UShr errors never authorize that changed key.
-            inspect(ArrayContentsFailure::UnknownIndex);
+            // This original BigInt one is also the later array index. The
+            // one-element array has no slot one, regardless of producer results.
+            inspect(ArrayContentsFailure::MissingElement);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
             mlir::Block & last = function.getBody().back();
@@ -646,6 +646,181 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                     "%zu retention budget cutoffs\n",
                     spelling.c_str(), rows.size() + origins.size() + 6, liveStates, budgets);
     }
+}
+
+void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %key = ctjs.constant #ctjs.bigint<\"0\"> {storage_test_id = \"key\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n";
+    const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string read = "  %saved = ctjs.get_property %a[%key]\n";
+    const std::string write = "  ctjs.set_property %a[%key], %zero\n";
+    const std::string done = "  ctjs.return %a\n";
+    unsigned rowCount = 0;
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const contents_row & expected,
+                           const char * discharged) {
+        checkArrayContents(module, expected);
+        const bool complete = expected.failure == ArrayContentsFailure::None;
+        budgets += checkArrayRetention(module, {.what = expected.what,
+                                                .body = expected.body,
+                                                .discharged = complete ? discharged : "",
+                                                .complete = complete});
+    };
+    const auto run = [&](const contents_row & expected, const char * discharged = "x") {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (module) {
+            check(*module, expected, discharged);
+        } else {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the literal BigInt index fixture did not parse");
+        }
+        ++rowCount;
+    };
+    contents_row original{.what = "a decimal BigInt zero replaces only its exact dense child",
+                          .body = array + read + write + done,
+                          .arrays = "a:[zero]",
+                          .reads = "a[0]=x",
+                          .exit = "a -> {a}",
+                          .writes = "ctjs.create_array[0]:a[0]=x; ctjs.set_property[2]:a[0]=zero"};
+    run(original);
+    run({.what = "a saved BigInt-indexed child remains retained after its slot is overwritten",
+         .body = array + read + write + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "a decimal BigInt one reads and replaces only the second dense element",
+         .body = values + "  %one = ctjs.constant #ctjs.bigint<\"1\">\n"
+                          "  %a = ctjs.create_array [%zero, %x] {storage_test_id = \"a\"}\n"
+                          "  %saved = ctjs.get_property %a[%one]\n"
+                          "  ctjs.set_property %a[%one], %zero\n"
+                          "  ctjs.return %saved\n",
+         .arrays = "a:[zero,zero]",
+         .reads = "a[1]=x",
+         .exit = "x -> {x}",
+         .writes = "ctjs.create_array[0]:a[0]=zero; ctjs.create_array[1]:a[1]=x; "
+                   "ctjs.set_property[2]:a[1]=zero"},
+        "");
+    run({.what = "an array-loaded BigInt key retains its original literal across replacement",
+         .body = array +
+                 "  %keys = ctjs.create_array [%key] {storage_test_id = \"keys\"}\n"
+                 "  %loaded = ctjs.get_property %keys[%zero]\n"
+                 "  ctjs.set_property %keys[%zero], %x\n"
+                 "  %saved = ctjs.get_property %a[%loaded]\n"
+                 "  ctjs.set_property %a[%loaded], %zero\n" +
+                 done,
+         .arrays = "a:[zero]; keys:[x]",
+         .reads = "keys[0]=key; a[0]=x",
+         .exit = "a -> {a}"});
+    for (const bool missing : {false, true}) {
+        const std::string other = missing ? "1" : "0";
+        run({.what = "BigInt key transport checks every structural arm and matching frame exit",
+             .body = "  %frame = ctjs.frame_enter 8\n" + array +
+                     "  %other = ctjs.constant #ctjs.bigint<\"" + other +
+                     "\">\n"
+                     "  %flag = ctjs.truthy %zero\n"
+                     "  cf.cond_br %flag, ^left(%key : !ctjs.value), ^right(%other : !ctjs.value)\n"
+                     "^left(%leftkey: !ctjs.value):\n"
+                     "  ctjs.set_property %a[%leftkey], %zero\n"
+                     "  ctjs.root %a in %frame\n  ctjs.frame_exit %frame\n" +
+                     done +
+                     "^right(%rightkey: !ctjs.value):\n"
+                     "  ctjs.set_property %a[%rightkey], %zero\n"
+                     "  ctjs.root %a in %frame\n  ctjs.frame_exit %frame\n" +
+                     done,
+             .failure = missing ? ArrayContentsFailure::MissingElement : ArrayContentsFailure::None,
+             .arrays = "a:[zero] | a:[zero]",
+             .exit = "a -> {a}; a -> {a}"});
+    }
+    // BigIntAttr holds the bytecode literal WITHOUT source 'n'. Malformed
+    // attributes and other spellings do not borrow the decimal proof, even
+    // where today's VM would substitute zero or parse an equivalent number.
+    for (const auto & [spelling, failure] :
+         {std::pair{"0", ArrayContentsFailure::None},
+          std::pair{"1", ArrayContentsFailure::MissingElement},
+          std::pair{"4294967294", ArrayContentsFailure::MissingElement},
+          std::pair{"4294967295", ArrayContentsFailure::UnknownIndex},
+          std::pair{"4294967296", ArrayContentsFailure::UnknownIndex},
+          std::pair{"9999999999", ArrayContentsFailure::UnknownIndex},
+          std::pair{"1000000000000000000000000", ArrayContentsFailure::UnknownIndex},
+          std::pair{"-1", ArrayContentsFailure::UnknownIndex},
+          std::pair{"-0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"00", ArrayContentsFailure::UnknownIndex},
+          std::pair{"+0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0.0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0e0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0_0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0n", ArrayContentsFailure::UnknownIndex},
+          std::pair{"1n", ArrayContentsFailure::UnknownIndex},
+          std::pair{" 0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0 ", ArrayContentsFailure::UnknownIndex},
+          std::pair{"", ArrayContentsFailure::UnknownIndex}}) {
+        for (const bool store : {false, true}) {
+            run({.what = "decimal BigInt reads and writes independently require an existing slot",
+                 .body = array + "  %index = ctjs.constant #ctjs.bigint<\"" + spelling + "\">\n" +
+                         (store ? "  ctjs.set_property %a[%index], %zero\n"
+                                : "  %read = ctjs.get_property %a[%index]\n") +
+                         "  ctjs.return %zero\n",
+                 .failure = failure,
+                 .arrays = store ? "a:[zero]" : "a:[x]",
+                 .reads = store ? "" : "a[0]=x",
+                 .exit = "zero -> {}"});
+        }
+    }
+    for (const std::string producer :
+         {"  %computed = ctjs.binary add %key, %key\n", "  %computed = ctjs.unary neg %key\n"}) {
+        run({.what = "computed BigInt categories cannot supply concrete array indices",
+             .body = array + producer + "  ctjs.set_property %a[%computed], %zero\n" + done,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "an object-loaded BigInt key needs independent own-data authority",
+         .body = array +
+                 "  %name = ctjs.constant #ctjs.string<\"index\">\n"
+                 "  %object = ctjs.create_object\n"
+                 "  ctjs.set_property %object[%name], %key\n"
+                 "  %loaded = ctjs.get_property %object[%name]\n"
+                 "  ctjs.set_property %a[%loaded], %zero\n" +
+                 done,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "a late prototype mutation invalidates an otherwise exact BigInt write",
+         .body = array + read + write + "  ctjs.set_proto %p on %a\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + original.body + "}\n", &context);
+    unsigned liveStates = 0;
+    if (module) {
+        ctjs::ConstantOp key;
+        module->walk([&](ctjs::ConstantOp op) {
+            if (llvm::isa<ctjs::BigIntAttr>(op.getValue())) { key = op; }
+        });
+        mlir::OpBuilder builder(key);
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        for (const auto & [spelling, failure] :
+             {std::pair{"0", ArrayContentsFailure::None},
+              std::pair{"1", ArrayContentsFailure::MissingElement},
+              std::pair{"1n", ArrayContentsFailure::UnknownIndex},
+              std::pair{"4294967294", ArrayContentsFailure::MissingElement},
+              std::pair{"4294967295", ArrayContentsFailure::UnknownIndex},
+              std::pair{"0", ArrayContentsFailure::None}}) {
+            key.setValueAttr(ctjs::BigIntAttr::get(&context, spelling));
+            original.failure = failure;
+            check(*module, original, "x");
+            ++liveStates;
+        }
+    } else {
+        fail(row{.what = original.what, .body = original.body, .expected = ""},
+             "the live literal BigInt index fixture did not parse");
+    }
+    std::printf("literal BigInt indices: %u rows, %u live states, %zu retention budget cutoffs\n",
+                rowCount, liveStates, budgets);
 }
 
 } // namespace ctcompile::test::escape::arrays

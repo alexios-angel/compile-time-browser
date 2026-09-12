@@ -255,15 +255,17 @@ void checkArrayContents(mlir::MLIRContext & context) {
         {"#ctjs.number<9218868437227405312>", false},  // infinity
     };
     for (const auto & [key, supported] : keys) {
+        const bool length = key == "#ctjs.string<\"length\">";
         run({.what = "contents independently validates canonical own-element keys",
              .body = array + "  %key = ctjs.constant " + key +
                      "\n"
                      "  %read = ctjs.get_property %a[%key]\n" +
                      done,
-             .failure = supported ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex,
-             .arrays = supported ? "a:[x]" : "",
+             .failure = supported || length ? ArrayContentsFailure::None
+                                            : ArrayContentsFailure::UnknownIndex,
+             .arrays = supported || length ? "a:[x]" : "",
              .reads = supported ? "a[0]=x" : "",
-             .exit = supported ? "zero -> {}" : ""});
+             .exit = supported || length ? "zero -> {}" : ""});
     }
 
     contents_row mutation{.what =

@@ -6,6 +6,231 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Owning child returns, Map keys and escape evidence, 2026-09-12
+
+Resumed clean **b0439107** and the **20:46:23 UTC** recovery journal. The old
+WIP branch was already merged. Three agents split ownership tests, escape-checker
+simplification and key/oracle review. Audit-held integration paths remained untouched
+until their **19:54:55 UTC** claims expired; the narrow takeover is journaled at
+**22:18:17 UTC**. This update also records the predecessor's deferred handoff below.
+
+**c398e22a** proves owning mixed child-Map returns through the existing
+`object_value`/identity carriers. A returned leaf gains no primitive-return authority.
+The existing source-scope check now covers Compare, Unary and Truthy operands before
+active-arm selection. Direct formal/local-object returns, result-as-formal dependencies,
+cycles and unchecked fields remain refused. Source/prepared checks pass with hostile
+late-getter and cross-function operands, stale/fresh/forged reports and bounded proofs.
+The stronger historical ownership expectations preserve all 19 raw MLIR fragments.
+
+**64fa4a5f** executes the unchanged returned-identity source **3e51df8e** as
+**5/5 native**, both policies, with **16 calls** and a complete budget of **31065 /
+30 incomplete cutoffs**. All **71 original JavaScript bodies** remain byte-identical.
+The cohort passes **38 native programs / 33 refusals**, **231 typed Node/VM
+observations / 174 distinguishing mutations**, both C++ layouts, GCC/Clang, no-Script
+and ASan/UBSan/leak checks. Saved owners come through compiled `get()` and survive
+overwrite/delete/clear, field mutation, **128 future calls**, detached closures,
+entry reexecution and final release. Null/false/zero/negative-zero/NaN payloads produce
+the original Null result. Exactly six historical controls gain ownership evidence
+while retaining their independent carrier/read refusals.
+
+**786e606f** canonicalizes negative-zero Map keys in shared `map_set`, including
+variant keys, without changing input or payload signs. It fixes all five native
+Map/deforestation integration failures. The Map representation gate passes **14
+observations**, Node/VM comparisons, both layouts/compilers and sanitizers; helper
+checks cover insert/update/delete-reinsert and preserved negative-zero payloads.
+
+**4df2ef5d / 88e0bf9f** replace duplicate CMake escape parsing with the checker's
+deterministic `--dump` and a complete snapshot, removing **394 lines net**. All
+**107,754 JavaScript bytes**, SHA256 **088377fc18a2cbc7f3aacd3c26dc8dbfcbd868d53b073c1a076c3abf277aa338**,
+and the **9,112-byte** source hash block are unchanged. The snapshot round-trips through
+all **39 old family checks**; **13 evidence mutations / eight malformed or duplicate
+controls** pass. All four corpus CTests and the checker pass. The fresh fixture
+measures **856 sites / 35 unclaimed / zero violations / precision 19/164**.
+
+**2d5323aa / 28a1827a / 85e6cee9** apply the corresponding exact **0166780d**
+test repairs: noniterable spread throws TypeError, the current parser has **1023
+capture operands / 219 indexed operands**, and Map has the standard toString tag.
+Differential/capture CTests and all **28 provider cases** pass. These commits change
+no browser/runtime or parser files; the measured parser is **b2b5155**.
+
+The standard full gate at **85e6cee9** passes **543/544 CTests in 1124.77s**.
+All ctcompile tests pass, including **168/168 lit cases in 738.62s** (CTest
+**738.82s**). The sole failure is the known browser `navigation` expectation for
+Null in `Array.prototype.join`; its correction is in **0166780d**. All **1,619
+frozen inputs** still matched the devbox at final measurement.
+
+During the gate Claude merged **7c3a24e3** as **7d76748d**, including that navigation
+correction. These measurements cover **85e6cee9**, not the merged revision. Claude's
+**23:07:14 UTC** journal reports the incoming audit build green but its CTest run
+incomplete. First gate the integrated tree before extending the next proof boundary.
+The audit now requires Python drivers to use the shared harness, explicit
+`--node`/`--reference`, and `PYTHONPATH=ctcompile/test`; merge resolutions changed
+those driver imports. CTC-01 is complete in **4df2ef5d / 88e0bf9f**, despite the
+incoming audit journal still listing it as open.
+
+At **85e6cee9**, the corrected focused group passes **9/9 CTests in 420.95s**.
+The required `tools/format.sh --check` reports the same **nine pre-existing files /
+26 diagnostics** with bundled clang-format **23.0.0git**. Every changed C++ file
+passes that formatter; the same repository-wide check using Homebrew clang-format
+**23.1.1** passes all **819 files**. The required check after merge retains those
+same nine files / 26 diagnostics and exits before the new Python/web checks.
+
+Fresh measurements at **85e6cee9** keep full Bootstrap at **19/574 native** in
+both policies. Exact Data remains **0/7** in both policies with
+`property receiver lacks a fresh own-data object proof`. Preserve its **2,522 bytes /
+SHA256 8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+
+Next: independently prove guarded returned-object field receivers and per-invocation
+contents/identity. Keep the original unguarded returned-field probe refused until its
+receiver is proved; a truthy mixed value can still be Number. Exact Data also needs
+its original recorder callback, `Array.from(s.keys())` and the template diagnostic.
+Component/DOM work must use ctbrowser's public RAII subsystem APIs without Script or
+GC dependencies. Independent escape candidates are bounded integer provenance for
+`denseLengthIndexed`'s `before - 1`, or original nondecimal BigInt literal indices.
+
+Evidence: `/tmp/ctcompile-owning-return-{full.log,full-detail.log,measured.json}`,
+`/tmp/ctcompile-owning-return-{repair-ctest.log,native-final.log,final-frozen.json}`,
+`/tmp/ctcompile-integration-checks.log`, `/tmp/ctcompile-zero-key-evidence.log`,
+`/tmp/ctcompile-data-return-next/{results.json,summary.json}`,
+`/tmp/ctcompile-escape-claims-before/` and `/tmp/ctcompile-owning-return-next.md`.
+Stopped at this gated increment at the user's request; no push.
+
+## Recovered mixed-child execution and dense-array length, 2026-09-12
+
+Historical recovery state recorded at **20:46:23 UTC**; the newer entry above
+supersedes its remaining failures and next steps. Resumed interrupted **471ac673**,
+its **16:57:21 UTC** journal and the nine uncommitted ctcompile paths, after runtime
+merge **422aa3f7**. Three agents split escape recovery, native lifetime checks and
+a read-only runtime audit.
+**4564097f** completes original dense-array length proofs; the predecessor's
+production logic was retained and its alias/six source-PC expectations corrected.
+The exact **30,235-byte** old escape fixture prefix is preserved. Fresh checks:
+**29 rows / eight live states / 888 budget cutoffs**, oracle **856 sites /
+35 unclaimed / zero violations / precision 19/164**.
+
+**3d31a120** completes mixed-child native execution: **37 native programs /
+34 refusals**, **227 typed observations / 171 distinguishing mutations**,
+both layouts, GCC/Clang, no-Script and ASan/UBSan/leak/lifetime checks through
+**128 future calls**. All **60 historical and 11 interrupted JavaScript bodies**
+remain unchanged. Nine added programs compile fully; the two owning-return
+probes remain refused. Complete budgets: identity **32700/31 cutoffs**,
+replacement **83098/30 cutoffs**. The **1,000-step rebuild** and all **14 focused
+CTests** pass (**230.42s**). Bundled formatting has **nine pre-existing files /
+26 diagnostics**; changed C++ files pass, and the alternative formatter passes **819 files**.
+
+The full gate passes **534/544 CTests in 996.29s**; lit passes **167/168 cases
+in 686.92s**. All ten failures reproduce the already-journaled integration issues.
+**b0439107** then repairs the stale WeakMap class expectation inside the audit's
+escape-test exclusion; its two-step rebuild and cycle CTest pass (**0.02s**).
+At that checkpoint **nine CTest failures remained**: five native Map/deforestation signed-zero
+checks, navigation, capture census, differential and lit's Map-toString expectation.
+Their paths were held by **claude-audit**. Test repairs were prepared on **0166780d**;
+native key normalization and integration of those repairs were the next obligation.
+Only Cycle.cpp changed after the full run; all **1,620 frozen inputs** matched on the
+devbox at full-gate completion. No compiler, browser or parser bytes changed between
+that run and the cycle rerun. Bundled formatting retains its baseline failures.
+
+At that checkpoint full Bootstrap stayed **19/574 native** under both policies. Exact Data
+**8359592c** was **0/7** under both policies, preserving **2,522 bytes** and its
+SHA256. The next proof boundary was owning mixed-child returns/identity, followed by
+guarded field reads and the original recorder callback. Component/DOM work uses
+public ctbrowser APIs.
+Evidence: `/tmp/ctcompile-recovery-summary.json`,
+`/tmp/ctcompile-recovery-{focused-detail.log,native.log,full.log,full-detail.log,measured.json}`.
+The recovered changes were committed without a push. This handoff was originally
+deferred under the active docs claim; its reviewed patch is now incorporated here.
+
+## Caller scalar-field payloads and decimal BigInt indices, 2026-09-12
+
+Continued clean **ee4b2a57**, the **14:25:57 UTC** journal and
+`/tmp/ctcompile-output-next.md`. The promised caller-payload proof was the next
+unfinished step; `codex-wip-20260907` was already an ancestor. Three agents split
+escape, ownership and native lifetime checks; root integrated and gated them.
+
+**5ea064b0** admits caller leaves with definitely initialized scalar own fields,
+including stable global aliases and strict identity uses. It checks every alias/use,
+source order and SSA dominance. A formal may receive objects and supported scalars
+across its complete call census; it gains no primitive-only authority. Existing
+`object_value` and identity-field carriers suffice. Cycles, missing/prototype fields,
+unknown consumers, method-formal field access and object returns remain refused.
+Thirteen source and thirteen prepared ownership rows pass, with forged self-cycles,
+late key/comparison operands and bounded incomplete proofs. Fourteen historical
+expectations were corrected without changing their 120 source fragments.
+
+**63206007** adds four straight-line caller witnesses, each **6/6 native** in
+both optimization modes: field **c3b36e07**, alias **96bc9f68**, mixed Number first
+**90b799ff** and last **b3f10a06**. The original 46 nested source bodies remain
+byte-identical; the first four conditional-entry probes remain explicit **0/6**
+refusals. The cohort passes **28 native programs / 32 refusals**, **139 typed Node/VM
+observations / 149 distinguishing mutations** in **57.37s**. Both C++ layouts pass
+GCC/Clang, no-Script and ASan/UBSan/leak checks through **128 future calls**, saved
+field-bearing owners after delete/clear, entry reexecution and final release.
+Measured complete budgets/cutoffs: **15329/31** and **21452/30**.
+
+**e7760ba4** updates the historical caller cohort without altering any of its
+55 JavaScript bodies. Field **698def06**, global field write **194d9834** and payload
+field **5442abee** now execute **4/4 native**; six mixed-key/category controls prove
+ownership but still refuse native emission. Preparation preserves each actual's
+original allocation/global-load/literal origin. The checker rejects 20 distinguishing
+mutations. The corrected cohort passes **22 native programs and their controls** in **46.35s**,
+both C++ layouts, GCC/Clang and no-Script; payload-field budget/cutoffs **1869/29**.
+The initial harness assertion expected an inline assignment; its one-line correction
+counts the actual existing field setter. Generated behavior did not change.
+
+**a78ab38d** proves original canonical decimal BigInt array indices with existing
+origin/bounds/budget checks. The old escape fixture remains an exact **28,451-byte
+prefix**. Five appended witnesses cover twelve literal sites: five confined and seven
+retained. The matrix passes **54 rows / six live states / 914 retention cutoffs**;
+all 11 escape CTests pass. The full oracle measures **828 sites / 33 unclaimed /
+zero violations / precision 16/157**. Computed, noncanonical and object-loaded keys,
+sparse/missing elements and ordinary-object/prototype effects remain conservative.
+The importer spelling comment now correctly says that bytecode already stripped `n`.
+
+The full standard run at **e7760ba4** passed **532/534 CTests**, including all
+**162 browser tests**, in **858.88s**. It exposed four obsolete host-contract
+expectations and one lit control whose mixed key now proves ownership but still
+has no native carrier. **ded4eb06** fixes the host expectations with all **116 input
+fragments / 41 rows** unchanged; its CTest passes **40.07s**. **f6caaadd** fixes
+only the native control's evidence and summary. All **230 tail source bodies** are
+unchanged; a two-policy census has zero errors, preserves 28 existing ownership-only
+routes and identifies exactly one new ownership-only row. Its checker passes eight
+measured/forged pairs, rejects 20 mutations, and its complete focused pipeline passes
+**0.53s**. The corrected **ctcompile_lit** CTest passes **168/168 cases in
+648.84s** (CTest **648.93s**). Together these runs cover all **534 CTests**.
+Only three test files differ from the full run. All **1,368 frozen production,
+browser, parser and test inputs** match the final local/remote snapshot; production,
+browser and parser bytes are identical between the full run and corrected reruns.
+Fresh Bootstrap stays **19/574 native** in both policies; Data stays **0/7 CommonJS,
+0/7 browser and 0/8 AMD**.
+Stable clang-format22 passes all **800 files**; bundled23 retains exactly the same
+**nine baseline files / 28 diagnostics**. No browser/runtime or parser changes were
+included. The parser remains **8eb3375**.
+
+Next: independently prove mixed scalar/object child-Map contents, owning object
+returns and identity, then Data's original recorder callback (`Array.from(s.keys())`
+and its template diagnostic). See `/tmp/ctcompile-caller-next-session.md`.
+The next independent escape candidate is dense-array `.length`; its proposed witness
+is Node-measured only, with VM/PCs still unmeasured. See
+`/tmp/ctcompile-bigint-indices-next.md`.
+Preserve exact Data's **2,522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+The current probe remains **0/7** in both modes; new caller witnesses are bounded
+proofs, not native Bootstrap. Component/DOM ownership must use ctbrowser's public API.
+
+Evidence: `/tmp/ctcompile-caller-{native.log,repair-gate.log,object-keys-final.log}`,
+`/tmp/ctcompile-caller-complete-summary.json`,
+`/tmp/ctcompile-caller-full-{detail.log,frozen.json,revision.json,summary.json}`,
+`/tmp/ctcompile-caller-{host-unit.log,lit-final.log,lit-final-detail.log,final-frozen.json}`,
+`/tmp/ctcompile-caller-tail-{audit.json,measured/results.json}`,
+`/tmp/ctcompile-caller-probe-measured/results.json`,
+`/tmp/ctcompile-caller-key-{preparation-measured,checker-mutations}.json` and
+`/tmp/ctcompile-caller-focused-detail.log`.
+Claude's pending isolated runtime work includes the **15:08:14 UTC** ToNumeric ABI
+proposal, accepted in the **15:10:59 UTC** journal. The **16:10:57 UTC**
+journal also records pending RegExp/String protocol and Function.toString changes.
+Re-read the latest journal and re-gate the differential oracle after integration.
+Nothing was pushed.
+
 ## Native nullable output and canonical String indices, 2026-09-12
 
 Continued clean **3e60248f** and the **11:04:32 UTC** journal. The preceding

@@ -773,8 +773,8 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
-// Number -0 and canonical String "0" are index zero; 2^32-1 is not an element.
-// Only an original literal proves an index; computed String categories do not.
+// Number -0 and canonical String/BigInt "0" are index zero; 2^32-1 is not an element.
+// Only an original literal proves an index; computed categories do not.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
@@ -785,14 +785,21 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
             return static_cast<std::size_t>(index);
         }
     }
+    llvm::StringRef key;
     if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-        const llvm::StringRef key = string.getValue();
-        std::uint32_t index = 0;
-        if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
-            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
-            !key.getAsInteger(10, index) && index < 4294967295ULL) {
-            return static_cast<std::size_t>(index);
-        }
+        key = string.getValue();
+    } else if (auto bigint = llvm::dyn_cast<ctjs::BigIntAttr>(constant.getValue())) {
+        // compile/expressions.cpp removes source 'n' before load_bigint. The VM
+        // converts decimal digits to an index without object hooks. Do not strip
+        // an attribute suffix: the literal parser rejects it and substitutes 0n.
+        // ponytail: only canonical decimal literals; model other radices separately.
+        key = bigint.getText();
+    }
+    std::uint32_t index = 0;
+    if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
+        llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
+        !key.getAsInteger(10, index) && index < 4294967295ULL) {
+        return static_cast<std::size_t>(index);
     }
     return std::nullopt;
 }
@@ -825,8 +832,10 @@ bool primitiveNonBigIntOrigin(mlir::Value origin,
         return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
                          ctjs::StringAttr>(constant.getValue());
     }
+    // Only an admitted dense-array length read has its own GetProperty origin;
+    // element/own-field reads forward their payload's original origin instead.
     return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryOp,
-                                 ctjs::BinaryStaticOp>(definition);
+                                 ctjs::BinaryStaticOp, ctjs::GetPropertyOp>(definition);
 }
 
 bool nonBigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
@@ -1444,6 +1453,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     continue;
                 }
                 const mlir::Value key = origin(op.getOperand(1));
+                if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
+                    const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
+                    if (name && name.getValue() == "length") {
+                        // lookup_property returns js_length as Number before any
+                        // prototype lookup. This exact tracked array admits no
+                        // sparse writes/deletion/accessors. Preserve an independent
+                        // origin, never an element alias or a concrete index/value.
+                        state.origins[op.getResult(0)] = op.getResult(0);
+                        continue;
+                    }
+                }
                 const auto index = key ? ownArrayIndex(key) : std::nullopt;
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or

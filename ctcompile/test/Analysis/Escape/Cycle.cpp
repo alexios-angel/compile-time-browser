@@ -520,16 +520,13 @@ int main() {
     }
 
     // =======================================================================
-    // E. ND-2: no weak references exist in this engine. Gate 4(e).
+    // E. ND-2: weak collection classes still use strong storage. Gate 4(e).
     // =======================================================================
     //
-    // Option 3 - weak links only where the SOURCE says `WeakRef` or `WeakMap`
-    // - is vacuous here, and the VM is asked rather than told: there is no
-    // `WeakRef` or `FinalizationRegistry` global at all, and `WeakMap`/
-    // `WeakSet` - their own classes since 34d90ea1 (2026-09-12), refusing a
-    // key that cannot be held weakly - keep the STRONG storage of `Map`/`Set`
-    // (builtins/collections/keyed.cpp, the TODO at its head): an entry is
-    // readable for as long as the map is, and its key is kept alive by it.
+    // WeakMap/WeakSet are distinct classes with strong __entries storage
+    // (builtins/collections/keyed.cpp; vm/objects/gc.cpp). These probes check
+    // absent weak-reference globals, class identity and lookup. They do not
+    // force GC or establish key retention.
     probe_expect("(e) ND-2: typeof WeakRef === \"undefined\"", "typeof WeakRef === \"undefined\"",
                  "true");
     probe_expect("(e) ND-2: typeof FinalizationRegistry === \"undefined\"",
@@ -538,7 +535,7 @@ int main() {
         "(e) ND-2: the conjunction the plan pins",
         "typeof WeakRef === \"undefined\" && typeof FinalizationRegistry === \"undefined\"",
         "true");
-    probe_expect("(e) ND-2: a WeakMap entry is a strong entry",
+    probe_expect("(e) ND-2: a WeakMap has its own class and supports lookup",
                  "(function () { var k = {}; var w = new WeakMap(); w.set(k, 1); "
                  "return w instanceof WeakMap && !(w instanceof Map) && w.get(k); })()",
                  "1");

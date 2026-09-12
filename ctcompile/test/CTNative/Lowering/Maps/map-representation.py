@@ -20,6 +20,41 @@ for (const name of Object.keys(context).sort()) {
 """
 
 
+def check_zero_keys(cpp):
+    renamed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    assert count == 1
+    return renamed + r"""
+template <class K> bool check_zero_keys(K negative) {
+    const K positive{0.0};
+    auto map = ctnative::make_number_map<K>();
+    ctnative::map_set(map, negative, js_num{-0.0});
+    for (int step = 0; step < 3; ++step) {
+        const auto found = map->find(positive);
+        if (found == map->end() || map->size() != 1 || !std::signbit(found->second)) {
+            return false;
+        }
+        if constexpr (std::is_same_v<K, js_num>) {
+            if (std::signbit(found->first)) { return false; }
+        } else {
+            if (std::signbit(std::get<js_num>(found->first))) { return false; }
+        }
+        if (step == 0) { ctnative::map_set(map, positive, js_num{-0.0}); }
+        if (step == 1) {
+            if (!ctnative::map_delete(map, positive)) { return false; }
+            ctnative::map_set(map, negative, js_num{-0.0});
+        }
+    }
+    return true;
+}
+int main() {
+    if (ctnative_test_entry() != 0) { return 90; }
+    if (!check_zero_keys(js_num{-0.0})) { return 91; }
+    if (!check_zero_keys(std::variant<bool, js_num>{-0.0})) { return 92; }
+    return 0;
+}
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
@@ -45,12 +80,12 @@ def main():
         (
             "ordered",
             False,
-            "orderResult=30102188\nprojectionResult=30\nstringOrderResult=37\nzeroResult=1\n",
+            "orderResult=30102188\nprojectionResult=30\nstringOrderResult=37\nzeroResult=0\n",
         ),
         (
             "ordered",
             True,
-            "orderResult=30102188\nprojectionResult=30\nstringOrderResult=37\nzeroResult=1\n",
+            "orderResult=30102188\nprojectionResult=30\nstringOrderResult=37\nzeroResult=0\n",
         ),
         ("payloads", False, "booleanResult=63\nnestedResult=1\nstringResult=63\n"),
         ("string-values", False, "keyResult=3\nsnapshotResult=3427\n"),
@@ -59,10 +94,9 @@ def main():
     ]
     for fixture, deforest, expected in cases:
         name = fixture + ("-deforested" if deforest else "")
-        if fixture in {"payloads", "string-values", "mixed-values"}:
-            js = args.fixtures / (fixture + ".js")
-            assert run([node, "-e", NODE_GLOBALS, str(js)]).stdout == expected
-            assert run([str(reference), str(js)]).stdout == expected
+        js = args.fixtures / (fixture + ".js")
+        assert run([node, "-e", NODE_GLOBALS, str(js)]).stdout == expected
+        assert run([str(reference), str(js)]).stdout == expected
         module = args.work / (name + ".mlir")
         run(
             [
@@ -148,7 +182,9 @@ def main():
                 # numeric key projection is safely deforested.
                 assert re.search(r"= ctnative::map_values\(", cpp)
             source = args.work / f"{name}-{label}.cpp"
-            source.write_text(cpp)
+            source.write_text(
+                check_zero_keys(cpp) if fixture in {"associative", "ordered"} else cpp
+            )
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}-{label}-{index}").resolve()
                 run(
