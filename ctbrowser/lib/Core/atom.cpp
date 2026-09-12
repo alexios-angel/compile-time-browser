@@ -1,3 +1,4 @@
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/atom.hpp>
 
 #include <mutex>
@@ -26,12 +27,7 @@ atom atom_table::intern(std::string_view text) {
 }
 
 atom atom_table::intern_lower(std::string_view text) {
-    std::string folded;
-    folded.reserve(text.size());
-    for (const char c : text) {
-        folded.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
-    }
-    return intern(folded);
+    return intern(ascii_lower_copy(text));
 }
 
 std::string_view atom_table::text(atom a) const {
