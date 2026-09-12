@@ -329,10 +329,12 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
         std::vector<std::string> stale;
         for (const auto & [key, current] : map.props) {
             if (key == "length" || is_index(key)) { continue; }
-            // A METHOD STAYS. Everything else on this object is a named
-            // property this function put there on an earlier refresh, and it
-            // goes: an attribute that has been removed must stop answering.
-            if (current.is_callable()) { continue; }
+            // THE OWNER SLOT STAYS - it is the map's link to its element, see
+            // install_named_node_map. Everything else on this object is a
+            // named property this function put there on an earlier refresh,
+            // and it goes: an attribute that has been removed must stop
+            // answering.
+            if (key == named_node_map_owner_key) { continue; }
             stale.push_back(key);
         }
         for (const std::string & key : stale) { (void)map.erase(key); }
