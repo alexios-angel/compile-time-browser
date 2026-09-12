@@ -662,12 +662,13 @@ bool set_declaration(declaration_block & block, std::string_view name, std::stri
 }
 
 void parse_declaration_block(declaration_block & block, std::string_view text,
-                             bool (*allow)(std::string_view, const void *), const void * ctx) {
+                             bool (*allow)(std::string_view, std::string_view, const void *),
+                             const void * ctx) {
     atom_table atoms;
     const stylesheet parsed = parse_declaration_list(text, atoms);
     for (const raw_declaration & d : parsed.declarations) {
         const std::string_view property = atoms.text(d.property);
-        if (allow != nullptr && !allow(property, ctx)) { continue; }
+        if (allow != nullptr && !allow(property, parsed.text_of(d), ctx)) { continue; }
         (void)put(block, property, parsed.text_of(d), d.important, true);
     }
 }

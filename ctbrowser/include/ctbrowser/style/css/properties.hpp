@@ -214,10 +214,12 @@ bool set_declaration(declaration_block & block, std::string_view name, std::stri
 // A declaration LIST appended to the block, as a `style` attribute, `cssText`
 // or a rule body arrives: a later declaration of the same longhand replaces
 // the earlier one and takes its place at the END, unless the earlier one was
-// `!important` and it is not. `allow` filters the property names a block may
-// hold (an `@page` block takes its descriptors only); null allows everything.
+// `!important` and it is not. `allow` filters the declarations a block may
+// hold, by name and by value (an `@page` block takes its descriptors only,
+// and no descriptor takes a tree-counting function); null allows everything.
 void parse_declaration_block(declaration_block & block, std::string_view text,
-                             bool (*allow)(std::string_view name, const void * ctx) = nullptr,
+                             bool (*allow)(std::string_view name, std::string_view value,
+                                           const void * ctx) = nullptr,
                              const void * ctx = nullptr);
 // `removeProperty`: answers the value it removed (`getPropertyValue` first),
 // and `removed` says whether anything left the block.

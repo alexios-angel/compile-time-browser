@@ -330,7 +330,26 @@ void set_indexed(script::object_object & obj, std::span<const value> items) {
     return held == nullptr ? value::null() : *held;
 }
 
-bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string_view name) {
+bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string_view name,
+                         std::string_view value) {
+    // A DESCRIPTOR IS NOT ON AN ELEMENT, so the tree-counting functions have
+    // nothing to count there and the declaration is invalid (CSS Values 5
+    // §tree-counting, tree-counting/sibling-function-descriptors).
+    const bool descriptor = rule.type == page_rule || rule.type == font_face_rule ||
+                            rule.type == counter_style_rule ||
+                            rule.type == font_feature_values_rule;
+    if (descriptor) {
+        for (std::size_t i = 0; i + 14 <= value.size(); ++i) {
+            const char before = i == 0 ? ' ' : value[i - 1];
+            const bool boundary =
+                !((before >= 'a' && before <= 'z') || (before >= 'A' && before <= 'Z') ||
+                  (before >= '0' && before <= '9') || before == '-' || before == '_');
+            if (boundary && (ascii_iequals(value.substr(i, 14), "sibling-index(") ||
+                             ascii_iequals(value.substr(i, 14), "sibling-count("))) {
+                return false;
+            }
+        }
+    }
     if (name.starts_with("--")) { return true; }
     if (rule.type == keyframe_rule) { return !name.starts_with("animation"); }
     if (rule.type != page_rule) { return true; }
@@ -403,7 +422,7 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
 
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
                        std::string_view text, bool important) {
-    if (!declaration_allowed(rule, css_name)) { return false; }
+    if (!declaration_allowed(rule, css_name, text)) { return false; }
     if (rule.type == page_rule && (css_name == "size" || css_name == "page-orientation") &&
         !trim(text, html_whitespace).empty()) {
         const std::string canonical = page_descriptor_value(css_name, text);
@@ -419,9 +438,9 @@ bool store_declaration(dom_bindings::css_rule_record & rule, const std::string &
 void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body) {
     style::css::parse_declaration_block(
         rule.declarations, body,
-        [](std::string_view name, const void * ctx) {
+        [](std::string_view name, std::string_view value, const void * ctx) {
             return declaration_allowed(*static_cast<const dom_bindings::css_rule_record *>(ctx),
-                                       name);
+                                       name, value);
         },
         &rule);
     if (rule.type != page_rule) { return; }
