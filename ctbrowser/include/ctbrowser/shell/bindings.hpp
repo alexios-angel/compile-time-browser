@@ -1998,6 +1998,10 @@ private:
     // see. moveBefore does not go through this, and keeps focus. Cleared
     // after the hook.
     std::vector<node_id> moved_by_mutation_;
+    // Set while `moveBefore` moves: DOM's "move" runs neither the removing
+    // nor the insertion side effects an ordinary insertion has - no focus
+    // fixup, and no script "children changed" steps (script-move-before.html).
+    bool moving_ = false;
 
 public:
     [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }

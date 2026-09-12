@@ -693,7 +693,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                    return value::undefined();
                }
                if (!may_become_a_child(c, given, before, node)) { return value::undefined(); }
+               moving_ = true;
                if (before != node) { place(node, before); }
+               moving_ = false;
                return given;
            });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {

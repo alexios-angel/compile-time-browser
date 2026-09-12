@@ -303,7 +303,7 @@ void dom_bindings::mutated() {
 // ponytail: creation order, not tree order - the corpus inserts in the order
 // it creates. Sort by tree position if a page ever depends on it.
 void dom_bindings::run_inserted_scripts() {
-    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_) { return; }
+    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_ || moving_) { return; }
     context & cx = *cx_;
     const atom src_name = atoms_->intern("src");
     const atom type_name = atoms_->intern("type");

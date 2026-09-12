@@ -377,7 +377,9 @@ void dom_bindings::install_node_methods(context & cx) {
                 return value::undefined();
             }
         }
+        moving_ = true;
         (void)insert_node(parent, child, handle_of(arg(args, 1)));
+        moving_ = false;
         // `undefined`, unlike insertBefore: the IDL return type is void.
         return value::undefined();
     });
