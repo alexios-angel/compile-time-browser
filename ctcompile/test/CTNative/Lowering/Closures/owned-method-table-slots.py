@@ -6,28 +6,13 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
+
+from CTNative.harness import find_compilers, run
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
 REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::")
-
-
-def run(command, *, environment=None):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120, env=environment)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result
-
-
-def sibling_test_tool(opt, name):
-    executable = Path(shutil.which(opt) or opt).resolve()
-    for parent in executable.parents:
-        candidate = parent / "test" / name
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(f"build {name} before running this execution regression")
 
 
 def prepare(args, source, name):
@@ -171,20 +156,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--reference")
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--specimen", type=Path, required=True)
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     tests = Path(__file__).resolve().parents[3]
-    reference = args.reference or sibling_test_tool(args.opt, "ctcompile-test-native-reference")
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("owning-slot regression requires " + " or ".join(choices))
-        compilers.append(compiler)
+    reference = args.reference
+    compilers = find_compilers()
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("VM symbol check cannot detect the interpreter in its positive control")

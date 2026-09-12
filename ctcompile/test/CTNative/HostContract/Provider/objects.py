@@ -3,20 +3,13 @@
 
 import argparse
 from dataclasses import dataclass, field
-import importlib.util
 import json
 from pathlib import Path
 import re
 import subprocess
-import sys
 
-sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location(
-    "provider_diagnostics", Path(__file__).with_name("diagnostics.py")
-)
-diagnostics = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = diagnostics
-spec.loader.exec_module(diagnostics)
+from CTNative.HostContract.Provider import diagnostics
+
 mutations, host = diagnostics.mutations, diagnostics.host
 OPTIONS = mutations.OPTIONS + " follow-provider-objects=true"
 OBJECT, UNDEFINED = mutations.OBJECT, mutations.UNDEFINED
@@ -790,7 +783,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate")
     parser.add_argument("--opt")
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument(
@@ -801,16 +794,10 @@ def main():
     )
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
-    if not args.oracle_only and (not args.translate or not args.opt):
-        parser.error("compiler checks require --translate and --opt")
+    if not args.oracle_only and not (args.translate and args.opt and args.reference):
+        parser.error("compiler checks require --translate, --opt and --reference")
     args.work.mkdir(parents=True, exist_ok=True)
-    node = diagnostics.node_executable(args)
-    reference = (
-        None
-        if args.oracle_only
-        else args.reference
-        or diagnostics.build_path(args.opt, "test/ctcompile-test-native-reference")
-    )
+    node, reference = args.node, args.reference
     evidence, prepared = {}, {}
     selected = [case for case in cases() if args.case is None or case.name in args.case]
     for case in selected:

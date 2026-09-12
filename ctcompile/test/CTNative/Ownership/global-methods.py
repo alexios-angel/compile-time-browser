@@ -2,7 +2,6 @@
 """Check live exported getter ownership through standalone native execution."""
 
 import argparse
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -11,9 +10,9 @@ import struct
 import subprocess
 from urllib.parse import unquote_to_bytes
 
-spec = importlib.util.spec_from_file_location("owned", Path(__file__).with_name("globals.py"))
-owned = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(owned)
+from CTNative.harness import find_compilers
+from CTNative.Ownership import globals as owned
+
 boundary = owned.boundary
 host = owned.host
 
@@ -348,16 +347,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
-    compilers = [
-        next((shutil.which(c) for c in choices if shutil.which(c)), None)
-        for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))
-    ]
+    node, reference = args.node, args.reference
+    compilers = find_compilers()
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if (
         not all(compilers)

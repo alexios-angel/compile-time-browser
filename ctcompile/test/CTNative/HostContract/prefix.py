@@ -2,16 +2,11 @@
 """Consume only actual closed entry-prefix proofs; keep unknown effects live."""
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 import re
 
-spec = importlib.util.spec_from_file_location(
-    "host_contract", Path(__file__).with_name("contract.py")
-)
-host = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(host)
+from CTNative.HostContract import contract as host
 
 
 def specialize(opt, ir, contract, prefix, *, success=True, options=""):

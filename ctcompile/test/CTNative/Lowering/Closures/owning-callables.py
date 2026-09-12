@@ -5,15 +5,8 @@ import argparse
 import os
 from pathlib import Path
 import re
-import shutil
-import subprocess
 
-
-def run(command, *, environment=None):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120, env=environment)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result.stdout
+from CTNative.harness import find_compilers, run
 
 
 def main():
@@ -25,12 +18,7 @@ def main():
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     tests = Path(__file__).resolve().parents[3]
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("owning callable regression requires " + " or ".join(choices))
-        compilers.append(compiler)
+    compilers = find_compilers()
     fixtures = {
         "owning": "independentResult=101\nlifetimeResult=42\nloopResult=16\nmutationResult=42\nsharedResult=15\n",
         "scalar-string": "keywordResult=42\nscalarResult=1342\nstringResult=11\n",
@@ -64,7 +52,7 @@ def main():
         )
         decisions = []
         for label, ir in [("plain", module), ("deduced", deduced)]:
-            cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
+            cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             assert "std::function<js_num(js_num)>" in cpp, cpp
             assert "#include <functional>" in cpp, cpp
             if fixture == "fallback":
@@ -120,7 +108,7 @@ def main():
                         str(binary),
                     ]
                 )
-                assert run([str(binary)]) == expected
+                assert run([str(binary)]).stdout == expected
         assert decisions[0] == decisions[1], decisions
 
     # Clang's address sanitizer catches a borrowed factory frame even when the
@@ -153,7 +141,7 @@ def main():
                 str(binary),
             ]
         )
-        assert run([str(binary)], environment=environment) == expected
+        assert run([str(binary)], environment=environment).stdout == expected
     print("owning callables: 9 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
 
 

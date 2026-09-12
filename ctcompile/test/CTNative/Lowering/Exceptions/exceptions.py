@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
+
+from CTNative.harness import find_compilers, run
 
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
@@ -124,36 +125,6 @@ CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
 REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
-
-
-def run(command, *, environment=None, input_text=None):
-    result = subprocess.run(
-        command, text=True, capture_output=True, timeout=120, env=environment, input=input_text
-    )
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result
-
-
-def build_path(opt, relative):
-    executable = Path(shutil.which(opt) or opt).resolve()
-    for parent in executable.parents:
-        candidate = parent / relative
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(f"cannot locate {relative} beside {opt}")
-
-
-def node_executable(args):
-    node = args.node or os.environ.get("CTCOMPILE_NODE") or shutil.which("node")
-    if node:
-        return node
-    if args.opt:
-        cache = build_path(args.opt, "CMakeCache.txt").read_text()
-        match = re.search(r"^CTCOMPILE_BOOTSTRAP_NODE:FILEPATH=(.+)$", cache, re.M)
-        if match and Path(match[1]).is_file():
-            return match[1]
-    raise RuntimeError("native exception regression requires independent Node; pass --node")
 
 
 NODE_ORACLE = r"""
@@ -477,13 +448,8 @@ def generated_helper_limits(fixtures):
 
 
 def execution_tools(args):
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("native exception regression requires " + " or ".join(choices))
-        compilers.append(compiler)
-    reference = args.reference or build_path(args.opt, "test/ctcompile-test-native-reference")
+    compilers = find_compilers()
+    reference = args.reference
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("VM symbol detector failed its interpreter positive control")
@@ -589,14 +555,14 @@ def main():
     parser.add_argument("--translate")
     parser.add_argument("--opt")
     parser.add_argument("--reference")
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     generated_helper_limits(args.fixtures)
-    node = node_executable(args)
+    node = args.node
     oracles = {}
     for name, (_, expected) in PROGRAMS.items():
         source = (args.fixtures / f"{name}.js").read_text()
@@ -622,8 +588,8 @@ def main():
             "executed wrong-state control agree"
         )
         return
-    if not args.translate or not args.opt:
-        parser.error("--translate and --opt are required unless --oracle-only")
+    if not (args.translate and args.opt and args.reference):
+        parser.error("--translate, --opt and --reference are required unless --oracle-only")
     reference, compilers, nm = execution_tools(args)
     register_flow_controls(args)
     report = []

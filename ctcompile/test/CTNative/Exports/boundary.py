@@ -6,18 +6,11 @@ an explicit live consumer implements the corresponding ownership/call gate.
 """
 
 import argparse
-import importlib.util
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 
-spec = importlib.util.spec_from_file_location(
-    "host", Path(__file__).resolve().parent.parent / "HostContract/contract.py"
-)
-host = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(host)
+from CTNative.HostContract import contract as host
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -95,39 +88,16 @@ def follow(args, ir, name):
     return json.loads(report.read_text()), output
 
 
-def reference_tool(opt):
-    executable = Path(shutil.which(opt) or opt).resolve()
-    for parent in executable.parents:
-        candidate = parent / "test" / "ctcompile-test-native-reference"
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError("build ctcompile-test-native-reference before running the export boundary")
-
-
-def node_executable(args):
-    node = args.node or os.environ.get("CTCOMPILE_NODE") or shutil.which("node")
-    if node:
-        return node
-    executable = Path(shutil.which(args.opt) or args.opt).resolve()
-    for parent in executable.parents:
-        cache = parent / "CMakeCache.txt"
-        if cache.is_file():
-            match = re.search(r"^CTCOMPILE_BOOTSTRAP_NODE:FILEPATH=(.+)$", cache.read_text(), re.M)
-            if match and Path(match[1]).is_file():
-                return match[1]
-    raise RuntimeError("native export boundary requires independent Node; pass --node")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    reference = reference_tool(args.opt)
-    node = node_executable(args)
+    reference, node = args.reference, args.node
     sources = {
         "scalar": "var host = {}; host.slot = 42; var trace = host.slot;",
         "plain_table": (

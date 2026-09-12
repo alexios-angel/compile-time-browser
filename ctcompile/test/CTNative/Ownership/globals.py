@@ -2,7 +2,6 @@
 """Check live ordinary global ownership, standalone output and source refusals."""
 
 import argparse
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,11 +9,9 @@ import re
 import shutil
 import subprocess
 
-spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).resolve().parent.parent / "Exports/boundary.py"
-)
-boundary = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(boundary)
+from CTNative.harness import find_compilers
+from CTNative.Exports import boundary
+
 host = boundary.host
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
 FLAGS = [
@@ -148,16 +145,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
-    compilers = [
-        next((shutil.which(c) for c in choices if shutil.which(c)), None)
-        for choices in (("g++-13", "g++"), ("clang++-18", "clang++"))
-    ]
+    node, reference = args.node, args.reference
+    compilers = find_compilers()
     nm = shutil.which("nm")
     if not all(compilers) or not nm or not VM.search(host.run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("need both compilers and a working VM-symbol positive control")

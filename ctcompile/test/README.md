@@ -29,7 +29,11 @@ separate homes.
 | `cmake/` | CTest registration, included in the root directory scope |
 
 Large C++ suites use a named subfolder with ordinary translation units and a
-shared header. Python execution suites use ordinary modules. Lit cases remain
+shared header. Python execution suites use ordinary modules: lit puts `test/`
+on `PYTHONPATH`, so a driver imports a sibling as `from CTNative.Exports import
+boundary` and shares `CTNative/harness.py` (`run`, `find_compilers`); Node and
+the interpreter reference arrive as `--node %node --reference %native_reference`
+on the RUN line. A hand run needs the same `PYTHONPATH` and both flags. Lit cases remain
 with their pass or target; `.mlir`, `.td` and `.test` files are discovered by lit,
 including the two handwritten EmitC fixtures under `CTNative/Fixtures/`.
 

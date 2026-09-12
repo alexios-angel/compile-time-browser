@@ -85,3 +85,10 @@ for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18"
     config.substitutions.append(
         (name, f"{found} -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic")
     )
+
+config.substitutions.append(("%node", config.node or shutil.which("node") or "node"))
+config.substitutions.append(("%native_reference", config.native_reference))
+
+# THE PYTHON DRIVERS IMPORT EACH OTHER ACROSS DIRECTORIES (CTNative/harness.py
+# says how), and a hand run wants the same path.
+config.environment["PYTHONPATH"] = config.test_source_root

@@ -2,18 +2,13 @@
 """Check associative lookup, ordered fallback, aliases, and owning Map values."""
 
 import argparse
-import importlib.util
 import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 
-spec = importlib.util.spec_from_file_location(
-    "boundary", Path(__file__).resolve().parents[2] / "Exports/boundary.py"
-)
-boundary = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(boundary)
+from CTNative.harness import find_compilers, run
+from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
 const vm = require('node:vm');
@@ -25,34 +20,22 @@ for (const name of Object.keys(context).sort()) {
 """
 
 
-def run(command, *, environment=None):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120, env=environment)
-    if result.returncode:
-        raise RuntimeError(f"{command!r}\n{result.stdout}{result.stderr}")
-    return result.stdout
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     tests = Path(__file__).resolve().parents[3]
-    node = boundary.node_executable(args)
-    reference = boundary.reference_tool(args.opt)
+    node, reference = args.node, args.reference
     nm = shutil.which("nm")
     if not nm:
         raise RuntimeError("Map representation regression requires nm")
-    compilers = []
-    for choices in [("g++-13", "g++"), ("clang++-18", "clang++")]:
-        compiler = next((shutil.which(name) for name in choices if shutil.which(name)), None)
-        if not compiler:
-            raise RuntimeError("Map representation regression requires " + " or ".join(choices))
-        compilers.append(compiler)
+    compilers = find_compilers()
     cases = [
         (
             "associative",
@@ -78,8 +61,8 @@ def main():
         name = fixture + ("-deforested" if deforest else "")
         if fixture in {"payloads", "string-values", "mixed-values"}:
             js = args.fixtures / (fixture + ".js")
-            assert run([node, "-e", NODE_GLOBALS, str(js)]) == expected
-            assert run([str(reference), str(js)]) == expected
+            assert run([node, "-e", NODE_GLOBALS, str(js)]).stdout == expected
+            assert run([str(reference), str(js)]).stdout == expected
         module = args.work / (name + ".mlir")
         run(
             [
@@ -112,7 +95,7 @@ def main():
             )
             assert altered != original
             forged.write_text(altered)
-            refused = run([args.opt, "--ctnative-deforest", str(forged)])
+            refused = run([args.opt, "--ctnative-deforest", str(forged)]).stdout
             assert (
                 'ctnative.deforest_reason = "native Map runtime contract is not present"' in refused
             )
@@ -129,7 +112,7 @@ def main():
             ]
         )
         for label, ir in [("plain", module), ("deduced", deduced)]:
-            cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
+            cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             assert "using string_to_number_map = number_map<std::string>;" in cpp
             assert "inline std::shared_ptr<string_to_number_map> make_string_to_number_map()" in cpp
             if fixture in {"associative", "ordered"}:
@@ -184,9 +167,9 @@ def main():
                         str(binary),
                     ]
                 )
-                actual = run([str(binary)])
+                actual = run([str(binary)]).stdout
                 assert actual == expected, (name, label, actual, expected)
-                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)])
+                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
             if label == "plain":
                 environment = dict(
                     os.environ,
@@ -214,7 +197,7 @@ def main():
                         str(binary),
                     ]
                 )
-                assert run([str(binary)], environment=environment) == expected
+                assert run([str(binary)], environment=environment).stdout == expected
     for fixture in ["boolean-values"]:
         source = (args.fixtures / (fixture + ".js")).read_text()
         _, prepared, count = boundary.prepare(args, fixture, source)

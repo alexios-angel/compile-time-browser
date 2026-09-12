@@ -5,16 +5,8 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
-
-def run(command, *, success=True):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    if (result.returncode == 0) != success:
-        raise RuntimeError(
-            f"unexpected tool status {result.returncode}: {command}\n{result.stdout}{result.stderr}"
-        )
-    return result
+from CTNative.harness import run
 
 
 def fingerprint(opt, ir):

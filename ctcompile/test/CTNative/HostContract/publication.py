@@ -2,14 +2,12 @@
 """Check runtime factory retention and current publication identities."""
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 import re
 
-spec = importlib.util.spec_from_file_location("prefix", Path(__file__).with_name("prefix.py"))
-prefix = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(prefix)
+from CTNative.HostContract import prefix
+
 host = prefix.host
 
 FACTORY = "function() { const resource = new Map; return {get: () => resource.size}; }"
