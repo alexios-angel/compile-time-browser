@@ -41,6 +41,7 @@
 // nothing else - so this is the only way to have a real parser.
 #include <boost/json/src.hpp>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -50,6 +51,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -345,7 +347,23 @@ private:
             if (path.empty()) { return fail("shot needs a path"); }
             const auto image = page.read_pixels();
             if (!image) { return fail("read_pixels failed"); }
-            if (!ctbrowser::write_ppm(path, *image)) { return fail("cannot write " + path); }
+            // PNG when the name says so - what a browser or an AI can look at
+            // - and PPM otherwise, the shape a byte-compared golden keeps. The
+            // encoder is the engine's own (toDataURL uses it), so a screenshot
+            // no longer needs converting by whoever asked for it.
+            bool written = false;
+            if (std::filesystem::path{path}.extension() == ".png") {
+                ctbrowser::paint::bitmap bits{image->width(), image->height()};
+                std::ranges::copy(image->pixels(), bits.pixels.begin());
+                const std::vector<std::byte> png = ctbrowser::shell::encode_png(bits);
+                std::ofstream out{path, std::ios::binary};
+                out.write(reinterpret_cast<const char *>(png.data()),
+                          static_cast<std::streamsize>(png.size()));
+                written = !png.empty() && out.good();
+            } else {
+                written = ctbrowser::write_ppm(path, *image);
+            }
+            if (!written) { return fail("cannot write " + path); }
             return json::value{{"ok", true},
                                {"path", path},
                                {"width", image->width()},
@@ -414,7 +432,7 @@ int main(int argc, char ** argv) {
                     "  {\"cmd\":\"key\",\"code\":\"Tab\"}        + shift, ctrl\n"
                     "  {\"cmd\":\"type\",\"text\":\"hello\"}\n"
                     "  {\"cmd\":\"wheel\",\"notches\":-3}        + x,y to aim it\n"
-                    "  {\"cmd\":\"shot\",\"path\":\"out.ppm\"}\n"
+                    "  {\"cmd\":\"shot\",\"path\":\"out.ppm\"}      or out.png\n"
                     "  {\"cmd\":\"eval\",\"script\":\"...\"}     info, resize, quit\n");
         return 2;
     }

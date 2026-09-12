@@ -67,66 +67,15 @@ ALIASES = {
 
 
 # --- images ----------------------------------------------------------------
-#
-# ctbrowser writes P6 PPM and has no PNG encoder - deliberately, since a golden
-# a test byte-compares gains nothing from compression. But a PNG is what an AI
-# or a browser can actually look at, so the conversion happens here, in about
-# twenty lines of zlib rather than a dependency.
-
-
-def read_ppm(path: Path) -> tuple[int, int, bytes]:
-    """A binary P6 as (width, height, RGB bytes). ctbrowser writes no other kind."""
-    data = path.read_bytes()
-    fields: list[bytes] = []
-    at = 0
-    while len(fields) < 4:
-        while at < len(data) and data[at : at + 1].isspace():
-            at += 1
-        if data[at : at + 1] == b"#":  # ctbrowser writes none, but P6 allows them
-            while at < len(data) and data[at] != 0x0A:
-                at += 1
-            continue
-        start = at
-        while at < len(data) and not data[at : at + 1].isspace():
-            at += 1
-        fields.append(data[start:at])
-    if fields[0] != b"P6":
-        raise ValueError(f"{path}: not a binary PPM")
-    width, height = int(fields[1]), int(fields[2])
-    return width, height, data[at + 1 :]
-
-
-def write_png(path: Path, width: int, height: int, rgb: bytes) -> None:
-    """8-bit RGB, no interlacing. Enough for a screenshot and nothing more."""
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(body))
-            + kind
-            + body
-            + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
-        )
-
-    stride = width * 3
-    # Filter byte 0 (None) per scanline: the images are screenshots, and a
-    # smarter filter would trade readability here for bytes nobody counts.
-    raw = b"".join(b"\0" + rgb[y * stride : (y + 1) * stride] for y in range(height))
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 6))
-        + chunk(b"IEND", b"")
-    )
 
 
 def read_png(path: Path) -> tuple[int, int, bytes]:
     """An 8-bit RGB or RGBA PNG as (width, height, RGB bytes).
 
-    The symmetric half of write_png, and it exists because the parity harness has
-    to compare what the two engines DREW, not only what they said - and Playwright
-    writes PNG while ctbrowser writes PPM, so something has to read one of them.
-    Twenty lines of zlib rather than a dependency, for the same reason write_png
-    is.
+    It exists because the parity harness has to compare what the two engines
+    DREW, not only what they said - Playwright's screenshots and ctdrive's are
+    both PNG, and the alpha ctdrive's carries is always 255. Twenty lines of
+    zlib rather than a dependency.
 
     Only the two colour types a screenshot can be, and no interlacing: a file
     outside that is a bug in whoever wrote it, not an input to support.
@@ -191,11 +140,6 @@ def read_png(path: Path) -> tuple[int, int, bytes]:
             dst = (y * width + x) * 3
             out[dst : dst + 3] = line[src : src + 3]
     return width, height, bytes(out)
-
-
-def ppm_to_png(ppm: Path, png: Path) -> None:
-    width, height, rgb = read_ppm(ppm)
-    write_png(png, width, height, rgb)
 
 
 # --- fonts -----------------------------------------------------------------
@@ -377,9 +321,8 @@ class Ctbrowse:
         return self.send(cmd="eval", script=script)
 
     def shot(self, path: Path) -> dict:
-        # ctbrowser writes PPM and has no PNG encoder; convert here and report
-        # the file that actually exists, so a caller can open what it is told.
-        ppm = path.with_suffix(".ppm")
+        # ctdrive writes PNG when the name ends in .png, so the file lands as
+        # asked and a caller can open what it is told.
         if self.remote:
             # A REMOTE ENGINE WRITES TO A REMOTE DISK. Handing ctdrive this
             # machine's absolute path asked the build box to write to a directory
@@ -394,7 +337,7 @@ class Ctbrowse:
             # cds there so the fixtures' `../../vendor/bootstrap/bootstrap.css`
             # resolves - so a relative path lands in the right place and the fetch
             # below runs through a shell that can expand the rest.
-            there = f"build/compare/{ppm.name}"
+            there = f"build/compare/{path.name}"
             answer = self.send(cmd="shot", path=there)
             if answer.get("ok"):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,17 +354,10 @@ class Ctbrowse:
                 )
                 if fetched.returncode != 0 or not fetched.stdout:
                     return {"ok": False, "error": f"could not fetch {there} from {self.remote}"}
-                ppm.write_bytes(fetched.stdout)
-                ppm_to_png(ppm, path)
-                ppm.unlink()
+                path.write_bytes(fetched.stdout)
                 answer["path"] = str(path)
             return answer
-        answer = self.send(cmd="shot", path=str(ppm))
-        if answer.get("ok"):
-            ppm_to_png(ppm, path)
-            ppm.unlink()
-            answer["path"] = str(path)
-        return answer
+        return self.send(cmd="shot", path=str(path))
 
     def close(self):
         try:
