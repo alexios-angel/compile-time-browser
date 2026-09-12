@@ -140,6 +140,27 @@ void test_a_collection_owns_its_indices_and_names() {
                (kids instanceof NodeList) + ',' + (document.querySelectorAll('p') instanceof NodeList);
     })())JS",
        "true,2,true,true");
+    // NodeList-live-mutations: the own keys after a mutation nothing read
+    // through, and NodeList-Iterable: the iterator sees what is appended
+    // between two `next()`s. (A `for...of` over a collection still snapshots -
+    // the VM materialises a proxy rather than calling its @@iterator.)
+    is(R"JS((function () {
+        var d = document.createElement('div');
+        var kids = d.childNodes;
+        var before = Object.getOwnPropertyNames(kids).length;
+        d.appendChild(document.createElement('b')).id = 'b1';
+        d.appendChild(document.createElement('b')).id = 'b2';
+        var after = Object.getOwnPropertyNames(kids).join();
+        var seen = [], it = kids[Symbol.iterator]();
+        for (var step = it.next(); !step.done; step = it.next()) {
+            seen.push(step.value.id);
+            if (seen.length < 3) { d.appendChild(document.createElement('b')).id = 'after' + step.value.id; }
+        }
+        var keys = [...kids.keys()], entries = [...kids.entries()];
+        return [before, after, seen.join(' '), keys.join(' '), entries[1][1].id,
+                !(kids.values() instanceof Array), kids.values().next().value === kids[0]].join('|');
+    })())JS",
+       "0|0,1|b1 b2 afterb1 afterb2|0 1 2 3|b2|true|true");
 }
 
 void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {
@@ -189,7 +210,32 @@ void test_a_range_cuts_moves_and_wraps() {
        "ab<br>cd|2|<s>ab<br>cd</s>");
 }
 
+// adoption.window.js and Node-isEqualNode-xhtml.xhtml: a fragment inserted
+// from another document is emptied there and stays there; adoptNode takes the
+// fragment itself; and isEqualNode reads across documents.
+void test_another_documents_fragment_and_nodes() {
+    is(R"JS((function () {
+        var doc = document.implementation.createHTMLDocument('');
+        var df = doc.createDocumentFragment();
+        var child = df.appendChild(doc.createTextNode('hi'));
+        document.body.appendChild(df);
+        var a = [df.childNodes.length, child.ownerDocument === document, df.ownerDocument === doc];
+        var df2 = doc.createDocumentFragment();
+        var kid2 = df2.appendChild(doc.createElement('i'));
+        document.adoptNode(df2);
+        a.push(df2.childNodes.length, df2.ownerDocument === document, kid2.ownerDocument === document);
+        var p = doc.createElement('p'); p.setAttribute('id', 'p1'); p.setAttribute('class', 'a');
+        var p1 = document.getElementById('p1');
+        a.push(p1.isEqualNode(p), p.isEqualNode(p1));
+        p.textContent = 'one';
+        a.push(p1.isEqualNode(p), p1.isEqualNode(null));
+        return a.join();
+    })())JS",
+       "0,true,true,1,true,true,false,false,true,false");
+}
+
 int main() {
+    test_another_documents_fragment_and_nodes();
     test_a_range_cuts_moves_and_wraps();
     test_the_document_element_has_a_parent_and_siblings();
     test_a_write_that_changes_nothing_still_queues_a_record();

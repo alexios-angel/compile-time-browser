@@ -183,6 +183,14 @@ std::string remove_stored_declaration(script::object_object & held, context & cx
 // rule; the break set is here because refresh_attribute_map reads it too.
 inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 [[nodiscard]] bool valid_attribute_name(std::string_view name);
+// A "valid namespace prefix" (DOM 4.9, whatwg/dom#1079): not empty, no ASCII
+// whitespace, U+0000, `/` or `>` - and NOT the attribute rule, which also
+// refuses `=`: `setAttributeNS(ns, "=:attr", v)` is legal
+// (dom/nodes/name-validation.html). document/internal.hpp spells the same.
+[[nodiscard]] inline bool valid_namespace_prefix(std::string_view prefix) {
+    return !prefix.empty() && prefix.find_first_of("\t\n\f\r />") == std::string_view::npos &&
+           prefix.find('\0') == std::string_view::npos;
+}
 [[nodiscard]] split_name split_attribute_name(std::string_view name);
 [[nodiscard]] std::string namespace_argument(context & cx, std::span<value> args, std::size_t i);
 

@@ -51,6 +51,10 @@ enum class token_kind : std::uint8_t {
     start_tag,
     end_tag,
     comment,
+    // `<?target data?>` - `name` is the target and `data` the data. HTML
+    // 13.2.5.72: a `<?` whose target is a name other than `xml` or
+    // `xml-stylesheet`; every other `<?` is still a bogus comment.
+    processing_instruction,
     character, // a RUN of text, not one code point - the spec emits one at a time
     end_of_file,
 };
@@ -164,6 +168,10 @@ private:
     // spec turns these into comments rather than dropping them, so a stray
     // processing instruction does not swallow the rest of the document.
     [[nodiscard]] token bogus_comment();
+
+    // `<?target data?>` as a processing instruction token, or the bogus
+    // comment above when the target is not one. See the definition.
+    [[nodiscard]] token processing_instruction();
 
     // `<![CDATA[ ... ]]>` as one text run, undecoded. Foreign content only -
     // in HTML the same bytes are a bogus comment.

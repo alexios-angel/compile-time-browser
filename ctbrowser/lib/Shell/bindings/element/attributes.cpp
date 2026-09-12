@@ -588,10 +588,8 @@ void dom_bindings::install_named_node_map(context & cx) {
 bool dom_bindings::validate_and_extract(context & cx, std::string_view where,
                                         const std::string & ns, const std::string & qualified) {
     const split_name split = split_attribute_name(qualified);
-    const bool prefix_writable =
-        !split.prefix.empty() &&
-        split.prefix.find_first_of(attribute_name_breaks) == std::string_view::npos;
-    if ((split.has_colon && !prefix_writable) || !valid_attribute_name(split.local)) {
+    if ((split.has_colon && !valid_namespace_prefix(split.prefix)) ||
+        !valid_attribute_name(split.local)) {
         throw_dom_exception(cx, "InvalidCharacterError",
                             std::string{where} + ": '" + qualified +
                                 "' is not a qualified attribute name");
@@ -856,6 +854,107 @@ void dom_bindings::install_attribute_methods(context & cx) {
         const auto txn = doc_->read();
         return value::boolean(
             txn.has_attribute(id, attribute_key(txn, id, arg_string(c, args, 0))));
+    });
+
+    // --- ProcessingInstruction's SEVEN, DOM §4.13 ----------------------------
+    //
+    // A PI's `data` is `name="value"` pairs to the page that wrote it - an
+    // `<?xml-stylesheet href=...?>` has always been read that way - and the DOM
+    // now says so: an attribute map parsed from the data, and the same seven
+    // operations Element has over it. The MAP is the DOM library's (document::
+    // update_pi_attributes / update_pi_data keep it and `data` in step, and
+    // say why it is stored rather than derived); what is here is the IDL.
+    //
+    // NOT Element's natives with a wider receiver check: a PI's names are
+    // case-sensitive whatever the document (`getAttribute("X")` misses `x`,
+    // `BLAbla` and `blabla` are two attributes), where attribute_key folds an
+    // HTML element's, and none of the namespaced half exists on a PI.
+    const auto pi_method = [&](const char * name, unsigned length, script::native_fn fn) {
+        define_operation(cx, {"ProcessingInstruction"}, name, length, std::move(fn));
+    };
+    // The receiver, when it is a PI - Element.prototype.getAttribute.call(pi)
+    // is not this method, and this method on an element is nothing either.
+    const auto pi_receiver = [this](context & c) {
+        const node_id id = receiver(c);
+        if (!id) { return node_id{}; }
+        const auto txn = doc_->read();
+        return txn.kind(id).value_or(node_kind::element) == node_kind::processing_instruction
+                   ? id
+                   : node_id{};
+    };
+    pi_method("hasAttributes", 0, [this, pi_receiver](context & c, std::span<value>) {
+        const node_id id = pi_receiver(c);
+        return value::boolean(id && !doc_->read().attributes(id).empty());
+    });
+    pi_method("getAttributeNames", 0, [this, pi_receiver](context & c, std::span<value>) {
+        value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        const node_id id = pi_receiver(c);
+        if (!id) { return out; }
+        const auto txn = doc_->read();
+        for (const attribute & held : txn.attributes(id)) {
+            items->items.push_back(c.string(std::string{atoms_->text(held.name)}));
+        }
+        return out;
+    });
+    pi_method("getAttribute", 1, [this, pi_receiver](context & c, std::span<value> args) {
+        const node_id id = pi_receiver(c);
+        if (!id) { return value::null(); }
+        const auto txn = doc_->read();
+        const attribute * held = txn.find_attribute(id, atoms_->intern(arg_string(c, args, 0)));
+        return held == nullptr ? value::null() : c.string(held->value);
+    });
+    pi_method("hasAttribute", 1, [this, pi_receiver](context & c, std::span<value> args) {
+        const node_id id = pi_receiver(c);
+        return value::boolean(
+            id && doc_->read().has_attribute(id, atoms_->intern(arg_string(c, args, 0))));
+    });
+    // The two that WRITE check the name first, as Element's do: it is the same
+    // "valid attribute local name" and the same InvalidCharacterError, and the
+    // check comes before the receiver so a bad name throws on any `this`.
+    pi_method("setAttribute", 2, [this, pi_receiver](context & c, std::span<value> args) {
+        const std::string name = arg_string(c, args, 0);
+        if (!valid_attribute_name(name)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "setAttribute: '" + name + "' is not a valid attribute name");
+            return value::undefined();
+        }
+        const node_id id = pi_receiver(c);
+        if (!id) { return value::undefined(); }
+        (void)doc_->set_attribute(id, atoms_->intern(name), arg_string(c, args, 1));
+        mutated();
+        return value::undefined();
+    });
+    pi_method("removeAttribute", 1, [this, pi_receiver](context & c, std::span<value> args) {
+        const node_id id = pi_receiver(c);
+        if (!id) { return value::undefined(); }
+        (void)doc_->remove_attribute(id, atoms_->intern(arg_string(c, args, 0)));
+        mutated();
+        return value::undefined();
+    });
+    pi_method("toggleAttribute", 1, [this, pi_receiver](context & c, std::span<value> args) {
+        const std::string name = arg_string(c, args, 0);
+        if (!valid_attribute_name(name)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "toggleAttribute: '" + name + "' is not a valid attribute name");
+            return value::boolean(false);
+        }
+        const node_id id = pi_receiver(c);
+        if (!id) { return value::boolean(false); }
+        const atom key = atoms_->intern(name);
+        const bool present = doc_->read().has_attribute(id, key);
+        // `force` is an OPTIONAL boolean: an explicit `undefined` is "not
+        // given" (WebIDL), not a false.
+        const bool given = args.size() > 1 && !args[1].is_undefined();
+        const bool want = given ? context::truthy(args[1]) : !present;
+        if (want == present) { return value::boolean(present); }
+        if (want) {
+            (void)doc_->set_attribute(id, key, "");
+        } else {
+            (void)doc_->remove_attribute(id, key);
+        }
+        mutated();
+        return value::boolean(want);
     });
 }
 

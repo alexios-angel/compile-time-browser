@@ -200,19 +200,25 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
         },
         [this](context & c, std::span<value> a) {
             const std::string wanted = arg_string(c, a, 0);
+            // HTML 4.2.2: an SVG root gets a new SVG `<title>` as its FIRST
+            // child (document.title-09.html); an HTML document gets one
+            // appended to its head; ANY OTHER ROOT makes the setter return
+            // before it looks for a title at all - an XML document's title is
+            // not settable even when an `html:title` sits somewhere in it
+            // (document.title-not-in-html-svg.html).
+            bool svg_root = false;
+            {
+                const auto txn = doc_->read();
+                const node_id root = txn.root();
+                svg_root = txn.element_ns(root) == node_ns::svg && txn.local_name(root) == "svg";
+                if (!svg_root && txn.element_ns(root) != node_ns::html) {
+                    return value::undefined();
+                }
+            }
             node_id title = title_element();
             if (!title) {
                 const auto txn = doc_->read();
                 const node_id root = txn.root();
-                const bool svg_root =
-                    txn.element_ns(root) == node_ns::svg && txn.local_name(root) == "svg";
-                // HTML 4.2.2: an SVG root gets a new SVG `<title>` as its
-                // FIRST child (document.title-09.html); an HTML document gets
-                // one appended to its head; any other root makes the setter
-                // return - an XML document's title is not settable at all.
-                if (!svg_root && txn.element_ns(root) != node_ns::html) {
-                    return value::undefined();
-                }
                 if (svg_root) {
                     const node_id made =
                         doc_->create_element(atoms_->intern("title"), node_ns::svg);

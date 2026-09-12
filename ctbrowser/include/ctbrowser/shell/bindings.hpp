@@ -395,7 +395,11 @@ private:
     // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
-    [[nodiscard]] node_id node_from(context & cx, value v);
+    // Another document's node is ADOPTED - cloned into this slab, its wrapper
+    // rebound - except a fragment, whose children come and which itself stays
+    // where it was, as insertion has it; `adoptNode` asks for the fragment too
+    // with `whole_fragment`.
+    [[nodiscard]] node_id node_from(context & cx, value v, bool whole_fragment = false);
     // "Convert nodes into a node", DOM 4.2.5: the arguments of one of those
     // methods as ONE node - the node itself for one argument, a fragment holding
     // them all (which MOVES each out of the tree) for several.
@@ -1271,6 +1275,9 @@ private:
         // A sheet or script announcing its `load`, as opposed to an <iframe>:
         // not a callback the page scheduled, so the drain does not count it.
         bool resource = false;
+        // The bindings whose element `id` names when it is not the queue's
+        // own: a frame document's nested frame lands on the primary's queue.
+        dom_bindings * owner = nullptr;
     };
     std::vector<pending_frame> frame_loads_;
     // Which frames are loaded, and from what. The `src` is kept as WRITTEN
@@ -1606,8 +1613,12 @@ private:
     // also carries a non-empty `name`, which is the asymmetry
     // `nameditem-01.html` tests by removing one attribute at a time.
     [[nodiscard]] std::vector<node_id> named_document_items(std::string_view name);
-    // The Proxy a page sees as `document`. Installs the `get` and `has` traps
-    // over `document_target_` and returns it.
+    // The other direction: every name the rule above answers to, once each, in
+    // tree order - the document's "supported property names".
+    [[nodiscard]] std::vector<std::string> document_property_names();
+    // The Proxy a page sees as `document`. Installs the `get`, `has`, `ownKeys`
+    // and `getOwnPropertyDescriptor` traps over `document_target_` and returns
+    // it.
     [[nodiscard]] value make_document_proxy(context & cx, value target);
     // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
     // FF and CR, all five - and drop duplicates. `split` above splits on spaces
@@ -1668,6 +1679,8 @@ private:
     node_id focused_;
     std::string location_href_;
     std::string location_hash_;
+    // The element the fragment names - `:target` - see observe_location.
+    node_id target_element_;
     // DOMException.prototype, held here as well as on the global for the reason
     // blob_prototype_ is: a page can delete a global, and an exception whose
     // prototype was collected stops being a DOMException.

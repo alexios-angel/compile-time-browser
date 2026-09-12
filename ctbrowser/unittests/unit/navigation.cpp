@@ -74,6 +74,33 @@ void test_location_parts_and_cookies() {
     check(log[3] == "replaced=a=9; b=2", "...and writing the same name replaces it: " + log[3]);
 }
 
+// `new URL(url, base)` over the same parser: the parts, the resolution against
+// a base, the TypeError for no URL at all, and the blob methods still there.
+void test_url_objects() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><script>
+        var u = new URL('../b/c?x=1#frag', 'http://Site.Example:8080/a/d/e');
+        console.log([u.href, u.protocol, u.host, u.hostname, u.port, u.pathname, u.search,
+                     u.hash, u.origin, String(u), JSON.stringify({u: u})].join('|'));
+        var threw = '';
+        try { new URL('no-scheme'); } catch (e) { threw = e.name; }
+        var plain = '';
+        try { URL('http://x/'); } catch (e) { plain = e.name; }
+        console.log([threw, plain, URL.canParse('/x', 'http://y/'), URL.parse('nope'),
+                     URL.parse('/p', 'http://y/').pathname, typeof URL.createObjectURL,
+                     u instanceof URL, u.constructor === URL].join('|'));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "http://site.example:8080/a/b/c?x=1#frag|http:|site.example:8080|site.example|"
+                    "8080|/a/b/c|?x=1|#frag|http://site.example:8080|"
+                    "http://site.example:8080/a/b/c?x=1#frag|"
+                    "{\"u\":\"http://site.example:8080/a/b/c?x=1#frag\"}",
+          "a URL reports its parts: " + log[0]);
+    check(log[1] == "TypeError|TypeError|true|null|/p|function|true|true",
+          "the failures and the statics: " + log[1]);
+}
+
 // --- alert, location, and <a href> -------------------------------------
 //
 // The last three things the previous engine's script surface had and this engine's did not. MDN's
@@ -307,5 +334,6 @@ int main() {
     test_run_app_reports_a_script_error();
     test_run_app_is_silent_for_a_healthy_page();
     test_location_parts_and_cookies();
+    test_url_objects();
     REPORT("navigation");
 }

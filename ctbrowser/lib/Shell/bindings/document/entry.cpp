@@ -42,6 +42,36 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
             }
         }
     }
+    // THE INDICATED ELEMENT, HTML 7.4.6.3: the fragment names an id - as
+    // written, then percent-decoded - and that element is what `:target`
+    // matches. Kept as a state bit on the selector engine, exactly as `:focus`
+    // is, so a query and a sheet both see it; the browser re-resolves on the
+    // mutation hook, and a frame document's own engine answers its queries.
+    node_id fresh;
+    if (location_hash_.size() > 1) {
+        const std::string_view fragment = std::string_view{location_hash_}.substr(1);
+        fresh = find_by_id(std::string{fragment});
+        if (!fresh && fragment.find('%') != std::string_view::npos) {
+            std::string decoded;
+            for (std::size_t i = 0; i < fragment.size(); ++i) {
+                if (fragment[i] == '%' && i + 2 < fragment.size() &&
+                    hex_value(fragment[i + 1]) >= 0 && hex_value(fragment[i + 2]) >= 0) {
+                    decoded += static_cast<char>(hex_value(fragment[i + 1]) * 16 +
+                                                 hex_value(fragment[i + 2]));
+                    i += 2;
+                } else {
+                    decoded += fragment[i];
+                }
+            }
+            fresh = find_by_id(decoded);
+        }
+    }
+    if (fresh == target_element_) { return; }
+    style::engine & states = selector_engine();
+    (void)states.set_state(target_element_, style::state_target, false);
+    (void)states.set_state(fresh, style::state_target, true);
+    target_element_ = fresh;
+    if (on_mutation_) { on_mutation_(); }
 }
 
 // THE REALM HAS ONE EXTERNAL-ROOTS CALLBACK. `set_external_roots` REPLACES

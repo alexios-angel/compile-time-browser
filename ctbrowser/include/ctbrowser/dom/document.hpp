@@ -363,6 +363,12 @@ private:
     // detach `child` from whatever parent it has; caller holds structure_
     void detach_locked(node * child_node, node_id child);
 
+    // A ProcessingInstruction's attribute map and its data, kept in step both
+    // ways (DOM §4.13) - see the parser above them in document.cpp. Caller
+    // holds the node's stripe.
+    void update_pi_attributes(node & n, std::string_view data);
+    void update_pi_data(node_id id, node & n);
+
     // "ADJUST FOREIGN ATTRIBUTES", the HTML parser's own step, and the reason
     // an SVG `xlink:href` is in the XLink namespace while an HTML `xml:lang` is
     // in none. It applies to FOREIGN CONTENT ONLY, which is why it takes the

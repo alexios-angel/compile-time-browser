@@ -1013,8 +1013,19 @@ void dom_bindings::install_node_methods(context & cx) {
         // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is `Node?`,
         // so `isEqualNode(null)` is a question with the answer false rather
         // than a TypeError.
-        const node_id other = handle_of(arg(args, 0));
-        if (!self || !other) { return value::boolean(false); }
+        node_id other = handle_of(arg(args, 0));
+        if (!self) { return value::boolean(false); }
+        // ANOTHER DOCUMENT'S NODE is compared the way the document's own
+        // isEqualNode compares two documents: cloned into this slab, deep,
+        // and left detached for collect(). `doc1.doctype.isEqualNode(doc2
+        // .doctype)` is Node-isEqualNode-xhtml.xhtml's two frames.
+        if (!other) {
+            dom_bindings * theirs = owner_of(arg(args, 0));
+            if (theirs == nullptr || theirs == this) { return value::boolean(false); }
+            const auto from = theirs->doc_->read();
+            other = clone_node(from, theirs->handle_of(arg(args, 0)), true, theirs);
+        }
+        if (!other) { return value::boolean(false); }
         const auto txn = doc_->read();
         return value::boolean(nodes_are_equal(txn, self, other));
     });

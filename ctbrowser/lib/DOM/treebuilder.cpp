@@ -97,8 +97,15 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
     // non-text kind. Where this still differs from the spec: a comment after
     // `</html>` lands under the last open element rather than the Document,
     // because this builder ignores `</body>` and `</html>` outright.
-    case token_kind::comment: {
-        const node_id comment = builder_->create_comment(t.data);
+    // A PROCESSING INSTRUCTION GOES WHERE A COMMENT GOES - every insertion
+    // mode's row for one reads "insert a processing instruction" beside the
+    // comment's "insert a comment", with the same target.
+    case token_kind::comment:
+    case token_kind::processing_instruction: {
+        const node_id comment =
+            t.kind == token_kind::comment
+                ? builder_->create_comment(t.data)
+                : builder_->create_processing_instruction(atoms_->intern(t.name), t.data);
         if (before_html()) {
             builder_->insert_before(doc_->document_node(), comment, root_);
         } else {

@@ -341,7 +341,7 @@ void test_comments_and_doctype() {
     expect_tree("<p>a<!-- unterminated", R"(html(body(p("a"))))",
                 "an unterminated comment swallows the rest rather than the document");
     expect_tree("<?php echo 1; ?><p>a", R"(html(body(p("a"))))",
-                "a processing instruction becomes a comment, which is not text");
+                "a processing instruction is a node, not an element and not text");
     // And where the comment lands: ahead of <html> it is the Document's, and
     // inside the tree it is the current node's.
     {

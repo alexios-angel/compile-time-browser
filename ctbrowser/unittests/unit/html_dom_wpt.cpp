@@ -361,6 +361,27 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
        "\"a  b\"");
 }
 
+// --- nameditem-names.html ---------------------------------------------------
+//
+// The document's supported property names: `Object.getOwnPropertyNames` lists
+// the named elements after the object's own keys, in tree order, an id ahead
+// of the same element's name, and an `<img>` id only beside a name.
+void test_the_document_lists_its_named_elements_as_property_names() {
+    is(R"JS((function () {
+        var h = document.getElementById('host');
+        h.innerHTML = '<form name=f></form><img name=i id=ii><img id=alone>'
+                    + '<object id=o></object><img name=f><template id=t><img name=in></template>';
+        var names = Object.getOwnPropertyNames(document);
+        var seen = ['f', 'ii', 'i', 'o'].map(function (n) { return names.indexOf(n); });
+        var ordered = seen[0] >= 0 && seen[0] < seen[1] && seen[1] < seen[2] && seen[2] < seen[3];
+        var once = names.filter(function (n) { return n === 'f'; }).length;
+        var d = Object.getOwnPropertyDescriptor(document, 'o');
+        return [ordered, once, names.includes('alone'), names.includes('t'), names.includes('in'),
+                d.enumerable && d.configurable && !d.writable, d.value === document.o].join();
+    })())JS",
+       "true,1,false,false,false,true,true");
+}
+
 } // namespace
 
 int main() {
@@ -375,5 +396,6 @@ int main() {
     test_translate_inherits_through_elements_and_stops_at_a_fragment();
     test_inner_text_collapses_whitespace_and_breaks_at_blocks();
     test_inner_text_reads_the_inline_style_it_can_see();
+    test_the_document_lists_its_named_elements_as_property_names();
     REPORT("html_dom_wpt");
 }

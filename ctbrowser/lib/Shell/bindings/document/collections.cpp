@@ -298,6 +298,9 @@ constexpr std::string_view collection_state_key = "@@sym:ctbrowser:collection";
 }
 
 // `length`, `item` and `namedItem` on a collection interface's prototype, once.
+// ENUMERABLE, as WebIDL 3.7.6-7 has every regular operation and attribute on an
+// interface prototype: `for (p in document.forms)` lists the indices and then
+// item, length and namedItem (document.forms.html); `@@iterator` alone is not.
 void install_collection_prototype(context & cx, script::object_object & proto, bool named) {
     if (proto.find("item") != nullptr) { return; }
     const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
@@ -312,7 +315,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                                                     value::undefined());
                                      return n.is_number() ? n : value::number(0);
                                  }),
-                          value::undefined(), script::attr_configurable);
+                          value::undefined(), script::attr_enumerable | script::attr_configurable);
     proto.define("item",
                  native("item", 1,
                         [](context & c, std::span<value> a) {
@@ -320,20 +323,72 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                 ask_collection(c, c.current_this(), "item", arg(a, 0));
                             return found.is_undefined() ? value::null() : found;
                         }),
-                 script::attr_builtin);
+                 script::attr_default);
     // THE ITERABLE DECLARATION: `[Symbol.iterator]` on both, and NodeList's
-    // forEach/keys/values/entries. Each materialises the members through the
-    // proxy - `iterable_values` reads `length` and every index - and hands the
-    // array's own iterator back, so `list.keys()` is an Array Iterator and
-    // not an Array, which Node-childNodes.html asserts.
-    const auto through_array = [&native](const char * name, const char * array_method) {
-        return native(name, 0, [array_method](context & c, std::span<value>) {
-            const value items = c.iterable_values(c.current_this());
-            const value fn = c.lookup_property(items, array_method);
-            return fn.is_callable() ? c.call(fn, {}, items) : value::undefined();
+    // forEach/keys/values/entries. Each hands back WebIDL's default iterator
+    // object (3.7.10.2): `next` reads `length` and the index off the collection
+    // ON EVERY STEP, so a for-of over `childNodes` sees what its own body
+    // appended - NodeList-Iterable.html's live case - where an array snapshot
+    // ended at the length the loop started with. The collection and the index
+    // are OWN PROPERTIES of the iterator rather than C++ captures, because a
+    // value held only in a capture is invisible to the collector. Not an
+    // Array, which Node-childNodes.html asserts of `list.keys()`.
+    const auto live_iterator = [&native](const char * name, int kind) {
+        return native(name, 0, [kind](context & c, std::span<value>) {
+            auto * it = static_cast<script::object_object *>(c.make_object().as_heap());
+            it->define("@@sym:ctbrowser:iterated", c.current_this(), script::attr_configurable);
+            it->define("@@sym:ctbrowser:index", value::number(0), script::attr_configurable);
+            it->define("next",
+                       value::object(c.allocate<script::native_object>(
+                           "next",
+                           [kind](context & inner, std::span<value>) {
+                               const value self = inner.current_this();
+                               auto * result = static_cast<script::object_object *>(
+                                   inner.make_object().as_heap());
+                               result->set("value", value::undefined());
+                               result->set("done", value::boolean(true));
+                               if (!self.is_object()) { return value::object(result); }
+                               auto * state = static_cast<script::object_object *>(self.as_heap());
+                               const value * held = state->find("@@sym:ctbrowser:iterated");
+                               const value * index = state->find("@@sym:ctbrowser:index");
+                               if (held == nullptr || index == nullptr) {
+                                   return value::object(result);
+                               }
+                               const value list = *held;
+                               const double at = context::to_number(*index);
+                               // `length` first and the slot written after: the read goes
+                               // through the collection's proxy, which may refresh.
+                               const double length =
+                                   inner.to_number_value(inner.lookup_property(list, "length"));
+                               if (!(at < length)) { return value::object(result); }
+                               state->set("@@sym:ctbrowser:index", value::number(at + 1));
+                               const std::string key = std::to_string(static_cast<std::size_t>(at));
+                               const value item = inner.lookup_property(list, key);
+                               value out = item;
+                               if (kind == 0) {
+                                   out = value::number(at);
+                               } else if (kind == 2) {
+                                   out = inner.make_array();
+                                   auto & pair =
+                                       static_cast<script::array_object *>(out.as_heap())->items;
+                                   pair.push_back(value::number(at));
+                                   pair.push_back(item);
+                               }
+                               result->set("value", out);
+                               result->set("done", value::boolean(false));
+                               return value::object(result);
+                           })),
+                       script::attr_builtin);
+            it->define("@@iterator",
+                       value::object(c.allocate<script::native_object>(
+                           "[Symbol.iterator]",
+                           [](context & inner, std::span<value>) { return inner.current_this(); })),
+                       script::attr_builtin);
+            it->define("@@toStringTag", c.string("Array Iterator"), script::attr_configurable);
+            return value::object(it);
         });
     };
-    proto.define("@@iterator", through_array("values", "values"), script::attr_builtin);
+    proto.define("@@iterator", live_iterator("values", 1), script::attr_builtin);
     if (named) {
         proto.define("namedItem",
                      native("namedItem", 1,
@@ -342,12 +397,12 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                                     ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
                                 return found.is_undefined() ? value::null() : found;
                             }),
-                     script::attr_builtin);
+                     script::attr_default);
         return;
     }
-    proto.define("keys", through_array("keys", "keys"), script::attr_builtin);
-    proto.define("values", through_array("values", "values"), script::attr_builtin);
-    proto.define("entries", through_array("entries", "entries"), script::attr_builtin);
+    proto.define("keys", live_iterator("keys", 0), script::attr_default);
+    proto.define("values", live_iterator("values", 1), script::attr_default);
+    proto.define("entries", live_iterator("entries", 2), script::attr_default);
     // `forEach` IS %Array.prototype.forEach% - WebIDL says so of an iterable
     // declaration, Node-childNodes.html asserts the identity, and the array's
     // is generic over array-likes. keys/values/entries would be the same
@@ -356,7 +411,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
     if (const value array = cx.global("Array"); array.is_object_like()) {
         const value for_each =
             cx.lookup_property(cx.lookup_property(array, "prototype"), "forEach");
-        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_builtin); }
+        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_default); }
     }
 }
 
@@ -479,6 +534,8 @@ value dom_bindings::make_live_collection(context & cx,
     };
 
     // The hidden state property the prototype's members reach the walk through.
+    // CONFIGURABLE, and only that: a non-configurable key is one the ownKeys
+    // trap below would be obliged to report, and this one is nobody's business.
     target->define(
         collection_state_key,
         native("collection",
@@ -503,7 +560,7 @@ value dom_bindings::make_live_collection(context & cx,
                    }
                    return value::undefined();
                }),
-        script::attr_none);
+        script::attr_configurable);
 
     // ONCE NOW: `Object.getOwnPropertyNames(list)` reads the target through no
     // trap at all, and a collection nothing has touched must already own its
@@ -549,6 +606,23 @@ value dom_bindings::make_live_collection(context & cx,
                          return value::undefined();
                      }
                      return c.from_property_descriptor(found);
+                 }));
+    // `Object.getOwnPropertyNames(list)` AFTER A MUTATION nothing else has read
+    // through: the keys are the refreshed target's, in its order - the indices
+    // first, as WebIDL's [[OwnPropertyKeys]] has them, then the names and any
+    // expando (NodeList-live-mutations.window.js). Symbol keys are the hidden
+    // state slot's, and are left to the target - see document/named_access.cpp
+    // for why a symbol is not rebuilt here.
+    handler->set("ownKeys", native("ownKeys", [refresh](context & c, std::span<value> args) {
+                     const value out = c.make_array();
+                     if (args.empty() || !args[0].is_object()) { return out; }
+                     refresh(c);
+                     auto & items = static_cast<script::array_object *>(out.as_heap())->items;
+                     static_cast<script::object_object *>(args[0].as_heap())
+                         ->each_own_key([&](const std::string & key) {
+                             if (!key.starts_with("@@")) { items.push_back(c.string(key)); }
+                         });
+                     return out;
                  }));
     return value::object(
         cx.allocate<script::proxy_object>(value::object(target), value::object(handler)));
