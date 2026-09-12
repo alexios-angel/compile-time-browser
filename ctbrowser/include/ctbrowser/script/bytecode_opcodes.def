@@ -128,9 +128,11 @@ CT_OPCODE(/* name */ move, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unus
 /* Indexes `names`, not `constants`. The binding table first; a miss asks
  * the embedder's undeclared-name hook, then the global object (own and
  * inherited - the global environment's object record), and a name that is
- * nowhere THROWS ReferenceError (6.2.5.5 GetValue). `typeof foo` is NOT this
- * instruction: the compiler reads it as get_prop on globalThis, which is
- * undefined rather than a throw for an unbound name. may_reenter and
+ * nowhere THROWS ReferenceError (6.2.5.5 GetValue) - EXCEPT when the very
+ * next instruction is type_of reading this one's register a, which is how
+ * the compiler spells `typeof foo` and the one read that is silent (13.5.3
+ * step 2): the run loop peeks, and a backend must lower a load_global whose
+ * only consumer is typeof through ct_aot_global_get_soft. may_reenter and
  * is_safepoint because the global object is a proxy whose traps run. */
 CT_OPCODE(/* name */ get_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
@@ -757,8 +759,9 @@ CT_OPCODE(/* name */ ret_undef, /* a_kind */ unused, /* b_kind */ unused, /* c_k
 /* `typeof` looks like the cheapest opcode in the set and is in fact the only
  * NON-arithmetic allocator here - one heap string per execution, so
  * interning the eight fixed answers is an obvious AOT win. may_throw is only
- * the allocation ceiling. `typeof undeclared` IS special-cased in
- * compile_unary: the operand is get_prop on globalThis, not get_global. */
+ * the allocation ceiling. `typeof undeclared` is get_global + this on one
+ * register, and it is the get_global that makes the pair silent - see its
+ * row. */
 CT_OPCODE(/* name */ type_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm/coerce.cpp:type_of")

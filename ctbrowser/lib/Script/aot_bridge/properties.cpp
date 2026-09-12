@@ -269,6 +269,14 @@ std::int32_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
     return status;
 }
 
+// ct_aot_global_get_soft: `typeof x`'s read - undefined on a miss, never a
+// throw. The row says which load_global a backend routes here.
+std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * name,
+                                          std::uint32_t name_len) {
+    context & cx = *frame_of(f).ctx;
+    return cx.global_or_named(std::string_view{name, name_len}, true).bits();
+}
+
 // ct_aot_global_set. VM_CASE(set_global) is
 // `globals_[names[in.bx()]] = reg(in.a)` (run_loop.cpp:235), and
 // context::define_global is that assignment - so a global created by
@@ -394,6 +402,10 @@ void ct_aot_cell_set(std::uint64_t cell, std::uint64_t v) {
 std::int32_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
                                std::uint64_t * out) {
     return script::aot_bridge::global_get(fr, name, name_len, out);
+}
+
+std::uint64_t ct_aot_global_get_soft(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
+    return script::aot_bridge::global_get_soft(fr, name, name_len);
 }
 
 void ct_aot_global_set(ct_aot_frame * fr, const char * name, std::uint32_t name_len,

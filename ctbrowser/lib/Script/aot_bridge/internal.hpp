@@ -241,6 +241,8 @@ struct aot_bridge {
     static void cell_set(std::uint64_t cell, std::uint64_t v);
     static std::int32_t global_get(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                                    std::uint64_t * out);
+    static std::uint64_t global_get_soft(aot::ct_aot_frame * f, const char * name,
+                                         std::uint32_t name_len);
     static void global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                            std::uint64_t v);
     static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,

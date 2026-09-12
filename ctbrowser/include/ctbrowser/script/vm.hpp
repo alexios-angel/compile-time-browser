@@ -359,9 +359,10 @@ public:
     // (`toString` resolves to Object.prototype's) or what the embedder's hook
     // answers - and a name that is nowhere is an unresolvable reference:
     // ReferenceError, catchable, exactly what feature detection written as
-    // `try { x } catch (e) {}` expects. `typeof x` never comes here; the
-    // compiler reads it as a property of globalThis so it stays silent.
-    [[nodiscard]] value global_or_named(std::string_view name) {
+    // `try { x } catch (e) {}` expects - unless the read is the operand of
+    // `typeof` (13.5.3 step 2), which is the one silent one: `silent` is how
+    // the run loop and the AOT bridge ask for it.
+    [[nodiscard]] value global_or_named(std::string_view name, bool silent = false) {
         const auto it = globals_.find(name);
         if (it != globals_.end()) { return it->second; }
         if (undeclared_name_) {
@@ -371,7 +372,7 @@ public:
         if (global_this_.is_object() && has_property(global_this_, string(std::string{name}))) {
             return lookup_property(global_this_, std::string{name});
         }
-        throw_error("ReferenceError", std::string{name} + " is not defined");
+        if (!silent) { throw_error("ReferenceError", std::string{name} + " is not defined"); }
         return value::undefined();
     }
 

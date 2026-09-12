@@ -317,8 +317,10 @@ out-slot in the same change). The global object is the global environment's
 object record, so an inherited name resolves - a bare `toString` is
 `Object.prototype.toString`, as in every browser - and the shell's named-access
 hook (an element with an `id`) is still asked before the throw. `typeof x` is
-the one read that stays silent: the compiler lowers it to a property read on
-`globalThis`, no new opcode. It was 1,180 files of test262 by itself.
+the one read that stays silent (13.5.3): it compiles to get_global + type_of on
+one register as it always did, the run loop peeks at the next instruction on a
+miss, and the AOT tier routes a load_global whose only use is typeof through
+`ct_aot_global_get_soft`. It was 1,180 files of test262 by itself.
 
 ### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
 
