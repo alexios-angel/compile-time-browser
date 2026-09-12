@@ -612,6 +612,10 @@ void test_eval() {
         "try { eval('let x = ;'); return 'no'; } catch (e) { return e instanceof SyntaxError; }",
         "true");
     expect_result("return eval('') === undefined;", "true");
+    // `++x` as a program's FIRST statement: the update node is node 1 and its
+    // prefix flag is 1, which the capture tour once followed as a child.
+    expect_result("var x = 1; return eval('++x');", "2");
+    expect_result("var x = 1; return eval('++x; x++; x');", "3");
 }
 
 int main() {
