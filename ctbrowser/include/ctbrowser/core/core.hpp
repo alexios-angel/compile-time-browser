@@ -6,8 +6,7 @@
 //   containers the third-party containers, aliased in one place
 //   handle     generation-tagged references, so a stale reference FAILS a
 //              lookup instead of resolving to a recycled object
-//   slab       chunked storage with lock-free reads behind those handles
-//   epoch      the reclamation scheme that lets those reads take no locks
+//   slab       chunked, slot-stable storage behind those handles
 //   atom       interned strings, so name comparison is an integer compare
 //   scheduler  work-stealing pool for style, layout and raster
 //   geometry   points, rects, sides, colors
@@ -19,7 +18,6 @@
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/core/containers.hpp>
-#include <ctbrowser/core/epoch.hpp>
 #include <ctbrowser/core/geometry.hpp>
 #include <ctbrowser/core/handle.hpp>
 #include <ctbrowser/core/scheduler.hpp>

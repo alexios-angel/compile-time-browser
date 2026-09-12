@@ -164,7 +164,7 @@ constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 
 } // namespace
 
-read_txn::read_txn(const document & doc) noexcept : doc_(&doc), guard_(doc.domain_) {}
+read_txn::read_txn(const document & doc) noexcept : doc_(&doc) {}
 
 bool read_txn::contains(node_id id) const noexcept {
     return doc_->find(id) != nullptr;
@@ -617,8 +617,12 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
     const std::lock_guard lock{stripe_of(id)};
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
-    publish(n->text, static_cast<const text_block *>(new text_block{std::string{value}}));
-    if (n->kind == node_kind::processing_instruction) { update_pi_attributes(*n, value); }
+    // The fresh block's own copy of the text goes to the PI parser below, not
+    // `value`: a caller may have passed this node's previous text, which the
+    // publish just deleted.
+    auto * fresh = new text_block{std::string{value}};
+    publish(n->text, static_cast<const text_block *>(fresh));
+    if (n->kind == node_kind::processing_instruction) { update_pi_attributes(*n, fresh->value); }
     bump_version();
     note_write(id, atom{}, true);
     return {};
@@ -660,11 +664,6 @@ void document::set_template_content(node_id element, node_id fragment) {
         }
     }
     template_contents_.emplace_back(element, fragment);
-}
-
-std::size_t document::collect() {
-    const std::size_t payloads = domain_.reclaim();
-    return payloads + nodes_.collect();
 }
 
 void document::builder::append(node_id parent, node_id child) {

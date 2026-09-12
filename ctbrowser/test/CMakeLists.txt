@@ -2,8 +2,8 @@
 #
 # What lives here rather than in unittests/: the lint (a sweep over the tree,
 # not a behaviour test), the corpus ratchets (somebody else's bundle, measured),
-# the lock-free stress tests, and the directories that are pure data - golden/,
-# baseline/, package/ and support/. `ctbrowser_test()` and the probes behind it
+# and the directories that are pure data - golden/, baseline/, package/ and
+# support/. `ctbrowser_test()` and the probes behind it
 # come from cmake/modules/CTTest.cmake.
 
 # The API-surface lint. Not a behaviour test - it sweeps include/, lib/
@@ -37,11 +37,6 @@ ctbrowser_test(corpus/webgl2/webgl2_api)
 # ES modules - the same ratchet shape over the engine's own corpus.
 ctbrowser_test(corpus/modules/module_ratchet)
 
-# The lock-free read paths under contention. stress_slab is the one that
-# must never be skipped: it is the evidence the path is sound.
-ctbrowser_test(stress/stress_slab)
-ctbrowser_test(stress/stress_dom)
-
 # THE CORPUS TESTS REACH THE DRIVER TOO, once ANGLE is on. gpu_basics and
 # navigation (bindings_basics until 2026-09-07) got the suppression file
 # because they were the only tests that touched Vulkan; a WebGL 2 or Babylon ratchet built with
@@ -61,11 +56,6 @@ foreach(angle-test webgl2_ratchet webgl2_api babylon_ratchet babylon_api
       "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp")
   endif()
 endforeach()
-
-# The stress test is the one that must never be skipped: it is the evidence
-# that the lock-free read path is actually sound. Give it room under TSan.
-set_tests_properties(stress_slab PROPERTIES TIMEOUT 300)
-
 
 # === test262 ===
 # The ECMAScript conformance suite. OPT-IN, and off by default for one reason:

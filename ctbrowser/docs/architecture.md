@@ -66,7 +66,7 @@ script --------- bindings ------------------------------ shell drives all of it
 
 | subsystem | target | owns | start in |
 |---|---|---|---|
-| `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, epochs, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `epoch.hpp` |
+| `core` | `ctbrowser::core` | the foundation; knows nothing about browsers. Slab allocation, generation-tagged handles, atoms, the thread pool, geometry, CPU time | `scheduler.hpp`, `slab.hpp`, `handle.hpp` |
 | `dom` | `ctbrowser::dom` | the WHATWG tokenizer and tree builder, and the document as a slab addressed by handles | `treebuilder.hpp` 318, `document.hpp` 213 |
 | `style` | `ctbrowser::style` | selector matching, the cascade, computed values, the UA sheet | `engine.hpp` 333 |
 | `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `algorithm.hpp` 561, `box.hpp` 530 |
