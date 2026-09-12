@@ -798,7 +798,8 @@ Same instrument, same corpus, engine at `b570bd29` (browser gate 186/186):
 | `built-ins/JSON` | 165 | 98 | **101** | +3 | 62 | 0 |
 | **total** | **32,927** | **14,981** | **19,179** | **+4,198** | | |
 
-**19,179 of the 32,927 (58.2%), from 45.5% in the morning.** `test/language`
+**19,179 of the 32,927 (58.2%), from 45.5% in the morning** (19,190 = 58.3% at
+`d27d8f36` three hours later, with the `fromAsync` crashes fixed). `test/language`
 carries it: the async generators (+~1,500 files by themselves), `for await`
 (+~1,000), the class member attributes (+~450), the escaped identifiers
 (+~800 class files), `eval`, the null/undefined TypeError. The 6 `host` rows in

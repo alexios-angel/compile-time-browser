@@ -14,7 +14,57 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-12
+## The baseline — 2026-09-12, late
+
+**588 of the 1,090 tests that ran, which is 53.9%**, and still not one crash.
+Same instrument, engine at commit `d27d8f36` on `ctbrowser-wpt` — browser gate
+187/187 at that commit. The row below (`b570bd29`, three hours earlier) is
+where the day's engine work was first measured; this one adds agent E's
+html/dom + dom/events work and one line in the INSTRUMENT.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 175 | 117 | 14 | 0 | 3 | 53 | 362 |
+| `dom/events` | 72 | 14 | 3 | 0 | 2 | 85 | 176 |
+| `html/dom` | 114 | 102 | 3 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 116 | 66 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 111 | 132 | 10 | 0 | 18 | 237 | 508 |
+| **total** | **588** | **431** | **30** | **0** | **41** | **542** | **1,632** |
+
+Subtests: **75,010 PASS, 6,992 FAIL, 212 NOTRUN, 25 TIMEOUT.**
+
+**THE REFLECTION TIMEOUTS WERE THE HARNESS.** `tools/wpt/testharnessreport.js`
+built its result JSON with `json += piece` per subtest, which in this engine
+copies the whole string each time: 8,000 subtests is 12 GB of copies, and the
+driver's 4 GB cap killed the seven `html/dom/reflection-*.html` files before
+they could report. Three sessions blamed the collector (the in-turn
+collection of `05ece7bc` is still right, and still needed for other
+files). It joins pieces now (`d27d8f36`); the seven files complete in under a
+second each and are FAIL, not TIMEOUT — reflection-embedded 8,446/8,922,
+forms 7,911/8,271, grouping 5,326/5,358, misc 4,781/4,877, sections
+5,346/5,604, tabular 6,106/6,116, text 10,138/10,202 — which is **+48,000
+passing subtests** and the whole of the html/dom subtest jump (8,658 ->
+57,847). Every number in the table is comparable with the rows below except
+that one column; the fix is in the instrument, not the engine, and is named
+here so nobody reads it as either.
+
+Against `b570bd29`: +3 files (`HTMLStyleElement-load-event`,
+`Event-dispatch-click` — a TIMEOUT before — and `src-cancel`), no file lost;
+`dom/nodes` +704 subtests and `dom/events` +3 from agent E's frames work (a
+frame's `contentWindow` is a proxy over the page's globals, so
+`windowFor(root).DOMException` IS the DOMException constructor and every
+`assert_throws_dom` inside an iframe document passes: `ParentNode-querySelector-All`
+1,671 -> 1,949, `Element-matches` 599 -> 668, `Document-createElementNS` 375 ->
+595), plus `javascript:` links, `queueMicrotask`, `<input type=image>`
+submitting, a sheet's `load` before the window's, and twenty ARIA attributes
+as nullable enumerated reflections (`aria-attribute-reflection-enumerated`
+562 -> 1,696 of 1,722).
+
+test262 at the same commit: **19,190 of 32,927 (58.3%)** — the `b570bd29`
+table in `docs/test262.md` plus `Function` +5 and `Array` +6 (the two
+`fromAsync` crashes fixed, the `String(class)` span).
+
+## The baseline — 2026-09-12, afternoon
 
 **585 of the 1,090 tests that ran, which is 53.7%**, and still not one crash.
 Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
@@ -100,7 +150,7 @@ next agent in `lib/Style`.
 | the wrapper of an adopted node is not the wrapper that was adopted (identity across `adoptNode`) | `document/tree_ops.cpp` `node_from` | named in `unit/second_document` |
 | `:target`; null-namespace elements (`|div`); `#eof\` tokenisation | `lib/Shell/page` -> engine hook; the DOM/bindings; `css/token.cpp` | 6 + 16 + 2 subtests |
 | shorthand reconstruction in `el.style`/`cssText`; `@property` registration (`typed_arithmetic_cycle`) | `element/declarations.cpp`; `css/parser.cpp` | the `shorthand-*` files, 1 subtest |
-| the seven `reflection-*.html` files: they now finish (collection inside a turn) and report; the remaining rows are the table in `element/reflection.cpp` | `element/reflection.cpp` | thousands of subtests, an agent is on it |
+| the seven `reflection-*.html` files now report (see the late row: it was the harness); what is left is URL reflection (`link.href`, `input.formAction`: the document has no URL under ctdrive — `browser::set_location` from the driver turns 160 subtests) and the per-row table in `element/reflection.cpp` | `element/reflection.cpp`, `browser.hpp`, `tools/ctdrive` | ~1,900 subtests |
 
 ## The baseline — 2026-09-10, late
 
