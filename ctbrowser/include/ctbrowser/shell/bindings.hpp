@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <span>
@@ -316,12 +317,37 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
+    // A NO-OP since the methods moved to the interface prototypes (see
+    // define_operation); kept only because bindings/custom_elements.cpp calls
+    // it on the instance a `new`-made custom element becomes.
     void install_element_methods(context & cx, script::object_object & obj);
-    // The three files the rest of the method surface lives in - see
-    // lib/Shell/bindings/element/. Called from install_element_methods only.
-    void install_attribute_methods(context & cx, script::object_object & obj);
-    void install_node_methods(context & cx, script::object_object & obj);
-    void install_control_methods(context & cx, script::object_object & obj);
+    // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
+    // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
+    // `"insertBefore" in Node.prototype` and `.length` on each are what the
+    // corpus asks; a wrapper carrying eighty own natives answered none of them.
+    //
+    // Every operation is recorded in `operations_` by the instance that built
+    // it, and the native on the prototype - installed by the PRIMARY bindings
+    // only - is a trampoline that asks `owner_of(this)` which instance's copy
+    // to run: a second Document shares the realm's prototypes (see
+    // adopt_interfaces_of) and its nodes must edit ITS tree, not the primary's.
+    // `interfaces` are the interface names whose prototypes get the native -
+    // one for a Node operation, three for a ParentNode mixin - and `length` is
+    // the WebIDL argument count.
+    void define_operation(context & cx, std::initializer_list<const char *> interfaces,
+                          const char * name, unsigned length, script::native_fn fn);
+    // The three files the operations live in - see lib/Shell/bindings/element/.
+    // Called from install_operations only.
+    void install_operations(context & cx);
+    void install_attribute_methods(context & cx);
+    void install_node_methods(context & cx);
+    void install_control_methods(context & cx);
+    struct operation {
+        std::string name;
+        script::native_fn fn;
+    };
+    // Built lazily for a secondary document, on the first call routed to it.
+    std::vector<operation> operations_;
     void note_callback_fault(std::string_view source);
     // One reading of addEventListener's third argument, shared by the element,
     // document and window registrations - three copies is three chances for

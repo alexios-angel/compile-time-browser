@@ -756,15 +756,21 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         // A POINTER INTO A STATIC TABLE, captured by value. The rows outlive
         // every page, so the accessors do not have to carry a copy of one.
         const reflected_attribute * held_row = &row;
+        // THE DOCUMENT THAT OWNS THE RECEIVER answers, for the reason
+        // define_operation gives: the prototype is shared by every document in
+        // the realm, and `frameDoc.body.id` read the PRIMARY's tree at the
+        // frame's node id before this.
         proto->define_accessor(property,
                                value::object(cx.allocate<script::native_object>(
                                    property,
                                    [this, held_row](context & c, std::span<value>) {
-                                       return reflected_get(c, held_row);
+                                       dom_bindings * owner = owner_of(c.current_this());
+                                       return (owner ? owner : this)->reflected_get(c, held_row);
                                    })),
                                value::object(cx.allocate<script::native_object>(
                                    property, [this, held_row](context & c, std::span<value> a) {
-                                       return reflected_set(c, held_row, a);
+                                       dom_bindings * owner = owner_of(c.current_this());
+                                       return (owner ? owner : this)->reflected_set(c, held_row, a);
                                    })));
     }
 
@@ -1084,35 +1090,10 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // the five functions - see install_character_data.
     install_character_data(cx);
 
-    // `isEqualNode` and `isSameNode`, ON Node.prototype - so an element, a text
-    // node, a comment and a fragment all have them, which is the point. The
-    // Document has its OWN pair as own properties (bindings/document.cpp) and
-    // those shadow these; with one document per page they can only agree.
-    if (const value node_interface = interface_prototype("Node"); node_interface.is_object()) {
-        auto * proto = static_cast<script::object_object *>(node_interface.as_heap());
-        const auto method = [&](const std::string & name, script::native_fn fn) {
-            proto->set(name,
-                       value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-            proto->set_attrs(name, script::attr_builtin);
-        };
-        method("isEqualNode", [this](context & c, std::span<value> args) {
-            const node_id self = receiver(c);
-            // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is
-            // `Node?`, so `isEqualNode(null)` is a question with the answer
-            // false rather than a TypeError.
-            const node_id other = handle_of(arg(args, 0));
-            if (!self || !other) { return value::boolean(false); }
-            const auto txn = doc_->read();
-            return value::boolean(nodes_are_equal(txn, self, other));
-        });
-        method("isSameNode", [this](context & c, std::span<value> args) {
-            // IDENTITY, and nothing else: this is `===` with a name, and it is
-            // a separate method because `isEqualNode` is not.
-            const node_id self = receiver(c);
-            const node_id other = handle_of(arg(args, 0));
-            return value::boolean(self && other && self == other);
-        });
-    }
+    // EVERY OTHER OPERATION - Node's, Element's, the ParentNode and ChildNode
+    // mixins', the canvas three - on the prototype WebIDL names, through one
+    // mechanism. See define_operation in element/methods.cpp.
+    install_operations(cx);
 
     // `animate` and `getAnimations` on Element.prototype, and the Animation
     // interfaces beside them - here because this is where that prototype

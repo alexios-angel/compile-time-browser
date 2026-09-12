@@ -152,6 +152,12 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 
 // --- helpers shared by more than one file of bindings/element/ ---------------
 
+// The object behind an interface prototype, or null before the interfaces are
+// built - which is what every installer in this directory checks first.
+[[nodiscard]] inline script::object_object * prototype_object(const value & proto) {
+    return proto.is_object() ? static_cast<script::object_object *>(proto.as_heap()) : nullptr;
+}
+
 // What counts as a declaration on the `element.style` store, and the store's
 // two serialisations. Defined in declarations.cpp.
 [[nodiscard]] bool is_declaration(const value & v);

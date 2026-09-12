@@ -312,12 +312,14 @@ bool dom_bindings::validate_and_extract(context & cx, std::string_view where,
     return true;
 }
 
-void dom_bindings::install_attribute_methods(context & cx, script::object_object & obj) {
-    const auto method = [&](std::string name, script::native_fn fn) {
-        obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+// ALL ON Element.prototype - the attribute API is Element's and nothing
+// else's, so a text node has none of it.
+void dom_bindings::install_attribute_methods(context & cx) {
+    const auto method = [&](const char * name, unsigned length, script::native_fn fn) {
+        define_operation(cx, {"Element"}, name, length, std::move(fn));
     };
 
-    method("setAttribute", [this](context & c, std::span<value> args) {
+    method("setAttribute", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string name = arg_string(c, args, 0);
         if (!valid_attribute_name(name)) {
@@ -342,7 +344,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     // in two others at once, and each of the three lookups has a different
     // right answer. `Element-removeAttribute.html`'s two subtests are that
     // sentence, in both orders.
-    method("setAttributeNS", [this](context & c, std::span<value> args) {
+    method("setAttributeNS", 3, [this](context & c, std::span<value> args) {
         const std::string ns = namespace_argument(c, args, 0);
         // A DOMString rather than a nullable one, so `null` here really is the
         // four characters "null" and an omitted argument is "undefined".
@@ -361,7 +363,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
         mutated();
         return value::undefined();
     });
-    method("getAttributeNS", [this](context & c, std::span<value> args) {
+    method("getAttributeNS", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::null(); }
         const std::string ns = namespace_argument(c, args, 0);
@@ -369,13 +371,13 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
         const attribute * held = txn.find_attribute_ns(id, ns, arg_string(c, args, 1));
         return held == nullptr ? value::null() : c.string(held->value);
     });
-    method("hasAttributeNS", [this](context & c, std::span<value> args) {
+    method("hasAttributeNS", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::boolean(false); }
         const std::string ns = namespace_argument(c, args, 0);
         return value::boolean(doc_->read().has_attribute_ns(id, ns, arg_string(c, args, 1)));
     });
-    method("removeAttributeNS", [this](context & c, std::span<value> args) {
+    method("removeAttributeNS", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const std::string ns = namespace_argument(c, args, 0);
@@ -388,7 +390,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     // `hasAttributes()` - "does this element have any at all", which is a
     // different question from `attributes.length !== 0` only in that a page can
     // ask it without materialising the map.
-    method("hasAttributes", [this](context & c, std::span<value>) {
+    method("hasAttributes", 0, [this](context & c, std::span<value>) {
         (void)c;
         const node_id id = receiver(c);
         if (!id) { return value::boolean(false); }
@@ -397,7 +399,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     // THE Attr SPELLINGS OF THE SAME FOUR LOOKUPS. `getAttributeNodeNS` is what
     // `Attr-prefix.html` reaches for on every one of its six cases, because the
     // prefix and the namespace are the two things only an Attr can report.
-    method("getAttributeNode", [this](context & c, std::span<value> args) {
+    method("getAttributeNode", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::null(); }
         std::optional<attribute> held;
@@ -409,7 +411,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
         }
         return held ? attribute_object(c, id, *held) : value::null();
     });
-    method("getAttributeNodeNS", [this](context & c, std::span<value> args) {
+    method("getAttributeNodeNS", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::null(); }
         const std::string ns = namespace_argument(c, args, 0);
@@ -436,9 +438,9 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
             return c.call(fn, args, map);
         };
     };
-    method("setAttributeNode", through_map("setNamedItem"));
-    method("setAttributeNodeNS", through_map("setNamedItemNS"));
-    method("removeAttributeNode", [this](context & c, std::span<value> args) {
+    method("setAttributeNode", 1, through_map("setNamedItem"));
+    method("setAttributeNodeNS", 1, through_map("setNamedItemNS"));
+    method("removeAttributeNode", 1, [this](context & c, std::span<value> args) {
         // NOT through the map: `removeAttributeNode` takes the Attr ITSELF and
         // throws a NotFoundError when it is not this element's, where
         // `removeNamedItem` takes a name.
@@ -485,7 +487,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     // ANSWERS whether the attribute is present afterwards, which is what a page
     // toggling one reads. Without it the only way to flip `disabled` was a
     // hasAttribute/removeAttribute/setAttribute dance that reads the tree twice.
-    method("toggleAttribute", [this](context & c, std::span<value> args) {
+    method("toggleAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string name = arg_string(c, args, 0);
         if (!valid_attribute_name(name)) {
@@ -511,7 +513,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     });
     // `getAttributeNames()` - the QUALIFIED names, in order, which is the one
     // answer `element.attributes` cannot give in a single string comparison.
-    method("getAttributeNames", [this](context & c, std::span<value>) {
+    method("getAttributeNames", 0, [this](context & c, std::span<value>) {
         const node_id id = receiver(c);
         value out = c.make_array();
         auto * items = static_cast<script::array_object *>(out.as_heap());
@@ -522,7 +524,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
         }
         return out;
     });
-    method("getAttribute", [this](context & c, std::span<value> args) {
+    method("getAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::null(); }
         const auto txn = doc_->read();
@@ -543,7 +545,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
     // about a boolean attribute - did not exist at all, leaving `getAttribute()
     // !== null` as the only spelling and undefined behaviour for the page that
     // did not know it.
-    method("removeAttribute", [this](context & c, std::span<value> args) {
+    method("removeAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const auto txn = doc_->read();
@@ -551,7 +553,7 @@ void dom_bindings::install_attribute_methods(context & cx, script::object_object
         mutated();
         return value::undefined();
     });
-    method("hasAttribute", [this](context & c, std::span<value> args) {
+    method("hasAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::boolean(false); }
         const auto txn = doc_->read();

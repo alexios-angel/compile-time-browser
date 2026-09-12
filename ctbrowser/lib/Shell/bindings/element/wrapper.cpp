@@ -31,7 +31,8 @@ value dom_bindings::wrap(context & cx, node_id id) {
         const value proto = prototype_for_node(txn, id);
         if (proto.is_object()) { obj->prototype = proto; }
     }
-    install_element_methods(cx, *obj);
+    // The METHODS are on those prototypes - see define_operation - and only
+    // the accessors that close over the node are the wrapper's own.
     install_element_views(cx, *obj, id);
     {
         const auto txn = doc_->read();
@@ -41,12 +42,6 @@ value dom_bindings::wrap(context & cx, node_id id) {
         if (kind == node_kind::document_fragment) {
             install_fragment_members(cx, *obj, id);
             if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
-        }
-        // `moveBefore` is a ParentNode method and a Text or Comment is not one -
-        // `"moveBefore" in textNode` is false, and `Node-moveBefore.html` asks.
-        // The other ParentNode methods stay where they have always been.
-        if (kind == node_kind::text || kind == node_kind::comment) {
-            (void)obj->erase("moveBefore");
         }
         // `template.content`, HTML 4.12.3: the DocumentFragment the parser put
         // the element's children into - see document::template_content - and,

@@ -1,5 +1,5 @@
-// dom_bindings - the event listener methods, form control value and focus, and
-// the canvas methods getContext, toDataURL and toBlob.
+// dom_bindings - click, form control value and focus, and the canvas methods
+// getContext, toDataURL and toBlob.
 
 #include "internal.hpp"
 
@@ -7,68 +7,35 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-void dom_bindings::install_control_methods(context & cx, script::object_object & obj) {
-    const auto method = [&](std::string name, script::native_fn fn) {
-        obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+// `click`, `focus` and `blur` are HTMLElement's (focus and blur SVGElement's
+// too); the canvas three are HTMLCanvasElement's. The EventTarget trio -
+// addEventListener, removeEventListener, dispatchEvent - is NOT here: it lives
+// on EventTarget.prototype (bindings/events/interfaces.cpp), which every node
+// chains to, and `step_of` there already resolves a wrapper to its node.
+void dom_bindings::install_control_methods(context & cx) {
+    const std::initializer_list<const char *> html = {"HTMLElement"};
+    const std::initializer_list<const char *> focusable = {"HTMLElement", "SVGElement"};
+    const std::initializer_list<const char *> canvas = {"HTMLCanvasElement"};
+    const auto method = [&](std::initializer_list<const char *> on, const char * name,
+                            unsigned length, script::native_fn fn) {
+        define_operation(cx, on, name, length, std::move(fn));
     };
 
-    method("addEventListener", [this](context & c, std::span<value> args) {
-        const node_id id = receiver(c);
-        if (id) { add_listener(make_listener(c, path_step{id, listen_on::node}, args)); }
-        return value::undefined();
-    });
-    // The other half. The WINDOW could remove a listener and an element could
-    // not, so a page that tidied up after itself - which p5's Element does when
-    // it is removed - threw instead. (The comment here used to say the document
-    // could too. It could not, and that was found the same way, one corpus
-    // later: see install_document.)
-    // `element.dispatchEvent(event)` - the third of the three EventTarget
-    // methods, and the one that was missing. addEventListener and
-    // removeEventListener were here; nothing a page constructed could ever be
-    // sent anywhere, so a page could only ever RECEIVE events the engine made.
-    //
-    // It returns whether the event was NOT cancelled, which is the opposite of
-    // what the internal dispatch reports and is how a caller learns that a
-    // listener refused the default action.
-    method("dispatchEvent", [this](context & c, std::span<value> args) {
-        const node_id id = receiver(c);
-        const value event = arg(args, 0);
-        if (!id || !event.is_object()) { return value::boolean(true); }
-        return value::boolean(!dispatch_to(event, path_step{id, listen_on::node}));
-    });
-    method("removeEventListener", [this](context & c, std::span<value> args) {
-        const node_id id = receiver(c);
-        const std::string type = arg_string(c, args, 0);
-        const value callback = arg(args, 1);
-        // THE CAPTURE FLAG IS PART OF THE IDENTITY - (type, callback, capture)
-        // is what the DOM says a listener IS, and only `add_listener` enforced
-        // it. So `removeEventListener(t, f)` took a CAPTURING listener away and
-        // `removeEventListener(t, f, true)` failed to, which is both subtests of
-        // `EventListenerOptions-capture.html`. Reading the third argument is
-        // also how a page detects that the option is supported at all.
-        //
-        // ...and `l.on` was not checked either, so an element wrapper whose id
-        // failed to resolve matched `l.target == node_id{}` and could remove the
-        // DOCUMENT's and the WINDOW's listeners.
-        const value options = arg(args, 2);
-        const bool capture = options.is_object()
-                                 ? context::truthy(c.lookup_property(options, "capture"))
-                                 : context::truthy(options);
-        std::erase_if(listeners_, [&](const listener & l) {
-            return l.on == listen_on::node && l.target == id && l.type == type &&
-                   l.capture == capture && l.callback.bits() == callback.bits();
-        });
+    // `element.click()` - the whole of it is in dom_bindings::click, beside the
+    // engine's own mouse events, because it IS one of those.
+    method(html, "click", 0, [this](context & c, std::span<value>) {
+        (void)click(receiver(c));
         return value::undefined();
     });
 
     // --- form controls -------------------------------------------------
-    method("getValue", [this](context & c, std::span<value>) {
+    method(html, "getValue", 0, [this](context & c, std::span<value>) {
         const node_id id = receiver(c);
         if (!id) { return c.string(std::string{}); }
         const auto txn = doc_->read();
         return c.string(forms_->state_of(txn, *atoms_, id).value);
     });
-    method("setValue", [this](context & c, std::span<value> args) {
+    method(html, "setValue", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const auto txn = doc_->read();
@@ -80,13 +47,13 @@ void dom_bindings::install_control_methods(context & cx, script::object_object &
         mutated();
         return value::undefined();
     });
-    method("isChecked", [this](context & c, std::span<value>) {
+    method(html, "isChecked", 0, [this](context & c, std::span<value>) {
         const node_id id = receiver(c);
         if (!id) { return value::boolean(false); }
         const auto txn = doc_->read();
         return value::boolean(forms_->state_of(txn, *atoms_, id).checked);
     });
-    method("setChecked", [this](context & c, std::span<value> args) {
+    method(html, "setChecked", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const auto txn = doc_->read();
@@ -94,17 +61,17 @@ void dom_bindings::install_control_methods(context & cx, script::object_object &
         mutated();
         return value::undefined();
     });
-    method("focus", [this](context & c, std::span<value>) {
+    method(focusable, "focus", 0, [this](context & c, std::span<value>) {
         if (const node_id id = receiver(c); id && on_focus_) { on_focus_(id); }
         return value::undefined();
     });
-    method("blur", [this](context &, std::span<value>) {
+    method(focusable, "blur", 0, [this](context &, std::span<value>) {
         if (on_focus_) { on_focus_(node_id{}); }
         return value::undefined();
     });
 
     // --- canvas --------------------------------------------------------
-    method("getContext", [this](context & c, std::span<value> args) {
+    method(canvas, "getContext", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string kind = arg_string(c, args, 0);
         // "2d" and "webgl". `webgl2` IS NOT IMPLEMENTED AND RETURNS NULL, and
@@ -179,7 +146,7 @@ void dom_bindings::install_control_methods(context & cx, script::object_object &
         const std::shared_ptr<const paint::bitmap> pixels = canvases_->pixels_of(id);
         return pixels ? encode_png(*pixels) : std::vector<std::byte>{};
     };
-    method("toDataURL", [canvas_bytes](context & c, std::span<value>) {
+    method(canvas, "toDataURL", 0, [canvas_bytes](context & c, std::span<value>) {
         const std::vector<std::byte> png = canvas_bytes(c);
         std::string binary;
         binary.reserve(png.size());
@@ -192,7 +159,7 @@ void dom_bindings::install_control_methods(context & cx, script::object_object &
         const value args[1] = {text};
         return c.string("data:image/png;base64," + c.to_string(c.call(encoder, args)));
     });
-    method("toBlob", [this, canvas_bytes](context & c, std::span<value> args) {
+    method(canvas, "toBlob", 1, [this, canvas_bytes](context & c, std::span<value> args) {
         const value callback = arg(args, 0);
         if (!callback.is_callable()) { return value::undefined(); }
         std::vector<std::byte> png = canvas_bytes(c);
