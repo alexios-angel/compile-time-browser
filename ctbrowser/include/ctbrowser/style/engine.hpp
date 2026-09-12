@@ -1054,6 +1054,12 @@ public:
             for (declaration & d : out) {
                 if (d.property == name) { own = &d; }
             }
+            // A `random()` in a registered property is keyed on THAT property
+            // (CSS Values 5 §random-caching): `--x` and `--y` on one element
+            // draw differently, and `--len-scoped: random(property-scoped, ...)`
+            // draws the same on every element (random-computed).
+            css::length_context registered_lengths = lengths;
+            registered_lengths.property = atoms_->text(name);
             std::optional<std::string> computed;
             const bool cyclic =
                 std::ranges::find(cyclic_registered, name) != cyclic_registered.end();
@@ -1085,7 +1091,8 @@ public:
                     if (!held.empty()) { computed = std::string{held}; }
                 } else if (substituted && !ascii_iequals(word, "initial") &&
                            !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
-                    computed = css::compute_registered(text, registration.syntax, lengths);
+                    computed =
+                        css::compute_registered(text, registration.syntax, registered_lengths);
                 }
             } else if (own == nullptr && registration.inherits && parent) {
                 continue;

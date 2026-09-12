@@ -442,33 +442,20 @@ std::string canonical_random(std::string_view value, std::string_view property) 
     };
     std::string out;
     std::size_t at = 0;
-    int depth = 0;
-    bool in_component = false;
-    std::size_t position = 0; // the component this random() sits in - fold.cpp counts the same
+    // The ordinal of the random() being spelled, among the value's in source
+    // order - fold.cpp and the evaluator count the same way.
+    std::size_t position = 0;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
-            in_component = true;
             continue;
         }
         if (name_at(value, at, std::array<std::string_view, 1>{name}).empty()) {
-            const char c = value[at];
-            if (c == '(') { ++depth; }
-            if (c == ')') { --depth; }
-            const bool separator =
-                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
-            if (separator) {
-                if (in_component) { ++position; }
-                in_component = false;
-            } else {
-                in_component = true;
-            }
-            out.push_back(c);
+            out.push_back(value[at]);
             ++at;
             continue;
         }
-        in_component = true;
         const function_span span = span_of(value, at, name);
         const std::string_view inner =
             value.substr(at + name.size(), span.end - at - name.size() - (span.closed ? 1 : 0));
@@ -530,6 +517,13 @@ std::string canonical_random(std::string_view value, std::string_view property) 
             out += bound(trim(arg, html_whitespace));
         }
         out += ')';
+        // The bounds were not walked, so the random() functions nested in
+        // them are counted here to keep step with the evaluator.
+        ++position;
+        for (std::size_t nested = inner.find(name); nested != std::string_view::npos;
+             nested = inner.find(name, nested + name.size())) {
+            if (nested == 0 || !is_name_char(inner[nested - 1])) { ++position; }
+        }
     }
     return out;
 }

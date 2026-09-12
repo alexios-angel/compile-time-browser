@@ -527,6 +527,19 @@ public:
     }
     [[nodiscard]] bool reached_self() const noexcept { return root_cycle_; }
 
+    // ONE MATH FUNCTION, against the caller's bases, with the value's
+    // random() functions numbered in order across every expression this
+    // substitution evaluates: `style(random(0, 1) = random(0, 1))` draws
+    // twice, and two `if()`s in one value draw a first and a second
+    // (random-in-if).
+    [[nodiscard]] math_answer math_of(std::string_view text) {
+        length_context ctx = conditions_ != nullptr ? conditions_->lengths : length_context{};
+        ctx.random_index += randoms_seen_;
+        const math_answer answer = evaluate_math(text, ctx);
+        randoms_seen_ += answer.randoms;
+        return answer;
+    }
+
     [[nodiscard]] bool run(std::string_view value, std::string & out, int depth) {
         if (depth > max_depth || value.size() > max_bytes) { return false; }
         const token_stream s = tokenize(value);
@@ -846,23 +859,23 @@ private:
                 const std::size_t close = end_of_block(s, i);
                 const std::string text = text_between(s, i, close);
                 if (!may_have_math(text)) { return false; }
-                const math_answer answer = evaluate_math(
-                    text, conditions_ != nullptr ? conditions_->lengths : length_context{});
-                if (answer.outcome != math_outcome::resolved || !answer.value.is_number ||
-                    answer.value.px != std::floor(answer.value.px)) {
+                const math_answer answer = math_of(text);
+                if (answer.outcome != math_outcome::resolved || !answer.value.is_number) {
                     return false;
                 }
-                made += number_of(answer.value.px);
+                // An <integer> slot rounds a math function's answer (CSS
+                // Values 4 §10.10): `ident("a" random(1, 300000))` is a name.
+                made += number_of(std::floor(answer.value.px + 0.5));
                 i = close - 1;
                 continue;
             }
             return false;
         }
         if (!any || made.empty()) { return false; }
-        // The result has to be an identifier: it may not begin like a number.
-        const std::vector<std::pair<token_type, std::string>> check = significant(made);
-        if (check.size() != 1 || check.front().first != token_type::ident) { return false; }
-        expansion = std::move(made);
+        // The result is an IDENTIFIER, and is spelled as one: `ident(3 "abc")`
+        // is `\33 abc`, because `3abc` would read back as a dimension
+        // (ident-function-computed).
+        expansion = serialize_identifier(made);
         return true;
     }
 
@@ -1162,7 +1175,7 @@ private:
             held = *computed;
             value = trim(held, html_whitespace);
         }
-        const math_answer answer = evaluate_math(value, conditions_->lengths);
+        const math_answer answer = math_of(value);
         if (answer.outcome != math_outcome::resolved) { return std::nullopt; }
         magnitude out;
         if (answer.value.has_percent) {
@@ -1377,6 +1390,7 @@ private:
     std::vector<atom> owners_;
     bool root_cycle_ = false;
     bool cyclic_ = false;
+    std::uint32_t randoms_seen_ = 0; // the random() functions math_of has numbered
 };
 
 } // namespace

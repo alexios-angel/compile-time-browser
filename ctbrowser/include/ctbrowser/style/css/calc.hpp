@@ -58,8 +58,9 @@ struct length_context {
     // WHAT `random()` IS RANDOM PER (CSS Values 5 §random-caching): a value
     // with no name is shared by nothing - it differs per element, per property
     // and per position in the value - and the caller says which element and
-    // which property this is. `random_index` is the position, counted by the
-    // fold as it walks the value; zero everywhere else.
+    // which property this is. `random_index` is the ordinal of this
+    // expression's first random() among the value's, counted from zero in
+    // source order by the fold as it walks the value; zero everywhere else.
     std::uint64_t element_key = 0;
     std::string_view property;
     std::uint32_t random_index = 0;
@@ -137,6 +138,11 @@ enum class math_outcome : std::uint8_t {
 struct math_answer {
     math_outcome outcome = math_outcome::invalid;
     calc_result value;
+    // HOW MANY random() FUNCTIONS THE EXPRESSION HOLDS, whatever the outcome,
+    // so a caller walking a whole value can number the next one: the
+    // automatic sharing key is the function's ordinal in the value
+    // (`length_context::random_index`), and a calc() may hold several.
+    std::uint32_t randoms = 0;
 };
 
 // WHAT KIND OF NUMBER THE PROPERTY WILL TAKE. A `<number>` answer is a valid

@@ -323,44 +323,31 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
     std::string out;
     bool ok = true;
     std::size_t at = 0;
-    // WHERE IN THE VALUE A FUNCTION SITS, for `random()`: its position is the
-    // top-level component it is in - `margin: random(..) random(..)` is two
-    // positions, `a, random(..)` puts one at the second - so two elements with
-    // the same declaration share by position and two positions never share.
+    // WHICH random() THIS IS, for its automatic key: the ordinal among the
+    // value's random() functions in source order - `margin: random(..)
+    // random(..)` is two, `a, random(..)` holds the first - so two elements
+    // with the same declaration share by ordinal and two ordinals never share.
+    // The evaluator counts the ones inside each function and reports back.
     length_context ctx = given;
-    int depth = 0;
-    std::uint32_t position = 0;
-    bool in_component = false;
+    std::uint32_t ordinal = 0;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
-            in_component = true;
             continue;
         }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
-            const char c = value[at];
-            if (c == '(') { ++depth; }
-            if (c == ')') { --depth; }
-            const bool separator =
-                depth == 0 && (c == ',' || html_whitespace.find(c) != std::string_view::npos);
-            if (separator) {
-                if (in_component) { ++position; }
-                in_component = false;
-            } else {
-                in_component = true;
-            }
-            out.push_back(c);
+            out.push_back(value[at]);
             ++at;
             continue;
         }
-        in_component = true;
-        ctx.random_index = position;
+        ctx.random_index = ordinal;
         const function_span span = span_of(value, at, name);
         const std::string_view whole = value.substr(at, span.end - at);
         const bool is_calc = ascii_iequals(name, "calc(");
         const math_answer answer = evaluate_math(body_of(value, at, name, span), ctx);
+        ordinal += answer.randoms;
         // A NUMBER WHERE THE PROPERTY WANTS A LENGTH IS A SYNTAX ERROR. This is
         // the guard that makes it safe for the evaluator to answer with numbers
         // at all: `width: calc(2 * 3)` stays invalid, as CSS says and as this

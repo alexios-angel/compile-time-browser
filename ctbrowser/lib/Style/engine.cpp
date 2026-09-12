@@ -46,6 +46,19 @@ bool engine::register_property(std::string_view name, css::property_registration
     if (!name.starts_with("--")) { return false; }
     const atom key = atoms_->intern(name);
     if (registrations_.contains(key.id)) { return false; }
+    // THE INITIAL VALUE IS COMPUTATIONALLY INDEPENDENT or the registration is
+    // invalid (CSS Properties and Values API 1 §2.1): one that draws a
+    // `random()`, counts siblings or substitutes has a different answer per
+    // element, and there is no element here. `*` takes anything
+    // (random-computed).
+    if (registration.syntax != "*") {
+        const std::string_view initial = registration.initial;
+        if (css::may_have_var(initial) || initial.find("random(") != std::string_view::npos ||
+            initial.find("sibling-index(") != std::string_view::npos ||
+            initial.find("sibling-count(") != std::string_view::npos) {
+            return false;
+        }
+    }
     registrations_.emplace(key.id, std::move(registration));
     return true;
 }
