@@ -756,15 +756,21 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         // A POINTER INTO A STATIC TABLE, captured by value. The rows outlive
         // every page, so the accessors do not have to carry a copy of one.
         const reflected_attribute * held_row = &row;
+        // THE DOCUMENT THAT OWNS THE RECEIVER answers, for the reason
+        // define_operation gives: the prototype is shared by every document in
+        // the realm, and `frameDoc.body.id` read the PRIMARY's tree at the
+        // frame's node id before this.
         proto->define_accessor(property,
                                value::object(cx.allocate<script::native_object>(
                                    property,
                                    [this, held_row](context & c, std::span<value>) {
-                                       return reflected_get(c, held_row);
+                                       dom_bindings * owner = owner_of(c.current_this());
+                                       return (owner ? owner : this)->reflected_get(c, held_row);
                                    })),
                                value::object(cx.allocate<script::native_object>(
                                    property, [this, held_row](context & c, std::span<value> a) {
-                                       return reflected_set(c, held_row, a);
+                                       dom_bindings * owner = owner_of(c.current_this());
+                                       return (owner ? owner : this)->reflected_set(c, held_row, a);
                                    })));
     }
 

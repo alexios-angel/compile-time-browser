@@ -105,9 +105,9 @@ void test_a_second_document_edits_its_own_tree() {
        " var p = doc.createElement('p'); p.setAttribute('id', 'made');"
        " doc.body.appendChild(p); p.append('hi');"
        " return doc.body.innerHTML + '|' + doc.getElementById('made').textContent + '|' +"
-       " (document.getElementById('made') === null) + '|' + doc.body.querySelector('p').id;"
-       " })()",
-       "<p id=\"made\">hi</p>|hi|true|made");
+       " (document.getElementById('made') === null) + '|' + doc.body.querySelector('p').id +"
+       " '|' + doc.body.firstChild.getAttribute('id'); })()",
+       "<p id=\"made\">hi</p>|hi|true|made|made");
 }
 
 } // namespace
