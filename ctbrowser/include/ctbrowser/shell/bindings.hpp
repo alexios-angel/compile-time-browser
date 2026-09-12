@@ -1907,6 +1907,19 @@ public:
     bool dispatch_focus(std::string_view type, node_id target, node_id related);
     // `hashchange` at the window, a HashChangeEvent with both addresses.
     bool dispatch_hash_change(const std::string & old_url, const std::string & new_url);
+    // TIME AS A SCRIPT OBSERVES IT: `performance.now()` and an event's
+    // timeStamp. The engine's one clock moves only between ticks, so within a
+    // script two readings were equal forever and `while (performance.now() <
+    // t)` never ended (Event-timestamp-safe-resolution.html spins until two
+    // events differ). Each observation advances it by the 5 us a browser
+    // coarsens to, counted from the tick's start - so it is still a function
+    // of the page's own behaviour and a golden stays a golden. The first
+    // reading of a tick is the clock itself; an event the ENGINE makes reads
+    // the clock, not this.
+    [[nodiscard]] double observed_now() {
+        return now_ms_ + 0.005 * static_cast<double>(time_reads_++);
+    }
+    std::uint64_t time_reads_ = 0;
     // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
     // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
     // LEFT IT, which before the first frame is no layout at all. The browser

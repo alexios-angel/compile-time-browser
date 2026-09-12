@@ -43,6 +43,7 @@ void dom_bindings::set_current_script(node_id script) {
 
 std::size_t dom_bindings::run_due_callbacks() {
     if (cx_ == nullptr) { return 0; }
+    time_reads_ = 0; // a new tick: the clock has moved, the observations start over
     std::size_t ran = 0;
     // FETCHES FIRST, so a handler waiting on one runs in the same turn as the
     // timers rather than a turn behind them. Copied before running, because a

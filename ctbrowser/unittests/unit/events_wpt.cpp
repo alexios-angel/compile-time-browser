@@ -207,6 +207,17 @@ void test_a_fragment_link_fires_hashchange_with_both_addresses() {
              "HashChangeEvent file:///srv/p.html file:///srv/p.html#x file:///srv/p.html#x #x");
 }
 
+void test_time_a_script_observes_moves_forward() {
+    // Event-timestamp-safe-resolution.html spins until two events' timeStamps
+    // differ; the engine's clock moves only between ticks, so each reading a
+    // script makes advances it by the 5 us a browser coarsens to.
+    is("(function () { var a = new Event('x'), b = new Event('x');"
+       " var t0 = performance.now(), t1 = performance.now();"
+       " return (b.timeStamp > a.timeStamp) + ',' + (t1 > t0) + ',' +"
+       " Math.round((b.timeStamp - a.timeStamp) * 1000); })()",
+       "true,true,5");
+}
+
 // --- a detached tree ---------------------------------------------------------
 
 void test_a_detached_tree_reaches_neither_document_nor_window() {
@@ -310,6 +321,7 @@ void test_an_image_input_submits_its_form() {
 } // namespace
 
 int main() {
+    test_time_a_script_observes_moves_forward();
     test_a_fragment_link_fires_hashchange_with_both_addresses();
     test_related_target_is_retargeted_and_cleared();
     test_focus_moves_with_blur_and_related_targets();

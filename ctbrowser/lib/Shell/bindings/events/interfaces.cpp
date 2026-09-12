@@ -317,7 +317,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
                 // extends Event` arrives with X.prototype already in place, and
                 // overwriting that would flatten the subclass back to an Event.
                 if (!event->prototype.is_object()) { event->prototype = prototype_value; }
-                initialise_event(c, *event, type, bubbles, cancelable, now_ms_,
+                initialise_event(c, *event, type, bubbles, cancelable, observed_now(),
                                  is_trusted_getter_of(event_prototype_));
                 event->set("composed", value::boolean(composed));
                 // CONSTRUCTED IS INITIALISED. It is the difference between this

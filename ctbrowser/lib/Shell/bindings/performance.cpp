@@ -75,9 +75,10 @@ script::object_object * dom_bindings::install_performance(context & cx) {
         native->retained.push_back(paint_prototype);
         performance->set(name, value::object(native));
     };
-    performance->set(
-        "now", value::object(cx.allocate<script::native_object>(
-                   "now", [this](context &, std::span<value>) { return value::number(now_ms_); })));
+    performance->set("now", value::object(cx.allocate<script::native_object>(
+                                "now", [this](context &, std::span<value>) {
+                                    return value::number(observed_now());
+                                })));
     performance->set("timeOrigin", value::number(0));
     method("getEntries", [entries](context & c, std::span<value>) { return entries(c, "", ""); });
     method("getEntriesByType", [entries](context & c, std::span<value> a) {
