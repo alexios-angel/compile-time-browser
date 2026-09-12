@@ -138,6 +138,10 @@ int main() {
               "TypeError");
     js_expect(kind("'use strict'; var a = [1]; Object.freeze(a); a[0] = 2"), "TypeError");
     js_expect(kind("'use strict'; 'str'.x = 1"), "TypeError");
+    // A proxy's set trap answering false is a rejected write (10.5.9 step 9).
+    js_expect(kind("'use strict'; var p = new Proxy({}, { set() { return false; } }); p.x = 1"),
+              "TypeError");
+    js_expect(kind("var p = new Proxy({}, { set() { return false; } }); p.x = 1"), "no");
     js_expect(kind("'use strict'; noSuchGlobalAnywhere = 1"), "ReferenceError");
     js_expect(kind("'use strict'; var f = function () { arguments.callee; frozen.a = 2; };"
                    " var frozen = Object.freeze({a: 1}); f()"),

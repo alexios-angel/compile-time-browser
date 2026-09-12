@@ -154,7 +154,12 @@ void context::store_property(value target, const std::string & name, value v) {
         const value trap = proxy_trap(target, "set");
         if (trap.is_callable()) {
             const value args[4] = {p->target, string(name), v, target};
-            (void)call(trap, args, p->handler);
+            // 10.5.9 step 9: a trap answering false is a REJECTED write -
+            // silent here, the TypeError in strict code (strict_store_check).
+            // An HTMLCollection's index is the everyday case.
+            if (!truthy(call(trap, args, p->handler)) && !throw_pending()) {
+                store_rejected_ = true;
+            }
             return;
         }
         store_property(p->target, name, v);
