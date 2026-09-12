@@ -110,9 +110,13 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
             const auto [it, fresh] = seen.emplace(lex[i].name, i);
             if (fresh) { continue; }
             const binding & first = lex[it->second];
-            if (first.how == binding_kind::function_ && lex[i].how == binding_kind::function_) {
-                continue;
-            }
+            // B.3.2.4: the relaxation is for two PLAIN function declarations
+            // in sloppy code; a generator or an async function on either
+            // side, or strict code, is the duplicate 14.2.1 refuses.
+            const auto plain = [&](const binding & b) {
+                return b.how == binding_kind::function_ && at(b.node).c <= 0;
+            };
+            if (plain(first) && plain(lex[i]) && !strict()) { continue; }
             report(quoted(lex[i].name) + " has already been declared in this scope; a " +
                        kind_word(lex[i].how) + " may not redeclare a " + kind_word(first.how),
                    lex[i].node);

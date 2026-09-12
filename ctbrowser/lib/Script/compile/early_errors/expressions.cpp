@@ -348,6 +348,24 @@ void checker::check_delete(std::int32_t operand) {
     return enclosing_non_arrow_frame().what;
 }
 
+// A YieldExpression IS AN AssignmentExpression, NOT AN OPERAND (15.5): `void
+// yield`, `a + yield b` and `yield 3 + yield 4` are not in the grammar, and
+// only parentheses make them one. The parser drops parentheses, so the
+// source after the operator's lexeme says whether they were there.
+void checker::check_yield_operand(std::int32_t op_node, std::int32_t operand) {
+    if (at(operand).kind != nk::yield_expr) { return; }
+    const vp::node & op = at(op_node);
+    const std::size_t where = offset_of(op_node);
+    if (where == early_error::nowhere || op.text.empty()) { return; }
+    for (std::size_t i = where + op.text.size(); i < source_.size(); ++i) {
+        const char c = source_[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
+        if (c == '(') { return; }
+        break;
+    }
+    report("`yield` is not an operand of `" + std::string{op.text} + "`; parenthesise it", operand);
+}
+
 void checker::walk_expression(std::int32_t idx) {
     if (idx < 0 || depth_ >= max_depth) { return; }
     const deeper nesting{depth_};
@@ -370,6 +388,7 @@ void checker::walk_expression(std::int32_t idx) {
 
     case nk::unary:
         if (n.text == "delete") { check_delete(n.a); }
+        check_yield_operand(idx, n.a);
         if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
             report("`await` is not allowed in the parameters of an async function", idx);
         }
@@ -435,7 +454,9 @@ void checker::walk_expression(std::int32_t idx) {
             walk_expression(n.b);
             return;
         }
+        check_yield_operand(idx, n.b);
         break;
+    case nk::logical: check_yield_operand(idx, n.b); break;
 
     case nk::num: check_number(idx); return;
 

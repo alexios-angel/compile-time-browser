@@ -341,6 +341,19 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
         compile_expr(target.b, key);
         proto().emit(instruction{op::delete_index, object, key});
         emit_const(dst, value::boolean(true));
+    } else if (target.kind == vp::nk::ident) {
+        // `delete x` inside a `with` whose object binds x deletes the
+        // property (13.5.1.2 step 3.b through the object environment's
+        // DeleteBinding); any other name is undeletable here and answers
+        // false.
+        const std::uint16_t obj = alloc_reg();
+        emit_const(dst, value::boolean(false));
+        if (emit_with_object(target.text, obj)) {
+            const std::size_t unbound = proto().emit(instruction{op::jump_if_false, obj});
+            proto().emit(instruction{op::delete_prop, obj, name_operand(std::string{target.text})});
+            emit_const(dst, value::boolean(true));
+            patch_here(unbound);
+        }
     } else {
         emit_const(dst, value::boolean(false));
     }
