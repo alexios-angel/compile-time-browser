@@ -92,28 +92,6 @@ namespace {
 constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
                                                 "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
 
-// Every comma-separated argument of `body`, at bracket depth zero and with
-// quoted runs skipped.
-[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body) {
-    std::vector<std::string_view> args;
-    std::size_t start = 0;
-    int depth = 0;
-    for (std::size_t i = 0; i < body.size(); ++i) {
-        if (const std::size_t quoted = end_of_string_at(body, i); quoted != i) {
-            i = quoted - 1;
-            continue;
-        }
-        if (body[i] == '(') { ++depth; }
-        if (body[i] == ')') { --depth; }
-        if (depth == 0 && body[i] == ',') {
-            args.push_back(body.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    args.push_back(body.substr(start));
-    return args;
-}
-
 [[nodiscard]] bool angle_arguments_ok(std::string_view value) {
     const length_context ctx;
     std::size_t at = 0;
@@ -162,42 +140,12 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 // cannot answer for and closes what EOF closed. That recursion terminates
 // because `inner` is always shorter than the function it came out of.
 [[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
-    std::vector<std::string_view> arguments = top_level_arguments(inner);
-    std::string out{name};
-    // A clamp() WITH AN ABSENT BOUND IS THE COMPARISON THAT IS LEFT. `clamp(none,
-    // 2px, 3em)` bounds nothing below and is `min(2px, 3em)`; `clamp(1em, 2px,
-    // none)` is `max(1em, 2px)`; with neither bound it is its middle argument.
-    // The specification has not said how a clamp() serialises
-    // (w3c/csswg-drafts#13535) and `clamp-partial-serialize.tentative` is the
-    // corpus's reading of it, sixteen assertions, all nested.
-    if (ascii_iequals(name, "clamp(") && arguments.size() == 3) {
-        const auto absent = [&](std::size_t i) {
-            return ascii_iequals(trim(arguments[i], html_whitespace), "none");
-        };
-        const bool no_low = absent(0);
-        const bool no_high = absent(2);
-        if (no_low && no_high) { return simplify_math(trim(arguments[1], html_whitespace)); }
-        if (no_low) {
-            out = "min(";
-            arguments.erase(arguments.begin());
-        } else if (no_high) {
-            out = "max(";
-            arguments.pop_back();
-        }
-    }
-    bool first = true;
-    for (const std::string_view argument : arguments) {
-        if (!first) { out += ", "; }
-        first = false;
-        const std::string_view one = trim(argument, html_whitespace);
-        std::string text;
+    return rewritten_arguments(name, inner, [](std::string_view one) {
         if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
-            text = serialize_symbolic(sum);
+            if (std::string text = serialize_symbolic(sum); !text.empty()) { return text; }
         }
-        out += text.empty() ? simplify_math(one) : text;
-    }
-    out += ')';
-    return out;
+        return simplify_math(one);
+    });
 }
 
 } // namespace

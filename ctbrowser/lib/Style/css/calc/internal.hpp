@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -147,6 +148,16 @@ struct function_span {
 [[nodiscard]] std::string_view body_of(std::string_view value, std::size_t at,
                                        std::string_view name, const function_span & span);
 [[nodiscard]] bool has_percentage(std::string_view text);
+// Every comma-separated argument of `body`, at bracket depth zero and with
+// quoted runs skipped.
+[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body);
+// A COMPARISON FUNCTION WITH NO ANSWER, its arguments each rewritten by `one`
+// and a `clamp()` with an absent bound reduced to the comparison that is
+// left. Defined in fold.cpp; simplify_math and fold_math both render through
+// it, one with symbolic terms and one against the bases it has.
+[[nodiscard]] std::string rewritten_arguments(
+    std::string_view name, std::string_view inner,
+    const std::function<std::string(std::string_view)> & one);
 
 // The canonical unit's spelling, or an empty view for a `<number>`. This is what
 // a computed value is serialised with. Defined in units.cpp.

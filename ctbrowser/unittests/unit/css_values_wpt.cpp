@@ -116,6 +116,19 @@ void test_a_clamp_with_an_absent_bound_is_a_comparison() {
              std::string{"clamp(1px, 2px, min(4px, 5em))"});
     CHECK_EQ(simplify_math("clamp(clamp(none, 2em, none), 4px, clamp(none, 6em, none))"),
              std::string{"clamp(2em, 4px, 6em)"});
+    // minmax-length-percent-serialize: a comparison that waits for a containing
+    // block still computes its arguments against the bases it has.
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.font_size = 16.0f;
+    CHECK_EQ(fold_math("min(1em, 10%)", ctx).text, std::string{"min(16px, 10%)"});
+    CHECK_EQ(fold_math("max(10% + 30px, 5em + 5%)", ctx).text,
+             std::string{"max(10% + 30px, 5% + 80px)"});
+    CHECK_EQ(fold_math("clamp(none, 1em, 10%)", ctx).text, std::string{"min(16px, 10%)"});
+    CHECK_EQ(fold_math("min(1em, max(10%, 2em))", ctx).text,
+             std::string{"min(16px, max(10%, 32px))"});
+    CHECK_EQ(fold_math("min(1em, 2em)", ctx).text, std::string{"16px"});
 }
 
 // calc-numbers and calc-rounds-to-integer: a math function's result is clamped

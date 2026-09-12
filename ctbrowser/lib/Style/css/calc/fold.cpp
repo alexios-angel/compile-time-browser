@@ -109,6 +109,68 @@ namespace detail {
     return false;
 }
 
+[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body) {
+    std::vector<std::string_view> args;
+    std::size_t start = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (const std::size_t quoted = end_of_string_at(body, i); quoted != i) {
+            i = quoted - 1;
+            continue;
+        }
+        if (body[i] == '(') { ++depth; }
+        if (body[i] == ')') { --depth; }
+        if (depth == 0 && body[i] == ',') {
+            args.push_back(body.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    args.push_back(body.substr(start));
+    return args;
+}
+
+// A FUNCTION WITH NO ANSWER STILL HAS ARGUMENTS, and every one of them is a
+// calculation in its own right. `min(1em, 1px)` cannot be ordered, but
+// `min(10% + 30px, 5em + 5%)` is `min(10% + 30px, 5% + 5em)` - the comparison is
+// undecidable and each side of it is still a sum with a canonical order.
+// `minmax-length-percent-serialize` and `calc-infinity-nan-serialize-length` ask
+// for exactly that, the second one through `min(NaN * 2px, NaN * 4em)`.
+[[nodiscard]] std::string rewritten_arguments(
+    std::string_view name, std::string_view inner,
+    const std::function<std::string(std::string_view)> & one) {
+    std::vector<std::string_view> arguments = top_level_arguments(inner);
+    std::string out{name};
+    // A clamp() WITH AN ABSENT BOUND IS THE COMPARISON THAT IS LEFT. `clamp(none,
+    // 2px, 3em)` bounds nothing below and is `min(2px, 3em)`; `clamp(1em, 2px,
+    // none)` is `max(1em, 2px)`; with neither bound it is its middle argument.
+    // The specification has not said how a clamp() serialises
+    // (w3c/csswg-drafts#13535) and `clamp-partial-serialize.tentative` is the
+    // corpus's reading of it, sixteen assertions, all nested.
+    if (ascii_iequals(name, "clamp(") && arguments.size() == 3) {
+        const auto absent = [&](std::size_t i) {
+            return ascii_iequals(trim(arguments[i], html_whitespace), "none");
+        };
+        const bool no_low = absent(0);
+        const bool no_high = absent(2);
+        if (no_low && no_high) { return one(trim(arguments[1], html_whitespace)); }
+        if (no_low) {
+            out = "min(";
+            arguments.erase(arguments.begin());
+        } else if (no_high) {
+            out = "max(";
+            arguments.pop_back();
+        }
+    }
+    bool first = true;
+    for (const std::string_view argument : arguments) {
+        if (!first) { out += ", "; }
+        first = false;
+        out += one(trim(argument, html_whitespace));
+    }
+    out += ')';
+    return out;
+}
+
 } // namespace detail
 
 bool may_have_math(std::string_view value) noexcept {
@@ -358,6 +420,32 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
         // fourteen functions added beside them: a `round()` this file cannot fold
         // is refused where the corpus looks for it, in `check_declaration`, and
         // not by quietly deleting a stylesheet's declaration.
+        if (!is_calc && answer.outcome == math_outcome::unresolved) {
+            // ...BUT ITS ARGUMENTS ARE STILL COMPUTED. `min(1em, 10%)` cannot be
+            // ordered without a containing block, and its computed value is
+            // `min(16px, 10%)` all the same: each argument resolves against
+            // the bases the element has (minmax-length-percent-serialize). One
+            // that cannot is folded like any other value, which reaches the
+            // functions inside it.
+            const std::size_t from = at + name.size();
+            const std::string_view inner =
+                value.substr(from, span.end - from - (span.closed ? 1 : 0));
+            out.append(rewritten_arguments(name, inner, [&](std::string_view one) {
+                const math_answer arg = evaluate_math(one, ctx);
+                if (arg.outcome == math_outcome::resolved) {
+                    // Inside an argument list the sum is bare: `10% + 30px`,
+                    // not `calc(10% + 30px)`.
+                    std::string text = serialize_calc(arg.value);
+                    if (text.starts_with("calc(") && text.ends_with(')')) {
+                        text = text.substr(5, text.size() - 6);
+                    }
+                    return text;
+                }
+                return fold_math(one, ctx).text;
+            }));
+            at = span.end;
+            continue;
+        }
         if (!is_calc || answer.outcome == math_outcome::unresolved) {
             out.append(whole);
             at = span.end;
