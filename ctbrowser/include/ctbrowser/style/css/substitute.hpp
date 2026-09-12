@@ -97,6 +97,10 @@ struct condition_environment {
     // Whether a custom property is registered: a query against one compares
     // computed values of its type, and `initial` names its initial value.
     registration_lookup registered;
+    // Told the name of every custom property a var() reads, so the cascade can
+    // see a dependency it has to refuse: `font-size: var(--x)` where the
+    // registered `--x` is in `em` (CSS Properties and Values API 1 §2.4).
+    std::function<void(std::string_view property)> on_read;
     // The bases a range query resolves its dimensions against: `style(10em >
     // 3px)` needs a font size.
     length_context lengths;

@@ -77,6 +77,18 @@ void test_at_property_in_the_cascade() {
         expect_value(g, g.find_id("a"), "--shared", "5px", "initial from an attribute");
     }
     {
+        // A font-size reading a registered property written in `em` is a
+        // cycle: the font-size is inherited and the property is its initial
+        // value (typed_arithmetic_cycle).
+        fixture f;
+        f.load("<div id=a></div>",
+               "@property --length { syntax: \"<length>\"; inherits: false; initial-value: 0px }"
+               ":root { font-size: 228px }"
+               "div { --length: calc(10px * (2em / 1em)); font-size: var(--length) }");
+        expect_value(f, f.find_id("a"), "font-size", "228px", "the cycle inherits");
+        expect_value(f, f.find_id("a"), "--length", "0px", "and the property is initial");
+    }
+    {
         // A rule missing a required descriptor registers nothing; the first
         // registration of a name stands.
         fixture f;

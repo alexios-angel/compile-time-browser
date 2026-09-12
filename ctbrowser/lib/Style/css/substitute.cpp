@@ -570,6 +570,7 @@ private:
         // being resolved is what says so.
         const bool cyclic = reached_again(name);
         bool ok = false;
+        if (conditions_ != nullptr && conditions_->on_read) { conditions_->on_read(name_text); }
         if (!cyclic) {
             if (const std::optional<std::string_view> held = (*lookup_)(name)) {
                 resolving_.push_back(name.id);
@@ -924,6 +925,12 @@ private:
                 // `else`, and a `var(--else)` that substitutes to it.
                 holds = ascii_iequals(trim(substituted, html_whitespace), "else") ||
                         evaluate_condition(substituted, depth) == truth::yes;
+            } else if (!cyclic_ && !root_cycle_) {
+                // A var() the condition could not resolve makes only the
+                // FEATURE holding it false, not the whole condition: `style(not
+                // (--x: var(--y)))` with a cyclic `--y` is true (if-cycle).
+                // The features substitute their own values as they are read.
+                holds = evaluate_condition(condition, depth) == truth::yes;
             }
             // A query that read the property being resolved is a cycle, and a
             // cycle is invalid whichever branch it would have chosen.
@@ -1049,7 +1056,9 @@ private:
         double value = 0.0;
     };
     [[nodiscard]] std::optional<magnitude> range_operand(std::string_view text, int depth) {
-        std::string_view value = trim(text, html_whitespace);
+        std::string own_text;
+        if (!run(text, own_text, depth + 1)) { return std::nullopt; }
+        std::string_view value = trim(own_text, html_whitespace);
         std::string held;
         if (value.starts_with("--")) {
             const std::vector<std::pair<token_type, std::string>> tokens = significant(value);
@@ -1189,7 +1198,11 @@ private:
         for (std::size_t i = first_significant + 1; i < colon; ++i) {
             if (s.tokens[i].type != token_type::whitespace) { return std::nullopt; }
         }
-        const std::string_view query = trim(text_between_view(s, colon + 1, to), html_whitespace);
+        std::string query_text;
+        if (!run(text_between_view(s, colon + 1, to), query_text, depth + 1)) {
+            return truth::no; // a value nothing can substitute matches nothing
+        }
+        const std::string_view query = trim(query_text, html_whitespace);
         if (custom) {
             const std::optional<std::string> own = custom_value(property, depth);
             const property_registration * registered =

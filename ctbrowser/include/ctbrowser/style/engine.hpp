@@ -898,6 +898,7 @@ public:
             root_line_height_ = parent_line_height;
         }
         float own_font_size = parent_font_size;
+        std::vector<atom> cyclic_registered;
         // Whether the WINNING font-size declaration actually resolved to a length.
         // `font-size: larger` and the other relative keywords are not modelled, and
         // rewriting one to a pixel value would be inventing an answer - so the text
@@ -915,12 +916,30 @@ public:
             ctx.percent_basis = parent_font_size;
             conditions.lengths = ctx;
             conditions.property = "font-size";
+            // A REGISTERED PROPERTY IN FONT-RELATIVE UNITS DEPENDS ON THIS
+            // FONT SIZE, so a font-size reading it is a cycle (CSS Properties
+            // and Values API 1 §2.4): the font-size is invalid at computed-value
+            // time - inherited - and the property takes its initial value
+            // (typed_arithmetic_cycle).
+            std::vector<atom> read;
+            conditions.on_read = [&read, this](std::string_view name) {
+                read.push_back(atoms_->intern(name));
+            };
             fold([&](const declaration & d) {
                 if (d.property != font_size_) { return; }
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
+                    read.clear();
                     const std::optional<std::string> done =
                         css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
+                    for (const atom name : read) {
+                        if (registration_of(name) == nullptr) { continue; }
+                        const std::optional<std::string_view> held = lookup(name);
+                        if (held && font_relative(*held, !parent)) {
+                            cyclic_registered.push_back(name);
+                            return;
+                        }
+                    }
                     if (!done) { return; }
                     value = *done;
                 }
@@ -1037,7 +1056,11 @@ public:
                 if (d.property == name) { own = &d; }
             }
             std::optional<std::string> computed;
-            if (own != nullptr && own->value != guaranteed_invalid) {
+            const bool cyclic =
+                std::ranges::find(cyclic_registered, name) != cyclic_registered.end();
+            if (cyclic) {
+                // Part of a cycle through font-size: the initial value.
+            } else if (own != nullptr && own->value != guaranteed_invalid) {
                 std::string text = own->value;
                 bool substituted = true;
                 if (css::may_have_var(text)) {
@@ -1109,6 +1132,12 @@ public:
                 }
             };
             const bool had_var = css::may_have_var(value);
+            // The font-size that was found to be a cycle above is invalid at
+            // computed-value time here too.
+            if (d.property == font_size_ && !cyclic_registered.empty() && had_var) {
+                unset();
+                return;
+            }
             if (had_var) {
                 conditions.lengths = lengths_for(d.property);
                 conditions.property = std::string{property};
@@ -1471,6 +1500,25 @@ private:
     void register_at_property_rules(std::string_view sheet_text);
     // The registered custom properties, by atom id.
     flat_map<std::uint32_t, css::property_registration> registrations_;
+
+    // Does this text carry a unit that resolves against the element's own font -
+    // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?
+    [[nodiscard]] static bool font_relative(std::string_view text, bool at_root) {
+        const css::token_stream s = css::tokenize(text);
+        for (const css::css_token & t : s.tokens) {
+            if (t.type != css::token_type::dimension) { continue; }
+            const std::string unit = ascii_lower_copy(s.unit_of(t));
+            for (const std::string_view own : {"em", "ex", "ch", "cap", "ic", "lh"}) {
+                if (unit == own) { return true; }
+            }
+            if (at_root) {
+                for (const std::string_view root : {"rem", "rex", "rch", "rcap", "ric", "rlh"}) {
+                    if (unit == root) { return true; }
+                }
+            }
+        }
+        return false;
+    }
 
     [[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
     [[nodiscard]] atom class_name() const { return atoms_->intern("class"); }

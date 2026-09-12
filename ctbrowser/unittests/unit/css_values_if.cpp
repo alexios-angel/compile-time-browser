@@ -105,6 +105,10 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style(--self): a; else: b)", "--other"), std::string{"b"});
     CHECK_EQ(s.sub("if(style(--x: 0): var(--self); else: b)", "--self"), std::string{"b"});
     CHECK_EQ(s.sub("if(style(--x: 3): var(--self); else: b)", "--self"), std::string{"<invalid>"});
+    // Another property's cycle makes only the feature reading it false.
+    s.own["--loop"] = "var(--loop)";
+    CHECK_EQ(s.sub("if(style(not (--x: var(--loop))): a; else: b)"), std::string{"a"});
+    CHECK_EQ(s.sub("if(style((--x) or (--loop)): a; else: b)"), std::string{"a"});
 }
 
 // ident-function-substitution and attr-argument-grammar: ident() joins its
