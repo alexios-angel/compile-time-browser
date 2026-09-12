@@ -174,7 +174,7 @@ bool browser::is_password(node_id id) {
 
 std::string browser::masked_text(std::string_view text) {
     std::string out;
-    for (std::size_t at = 0; at < text.size(); at = next_code_point(text, at)) {
+    for (std::size_t at = 0; at < text.size(); at = form_store::next_code_point(text, at)) {
         out += "\xE2\x80\xA2"; // U+2022 BULLET
     }
     return out;
@@ -182,14 +182,6 @@ std::string browser::masked_text(std::string_view text) {
 
 std::string browser::shown(std::string_view text, bool masked) {
     return masked ? masked_text(text) : std::string{text};
-}
-
-std::size_t browser::next_code_point(std::string_view text, std::size_t at) {
-    std::size_t next = at + 1;
-    while (next < text.size() && (static_cast<unsigned char>(text[next]) & 0xC0) == 0x80) {
-        ++next;
-    }
-    return next;
 }
 
 color browser::text_colour(const ctbrowser::style::computed_style_ptr & style) {

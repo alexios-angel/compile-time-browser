@@ -939,7 +939,6 @@ private:
     [[nodiscard]] static std::string masked_text(std::string_view text);
     // What the user SEES for a stretch of the value.
     [[nodiscard]] static std::string shown(std::string_view text, bool masked);
-    [[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at);
 
     // Where in a control's value a point falls. The nearest character boundary
     // on the line the point is on - which is the ONLY way a click can put the
@@ -976,7 +975,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - want); distance < best_distance) {
@@ -1016,7 +1015,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - column); distance < best_distance) {
