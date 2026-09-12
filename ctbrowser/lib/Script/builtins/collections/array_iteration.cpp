@@ -5,10 +5,9 @@
 // One of four files carved out of a 1,824-line builtins/collections.cpp on
 // 2026-09-08 - which was itself one of five carved out of builtins.cpp on
 // 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// these functions' declarations - is in ../internal.hpp.
 
-#include "internal.hpp"
+#include "../internal.hpp"
 
 namespace ctbrowser::script::detail {
 
@@ -77,6 +76,34 @@ namespace ctbrowser::script::detail {
 namespace ctbrowser::script::builtins_detail {
 
 using detail::list_iterator;
+
+// `find` and its three siblings DO NOT SKIP A HOLE - 23.1.3.9 reads every
+// index with [[Get]] and hands the callback an undefined - which is why none
+// of them goes through `each` below. The miss is undefined for the two that
+// answer the item, -1 for the two that answer the index.
+value array_find(context & c, std::span<value> a, const char * name, bool backwards,
+                 bool want_index) {
+    const value miss = want_index ? value::number(-1) : value::undefined();
+    const value self = detail::array_this(c);
+    if (!detail::coercible_this(c, self, name)) { return miss; }
+    // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+    // `length` getter runs, and its throw wins, even for a callback that
+    // is not callable.
+    const double len = detail::array_like_length(c, self);
+    if (c.throw_pending()) { return miss; }
+    const value callback = arg_at(a, 0);
+    if (!detail::callable_arg(c, callback, "callback")) { return miss; }
+    const value this_arg = arg_at(a, 1);
+    const double step = backwards ? -1.0 : 1.0;
+    for (double k = backwards ? len - 1 : 0; backwards ? k >= 0 : k < len; k += step) {
+        const value item = detail::element_at(c, self, k);
+        const value call_args[3] = {item, value::number(k), self};
+        if (context::truthy(c.call(callback, call_args, this_arg))) {
+            return want_index ? value::number(k) : item;
+        }
+    }
+    return miss;
+}
 
 void install_array_iteration(context & cx, native_object * array_ctor,
                              object_object * array_proto) {
@@ -187,43 +214,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return out;
     });
-    // `find` and `findIndex` DO NOT SKIP A HOLE - 23.1.3.9 reads every index
-    // with [[Get]] and hands the callback an undefined - which is why neither
-    // goes through `each`.
-    method(cx, array_proto, "find", 1, [](context & c, std::span<value> a) {
-        const value self = detail::array_this(c);
-        if (!detail::coercible_this(c, self, "find")) { return value::undefined(); }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
-        // `length` getter runs, and its throw wins, even for a callback that
-        // is not callable.
-        const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return value::undefined(); }
-        const value callback = arg_at(a, 0);
-        if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
-        const value this_arg = arg_at(a, 1);
-        for (double k = 0; k < len; k += 1.0) {
-            const value item = detail::element_at(c, self, k);
-            const value call_args[3] = {item, value::number(k), self};
-            if (context::truthy(c.call(callback, call_args, this_arg))) { return item; }
-        }
-        return value::undefined();
-    });
+    // `find`, `findIndex`, `findLast` and `findLastIndex` (array.cpp) are
+    // array_find, walked in one direction or the other.
+    method(cx, array_proto, "find", 1,
+           [](context & c, std::span<value> a) { return array_find(c, a, "find", false, false); });
     method(cx, array_proto, "findIndex", 1, [](context & c, std::span<value> a) {
-        const value self = detail::array_this(c);
-        if (!detail::coercible_this(c, self, "findIndex")) { return value::number(-1); }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
-        // `length` getter runs, and its throw wins, even for a callback that
-        // is not callable.
-        const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return value::number(-1); }
-        const value callback = arg_at(a, 0);
-        if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
-        const value this_arg = arg_at(a, 1);
-        for (double k = 0; k < len; k += 1.0) {
-            const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            if (context::truthy(c.call(callback, call_args, this_arg))) { return value::number(k); }
-        }
-        return value::number(-1);
+        return array_find(c, a, "findIndex", false, true);
     });
     method(cx, array_proto, "some", 1, [each](context & c, std::span<value> a) {
         bool answer = false;

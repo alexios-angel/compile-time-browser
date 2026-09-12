@@ -190,7 +190,8 @@ its header, and the header did not change:
   before the callback-taking methods, the halves share only the constructor and
   the prototype passed across it, and every property lands in the order it did.
   `list_iterator` gained external linkage in `ctbrowser::script::detail` so Map
-  and Set can share it; the directory's own `internal.hpp` declares both.
+  and Set can share it; `../internal.hpp` declares both (the directory's own
+  header went on 2026-09-12 once that was all it held).
 - `ctbrowser/lib/Script/builtins/objects/` — five, from 1,429. The four abstract
   operations Object and Reflect both answer through (OwnPropertyKeys,
   [[GetPrototypeOf]], FromPropertyDescriptor, the descriptor refusals) are

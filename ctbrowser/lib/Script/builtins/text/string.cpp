@@ -4,8 +4,8 @@
 // One of four files carved out of a 1,333-line builtins/text.cpp on 2026-09-08
 // - which was itself one of five carved out of builtins.cpp on 2026-08-09.
 // Everything shared - the argument helpers, namespace detail, and these
-// functions' declarations - is in ../internal.hpp; nothing is shared between
-// these four alone, so there is no second header.
+// functions' declarations - is in ../internal.hpp; what String reaches into
+// RegExp for is in internal.hpp beside this.
 
 #include "internal.hpp"
 
