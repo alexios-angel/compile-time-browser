@@ -419,16 +419,10 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    std::optional<session> control;
-    try {
-        control.emplace(port);
-    } catch (const std::exception & e) {
-        std::printf("ctdrive: cannot listen on port %u: %s\n", port, e.what());
-        return 1;
-    }
+    session control{port};
     // The port, on stdout, before anything else: asking for 0 gets one the
     // operating system chose, and the client has no other way to learn it.
-    std::printf("ctdrive: listening on 127.0.0.1:%u\n", control->port());
+    std::printf("ctdrive: listening on 127.0.0.1:%u\n", control.port());
     std::fflush(stdout);
 
     // THE PAGE HAS AN ADDRESS, and it is the file's. `run_app_file` loads the
@@ -474,7 +468,7 @@ int main(int argc, char ** argv) {
         // was aimed. It is a race the client cannot see and cannot avoid - it
         // only knows the socket is up - so it is refused here.
         if (page.frames() == 0) { return; }
-        control->poll(page);
+        control.poll(page);
     };
     return ctbrowser::run_app("", std::move(options));
 }
