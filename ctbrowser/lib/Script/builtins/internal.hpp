@@ -861,6 +861,7 @@ inline value settle_with(context & cx, value on_ok, value on_err,
     method(cx, table, "finally", [](context & c, std::span<value> a) {
         return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
     });
+    table->define("@@toStringTag", cx.string("Promise"), attr_configurable); // 27.2.5.5
     cx.set_prototype(context::proto_kind::promise, table);
     return table;
 }

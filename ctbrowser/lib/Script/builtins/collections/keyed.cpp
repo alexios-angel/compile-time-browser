@@ -127,6 +127,8 @@ void install_collections(context & cx) {
         // instantiated at all.
         proto->set("constructor", value::object(ctor));
         detail::constant(ctor, "prototype", value::object(proto));
+        // 24.1.3.13 / 24.2.3.12: the tag Object.prototype.toString reads.
+        proto->define("@@toStringTag", cx.string(name), attr_configurable);
         cx.set_prototype(keyed ? context::proto_kind::map : context::proto_kind::set, proto);
         cx.define_global(name, value::object(ctor));
         return proto;

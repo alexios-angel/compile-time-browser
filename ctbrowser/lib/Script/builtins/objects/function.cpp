@@ -356,6 +356,7 @@ void install_generator(context & cx) {
     // and what makes `[...gen()]` work.
     detail::method(cx, table, "@@iterator", 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
+    table->define("@@toStringTag", cx.string("Generator"), attr_configurable); // 27.5.1.5
     cx.set_prototype(context::proto_kind::generator, table);
 
     // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
@@ -373,6 +374,7 @@ void install_generator(context & cx) {
     detail::method(cx, async_table, "return", 1, async_driver(context::resume_mode::returned));
     detail::method(cx, async_table, "@@asyncIterator", 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
+    async_table->define("@@toStringTag", cx.string("AsyncGenerator"), attr_configurable);
     cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 
