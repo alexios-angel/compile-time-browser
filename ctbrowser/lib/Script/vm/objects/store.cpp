@@ -167,6 +167,11 @@ void context::store_property(value target, const std::string & name, value v) {
     // `a.length = 10` is occasionally used for.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        // `a["0"] = v` is the element, not a named property - see lookup_property.
+        if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
+            store_index(target, value::number(static_cast<double>(at)), v);
+            return;
+        }
         if (name != "length") {
             // A NAMED PROPERTY, in the array's own table - see
             // array_object::named. The same three checks as an object's: an

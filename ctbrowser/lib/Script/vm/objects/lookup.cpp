@@ -120,6 +120,13 @@ value context::lookup_property(value target, const std::string & name) {
         // `length` without allocating for it, and this is the one read that has
         // to see that. Everything else keeps items.size() and its bounds.
         if (name == "length") { return value::number(static_cast<double>(arr->js_length())); }
+        // A CANONICAL INDEX SPELLED AS A STRING is the element: `a["0"]`, and
+        // `for (i in a) a[i]` where i is always a string. It went to the
+        // prototype (and, since the named table, would have gone there) - p5's
+        // PrintWriter walks its writers exactly this way.
+        if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
+            return lookup_index(target, value::number(static_cast<double>(at)));
+        }
         // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
         // how a page makes a second view of a different width over storage it
         // already has - Phaser does exactly that - and it needs `buffer` to
