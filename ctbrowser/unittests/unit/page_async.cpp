@@ -40,11 +40,6 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    return std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
-                                  reinterpret_cast<const std::byte *>(text.data() + text.size())};
-}
-
 // `await` ON A PENDING PROMISE SUSPENDS THE FRAME.
 //
 // There is one stack and the event loop is above it, so await cannot block: the

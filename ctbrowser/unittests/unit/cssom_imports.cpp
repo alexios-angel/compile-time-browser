@@ -32,11 +32,6 @@ using ctbrowser_test::logged;
 
 namespace {
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    const auto * begin = reinterpret_cast<const std::byte *>(text.data());
-    return {begin, begin + text.size()};
-}
-
 // THE STATEMENTS THE FRONT END FINDS: only the leading run, the URL in any of
 // its three spellings, the media list with `layer` and `supports()` removed,
 // and byte spans a caller can splice.

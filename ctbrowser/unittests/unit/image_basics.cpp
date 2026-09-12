@@ -58,14 +58,6 @@ namespace {
     return walk(walk, page.fragments(), 0, 0);
 }
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        out[i] = static_cast<std::byte>(static_cast<unsigned char>(text[i]));
-    }
-    return out;
-}
-
 // Scripts report through console.log, the same way the other binding tests do.
 [[nodiscard]] std::string logged(browser & page) {
     std::string out;

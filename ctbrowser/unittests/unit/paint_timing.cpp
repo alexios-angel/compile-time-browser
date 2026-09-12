@@ -30,13 +30,6 @@ using ctbrowser_test::logged;
 
 namespace {
 
-[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view text) {
-    std::vector<std::byte> out;
-    out.reserve(text.size());
-    for (const char c : text) { out.push_back(static_cast<std::byte>(c)); }
-    return out;
-}
-
 // The two paint entries appear with the first frame and not before, and they
 // are PerformancePaintTiming objects a page can feature-detect and filter.
 void test_paint_entries_are_recorded_by_the_first_frame() {

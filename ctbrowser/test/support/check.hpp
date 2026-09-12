@@ -1,6 +1,7 @@
 #ifndef CTBROWSER_V2_TEST_CHECK_HPP
 #define CTBROWSER_V2_TEST_CHECK_HPP
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <version>
 
 #include <csignal>
@@ -50,6 +52,12 @@ inline void check(bool ok, std::string_view what) {
     std::ostringstream all;
     all << in.rdbuf();
     return all.str();
+}
+
+// Text as the bytes an asset registry takes. Seven tests had one each.
+[[nodiscard]] inline std::vector<std::byte> bytes_of(std::string_view text) {
+    const auto * begin = reinterpret_cast<const std::byte *>(text.data());
+    return {begin, begin + text.size()};
 }
 
 namespace ctbrowser_test {
