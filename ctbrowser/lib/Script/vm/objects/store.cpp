@@ -166,8 +166,31 @@ void context::store_property(value target, const std::string & name, value v) {
     // Growing pads with undefined, which is what the spec says and what
     // `a.length = 10` is occasionally used for.
     if (target.is_array()) {
-        if (name != "length") { return; } // arrays have no property table here
         auto * arr = static_cast<array_object *>(target.as_heap());
+        if (name != "length") {
+            // A NAMED PROPERTY, in the array's own table - see
+            // array_object::named. The same three checks as an object's: an
+            // own accessor's setter, a non-writable own data property, and
+            // extensibility for a fresh one. (Inherited setters on
+            // Array.prototype are not consulted; nothing defines one.)
+            if (arr->named) {
+                if (accessor_entry * entry = arr->named->find_accessor(name)) {
+                    if (entry->setter.is_callable()) {
+                        const value args[1] = {v};
+                        (void)call(entry->setter, args, target);
+                    }
+                    return;
+                }
+                if (arr->named->find(name) != nullptr) {
+                    if ((arr->named->attrs_of(name) & attr_writable) == 0) { return; }
+                    arr->named->set(name, v);
+                    return;
+                }
+            }
+            if (!arr->extensible) { return; }
+            arr->named_table().set(name, v);
+            return;
+        }
         // A TYPED array's length is fixed - it is a view over bytes that were
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.

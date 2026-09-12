@@ -498,5 +498,27 @@ int main() {
               " + Object.getOwnPropertyDescriptor([].push, 'length').configurable",
               "false,false,true");
 
+    // ================================================================
+    // NAMED OWN PROPERTIES ON AN ARRAY (array_object::named). `a.foo = 1` was
+    // dropped and `a.foo` read the prototype; test262 sets
+    // `x.getClass = Object.prototype.toString` on an array 83 times.
+    // ================================================================
+    js_expect("(function(){var a=[1,2];a.foo='x';return a.foo+'/'+a.length+'/'+('foo' in a);})()",
+              "x/2/true");
+    js_expect("(function(){var a=[];a.getClass=Object.prototype.toString;return a.getClass();})()",
+              "[object Array]");
+    js_expect("(function(){var a=[1];a.k=2;return Object.keys(a).join()+'|'+JSON.stringify(a);})()",
+              "0,k|[1]");
+    js_expect("(function(){var a=[];a.k=1;delete a.k;return 'k' in a;})()", "false");
+    js_expect("(function(){var a=[];Object.defineProperty(a,'h',{value:3,enumerable:false});"
+              "return a.h+'/'+Object.keys(a).length;})()",
+              "3/0");
+    js_expect(
+        "(function(){var a=[];Object.defineProperty(a,'g',{get:function(){return this.length;}});"
+        "a.push(1,2);return a.g;})()",
+        "2");
+    js_expect("(function(){var a=[1];a.k=2;var b={...a};return b[0]+'/'+b.k;})()", "1/2");
+    js_expect("(function(){var a=[];Object.freeze(a);a.k=1;return a.k;})()", "undefined");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

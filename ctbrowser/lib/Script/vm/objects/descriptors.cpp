@@ -198,6 +198,10 @@ bool context::own_property(value target, const std::string & name, property_desc
                 out.virtual_slot = true;
                 return true;
             }
+        } else if (arr->named) {
+            // A named own property lives in the array's own table, which is
+            // an object_object - so the object arm answers for it.
+            return own_property(value::object(arr->named.get()), name, out);
         }
         return false;
     }
@@ -370,6 +374,13 @@ bool context::delete_own_property(value target, const std::string & name) {
         if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
         return closure->erase(name);
     }
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        std::uint32_t at = 0;
+        if (name != "length" && !index_key(name, at) && arr->named) {
+            return delete_own_property(value::object(arr->named.get()), name);
+        }
+    }
     // AN ARRAY ELEMENT IS NOT DELETED, and never was: `items` is a dense
     // std::vector with no way to spell a hole, so removing one would shift
     // every element after it and `delete a[0]` would change a.length. The
@@ -516,13 +527,10 @@ bool context::define_own_property(value target, const std::string & name,
             if (wanted.has_value) { store_index(target, value::number(at), held); }
             return true;
         }
-        // A NAMED PROPERTY ON AN ARRAY IS DROPPED AND ANSWERS TRUE. An array
-        // here has no property table at all, so there is nowhere to put one -
-        // and answering false would turn `Object.defineProperty(a, 'x', ...)`
-        // from the silent no-op it has always been into a TypeError, which is a
-        // behaviour change unrelated to attributes. Stated rather than
-        // discovered; see docs/test262.md.
-        return true;
+        // A NAMED PROPERTY goes into the array's own table (see
+        // array_object::named), through the object arm so every attribute
+        // rule is the one an object has.
+        return define_own_property(value::object(&arr->named_table()), name, wanted);
     }
     return false;
 }

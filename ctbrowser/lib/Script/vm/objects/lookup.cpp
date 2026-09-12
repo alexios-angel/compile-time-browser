@@ -146,6 +146,16 @@ value context::lookup_property(value target, const std::string & name) {
             if (name == "input") { return arr->input; }
             if (name == "groups") { return arr->groups; }
         }
+        // A NAMED OWN PROPERTY - see array_object::named. Data or accessor,
+        // before the prototypes, as on any object.
+        if (arr->named) {
+            if (value * found = arr->named->find(name)) { return *found; }
+            if (accessor_entry * entry = arr->named->find_accessor(name)) {
+                return entry->getter.is_callable()
+                           ? call(entry->getter, std::span<const value>{}, target)
+                           : value::undefined();
+            }
+        }
         // A TYPED array's own methods first, then every array's, then every
         // object's - which is the chain JavaScript actually has, and the reason
         // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.

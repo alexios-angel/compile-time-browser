@@ -71,6 +71,16 @@ void context::trace_object(heap_object * o) {
         edge(arr->index);
         edge(arr->input);
         edge(arr->groups);
+        // The named table is the array's own, not a heap object: its edges
+        // are traced here rather than by pushing it (a mark bit nobody
+        // sweeps would stay set and hide its edges from the next cycle).
+        if (arr->named) {
+            for (const auto & [name, v] : arr->named->props) { edge(v); }
+            for (const accessor_entry & entry : arr->named->accessors.entries) {
+                edge(entry.getter);
+                edge(entry.setter);
+            }
+        }
         break;
     }
     case heap_kind::object: {
