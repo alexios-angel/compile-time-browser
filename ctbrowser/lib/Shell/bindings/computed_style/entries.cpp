@@ -406,6 +406,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                         return selector_engine_->registration_of(atoms->intern(name));
                     };
                 }
+                conditions.canonical_color = [](std::string_view text) {
+                    const std::optional<color> c = paint::parse_color(text);
+                    return c ? color_text(*c) : std::string{text};
+                };
                 std::optional<std::string> done =
                     style::css::substitute_var(text, custom, *atoms, attributes, &conditions);
                 // INVALID AT COMPUTED-VALUE TIME: the guaranteed-invalid value,
@@ -425,6 +429,19 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     return conditions.inherited(property).value_or("");
                 }
                 if (!registered && ascii_iequals(word, "initial")) { return {}; }
+            }
+            // A REGISTERED `<color>` SERIALISES AS A COLOUR - `rgb(0, 0, 255)`
+            //    for `blue` - which the cascade, having no colour parser, left
+            //    as the keyword (attr-security).
+            if (const style::css::property_registration * registration =
+                    selector_engine_ != nullptr
+                        ? selector_engine_->registration_of(atoms->intern(property))
+                        : nullptr;
+                registration != nullptr &&
+                registration->syntax.find("<color>") != std::string::npos) {
+                if (const std::optional<color> c = paint::parse_color(text)) {
+                    return color_text(*c);
+                }
             }
             return text;
         }

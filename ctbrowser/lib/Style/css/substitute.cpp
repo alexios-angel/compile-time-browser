@@ -1242,8 +1242,14 @@ private:
             // A registered property compares computed values of its type, so
             // `style(--length: 1em)` holds against a `30px` under a 30px font.
             if (registered != nullptr) {
-                return same(own,
-                            compute_registered(query, registered->syntax, conditions_->lengths));
+                std::optional<std::string> theirs =
+                    compute_registered(query, registered->syntax, conditions_->lengths);
+                if (conditions_->canonical_color && theirs &&
+                    registered->syntax.find("<color>") != std::string::npos) {
+                    return same(conditions_->canonical_color(*own),
+                                conditions_->canonical_color(*theirs));
+                }
+                return same(own, theirs);
             }
             return significant(*own) == significant(query) ? truth::yes : truth::no;
         }

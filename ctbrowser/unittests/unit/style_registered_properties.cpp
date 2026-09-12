@@ -108,13 +108,16 @@ void test_register_property_from_script() {
     using ctbrowser_test::logged;
     browser page{browser_options{400, 200}};
     page.load_html(R"html(<html><head><style>
-      #t { --len: 1em; font-size: 20px; --if: if(style(--len: 20px): yes; else: no); }
+      #t { --len: 1em; font-size: 20px; --if: if(style(--len: 20px): yes; else: no);
+           --c: green; --cif: if(style(--c: rgb(0, 128, 0)): same; else: differs); }
     </style></head><body><div id=t></div>
     <script>
         const cs = () => getComputedStyle(document.getElementById('t'));
         const before = cs().getPropertyValue('--len');
         CSS.registerProperty({ name: '--len', syntax: '<length>', inherits: false, initialValue: '3px' });
-        const after = cs().getPropertyValue('--len');
+        CSS.registerProperty({ name: '--c', syntax: '<color>', inherits: false, initialValue: 'blue' });
+        const after = cs().getPropertyValue('--len') + '|' + cs().getPropertyValue('--c') + '|' +
+                      cs().getPropertyValue('--cif');
         let errors = '';
         try { CSS.registerProperty({ name: '--len', syntax: '<length>', inherits: false, initialValue: '3px' }); }
         catch (e) { errors += e.name; }
@@ -129,10 +132,10 @@ void test_register_property_from_script() {
         console.log('reg=' + [before, after, cs().getPropertyValue('--if'), errors].join('|'));
     </script></body></html>)html");
     CHECK(page.script_error().empty());
-    CHECK_EQ(
-        logged(page, "reg="),
-        std::string{
-            "reg=1em|20px|yes|InvalidStateError,SyntaxError,SyntaxError,SyntaxError,TypeError"});
+    CHECK_EQ(logged(page, "reg="),
+             std::string{
+                 "reg=1em|20px|rgb(0, 128, 0)|same|yes|InvalidStateError,SyntaxError,SyntaxError,"
+                 "SyntaxError,TypeError"});
 }
 
 } // namespace

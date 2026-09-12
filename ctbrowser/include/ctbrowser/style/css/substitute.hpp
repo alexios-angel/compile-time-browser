@@ -97,6 +97,11 @@ struct condition_environment {
     // Whether a custom property is registered: a query against one compares
     // computed values of its type, and `initial` names its initial value.
     registration_lookup registered;
+    // A colour in its canonical form, when the caller has a colour parser: a
+    // `<color>` registration compares `green` with `rgb(0, 128, 0)` through
+    // it. The style engine has none of its own - colours are paint's - and
+    // without one the two are the different texts they are.
+    std::function<std::string(std::string_view)> canonical_color;
     // Told the name of every custom property a var() reads, so the cascade can
     // see a dependency it has to refuse: `font-size: var(--x)` where the
     // registered `--x` is in `em` (CSS Properties and Values API 1 §2.4).
