@@ -231,6 +231,25 @@ void test_sticky_insets() {
     CHECK_EQ(logged(page, "sticky="), std::string{"sticky=250px,49px,0px,auto"});
 }
 
+// mediaquery-sort-dedup: matchMedia serialises the list as written - not
+// sorted, not deduplicated - and answers `matches` from the cascade's own
+// environment.
+void test_match_media() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><script>
+        console.log('mm=' + matchMedia('(min-width: 10px) and (min-height: 10px)').media + '|' +
+                    window.matchMedia('(color) and (color)').media + '|' +
+                    matchMedia('(min-width: 300px)').matches + ',' +
+                    matchMedia('(min-width: 500px)').matches + ',' +
+                    matchMedia('screen').matches + ',' + matchMedia('print').matches + '|' +
+                    Object.prototype.toString.call(matchMedia('all')));
+        </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "mm="),
+             std::string{"mm=(min-width: 10px) and (min-height: 10px)|(color) and (color)|"
+                         "true,false,true,false|[object MediaQueryList]"});
+}
+
 // ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -
 // its `length` follows a removed <style> - and it still iterates, indexes and
 // answers `item()`, and is one object.
@@ -275,6 +294,7 @@ int main() {
     test_flat_tree_and_pseudo_arguments();
     test_live_sheet_list();
     test_sticky_insets();
+    test_match_media();
     test_descriptors_refuse_tree_counting();
     test_class_strings_and_iterators();
     test_removed_rules_charset_keyframes_and_container();
