@@ -239,10 +239,6 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     // or texture to read as ZERO, and a byte-compared golden cannot survive
     // reading whatever the last allocation left in device memory.
     //
-    // TEMPORARY, AND SAY SO: `CTBROWSER_GL_COMPAT=0` turns both off, so one
-    // build can measure with and against - the discipline this work kept failing
-    // on. It comes out when the question is answered.
-    //
     // ES 3.0, NOT 3.1, AND THE VERSION IS LOAD-BEARING. Measured on the devbox
     // against SwiftShader, one attribute changed per run:
     //
@@ -264,16 +260,13 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     // SH_GLES3_1_SPEC for minor 1, so 3.1 would have validated page shaders
     // against the wrong dialect even had the context come up.
     std::vector<EGLint> context_attrs{EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 0};
-    const char * compat = std::getenv("CTBROWSER_GL_COMPAT");
-    if (compat == nullptr || std::string_view{compat} != "0") {
-        if (has_extension(impl_->display, "EGL_ANGLE_create_context_webgl_compatibility")) {
-            context_attrs.push_back(EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE);
-            context_attrs.push_back(EGL_TRUE);
-        }
-        if (has_extension(impl_->display, "EGL_ANGLE_robust_resource_initialization")) {
-            context_attrs.push_back(EGL_ROBUST_RESOURCE_INITIALIZATION_ANGLE);
-            context_attrs.push_back(EGL_TRUE);
-        }
+    if (has_extension(impl_->display, "EGL_ANGLE_create_context_webgl_compatibility")) {
+        context_attrs.push_back(EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE);
+        context_attrs.push_back(EGL_TRUE);
+    }
+    if (has_extension(impl_->display, "EGL_ANGLE_robust_resource_initialization")) {
+        context_attrs.push_back(EGL_ROBUST_RESOURCE_INITIALIZATION_ANGLE);
+        context_attrs.push_back(EGL_TRUE);
     }
     context_attrs.push_back(EGL_NONE);
     impl_->context = eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs.data());
