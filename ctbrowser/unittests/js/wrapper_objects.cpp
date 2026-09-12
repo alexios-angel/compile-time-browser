@@ -68,6 +68,10 @@ int main() {
     js_expect("Object.prototype.toString.call(new Number(1))", "[object Number]");
     js_expect("Object.prototype.toString.call(new Boolean(1))", "[object Boolean]");
     js_expect("Object.prototype.toString.call(Object('x'))", "[object String]");
+    // ...and the three prototypes carry a slot of their own (21.1.3, 22.1.3, 20.3.3).
+    js_expect("Object.prototype.toString.call(Number.prototype)", "[object Number]");
+    js_expect("Object.prototype.toString.call(String.prototype)", "[object String]");
+    js_expect("Object.prototype.toString.call(Boolean.prototype)", "[object Boolean]");
 
     // --- the String exotic object: 10.4.3 --------------------------------------
     js_expect("Object('abc').length", "3");
