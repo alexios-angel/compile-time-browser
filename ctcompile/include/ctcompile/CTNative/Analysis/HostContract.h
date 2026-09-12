@@ -113,6 +113,9 @@ struct HostCapturedMap {
     // Initialized before every publication and preserved by every child write.
     // This says nothing about identity, other keys, cardinality or startup values.
     std::vector<HostChildMapEntry> childEntries{};
+    // Every child write has this scalar category, independently of membership.
+    // Empty publication, delete and clear preserve it; reads may be Undefined.
+    PrimitiveAlternatives childScalarContents{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

@@ -290,6 +290,23 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         if (auto found = alternatives.find(condition); found != alternatives.end()) {
             found->second = found->second.filtered(branch);
         }
+        if (auto compare = condition.getDefiningOp<ctjs::CompareOp>();
+            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            for (unsigned index = 0; index < 2; ++index) {
+                if (!step()) { return false; }
+                auto literal = compare->getOperand(index).getDefiningOp<ctjs::ConstantOp>();
+                if (!literal ||
+                    !llvm::isa<ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue())) {
+                    continue;
+                }
+                if (auto found = alternatives.find(compare->getOperand(1 - index));
+                    found != alternatives.end()) {
+                    const auto mask = PrimitiveAlternatives::literal(literal.getValue()).falsy;
+                    found->second.truthy &= branch ? mask : ~mask;
+                    found->second.falsy &= branch ? mask : ~mask;
+                }
+            }
+        }
         auto call = condition.getDefiningOp<ctjs::CallOp>();
         if (!branch || !call || !maps.contains(call.getReceiver())) { return true; }
         auto & state = mapStates[maps.lookup(call.getReceiver())];
@@ -801,6 +818,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 }
                                 break;
                             }
+                        }
+                        if (origin != capturedOrigin && result.childScalarContents.tag()) {
+                            primitives.insert(invoke.getResult());
+                            // A local exact write/absence takes precedence. The family
+                            // category alone never establishes that this key exists.
+                            alternatives.try_emplace(
+                                invoke.getResult(),
+                                result.childScalarContents.joined(PrimitiveAlternatives::forTag(
+                                    mlir::TypeID::get<ctjs::UndefinedAttr>())));
                         }
                         if (maps.lookup(invoke.getResult()) == invoke.getResult()) {
                             auto & child = mapStates[invoke.getResult()];

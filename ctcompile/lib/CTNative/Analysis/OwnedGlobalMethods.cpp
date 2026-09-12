@@ -100,6 +100,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
+                         !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
                          edge.capturedMap->childEntries != capture->childEntries ||
                          edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
@@ -159,7 +160,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
 
     llvm::DenseSet<mlir::Operation *> childMaps;
     if (capture && (!capture->childMaps.empty() || !capture->returnedChildMaps.empty() ||
-                    !capture->childEntries.empty() || capture->childMapContents)) {
+                    !capture->childEntries.empty() || capture->childMapContents ||
+                    capture->childScalarContents.known)) {
         mlir::DominanceInfo dominance(module);
         llvm::DenseSet<mlir::Value> outers, children, constructedChildren, returnedChildren;
         llvm::DenseMap<mlir::Value, ctjs::ConstructOp> childOrigins;
@@ -217,6 +219,31 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 }
             }
         }
+        const auto scalar = [&](mlir::Value value) -> PrimitiveAlternatives {
+            if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+                return PrimitiveAlternatives::literal(constant.getValue()).categories();
+            }
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+            if (!argument) { return {}; }
+            for (const auto & method : capture->parameters) {
+                if (!spend()) { return {}; }
+                auto function = method.function;
+                auto & block = function.getBody().front();
+                const auto first = block.getNumArguments() - method.alternatives.size();
+                if (argument.getOwner() == &block && argument.getArgNumber() >= first) {
+                    return method.alternatives[argument.getArgNumber() - first].categories();
+                }
+            }
+            return {};
+        };
+        PrimitiveAlternatives scalarContents;
+        bool childWrite = false, childPublication = false;
+        if (capture->childScalarContents.known &&
+            (!capture->childMapContents || !capture->childScalarContents.tag() ||
+             !(capture->childScalarContents == capture->childScalarContents.categories()))) {
+            reject("owned child contents lack a complete homogeneous scalar category");
+            return;
+        }
         // These sets distinguish owning roles, not runtime identities. A
         // present outer get can name a child from an earlier invocation. Only
         // fresh constructors and their fluent aliases establish the universal
@@ -252,6 +279,19 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                            "census");
                     return;
                 }
+                if (capture->childScalarContents.known) {
+                    if (outers.contains(call.getReceiver())) {
+                        childPublication = true;
+                    } else {
+                        const auto payload = scalar(call.getArgs()[1]);
+                        if (!payload.tag()) {
+                            reject("owned child scalar contents have an unproved write");
+                            return;
+                        }
+                        scalarContents = childWrite ? scalarContents.joined(payload) : payload;
+                        childWrite = true;
+                    }
+                }
                 (outers.contains(call.getReceiver()) ? outers : children).insert(call.getResult());
                 if (constructedChildren.contains(call.getReceiver())) {
                     constructedChildren.insert(call.getResult());
@@ -265,6 +305,14 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 children.insert(call.getResult());
             }
         }
+        // A content category permits absence; deletion and clear preserve it.
+        // It supplies neither a required entry nor a returned-child identity.
+        if (capture->childScalarContents.known &&
+            (!childPublication || !childWrite ||
+             !(scalarContents == capture->childScalarContents))) {
+            reject("owned child scalar contents disagree with the complete write census");
+            return;
+        }
         if (!capture->childEntries.empty()) {
             if (!spend()) { return; }
             const auto & entry = capture->childEntries.front();
@@ -274,23 +322,6 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 reject("owned child invariant lacks its exact scalar key and category");
                 return;
             }
-            const auto scalar = [&](mlir::Value value) -> PrimitiveAlternatives {
-                if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
-                    return PrimitiveAlternatives::literal(constant.getValue()).categories();
-                }
-                auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-                if (!argument) { return {}; }
-                for (const auto & method : capture->parameters) {
-                    if (!spend()) { return {}; }
-                    auto function = method.function;
-                    auto & block = function.getBody().front();
-                    const auto first = block.getNumArguments() - method.alternatives.size();
-                    if (argument.getOwner() == &block && argument.getArgNumber() >= first) {
-                        return method.alternatives[argument.getArgNumber() - first].categories();
-                    }
-                }
-                return {};
-            };
             // Recheck the complete mutation census and initialization order.
             // Returned owners establish no seed or allocation identity here.
             llvm::DenseMap<mlir::Value, ctjs::CallOp> seeds;
