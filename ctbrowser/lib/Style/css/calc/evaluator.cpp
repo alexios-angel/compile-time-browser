@@ -413,8 +413,15 @@ private:
         }
         case token_type::percentage: {
             ++at_;
-            saw_percent_ = true;
             term out;
+            // WITH A BASIS IT IS A LENGTH, and every non-linear function that
+            // could not be applied to `10%` applies to `7.5px`.
+            if (basis_ == basis::against_context && ctx_.percent_basis) {
+                out.set_type(numeric_type::length);
+                out.value = tok.number / 100.0 * static_cast<double>(*ctx_.percent_basis);
+                return out;
+            }
+            saw_percent_ = true;
             // A percentage has no type of its own until the property says what it
             // is a percentage OF, and every property this engine resolves one
             // for takes a length. So it travels as a length carrying an

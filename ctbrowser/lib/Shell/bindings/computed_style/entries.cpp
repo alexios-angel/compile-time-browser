@@ -118,6 +118,7 @@ struct probe {
     float basis = 0;        // the containing block's content width
     float basis_height = 0; // and its content height, for a relative inset
     float font_size = 16;
+    float root_font_size = 16; // the <html> element's, for a `rem` folded here
     // Is this element a FLEX ITEM? A fact about its parent rather than about it,
     // and the two properties whose reported value depends on it - `min-width`
     // and `min-height` - are answered nowhere else, so it is gathered with the
@@ -215,6 +216,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
 
         at.basis = static_cast<float>(viewport_width_);
         at.basis_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+        // The ROOT ELEMENT's font size, for a `rem` folded at used-value time:
+        // the chain ends at the document, and the element before it is <html>.
+        if (at.chain.size() >= 2) {
+            const layout::box_node * root_box = box_for(boxes_, at.chain[at.chain.size() - 2]);
+            if (root_box != nullptr) { at.root_font_size = root_box->font_size; }
+        }
         if (at.chain.size() >= 2) {
             const node_id parent = at.chain[1];
             const layout::box_node * up_box = box_for(boxes_, parent);
@@ -594,6 +601,29 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             // `10%` rather than as a share of a containing block it does not
             // have. Same sentence, same rule, as `width` above.
             if (!at.has_box) { return computed_length(text); }
+            // A MATH FUNCTION THE CASCADE COULD NOT FOLD is folded here, against
+            // the containing block: this is the used value, and the used value
+            // is where `round(10%, 1px)` finally has a basis. A percentage in a
+            // min or max survives as one below and never comes this way.
+            if (style::css::may_have_math(text) && !is_min_or_max_property(property)) {
+                style::css::length_context ctx;
+                ctx.font_size = at.font_size;
+                ctx.root_font_size = at.root_font_size;
+                ctx.viewport_width = static_cast<float>(viewport_width_);
+                ctx.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+                ctx.percent_basis = at.basis;
+                const style::css::math_answer used = style::css::evaluate_math(text, ctx);
+                if (used.outcome == style::css::math_outcome::resolved &&
+                    used.value.type == style::css::numeric_type::length &&
+                    !used.value.has_percent) {
+                    // The same bound the cascade's fold applies (calc/fold.cpp):
+                    // an infinity lands on it and a NaN on zero.
+                    double px = used.value.px;
+                    if (std::isnan(px)) { px = 0; }
+                    if (std::isinf(px)) { px = std::copysign(33554432.0, px); }
+                    return px_text(static_cast<float>(px));
+                }
+            }
             const layout::length len = layout::parse_length(text);
             if (len.is_auto()) { return "auto"; }
             // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the

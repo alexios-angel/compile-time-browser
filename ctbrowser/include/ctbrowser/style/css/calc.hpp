@@ -39,6 +39,14 @@ struct length_context {
     // but the cascade's, and leaves both functions unresolved.
     std::uint32_t sibling_index = 0;
     std::uint32_t sibling_count = 0;
+    // WHAT A PERCENTAGE IS A PERCENTAGE OF, when the caller has it: the
+    // containing block's width, at USED-value time. The cascade never sets it -
+    // a computed value keeps `calc(50% + 12px)` - and getComputedStyle sets it
+    // for a margin or a padding, whose resolved value CSSOM says is the used
+    // one: `round(10%, 1px)` against a 75px block is `8px`, and no linear sum
+    // can say so before the basis exists (round-mod-rem-computed,
+    // signs-abs-computed, hypot-pow-sqrt-computed).
+    std::optional<float> percent_basis;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
