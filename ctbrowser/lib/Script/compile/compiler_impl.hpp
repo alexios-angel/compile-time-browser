@@ -132,6 +132,17 @@ public:
     // How many class bodies are open: everything inside one is strict code
     // (15.7.1 note), whatever the surrounding script says.
     std::size_t class_body_depth_ = 0;
+    // THE PRIVATE NAMES IN SCOPE (15.7.1 PrivateBoundIdentifiers): one entry
+    // per open class body, the names it declares and the class's own number.
+    // A reference resolves to the innermost body declaring it, so `#x` in
+    // two classes - nested or not - is two keys, `@#x:1` and `@#x:2`, and an
+    // inner class's `#x` never reads an outer instance's. See member_operand.
+    struct private_scope {
+        std::vector<std::string_view> names;
+        std::size_t klass = 0;
+    };
+    std::vector<private_scope> private_scopes_;
+    std::size_t private_classes_ = 0;
     // Whether `body` (a block or a program) opens with a "use strict"
     // directive (11.2.1): a leading expression statement that is exactly
     // that string literal, before any other statement.
@@ -559,11 +570,20 @@ public:
     // The seam every property-name operand goes through.
     [[nodiscard]] std::uint16_t name_operand(std::string text);
     // The operand for a MEMBER name as the parser spelled it: `#x` becomes the
-    // private key `@#x` (see private_key_prefix), anything else is itself.
+    // private key `@#x:N` of the innermost class declaring it (see
+    // private_key_prefix and private_scopes_) - `@#x` alone when none does,
+    // which is an early error the checker owns - anything else is itself.
     [[nodiscard]] std::uint16_t member_operand(std::string_view text) {
-        return name_operand(text.starts_with('#')
-                                ? std::string{private_key_prefix} + std::string{text}
-                                : std::string{text});
+        if (!text.starts_with('#')) { return name_operand(std::string{text}); }
+        std::string key = std::string{private_key_prefix} + std::string{text};
+        for (std::size_t i = private_scopes_.size(); i-- > 0;) {
+            const private_scope & scope = private_scopes_[i];
+            if (std::find(scope.names.begin(), scope.names.end(), text) != scope.names.end()) {
+                key += ':' + std::to_string(scope.klass);
+                break;
+            }
+        }
+        return name_operand(std::move(key));
     }
 
     // Called where a frame's size is finally written, because that is the only

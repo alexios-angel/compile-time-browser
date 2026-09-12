@@ -320,6 +320,18 @@ caller to hand a promise to) - and when what it awaits is a PENDING promise
 it drains the microtask queue first, because with every inner await a job,
 `return await g()` for an async `g` is pending until those jobs run.
 
+### Private names are keys per class, and a read is a brand check (since 2026-09-12)
+
+`#x` compiles to the property key `@#x:N`, N numbering the class body that
+declares it (`compiler_impl::private_scopes_`), so an inner class's `#x` is
+never an outer instance's and two classes' `#x` never alias. `lookup_property`
+treats any `@#` key as 7.3.31 PrivateGet: an object the class did not
+initialise - or any proxy - is the TypeError "Cannot read private member #x
+from an object whose class did not declare it". A WRITE is not checked yet:
+`this.#x = v` on a foreign object creates the element instead of throwing,
+because the field initialiser still defines through `set_prop` and a checked
+store would need a define native there. `#x in obj` is not parsed.
+
 ### Strict mode, the part that changes what runs (since 2026-09-12)
 
 `function_proto::is_strict` is set by a `"use strict"` directive, inherited by

@@ -1210,6 +1210,8 @@ public:
     // JavaScript however many methods a primitive resolves. `delete` on
     // anything that is not an object is a silent no-op.
     [[nodiscard]] bool has_property(value target, value key);
+    // The same walk for a name already a string - no key object made.
+    [[nodiscard]] bool has_property(value target, const std::string & name);
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);
 

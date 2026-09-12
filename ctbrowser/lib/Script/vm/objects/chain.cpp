@@ -200,6 +200,11 @@ bool context::has_property(value target, value key) {
         }
         return !lookup_property(p->target, to_string(key)).is_undefined();
     }
+    return has_property(target, to_string(key));
+}
+
+bool context::has_property(value target, const std::string & name) {
+    if (target.is_kind(heap_kind::proxy)) { return has_property(target, string(name)); }
     // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
     //
     // `in` used to answer about own DATA properties of an object_object and
@@ -213,7 +218,6 @@ bool context::has_property(value target, value key) {
     // own_property is the shared [[GetOwnProperty]] over all four tables, so
     // this is that walked up the chain: the explicit prototype links first,
     // then the implicit tables property lookup falls back to.
-    const std::string name = to_string(key);
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
     value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
@@ -227,7 +231,7 @@ bool context::has_property(value target, value key) {
     // A prototype that is not a plain object (`foo.prototype = [1]`) answers
     // for the rest of the chain - see lookup_property.
     if (link.is_heap() && !link.is_object() && !link.is_string()) {
-        return has_property(link, key);
+        return has_property(link, name);
     }
     // An explicit null [[Prototype]] (object_object::prototype) ends the chain
     // without the implicit Object.prototype.

@@ -57,9 +57,31 @@ void test_class_fields_are_per_instance() {
 // A PRIVATE NAME IS A DISTINCT NAME. The `#` used to be skipped as an unknown
 // byte, so `this.#count` became `this.count`: a private field silently aliased
 // a public one, and every later stage agreed with the wrong reading. p5.js
-// declares 174 of them. Real brand-check privacy is not modelled - what is
-// fixed is that the two names are no longer the same name.
+// declares 174 of them. Since 2026-09-12 a READ is a brand check too (7.3.31):
+// the key is `@#n:N` for the Nth class body, so two classes' `#n` are two
+// names, and an object the class did not initialise is the TypeError.
 void test_private_names_are_distinct() {
+    expect_result("class A { #x = 'a'; static read(o) { return o.#x; } }"
+                  "class B { #x = 'b'; static read(o) { return o.#x; } }"
+                  "return A.read(new A()) + B.read(new B());",
+                  "ab");
+    expect_result("class A { #x = 'a'; static read(o) { return o.#x; } }"
+                  "class B { #x = 'b'; }"
+                  "try { return A.read(new B()); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("class A { #x = 'outer'; m() { class B { #x = 'inner'; read(o) { return o.#x; } }"
+                  " try { return new B().read(this); } catch (e) { return e.constructor.name; } } }"
+                  "return new A().m();",
+                  "TypeError");
+    expect_result("class C { #x; read() { return String(this.#x); } } return new C().read();",
+                  "undefined");
+    expect_result("class C { #m() { return 1; } static call(o) { return o.#m(); } }"
+                  "try { return C.call({}); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result(
+        "class C { #x = 1; static read(o) { return o.#x; } }"
+        "try { return C.read(new Proxy(new C(), {})); } catch (e) { return e.constructor.name; }",
+        "TypeError");
     expect_result("class C { #n = 1; n = 2; read() { return this.#n + ',' + this.n; } } "
                   "return new C().read();",
                   "1,2");

@@ -100,6 +100,19 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     ++class_body_depth_; // everything in here is strict code (15.7.1)
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
     const std::span<const std::int32_t> members = kids(n);
+    // The body's private names, in scope for every member (a method may
+    // read a field declared below it) and gone when the body closes.
+    private_scopes_.push_back(private_scope{{}, ++private_classes_});
+    for (const std::int32_t member : members) {
+        const vp::node & m = at(member);
+        if ((m.d & 2) == 0 && m.text.starts_with('#')) {
+            private_scopes_.back().names.push_back(m.text);
+        }
+    }
+    const struct close_private_scope {
+        std::vector<private_scope> & scopes;
+        ~close_private_scope() { scopes.pop_back(); }
+    } closing{private_scopes_};
     const std::uint32_t mark = reg_mark();
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});

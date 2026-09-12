@@ -99,6 +99,22 @@ value context::lookup_index(value target, value key) {
 }
 
 value context::lookup_property(value target, const std::string & name) {
+    // A PRIVATE NAME IS A BRAND CHECK (7.3.31 PrivateGet): an object whose
+    // class did not add the element is the TypeError, not undefined - and a
+    // proxy never carries one, whatever its target does. Two byte compares
+    // on the hot path; the walk only for the `@#` keys the compiler spells.
+    if (is_private_key(name)) [[unlikely]] {
+        if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
+            !has_property(target, name)) {
+            const std::size_t colon = name.find(':');
+            throw_error(
+                "TypeError",
+                "Cannot read private member " +
+                    name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1) +
+                    " from an object whose class did not declare it");
+            return value::undefined();
+        }
+    }
     // A PROPERTY OF null OR undefined IS A TypeError (7.3.2 GetV -> ToObject),
     // not undefined. Until 2026-09-12 it was undefined, and docs/script.md
     // recorded why that hurt: a missing object surfaced one step later under
