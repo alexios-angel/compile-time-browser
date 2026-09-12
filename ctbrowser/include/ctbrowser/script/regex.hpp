@@ -577,12 +577,18 @@ inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::siz
 		}
 		return pos < s.size() && rx_fold(s[pos], st.p->icase) == rx_fold(pc.c, st.p->icase) &&
 		       k(pos + 1);
-	case rx_piece::any:
-		// A line terminator is not "any" unless `s` says so. \u2028 and \u2029
-		// are three bytes each here and are let through; \r and \n are the
-		// two that pages meet.
-		return pos < s.size() && (st.p->dotall || (s[pos] != '\n' && s[pos] != '\r')) &&
-		       k(pos + 1);
+	case rx_piece::any: {
+		// ONE CODE POINT, however many bytes: `"é".match(/./)[0]` is "é". A
+		// line terminator is not "any" unless `s` says so - \n, \r, and the
+		// three-byte U+2028 and U+2029.
+		if (pos >= s.size()) { return false; }
+		std::size_t width = 1;
+		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
+		if (!st.p->dotall && (cp == '\n' || cp == '\r' || cp == 0x2028u || cp == 0x2029u)) {
+			return false;
+		}
+		return k(pos + width);
+	}
 	case rx_piece::backref: {
 		// A group that has not captured matches EMPTY (22.2.2.7.2 step 3),
 		// and one that has must be repeated here, folded like a literal. A
@@ -746,6 +752,12 @@ struct rx_match {
 
 inline constexpr bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out) {
 	for (std::size_t start = from; start <= s.size(); ++start) {
+		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
+		// byte is not a character, and `[^x]` at such a position would
+		// "match" the tail of the very character the class excludes.
+		if (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {
+			continue;
+		}
 		rx_state st;
 		st.s = &s;
 		st.p = &p;
