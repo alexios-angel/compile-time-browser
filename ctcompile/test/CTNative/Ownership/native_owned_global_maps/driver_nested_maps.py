@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -10,7 +11,9 @@ from .driver_common import (
     CONSTANT_GLOBAL_NODE, boundary, check_budgets, check_call_preservation, comparable_provenance, contract,
     forge_leaf_evidence, host, methods, owned, source_calls,
 )
-from .harness_objects import instrument_leaf_objects
+from .harness_objects import (
+    instrument_leaf_objects, object_argument_cases, object_payload_lifetime_cpp,
+)
 
 
 def nested_map_cases():
@@ -213,7 +216,143 @@ var trace = host.slot.get('value');
         16, functions=6, admitted=True, retained=True, reused=True, separate=True, dynamic=True)
     rows['nested_map_previous_observed']['expected_trace'] = True
     rows['nested_map_dynamic_nullable_observed']['expected_trace'] = True
+    # Caller fields are a separate flat-Map boundary. No child-content or
+    # returned-object authority follows from these scalar-result methods.
+    payload = object_argument_cases()['object_argument_scalar_key_payload']['source'].replace(
+        'var key = {};', 'var key = {value: 64};').replace(
+        'var trace = host.slot.get(key);', 'var trace = host.slot.get(key) === 1 ? key.value : 0;')
+    variants = (
+        ('fields', payload, 10, 64, False, False),
+        ('alias_mutation', payload.replace('host.slot.get(key); host.slot.erase();',
+            'var alias = key; host.slot.get(key); alias.value = 65; host.slot.erase();').replace(
+            'host.slot.get(key) === 1 ? key.value : 0',
+            'host.slot.get(alias) === 1 && alias === key ? alias.value : 0'), 10, 65, False, True),
+        ('number_first', payload.replace('var key =', 'host.slot.get(7); var key ='),
+            11, 64, True, False),
+        ('number_last', payload + 'host.slot.get(7);\n', 11, 64, True, False),
+    )
+    for name, source, calls, expected, mixed, alias in variants:
+        # Preserve the first conditional-entry probes: the field access in
+        # their selected arm is outside the unconditional caller proof.
+        add('caller_payload_' + name, source, calls, functions=6)
+        rows['nested_map_caller_payload_' + name]['expected_trace'] = expected
+        source = source.replace(
+            'var trace = host.slot.get(alias) === 1 && alias === key ? alias.value : 0;',
+            'var traceCall = host.slot.get(alias) === 1; var traceIdentity = alias === key; '
+            'var trace = alias.value;').replace(
+            'var trace = host.slot.get(key) === 1 ? key.value : 0;',
+            'var traceCall = host.slot.get(key) === 1; var trace = key.value;')
+        add('caller_payload_' + name + '_observed', source, calls, functions=6, admitted=True)
+        rows['nested_map_caller_payload_' + name + '_observed'].update(
+            caller_payload=True, mixed=mixed, global_alias=alias, expected_trace=expected,
+            number_last=name == 'number_last',
+            observations={'traceCall': True, **({'traceIdentity': True} if alias else {})})
+    for name, source, calls, expected, functions in (
+        ('returned', payload.replace('return t.has(1) ? 1 : 0;', 'return e;'), 9, 0, 6),
+        ('method_field', payload.replace('return t.has(1) ? 1 : 0;', 'return e.value;'), 9, 0, 6),
+        ('cycle', payload.replace('host.slot.get(key); host.slot.erase();',
+            'key.self = key; host.slot.get(key); host.slot.erase();'), 10, 64, 6),
+        ('missing_field', payload.replace('{value: 64}', '{}'), 10, 'undefined', 6),
+        ('foreign_consumer', 'function consume(item) { return 0; }\n' + payload.replace(
+            'host.slot.get(key); host.slot.erase();',
+            'consume(key); host.slot.get(key); host.slot.erase();'), 11, 64, 7),
+        ('string_mixed', payload + "host.slot.get('other');\n", 11, 64, 6),
+    ):
+        add('caller_payload_' + name, source, calls, functions=functions)
+        rows['nested_map_caller_payload_' + name]['expected_trace'] = expected
     return rows
+
+
+def caller_payload_observer(source, row):
+    return source + '''
+(function() {
+    const get = host.slot.get, erase = host.slot.erase, clear = host.slot.clear;
+    host = {};
+    const original = Map.prototype.has;
+    let map;
+    Map.prototype.has = function(key) { map = this; return original.call(this, key); };
+    let ok = get(key) === 1 && key.value === INITIAL_FIELD;
+    Map.prototype.has = original;
+    let saved = map.get(1);
+    ok = ok && saved === key;
+    key.value = 73;
+    ok = ok && saved.value === 73 && erase() === 1 && map.size === 0;
+    key.value = 74;
+    ok = ok && saved.value === 74 && clear() === 0 && saved === key;
+    for (let i = 0; i < 128; ++i) {
+        const value = i % 2 === 0 ? -i : i + 0.5;
+        const item = {value}, alias = item, other = {value: value + 1};
+        ok = ok && get(item) === 1 && get(alias) === 1 && map.get(1) === item;
+        saved = map.get(1);
+        item.value = value + 2;
+        ok = ok && saved.value === value + 2 && get(other) === 1 && map.get(1) === other;
+        ok = ok && saved === item && saved !== other && saved.value === value + 2;
+        ok = ok && erase() === 1 && erase() === 0 && get(other) === 1 && clear() === 0;
+        ok = ok && map.size === 0 && other.value === value + 1 && saved.value === value + 2;
+        MIXED
+    }
+    trace = ok ? 1 : 0;
+})();
+'''.replace('INITIAL_FIELD', str(row['expected_trace'])).replace('MIXED', '''
+        ok = ok && get(value) === 1 && map.get(1) === value && erase() === 1 &&
+             map.size === 0 && saved.value === value + 2;''' if row['mixed'] else '')
+
+
+def caller_payload_lifetime_cpp(cpp, row):
+    changed = object_payload_lifetime_cpp(cpp, 'object_argument_scalar_key_payload')
+    changed = changed.replace('    auto owner = g_host;', '''    if (g_key->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||
+        g_key->field_76616c7565.value != INITIAL_FIELD) { return 311; }
+    auto owner = g_host;''').replace('INITIAL_FIELD', str(row['expected_trace']))
+    changed = changed.replace('        auto alias = first;', '''        first->field_76616c7565 = ctnative::nullable_scalar{static_cast<js_num>(call)};
+        auto alias = first;''').replace('        first.reset(); alias.reset();', '''        first->field_76616c7565 = ctnative::nullable_scalar{static_cast<js_num>(call) + 0.5};
+        if (map->at(js_num{1}).object->field_76616c7565.value != call + 0.5) { return 312; }
+        first.reset(); alias.reset();''')
+    changed = changed.replace('    auto last = std::make_shared<ctnative::identity_object>();', '''    auto retained = std::make_shared<ctnative::identity_object>();
+    retained->field_76616c7565 = ctnative::nullable_scalar{73.0};
+    std::weak_ptr retained_lifetime = retained;
+    if (get(retained) != 1) { return 313; }
+    auto saved = ctnative::map_get(map, js_num{1});
+    retained.reset();
+    if (erase() != 1 || !map->empty() || retained_lifetime.expired() ||
+        saved.object->field_76616c7565.value != 73) { return 314; }
+    saved.object->field_76616c7565 = ctnative::nullable_scalar{74.0};
+    if (clear() != 0 || saved.object->field_76616c7565.value != 74) { return 315; }
+    saved = {};
+    if (!retained_lifetime.expired()) { return 316; }
+    auto last = std::make_shared<ctnative::identity_object>();
+    last->field_76616c7565 = ctnative::nullable_scalar{91.0};''').replace(
+        '    map.reset();', '''    if (map->begin()->second.object->field_76616c7565.value != 91) { return 317; }
+    map.reset();''')
+    if row['global_alias']:
+        changed = changed.replace('g_key.reset();', 'g_key.reset(); g_alias.reset();')
+    if row['mixed']:
+        changed = changed.replace('std::function<js_num(Object)>',
+            'std::function<js_num(ctnative::object_value)>').replace(
+            'static_assert(!std::is_invocable_v<decltype(get), int>);',
+            'static_assert(std::is_invocable_v<decltype(get), Object>);\n'
+            '    static_assert(std::is_invocable_v<decltype(get), js_num>);').replace(
+            '    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||',
+            '    if (get(g_key) != 1) { return 318; }\n'
+            '    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||')
+        # The historical helper drops g_key before its Map observation.
+        changed = changed.replace('} g_key.reset();', '}', 1).replace(
+            '    if (clear() != 0) { return 265; }',
+            '    g_key.reset();\n    if (clear() != 0) { return 265; }', 1)
+        changed = changed.replace('        if (!other_lifetime.expired() || !map->empty()) { return 259; }',
+            '''        if (!other_lifetime.expired() || !map->empty()) { return 259; }
+        const js_num number = call % 2 == 0 ? -call : call + 0.5;
+        if (get(number) != 1) { return 319; }
+        const auto scalar = ctnative::map_get(map, js_num{1});
+        if (scalar.object || scalar.scalar.tag != ctnative::nullable_scalar::kind::number ||
+            scalar.scalar.value != number || erase() != 1 || !map->empty()) { return 320; }''')
+        if row['number_last']:
+            changed = changed.replace('    if (get(g_key) != 1)', '''    const auto initial = ctnative::map_get(map, js_num{1});
+    if (initial.object || initial.scalar.tag != ctnative::nullable_scalar::kind::number ||
+        initial.scalar.value != 7) { return 321; }
+    if (get(g_key) != 1)''').replace('    if (g_key != ctn_test_objects[1].lock())',
+            '    if (g_host->slot->m_get(g_key) != 1) { return 322; }\n'
+            '    if (g_key != ctn_test_objects[1].lock())')
+    return changed
 
 
 def nested_map_observer(source, row):
@@ -322,6 +461,8 @@ def nested_map_observer(source, row):
 
 def nested_map_lifetime_cpp(cpp, row):
     # Reuse the existing weak allocation observer; generated ownership is unchanged.
+    if row.get('caller_payload'):
+        return caller_payload_lifetime_cpp(cpp, row)
     if row.get('nullable'):
         return nested_map_mutation_lifetime_cpp(cpp, row)
     changed = instrument_leaf_objects(cpp, allocations=0) + r'''
@@ -606,22 +747,25 @@ def check_nested_maps(args, node, reference, compilers, nm):
     cases = nested_map_cases()
     observations = mutations = 0
 
-    def observe(name, source, expected):
+    def observe(name, source, expected, extra=()):
         js = args.work / f'{name}-observed.js'
         js.write_text(source)
         result = host.run([str(reference), str(js)]) if reference else None
-        expected_text = str(expected).lower() if isinstance(expected, bool) else str(expected)
-        kind = ('boolean' if isinstance(expected, bool) else expected
-                if expected in ('null', 'undefined') else 'number')
-        types = '(' + ', '.join(f'{int(tag == kind)} {tag}' for tag in
+        values = {'trace': expected, **dict(extra)}
+        expected_text = ''.join(f'{key}={str(value).lower()}\n'
+                                for key, value in sorted(values.items()))
+        kinds = [('boolean' if isinstance(value, bool) else value
+                  if value in ('null', 'undefined') else 'number') for value in values.values()]
+        types = '(' + ', '.join(f'{kinds.count(tag)} {tag}' for tag in
                                ('number', 'boolean', 'string', 'null', 'undefined')) + ')'
-        if (host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != f'trace={expected_text}\n'
-                or result and (result.stdout != f'trace={expected_text}\n' or types not in result.stderr)):
+        if (host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))]).stdout != expected_text
+                or result and (result.stdout != expected_text or types not in result.stderr)):
             raise RuntimeError(f'{name}: typed source observation changed')
 
     for name, row in cases.items():
-        observe(name, row['source'], row['expected_trace'])
-        observations += 1
+        extra = row.get('observations', {})
+        observe(name, row['source'], row['expected_trace'], extra)
+        observations += 1 + len(extra)
         if 'poison' in row:
             mutation, expected = row['poison']
             assert row['source'].count(mutation) == 1, (name, mutation)
@@ -641,9 +785,10 @@ def check_nested_maps(args, node, reference, compilers, nm):
             mutations += 1
         if not row['admitted'] and not row['previous'] and not row['dynamic']:
             continue
-        observed = nested_map_observer(row['source'], row)
-        observe(name + '-future', observed, 1)
-        observations += 1
+        observer = caller_payload_observer if row.get('caller_payload') else nested_map_observer
+        observed = observer(row['source'], row)
+        observe(name + '-future', observed, 1, extra)
+        observations += 1 + len(extra)
         readback = "again.get('value')" if row['repeated'] else "saved.get('value')"
         replacements = [("t.get(1).get('value')" if row['separate'] else readback, '41'),
                         (".set('value', value);", ".set('value', 0);")]
@@ -676,10 +821,17 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 ('t.has(1) || t.set(1, new Map);', 't.set(1, new Map);'),
                 ('saved.delete(key);', 'saved.has(key);'),
                 ('if (!saved.size) { t.delete(1); }', '')]
+        if row.get('caller_payload'):
+            replacements = [('t.set(1, e);', 't.set(1, {});'),
+                ('t.set(1, e);', 't.set(1, 1);'), ('t.set(1, e);', 't.has(1);'),
+                ('t.delete(1)', 't.has(1)'), ('clear() { t.clear();', 'clear() { t.size;'),
+                ('{value: 64}', '{value: 0}')]
+            if row['global_alias']:
+                replacements[-1] = ('alias.value = 65;', 'alias.value = 0;')
         for index, (old, replacement) in enumerate(replacements):
             assert row['source'].count(old) == 1, (name, old)
             blinded = args.work / f'{name}-blinded-{index}.js'
-            blinded.write_text(nested_map_observer(row['source'].replace(old, replacement), row))
+            blinded.write_text(observer(row['source'].replace(old, replacement), row))
             result = subprocess.run([node, '-e', boundary.NODE, str(blinded)],
                                     capture_output=True, text=True, timeout=30)
             if not result.returncode and result.stdout == 'trace=1\n':
@@ -688,10 +840,18 @@ def check_nested_maps(args, node, reference, compilers, nm):
 
     def check_case(item):
         name, row = item
+        def observed_contract(ir, label):
+            config = contract(args, ir, label)
+            if row.get('observations'):
+                value = json.loads(config.read_text())
+                value['observations'] = sorted(['trace', *row['observations']])
+                config.write_text(json.dumps(value, indent=2) + '\n')
+            return config
+
         _, ir, functions = boundary.prepare(args, name, row['source'])
         assert functions == row['functions']
         nested_map_census(args, ir, name, row)
-        config = contract(args, ir, name)
+        config = observed_contract(ir, name)
         for policy, options in (('default', ''), ('disabled', 'optimize=false')):
             label = name + '-' + policy
             if not row['admitted']:
@@ -714,7 +874,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
             stale = methods.refused(args, forged, label + '-stale', config,
                 options=options, reason='fingerprint mismatch', admitted=0)
             nested_map_preserved(forged.read_text(), stale.read_text(), label)
-            fresh = contract(args, forged, label + '-forged')
+            fresh = observed_contract(forged, label + '-forged')
             checked = owned.lower(args, forged, label + '-fresh', fresh,
                                   options=options, cleanup=row['admitted'])
             methods.census(checked, functions, label, admitted=functions if row['admitted'] else 0)
@@ -728,13 +888,16 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 raise RuntimeError(f'{label}: forged leaf/presence facts changed nested C++')
         if not row['admitted']:
             return
-        expected_text = str(row['expected_trace']).lower()
-        expected_output = f'trace={expected_text}\n' * 2
+        values = {'trace': row['expected_trace'], **row.get('observations', {})}
+        expected_output = ''.join(f'{key}={str(value).lower()}\n'
+                                  for key, value in sorted(values.items())) * 2
         deduced = args.work / f'{name}.deduced.mlir'
         host.run([args.opt, str(default), '--ctnative-print-deduced', '-o', str(deduced)])
         for mode, native in (('explicit', default), ('deduced', deduced)):
             cpp = host.run([args.translate, '--mlir-to-cpp', str(native)]).stdout
             signature = ('std::function<js_num(js_num, std::string)>' if row['dynamic'] else
+                         'std::function<js_num(ctnative::object_value)>' if row.get('caller_payload') and row['mixed'] else
+                         'std::function<js_num(std::shared_ptr<ctnative::identity_object>)>' if row.get('caller_payload') else
                          'std::function<ctnative::nullable_scalar()>' if row.get('nullable') else
                          'std::function<ctnative::nullable_scalar(js_num)>' if row['previous'] or row.get('alias') else
                          'std::function<js_num(js_num)>')
@@ -764,7 +927,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                     'nested_map_conditional_initialize', 'nested_map_cross_invocation',
                     'nested_map_repeated_lookup', 'nested_map_cross_inverted_guard',
                     'nested_map_conditional_unknown_contents', 'nested_map_dynamic_nullable',
-                    'nested_map_previous_observed', 'nested_map_dynamic_nullable_observed'}:
+                    'nested_map_previous_observed', 'nested_map_dynamic_nullable_observed',
+                    'nested_map_caller_payload_fields_observed', 'nested_map_caller_payload_number_last_observed'}:
             check_budgets(args, ir, config, name, functions=functions)
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
