@@ -862,32 +862,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     if (saved != nullptr) {
                         saved->awaiting = true;
                         saved->running = false;
-                        saved->handlers.clear();
                     } else {
                         saved = allocate<coroutine_object>();
                     }
-                    saved->proto = vm_frame->proto;
-                    saved->ip = vm_frame->ip;
-                    saved->await_reg = in.a;
-                    saved->argc = vm_frame->argc;
-                    saved->closure = vm_frame->closure;
-                    saved->receiver = vm_frame->receiver;
-                    saved->constructing = vm_frame->constructing;
-                    saved->promise = promise;
-                    saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
-                                         registers_.end());
-                    // This (*vm_frame)'s handlers travel with it, with reg_top made
-                    // RELATIVE - the (*vm_frame) comes back somewhere else in the stack,
-                    // and an absolute mark would point at whatever is there then.
-                    for (std::size_t i = vm_frame->handler_base; i < handlers_.size(); ++i) {
-                        handler moved = handlers_[i];
-                        moved.reg_top -= base;
-                        saved->handlers.push_back(moved);
-                    }
-                    handlers_.resize(vm_frame->handler_base);
                     const std::uint16_t slot = vm_frame->result_reg;
-                    registers_.resize(base);
-                    frames_.pop_back();
+                    suspend_frame(saved, in.a);
                     if (is_pending_promise(awaited)) {
                         attach_resume(awaited, value::object(saved));
                     } else {
@@ -931,10 +910,10 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(yield_value) do {
             {
-                // SUSPEND INTO THE GENERATOR AND HAND THE VALUE OUT. Everything
-                // here is the (*vm_frame)-lifting `await` does a few cases up; what
-                // differs is only who puts it back, and that a value goes to the
-                // caller of `.next()` rather than to a promise.
+                // SUSPEND INTO THE GENERATOR AND HAND THE VALUE OUT. The same
+                // frame-lifting `await` does a few cases up; what differs is
+                // only who puts it back, and that a value goes to the caller
+                // of `.next()` rather than to a promise.
                 coroutine_object * saved = vm_frame->generator;
                 if (saved == nullptr) {
                     // The compiler refuses `yield` outside a generator, so this is
@@ -944,23 +923,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     break;
                 }
                 const value produced = reg(in.b);
-                saved->ip = vm_frame->ip;
-                saved->await_reg = in.a;
-                saved->receiver = vm_frame->receiver;
-                saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base),
-                                     registers_.end());
-                // This (*vm_frame)'s handlers travel with it, with reg_top made RELATIVE:
-                // the (*vm_frame) comes back somewhere else in the register stack, and an
-                // absolute mark would point at whatever is there then.
-                saved->handlers.clear();
-                for (std::size_t i = vm_frame->handler_base; i < handlers_.size(); ++i) {
-                    handler moved = handlers_[i];
-                    moved.reg_top -= base;
-                    saved->handlers.push_back(moved);
-                }
-                handlers_.resize(vm_frame->handler_base);
-                registers_.resize(base);
-                frames_.pop_back();
+                suspend_frame(saved, in.a);
                 yielded_ = true;
                 if (frames_.size() <= stop_depth) { return produced; }
                 // A generator body is only ever entered by generator_resume, which

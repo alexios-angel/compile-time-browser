@@ -1616,6 +1616,16 @@ public:
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
+    // LIFT THE TOP FRAME INTO A COROUTINE (await and yield are the same
+    // suspension): its register window is copied out, its handlers travel
+    // with it with reg_top made RELATIVE - it comes back somewhere else in
+    // the stack - and the frame is popped. `await_reg` is where the resuming
+    // value lands.
+    void suspend_frame(coroutine_object * saved, std::uint16_t await_reg);
+    // The mirror: the window back on the register stack with slack above it,
+    // a frame rebuilt from the coroutine and pushed, the handlers absolute
+    // again. Returns the frame's base.
+    std::size_t restore_frame(coroutine_object * saved);
 
     // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
     // yields or finishes, and answers the `{value, done}` record the iterator

@@ -318,33 +318,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     }
     const std::size_t fence_mark = handlers_.size();
 
-    const std::size_t base = registers_.size();
-    registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
-    // Slack above the window, for the same reason a call reserves it: an
-    // expression allocates scratch registers past the frame's declared size.
-    registers_.resize(registers_.size() + 8u, value::undefined());
-
-    call_frame frame;
-    frame.proto = saved->proto;
-    frame.ip = saved->ip;
-    frame.base = base;
-    frame.result_reg = 0;
-    frame.argc = saved->argc;
-    frame.closure = saved->closure;
-    frame.receiver = saved->receiver;
-    frame.handler_base = handlers_.size();
-    frame.generator = saved;
-    // An async generator's frame settles the REQUEST'S promise, so an await
-    // inside it parks on that one rather than minting another.
-    if (saved->async_gen) { frame.async_promise = saved->promise; }
-    frames_.push_back(frame);
-    const std::size_t index = frames_.size() - 1;
-    for (handler restored : saved->handlers) {
-        restored.frame = index;
-        restored.reg_top += base; // relative while saved; absolute again here
-        handlers_.push_back(restored);
-    }
-    saved->handlers.clear();
+    const std::size_t base = restore_frame(saved);
 
     // WHERE THE VALUE PASSED TO `.next(v)` LANDS: the destination register of
     // the `yield` that suspended, which is what makes `var x = yield y` see it.
@@ -510,10 +484,30 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
     promise_settler_(*this, promise, record, false);
 }
 
-void context::resume(value coroutine, value with, bool rejected) {
-    if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
-    auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
+    const call_frame & frame = frames_.back();
+    const std::size_t base = frame.base;
+    saved->proto = frame.proto;
+    saved->ip = frame.ip;
+    saved->await_reg = await_reg;
+    saved->argc = frame.argc;
+    saved->closure = frame.closure;
+    saved->receiver = frame.receiver;
+    saved->constructing = frame.constructing;
+    saved->promise = frame.async_promise;
+    saved->window.assign(registers_.begin() + static_cast<std::ptrdiff_t>(base), registers_.end());
+    saved->handlers.clear();
+    for (std::size_t i = frame.handler_base; i < handlers_.size(); ++i) {
+        handler moved = handlers_[i];
+        moved.reg_top -= base;
+        saved->handlers.push_back(moved);
+    }
+    handlers_.resize(frame.handler_base);
+    registers_.resize(base);
+    frames_.pop_back();
+}
 
+std::size_t context::restore_frame(coroutine_object * saved) {
     const std::size_t base = registers_.size();
     registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
     // Slack above the window, for the same reason a call reserves it: an
@@ -530,20 +524,32 @@ void context::resume(value coroutine, value with, bool rejected) {
     frame.receiver = saved->receiver;
     frame.constructing = saved->constructing;
     frame.handler_base = handlers_.size();
+    // A generator's frame keeps its coroutine, and an async generator's
+    // settles the REQUEST'S promise, so an await inside it parks on that
+    // one rather than minting another; a sync generator's is undefined.
+    frame.generator = saved->generator ? saved : nullptr;
     frame.async_promise = saved->promise;
-    // An async generator comes back as a GENERATOR frame, so its next `yield`
-    // finds the coroutine to park in.
-    if (saved->generator) {
-        frame.generator = saved;
-        saved->awaiting = false;
-        saved->running = true;
-    }
     frames_.push_back(frame);
     const std::size_t index = frames_.size() - 1;
     for (handler restored : saved->handlers) {
         restored.frame = index;
         restored.reg_top += base; // relative while saved; absolute again here
         handlers_.push_back(restored);
+    }
+    saved->handlers.clear();
+    return base;
+}
+
+void context::resume(value coroutine, value with, bool rejected) {
+    if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
+    auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+
+    const std::size_t base = restore_frame(saved);
+    // An async generator comes back as a GENERATOR frame, so its next `yield`
+    // finds the coroutine to park in.
+    if (saved->generator) {
+        saved->awaiting = false;
+        saved->running = true;
     }
 
     registers_[base + saved->await_reg] = with;

@@ -46,13 +46,13 @@ CT_FRAME_END(
     "and is cleared only after the landing write, so it is a root here; "
     "compiled allocations are folded as UNCHECKED")
 CT_FRAME_END(/* name */ await,
-             /* where */ "run_loop.cpp VM_CASE(await_value): frames_.pop_back() (run_loop.cpp:900)",
+             /* where */ "run_loop.cpp VM_CASE(await_value): suspend_frame() (call/coroutines.cpp), frames_.pop_back()",
              /* hooked */ 0,
              /* note */
              "the frame's window is copied into a coroutine_object first and is traced from "
              "the heap; its records stay pending and are reported UNCHECKED")
 CT_FRAME_END(/* name */ yield,
-             /* where */ "run_loop.cpp VM_CASE(yield_value): frames_.pop_back() (run_loop.cpp:956)",
+             /* where */ "run_loop.cpp VM_CASE(yield_value): suspend_frame() (call/coroutines.cpp), frames_.pop_back()",
              /* hooked */ 0,
              /* note */ "the window is copied into the generator's coroutine_object; same as await")
 CT_FRAME_END(/* name */ execute_clear,
