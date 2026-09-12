@@ -671,16 +671,20 @@ CT_AOT_HELPER(/* name */ ct_aot_upvalue_cell, /* ret */ uint64_t,
  * exactly this, 'Using anything else here is a lookup that silently never
  * matches' - a hash baked by a different Boost version is not a wrong
  * answer, it is a global that is permanently undefined.
- * DELEGATES TO: context::globals_ (string_flat_map<value>, vm.hpp:1043;
- *   containers.hpp:79) - run_loop.cpp:225-231.
- * FAILURE: None, and the absence is load-bearing: an undeclared global does
- *   NOT throw ReferenceError, it silently yields undefined. `foo` and
- *   `typeof foo` are the same instruction, and feature detection written
- *   against a ReferenceError gets undefined instead. A spec-conformant
- *   backend that emitted a throw would break pages the interpreter runs. */
-CT_AOT_HELPER(/* name */ ct_aot_global_get, /* ret */ uint64_t,
-              /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len),
-              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+ * DELEGATES TO: context::global_or_named (vm.hpp) - the binding table, then
+ *   the embedder's undeclared-name hook, then the global object's own and
+ *   inherited properties.
+ * FAILURE: ReferenceError, catchable, when the name resolves to none of those
+ *   - "x is not defined". Status and out-slot like every throwing row; *out is
+ *   written ONLY on CT_AOT_OK. `typeof x` never reaches this helper: the
+ *   compiler reads it as get_prop on globalThis so it stays "undefined".
+ *   may_reenter and is_safepoint because the global object is a proxy whose
+ *   `has`/`get` traps run and the hook may allocate a wrapper. (Until
+ *   2026-09-12 an undeclared name read `undefined` here; pages that
+ *   feature-detect with `try { x } catch (e) {}` were wrong.) */
+CT_AOT_HELPER(/* name */ ct_aot_global_get, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len, uint64_t *out),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
 CT_AOT_COVERS(/* helper */ ct_aot_global_get, /* opcode */ get_global)
 
 /* Cannot share with the read: different direction, different arity. Two

@@ -307,6 +307,19 @@ TypeError now, in `lookup_property`/`store_property` so both tiers agree:
 "Cannot read properties of undefined (reading 'x')". `?.` is the way to ask
 without one.
 
+### Reading an unresolvable name throws (since 2026-09-12)
+
+A bare identifier that is neither a local, a global binding nor a property of
+the global object read `undefined`; it is a ReferenceError now, "x is not
+defined", catchable, in `context::global_or_named` so both tiers agree (the
+`get_global` row and `ct_aot_global_get` became may_throw with a status and an
+out-slot in the same change). The global object is the global environment's
+object record, so an inherited name resolves - a bare `toString` is
+`Object.prototype.toString`, as in every browser - and the shell's named-access
+hook (an element with an `id`) is still asked before the throw. `typeof x` is
+the one read that stays silent: the compiler lowers it to a property read on
+`globalThis`, no new opcode. It was 1,180 files of test262 by itself.
+
 ### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
 
 Callgrind on a whole page render: `ctjs::vp::lex` 23.7%, the compiler's own

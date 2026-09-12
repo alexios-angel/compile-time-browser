@@ -347,20 +347,32 @@ public:
 
     // WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer. HTML
     // 7.3.3: an element with an `id` is reachable as a bare identifier, and
-    // web-platform-tests leans on it constantly.
-    //
-    // A HOOK RATHER THAN A LOOK AT `window`, deliberately. Going through the
-    // window proxy would also inherit Object.prototype, so a bare `toString`
-    // would stop being undefined. The shell installs a function that answers
-    // named elements and nothing else. Consulted ONLY when the name is not a
-    // global, so the declared path is one map lookup.
+    // web-platform-tests leans on it constantly. The shell installs a
+    // function that answers named elements; it is consulted ONLY when the
+    // name is not a global, so the declared path is one map lookup.
     void set_undeclared_name_hook(std::function<value(std::string_view)> hook) {
         undeclared_name_ = std::move(hook);
     }
+    // GetValue OF AN IDENTIFIER REFERENCE (6.2.5.5, 9.1.1.4.6). The global
+    // environment's object record IS the global object, so a name that is
+    // not in the binding table is read off `globalThis` - own, inherited
+    // (`toString` resolves to Object.prototype's) or what the embedder's hook
+    // answers - and a name that is nowhere is an unresolvable reference:
+    // ReferenceError, catchable, exactly what feature detection written as
+    // `try { x } catch (e) {}` expects. `typeof x` never comes here; the
+    // compiler reads it as a property of globalThis so it stays silent.
     [[nodiscard]] value global_or_named(std::string_view name) {
         const auto it = globals_.find(name);
         if (it != globals_.end()) { return it->second; }
-        return undeclared_name_ ? undeclared_name_(name) : value::undefined();
+        if (undeclared_name_) {
+            const value named = undeclared_name_(name);
+            if (!named.is_undefined()) { return named; }
+        }
+        if (global_this_.is_object() && has_property(global_this_, string(std::string{name}))) {
+            return lookup_property(global_this_, std::string{name});
+        }
+        throw_error("ReferenceError", std::string{name} + " is not defined");
+        return value::undefined();
     }
 
     // The realm's script receiver is independent of the writable globalThis

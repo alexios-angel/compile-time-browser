@@ -750,9 +750,8 @@ void test_each_classic_script_is_its_own_program() {
 
     // WHAT WAS LOST, and it is what the specification says should be lost: a
     // call in an earlier script to a function declared in a later one. It
-    // returned 42 when the page was one program. Chrome makes it a
-    // ReferenceError; this engine reports a TypeError on calling an undefined
-    // global, which is a separate difference that predates this change.
+    // returned 42 when the page was one program; it is a ReferenceError
+    // now, as in Chrome.
     check(said("<html><body>"
                "<script>try { alert('got ' + f()); } catch (e) { alert('threw'); }</script>"
                "<script>function f() { return 42; }</script></body></html>") == "threw;",

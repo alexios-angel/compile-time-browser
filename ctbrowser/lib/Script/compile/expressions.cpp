@@ -327,6 +327,22 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
     }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t operand = alloc_reg();
+    // `typeof x` ON AN UNRESOLVABLE NAME IS "undefined", NOT A THROW (13.5.3
+    // step 2): the one place an unbound identifier is not an error, and the
+    // guard every bundle is wrapped in. A bare name that resolves to nothing
+    // local reads as a PROPERTY of the global object here, which is the same
+    // value when the name exists and undefined instead of a ReferenceError
+    // when it does not - one get_prop, no new opcode.
+    const vp::node & arg = at(n.a);
+    if (n.text == "typeof" && arg.kind == vp::nk::ident && !find_local_entry(fn(), arg.text) &&
+        resolve_upvalue(frames_.size() - 1, arg.text) < 0) {
+        proto().emit(instruction::with_bx(op::get_global, operand, name_operand("globalThis")));
+        proto().emit(
+            instruction{op::get_prop, operand, operand, name_operand(std::string{arg.text})});
+        proto().emit(instruction{op::type_of, dst, operand});
+        release_to(mark);
+        return;
+    }
     compile_expr(n.a, operand);
     if (n.text == "-") {
         proto().emit(instruction{op::negate, dst, operand});

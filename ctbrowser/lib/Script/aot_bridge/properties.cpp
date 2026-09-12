@@ -254,19 +254,19 @@ void aot_bridge::cell_set(std::uint64_t cell, std::uint64_t v) {
     }
 }
 
-// ct_aot_global_get. THE ABSENCE IS LOAD-BEARING and the row says so: an
-// undeclared global does NOT throw a ReferenceError in this runtime, it
-// reads `undefined` - or whatever the embedder's undeclared-name hook says,
-// which is how an element with an `id` answers to a bare identifier.
-// `context::global_or_named` is exactly what VM_CASE(get_global) runs, so
-// the two tiers cannot drift.
-//
-// THE CONTEXT IS NO LONGER const, because the hook may allocate a wrapper.
-// It still touches no frame beyond finding the context.
-std::uint64_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
-                                     std::uint32_t name_len) {
+// ct_aot_global_get. A name that is neither a global nor a property of the
+// global object is an unresolvable reference and THROWS ReferenceError
+// (catchable, so a status and an out-slot like every other throwing row);
+// the embedder's undeclared-name hook still answers first, which is how an
+// element with an `id` answers to a bare identifier. `context::global_or_named`
+// is exactly what VM_CASE(get_global) runs, so the two tiers cannot drift.
+std::int32_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
+                                    std::uint32_t name_len, std::uint64_t * out) {
     context & cx = *frame_of(f).ctx;
-    return cx.global_or_named(std::string_view{name, name_len}).bits();
+    const value produced = cx.global_or_named(std::string_view{name, name_len});
+    const std::int32_t status = check(f);
+    if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
+    return status;
 }
 
 // ct_aot_global_set. VM_CASE(set_global) is
@@ -391,8 +391,9 @@ void ct_aot_cell_set(std::uint64_t cell, std::uint64_t v) {
     script::aot_bridge::cell_set(cell, v);
 }
 
-std::uint64_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len) {
-    return script::aot_bridge::global_get(fr, name, name_len);
+std::int32_t ct_aot_global_get(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
+                               std::uint64_t * out) {
+    return script::aot_bridge::global_get(fr, name, name_len, out);
 }
 
 void ct_aot_global_set(ct_aot_frame * fr, const char * name, std::uint32_t name_len,

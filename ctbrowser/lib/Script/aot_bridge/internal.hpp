@@ -239,8 +239,8 @@ struct aot_bridge {
     static void copy_props(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t source);
     static std::uint64_t cell_get(std::uint64_t cell);
     static void cell_set(std::uint64_t cell, std::uint64_t v);
-    static std::uint64_t global_get(aot::ct_aot_frame * f, const char * name,
-                                    std::uint32_t name_len);
+    static std::int32_t global_get(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
+                                   std::uint64_t * out);
     static void global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                            std::uint64_t v);
     static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,

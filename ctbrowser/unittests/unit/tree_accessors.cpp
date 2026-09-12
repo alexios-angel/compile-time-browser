@@ -213,12 +213,13 @@ void test_a_bare_identifier_finds_an_element() {
     is("anchor1.getAttribute('name')", "anchor1");
     // A DECLARED name still wins: the hook is consulted only on a miss.
     is("(function () { var ia = 7; return ia; })()", "7");
-    // And a name that is neither a global nor an element is still undefined
-    // rather than a ReferenceError, which is this runtime's documented shape.
+    // A name that is neither a global nor an element is an unresolvable
+    // reference: `typeof` says undefined, a read throws ReferenceError.
     is("typeof nosuchnameanywhere", "undefined");
-    // The hook answers named elements ONLY - a bare `toString` does not reach
-    // Object.prototype, which would be a much larger change.
-    is("typeof toString", "undefined");
+    is("try { nosuchnameanywhere } catch (e) { e.constructor.name }", "ReferenceError");
+    // The window is the global object, so a bare `toString` is
+    // Object.prototype's - as in every browser.
+    is("typeof toString", "function");
 }
 
 // --- named access on the Document ------------------------------------------

@@ -62,11 +62,12 @@ context::context() {
         }
         return value::boolean(true);
     });
+    // THE WHOLE CHAIN, not the own table: `'toString' in globalThis` is true
+    // in every engine, and global_or_named asks this before it decides a
+    // bare identifier is unresolvable.
     trap("has", [](context & cx, std::span<value> args) {
-        auto * object = static_cast<object_object *>(args[0].as_heap());
-        const std::string name = cx.to_string(args[1]);
-        return value::boolean(object->find(name) != nullptr ||
-                              object->find_accessor(name) != nullptr || cx.has_global(name));
+        return value::boolean(cx.has_property(args[0], args[1]) ||
+                              cx.has_global(cx.to_string(args[1])));
     });
     set_global_this(value::object(allocate<proxy_object>(target, value::object(handler))));
 }
