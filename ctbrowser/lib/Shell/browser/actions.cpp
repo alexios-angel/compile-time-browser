@@ -100,6 +100,13 @@ bool browser::toggle_details(node_id target) {
     return true;
 }
 
+void browser::set_location(std::string href) {
+    const std::size_t hash = href.find('#');
+    location_hash_ = hash == std::string::npos ? std::string{} : href.substr(hash);
+    location_href_ = std::move(href);
+    if (bindings_) { bindings_->observe_location(location_href_, location_hash_); }
+}
+
 bool browser::follow_link(node_id target) {
     std::string href;
     std::string download;
@@ -119,13 +126,21 @@ bool browser::follow_link(node_id target) {
     }
     if (has_download && save_download(href, download)) { return true; }
     if (href.empty()) { return false; }
-    location_href_ = href;
+    // THE ADDRESS IS RESOLVED against the document's when it has one - a page
+    // at file:///a/b.html following `#x` is at file:///a/b.html#x, not at
+    // `#x`. The embedder's hook still gets the author's text.
+    const std::string old_href = location_href_;
+    location_href_ = location_href_.empty() ? href : resolve(location_href_, href);
     if (href.front() == '#') {
         // A FRAGMENT is not a navigation: it scrolls this document, and the
-        // page can read where it went through location.hash.
+        // page can read where it went through location.hash - and hears
+        // `hashchange` at the window (HTML 7.4.6.2, "scroll to the fragment").
         location_hash_ = href;
         scroll_to_fragment(href.substr(1));
         bindings_->observe_location(location_href_, location_hash_);
+        if (old_href != location_href_) {
+            (void)bindings_->dispatch_hash_change(old_href, location_href_);
+        }
         return true;
     }
     location_hash_.clear();

@@ -562,9 +562,31 @@ void test_events_bubble_and_can_be_prevented() {
     }
 }
 
+void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
+    // dom/events/Event-dispatch-bubbles-true.html, "In DOMImplementation
+    // .createHTMLDocument()": the path is doc, html, body, target and back -
+    // and NOT the page's window, which is no ancestor of another document.
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+    var d = document.implementation.createHTMLDocument('x');
+    var t = d.createElement('div'); d.body.appendChild(t);
+    var seen = [];
+    function on(e) { seen.push((e.currentTarget === d ? '#doc' : e.currentTarget.nodeName) + e.eventPhase); }
+    for (var n of [d, d.documentElement, d.body, t]) { n.addEventListener('x', on, true); n.addEventListener('x', on, false); }
+    window.addEventListener('x', on, true);
+    t.dispatchEvent(new Event('x', {bubbles: true}));
+    console.log(seen.join(' '));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 1 && log[0] == "#doc1 HTML1 BODY1 DIV2 DIV2 BODY3 HTML3 #doc3",
+          "the made document's path: " + (log.empty() ? std::string{} : log[0]));
+}
+
 } // namespace
 
 int main() {
+    test_a_made_documents_nodes_have_a_path_that_ends_at_it();
     test_click_dispatch();
     test_handler_properties();
     test_events_bubble_and_can_be_prevented();

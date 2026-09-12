@@ -90,6 +90,48 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
     return dispatch_event("error", node_id{}, event);
 }
 
+// `focus`/`blur` and `focusin`/`focusout` (UI Events 5.4.4): FocusEvents whose
+// `relatedTarget` is the other element of the change, the first pair not
+// bubbling and the second bubbling. `dispatch()` alone made a bubbling plain
+// Event with no relatedTarget, which a page cannot tell from any other.
+bool dom_bindings::dispatch_focus(std::string_view type, node_id target, node_id related) {
+    if (cx_ == nullptr || !target) { return false; }
+    value event = make_event(*cx_, type, target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    const bool bubbles = type == "focusin" || type == "focusout";
+    object->set("bubbles", value::boolean(bubbles));
+    object->set("cancelable", value::boolean(false));
+    object->set("composed", value::boolean(true));
+    object->set("relatedTarget", related ? wrap(*cx_, related) : value::null());
+    if (const value ctor =
+            cx_->has_global("FocusEvent") ? cx_->global("FocusEvent") : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
+    return dispatch_event(type, target, event);
+}
+
+// `hashchange` at the window: a HashChangeEvent carrying both addresses,
+// bubbling as HTML fires it, not cancelable.
+bool dom_bindings::dispatch_hash_change(const std::string & old_url, const std::string & new_url) {
+    if (cx_ == nullptr) { return false; }
+    value event = make_event(*cx_, "hashchange", node_id{});
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("cancelable", value::boolean(false));
+    object->set("oldURL", cx_->string(old_url));
+    object->set("newURL", cx_->string(new_url));
+    if (const value ctor = cx_->has_global("HashChangeEvent") ? cx_->global("HashChangeEvent")
+                                                              : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
+    return dispatch_event("hashchange", node_id{}, event);
+}
+
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
     value event = make_event(*cx_, type, target);
@@ -339,7 +381,12 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     }
     if (!connected) { return path; }
     if (at.on != listen_on::window) { path.push_back(path_step{node_id{}, listen_on::document}); }
-    path.push_back(path_step{node_id{}, listen_on::window});
+    // A DOCUMENT A PAGE MADE HAS NO WINDOW ABOVE IT: `new Document()`,
+    // `createHTMLDocument()` and a clone of the page's document have a null
+    // browsing context, so their path ends at the Document - the page's
+    // window is not an ancestor of another document's nodes.
+    // Event-dispatch-bubbles-{true,false}.html count exactly that.
+    if (!secondary_) { path.push_back(path_step{node_id{}, listen_on::window}); }
     return path;
 }
 

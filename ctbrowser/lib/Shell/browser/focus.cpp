@@ -110,6 +110,10 @@ bool browser::focus(node_id id) {
         // difference between it and `input`, and pages rely on it.
         bindings_->dispatch("change", focused_);
         (void)set_state(focused_, state_focus, false);
+        // HTML's focus update steps: `blur` then `focusout` at what loses
+        // focus, each naming what gains it. `blur` never fired at all before.
+        (void)bindings_->dispatch_focus("blur", focused_, id);
+        (void)bindings_->dispatch_focus("focusout", focused_, id);
         // And the outgoing field DROPS ITS SELECTION. A highlight left
         // behind in a field nobody is typing in reads as still selected,
         // and Ctrl+A followed by a click somewhere else did exactly that.
@@ -122,6 +126,7 @@ bool browser::focus(node_id id) {
             }
         }
     }
+    const node_id was = focused_;
     focused_ = id;
     // Told to the bindings BEFORE the event fires, so a `focus` listener asking
     // document.activeElement gets the element it was just handed rather than
@@ -130,7 +135,8 @@ bool browser::focus(node_id id) {
     restart_caret_blink(); // a field you just clicked into shows its caret at once
     if (focused_) {
         (void)set_state(focused_, state_focus, true);
-        bindings_->dispatch("focus", focused_);
+        (void)bindings_->dispatch_focus("focus", focused_, was);
+        (void)bindings_->dispatch_focus("focusin", focused_, was);
     }
     mark(dirty::paint);
     return true;

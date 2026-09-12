@@ -1899,6 +1899,77 @@ private:
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+
+    // HTML's window-reflecting body element event handler set: `body.onload`
+    // is the window's, and a `<body onload>` content attribute is compiled onto
+    // the window. Lazy - checked on read - because there is no attribute-change
+    // hook; see events/dispatch.cpp. `forwarded_from_` is the element whose
+    // attribute last supplied each window handler.
+    [[nodiscard]] node_id body_or_frameset_of(value self);
+    void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
+    flat_map<std::string, node_id> forwarded_from_;
+    std::vector<node_id> bodies_; // every wrapped body/frameset, rebuilt when a wrapper is made
+    std::size_t bodies_scanned_at_ = static_cast<std::size_t>(-1);
+    // Which bindings an EventTarget receiver belongs to - `owner_of` for a
+    // node, the document's own for a Document, else this. The EventTarget
+    // methods route through it so a second document's nodes get a path.
+    [[nodiscard]] dom_bindings & target_owner(value self);
+
+public:
+    // What the browser tells the document as a load progresses.
+    // `document.currentScript`: the <script> running now, or none.
+    void set_current_script(node_id script);
+    // `document.readyState`, with `readystatechange` at the document when it
+    // changes.
+    void set_ready_state(std::string_view state);
+    // A FocusEvent at `target` naming `related` (the element focus came from
+    // or went to): `focus`/`blur` do not bubble, `focusin`/`focusout` do.
+    bool dispatch_focus(std::string_view type, node_id target, node_id related);
+    // `hashchange` at the window, a HashChangeEvent with both addresses.
+    bool dispatch_hash_change(const std::string & old_url, const std::string & new_url);
+    // TIME AS A SCRIPT OBSERVES IT: `performance.now()` and an event's
+    // timeStamp. The engine's one clock moves only between ticks, so within a
+    // script two readings were equal forever and `while (performance.now() <
+    // t)` never ended (Event-timestamp-safe-resolution.html spins until two
+    // events differ). Each observation advances it by the 5 us a browser
+    // coarsens to, counted from the tick's start - so it is still a function
+    // of the page's own behaviour and a golden stays a golden. The first
+    // reading of a tick is the clock itself; an event the ENGINE makes reads
+    // the clock, not this.
+    [[nodiscard]] double observed_now() {
+        return now_ms_ + 0.005 * static_cast<double>(time_reads_++);
+    }
+    std::uint64_t time_reads_ = 0;
+    // `contentWindow`/`contentDocument` on HTMLIFrameElement.prototype, which
+    // build a not-yet-reconciled frame on demand. See frames.cpp.
+    void install_frame_accessors(context & cx);
+    // `ariaActiveDescendantElement` and the seven `aria*Elements` lists: HTML
+    // 2.6.1's Element and FrozenArray<Element> reflection, with the explicitly
+    // set attr-element kept on the wrapper. See element/reflection.cpp.
+    void install_element_reflection(context & cx);
+    // `progress.max` and `<meter>`'s six: HTML's double reflections, on
+    // their interface prototypes. See element/reflection.cpp.
+    void install_double_reflection(context & cx);
+    // `option.label` and `option.value`, which fall back to the option's text.
+    void install_option_reflection(context & cx);
+    [[nodiscard]] value element_reference_get(context & cx, std::string_view idl,
+                                              std::string_view content, bool list);
+    void element_reference_set(context & cx, std::string_view idl, std::string_view content,
+                               bool list, value given);
+    [[nodiscard]] bool element_reference_in_scope(const read_txn & txn, node_id element,
+                                                  node_id candidate) const;
+    [[nodiscard]] node_id element_reference_by_id(const read_txn & txn, node_id element,
+                                                  std::string_view id) const;
+    // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
+    // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
+    // LEFT IT, which before the first frame is no layout at all. The browser
+    // installs the same flush its getComputedStyle wrapper does; anything
+    // reading `box_of` calls this first. Only what is stale runs.
+    void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    void flush_layout() {
+        if (flush_layout_) { flush_layout_(); }
+    }
+    std::function<void()> flush_layout_;
 };
 
 } // namespace ctbrowser::shell

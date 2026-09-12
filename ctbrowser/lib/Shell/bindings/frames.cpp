@@ -167,6 +167,34 @@ void dom_bindings::reconcile_frames() {
     frames_.swap(still);
 }
 
+// A FRAME HAS ITS DOCUMENT THE MOMENT IT IS INSERTED, not at the next tick.
+// `appendChild(iframe).contentWindow` is how event-global-extra.window.js and
+// the cross-realm listener files reach another global, and a browser answers
+// it synchronously. The accessors live on the prototype and a reconciled
+// frame carries the two as OWN properties, so they run only while a frame is
+// still unbuilt - and building it is one pass over the frames that changed.
+void dom_bindings::install_frame_accessors(context & cx) {
+    const value iface = interface_prototype("HTMLIFrameElement");
+    if (!iface.is_object()) { return; }
+    auto * proto = static_cast<script::object_object *>(iface.as_heap());
+    for (const char * name : {"contentWindow", "contentDocument"}) {
+        proto->define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name,
+                [this, name](context & c, std::span<value>) {
+                    const value self = c.current_this();
+                    if (!self.is_object()) { return value::null(); }
+                    dom_bindings & owner = target_owner(self);
+                    if (owner.handle_of(self)) { owner.reconcile_frames(); }
+                    const value * held =
+                        static_cast<script::object_object *>(self.as_heap())->find(name);
+                    return held == nullptr ? value::null() : *held;
+                })),
+            value::undefined());
+    }
+}
+
 // Build the frame's document. Synchronous, because the bytes are already on
 // disk or in the registry; the EVENT it queues is what makes the load
 // asynchronous in the way a page can observe.

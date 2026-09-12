@@ -12,6 +12,11 @@
 
 namespace ctbrowser::shell {
 
+namespace detail {
+// ToUint32 - defined in element/reflection.cpp beside the rows that use it.
+[[nodiscard]] long long to_uint32(double x);
+} // namespace detail
+
 void dom_bindings::observe_resources(asset_registry & assets, image_store & images) {
     assets_ = &assets;
     images_ = &images;
@@ -41,38 +46,40 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
         return src.empty() ? nullptr : images_->load(*assets_, src);
     };
     const auto size_view = [&](std::string property, bool natural_only, bool horizontal) {
-        obj.define_accessor(property,
-                            value::object(cx.allocate<script::native_object>(
-                                property,
-                                [this, id, property, natural_only, horizontal,
-                                 decoded](context &, std::span<value>) {
-                                    if (!natural_only) {
-                                        const auto txn = doc_->read();
-                                        const std::string_view text =
-                                            txn.attribute_value(id, atoms_->intern(property));
-                                        double parsed = 0;
-                                        bool any = false;
-                                        for (const char c : text) {
-                                            if (c < '0' || c > '9') { break; }
-                                            parsed = parsed * 10 + (c - '0');
-                                            any = true;
-                                        }
-                                        if (any) { return value::number(parsed); }
-                                    }
-                                    const std::shared_ptr<const paint::bitmap> image = decoded();
-                                    if (!image) { return value::number(0); }
-                                    return value::number(static_cast<double>(
-                                        horizontal ? image->width : image->height));
-                                })),
-                            value::object(cx.allocate<script::native_object>(
-                                property, [this, id, property](context & c, std::span<value> a) {
-                                    (void)doc_->set_attribute(
-                                        id, atoms_->intern(property),
-                                        std::to_string(static_cast<long long>(arg_number(a, 0))));
-                                    mutated();
-                                    (void)c;
-                                    return value::undefined();
-                                })));
+        obj.define_accessor(
+            property,
+            value::object(cx.allocate<script::native_object>(
+                property,
+                [this, id, property, natural_only, horizontal, decoded](context &,
+                                                                        std::span<value>) {
+                    if (!natural_only) {
+                        const auto txn = doc_->read();
+                        const std::string_view text =
+                            txn.attribute_value(id, atoms_->intern(property));
+                        double parsed = 0;
+                        bool any = false;
+                        for (const char c : text) {
+                            if (c < '0' || c > '9') { break; }
+                            parsed = parsed * 10 + (c - '0');
+                            any = true;
+                        }
+                        if (any) { return value::number(parsed); }
+                    }
+                    const std::shared_ptr<const paint::bitmap> image = decoded();
+                    if (!image) { return value::number(0); }
+                    return value::number(
+                        static_cast<double>(horizontal ? image->width : image->height));
+                })),
+            value::object(cx.allocate<script::native_object>(
+                property, [this, id, property](context &, std::span<value> a) {
+                    // A reflected `unsigned long`: ToUint32, and
+                    // anything past 2^31-1 writes the default 0.
+                    long long given = detail::to_uint32(arg_number(a, 0));
+                    if (given > 2147483647LL) { given = 0; }
+                    (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(given));
+                    mutated();
+                    return value::undefined();
+                })));
     };
     size_view("width", false, true);
     size_view("height", false, false);
@@ -82,22 +89,30 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
     // `src` REFLECTS, and assigning it STARTS A LOAD. The generic reflection two
     // screens up would have given the first half only: the attribute changed and
     // nothing ever told the page the pixels had arrived.
-    obj.define_accessor(
-        "src",
-        value::object(cx.allocate<script::native_object>(
-            "src",
-            [this, id](context & c, std::span<value>) {
-                const auto txn = doc_->read();
-                return c.string(std::string{txn.attribute_value(id, atoms_->intern("src"))});
-            })),
-        value::object(cx.allocate<script::native_object>(
-            "src", [this, id, wrapper](context & c, std::span<value> a) {
-                const std::string url = arg_string(c, a, 0);
-                (void)doc_->set_attribute(id, atoms_->intern("src"), url);
-                mutated();
-                begin_image_load(value::object(wrapper), id, url, value::undefined());
-                return value::undefined();
-            })));
+    obj.define_accessor("src",
+                        value::object(cx.allocate<script::native_object>(
+                            "src",
+                            [this, id](context & c, std::span<value>) {
+                                // The URL reflection rule, as reflected_get spells it: absent
+                                // is "", else parsed against the document and the raw text
+                                // when that fails.
+                                const auto txn = doc_->read();
+                                const atom name = atoms_->intern("src");
+                                if (!txn.has_attribute(id, name)) { return c.string(""); }
+                                const std::string raw{txn.attribute_value(id, name)};
+                                if (location_href_.empty()) { return c.string(raw); }
+                                const std::string resolved = resolve(location_href_, raw);
+                                return c.string(resolved.empty() ? raw : resolved);
+                            })),
+                        value::object(cx.allocate<script::native_object>(
+                            "src", [this, id, wrapper](context & c, std::span<value> a) {
+                                const std::string url = arg_string(c, a, 0);
+                                (void)doc_->set_attribute(id, atoms_->intern("src"), url);
+                                mutated();
+                                begin_image_load(value::object(wrapper), id, url,
+                                                 value::undefined());
+                                return value::undefined();
+                            })));
 
     // `complete` is what a page checks before waiting: p5 and many others do
     // `if (img.complete) use(img); else img.onload = ...`, and a `complete` that

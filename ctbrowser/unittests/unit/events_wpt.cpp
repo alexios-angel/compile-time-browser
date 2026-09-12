@@ -147,6 +147,83 @@ void test_window_event_is_hidden_inside_a_shadow_tree() {
        "true,true,true");
 }
 
+void test_related_target_is_retargeted_and_cleared() {
+    // relatedTarget.window.js: a relatedTarget inside a closed tree names the
+    // host outside it; a target inside one leaves both null afterwards; and a
+    // relatedTarget that retargets to the target itself is no dispatch at all.
+    is("(function () {"
+       " var host = document.body.appendChild(document.createElement('div'));"
+       " var shadow = host.attachShadow({mode: 'closed'});"
+       " var inner = shadow.appendChild(document.createElement('div'));"
+       " var seen = [];"
+       " document.body.addEventListener('demo', function (e) {"
+       "   seen.push(e.relatedTarget === host); });"
+       " var e1 = new FocusEvent('demo', {relatedTarget: inner});"
+       " document.body.dispatchEvent(e1); seen.push(e1.relatedTarget === host);"
+       " var e2 = new FocusEvent('demo', {relatedTarget: host});"
+       " inner.dispatchEvent(e2); seen.push(e2.target === null && e2.relatedTarget === null);"
+       " var e3 = new FocusEvent('demo', {relatedTarget: shadow});"
+       " var ran = false; host.addEventListener('demo', function () { ran = true; });"
+       " host.dispatchEvent(e3); seen.push(!ran && e3.target === null);"
+       " var e4 = new FocusEvent('demo', {relatedTarget: inner});"
+       " document.body.addEventListener('demo', function () { document.body.appendChild(inner); }, "
+       "{once: true});"
+       " document.body.dispatchEvent(e4); seen.push(e4.relatedTarget === host); inner.remove();"
+       " return seen.join(','); })()",
+       "true,true,true,true,true,true");
+}
+
+void test_focus_moves_with_blur_and_related_targets() {
+    // shadow-relatedTarget.html: focus leaving one field for another fires
+    // `blur` naming the next and `focus` naming the previous, neither
+    // bubbling, `focusin`/`focusout` bubbling - and the one inside a closed
+    // tree is seen from outside as its host.
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!DOCTYPE html><html><body><div id=host></div><input id=light><script>
+    var root = host.attachShadow({mode: 'closed'}); root.innerHTML = '<input id=s>';
+    var seen = [];
+    ['focus', 'blur', 'focusin', 'focusout'].forEach(function (t) {
+      document.body.addEventListener(t, function (e) {
+        seen.push('body:' + t + ':' + e.eventPhase); });
+      light.addEventListener(t, function (e) {
+        seen.push(t + ':' + (e.relatedTarget === host) + ':' + e.bubbles); });
+    });
+    root.getElementById('s').focus(); light.focus();
+    console.log(seen.join(' '));
+    </script></body></html>)");
+    CHECK_EQ(page.bindings().console_output().back(),
+             "body:focusin:3 body:focusout:3 focus:true:false focusin:true:true body:focusin:3");
+}
+
+void test_a_fragment_link_fires_hashchange_with_both_addresses() {
+    // HTML "scroll to the fragment" -> `hashchange` at the window, a
+    // HashChangeEvent whose oldURL/newURL are the document's addresses.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///srv/p.html");
+    page.load_html(R"(<!DOCTYPE html><html><body><a id=l href="#x">x</a><div id=x></div><script>
+    window.addEventListener('hashchange', function (e) {
+      console.log([e.constructor.name, e.oldURL, e.newURL, location.href, location.hash].join(' '));
+    });
+    document.getElementById('l').click();
+    </script></body></html>)");
+    (void)page.tick(16.0);
+    CHECK_EQ(page.bindings().console_output().back(),
+             "HashChangeEvent file:///srv/p.html file:///srv/p.html#x file:///srv/p.html#x #x");
+}
+
+void test_time_a_script_observes_moves_forward() {
+    // Event-timestamp-safe-resolution.html spins until two events' timeStamps
+    // differ; the engine's clock moves only between ticks, so each reading a
+    // script makes advances it by the 5 us a browser coarsens to.
+    is("(function () { var a = new Event('x'), b = new Event('x');"
+       " var t0 = performance.now(), t1 = performance.now();"
+       " var d = Object.getOwnPropertyDescriptor(Event.prototype, 'timeStamp');"
+       " return (b.timeStamp > a.timeStamp) + ',' + (t1 > t0) + ',' +"
+       " Math.round((b.timeStamp - a.timeStamp) * 1000) + ',' + (d.get.call(a) === a.timeStamp); "
+       "})()",
+       "true,true,5,true");
+}
+
 // --- a detached tree ---------------------------------------------------------
 
 void test_a_detached_tree_reaches_neither_document_nor_window() {
@@ -179,6 +256,17 @@ void test_offset_x_is_measured_from_the_target_box() {
        " target.dispatchEvent(new MouseEvent('click', {clientX: 50, clientY: 20}));"
        " return seen; })()",
        "42,12");
+    // AND FROM A PARSER-INSERTED SCRIPT, before any frame has laid the page
+    // out - which is when the file dispatches. The box is flushed on demand.
+    browser page{browser_options{400, 300}};
+    std::string html{page_html};
+    html.insert(html.find("</body>"),
+                "<script>document.getElementById('target').addEventListener('click',"
+                " function (e) { console.log(e.offsetX); });"
+                "document.getElementById('target').dispatchEvent("
+                "new MouseEvent('click', {clientX: 50}));</script>");
+    page.load_html(html);
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"42"});
 }
 
 // --- activation behaviour ----------------------------------------------------
@@ -239,6 +327,10 @@ void test_an_image_input_submits_its_form() {
 } // namespace
 
 int main() {
+    test_time_a_script_observes_moves_forward();
+    test_a_fragment_link_fires_hashchange_with_both_addresses();
+    test_related_target_is_retargeted_and_cleared();
+    test_focus_moves_with_blur_and_related_targets();
     test_a_composed_event_crosses_the_shadow_boundary();
     test_an_uncomposed_event_stops_at_the_shadow_root();
     test_the_target_is_retargeted_at_the_host();

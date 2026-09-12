@@ -7,3 +7,4 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/program_image.hpp>
 #include <ctbrowser/shell/browser.hpp>
+#include <ctbrowser/shell/net/url.hpp>

@@ -2,6 +2,7 @@
 // and the proxy that makes it the global object.
 
 #include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 
 namespace ctbrowser::shell {
 
@@ -731,7 +732,10 @@ void dom_bindings::install_window(context & cx) {
     //
     // The tag list is the specification's and not "any element with a name":
     // `<input name=q>` is NOT a named property of the window, and treating it as
-    // one would shadow a global a page had defined.
+    // one would shadow a global a page had defined. An <iframe name=x> is
+    // there as a CHILD NAVIGABLE, and what `window.x` answers for one is its
+    // WindowProxy - `contentWindow` - not the element (HTML 7.3.3, "determine
+    // the value of a named property"); nameditem-02.html reads it that way.
     //
     // IT WALKS THE DOCUMENT, and it is consulted on every `window.x` that is
     // neither an own property nor a global - which includes `window.hasOwnProperty`
@@ -749,6 +753,9 @@ void dom_bindings::install_window(context & cx) {
         const atom name_attribute = atoms_->intern("name");
         const auto exposes_name = [&](node_id node) {
             const atom tag = txn.tag(node).value_or(atom{});
+            // `a`, `area` and `frameset` are NOT in the specification's list;
+            // they stay because unittests/unit/tree_accessors.cpp pins
+            // `anchor1` resolving to an `<a name=anchor1>`.
             for (const std::string_view exposed :
                  {"a", "area", "embed", "form", "frame", "frameset", "iframe", "img", "object"}) {
                 if (tag == atoms_->intern_lower(exposed)) { return true; }
@@ -767,6 +774,29 @@ void dom_bindings::install_window(context & cx) {
         walk(walk, txn.root());
         return found;
     };
+    // One named property's value: a frame matched by its name is its window,
+    // one element is itself, several are a collection.
+    const auto named_value = [this, named_element](context & c, const std::string & name) {
+        const std::vector<node_id> found = named_element(name);
+        if (found.empty()) { return value::undefined(); }
+        {
+            const auto txn = doc_->read();
+            for (const node_id node : found) {
+                const atom tag = txn.tag(node).value_or(atom{});
+                if ((tag == atoms_->intern_lower("iframe") ||
+                     tag == atoms_->intern_lower("frame")) &&
+                    txn.attribute_value(node, atoms_->intern("name")) == name) {
+                    const value window = c.lookup_property(wrap(c, node), "contentWindow");
+                    if (window.is_object_like()) { return window; }
+                }
+            }
+        }
+        if (found.size() == 1) { return wrap(c, found.front()); }
+        return make_live_collection(c, [this, name, named_element] {
+            (void)this;
+            return named_element(name);
+        });
+    };
     // AND A BARE IDENTIFIER GETS THE SAME ANSWER, which is the half that was
     // missing. HTML 7.3.3 makes an element with an `id` a named property of the
     // global OBJECT, and a bare identifier resolves against that object - so
@@ -778,18 +808,11 @@ void dom_bindings::install_window(context & cx) {
     // ONLY THE NAMED ELEMENTS, not the whole trap: a bare identifier that
     // reaches Object.prototype - `toString` with no receiver - is a much larger
     // change and is not this one. See context::set_undeclared_name_hook.
-    cx.set_undeclared_name_hook([this, named_element](std::string_view name) {
+    cx.set_undeclared_name_hook([this, named_value](std::string_view name) {
         if (cx_ == nullptr) { return value::undefined(); }
-        const std::vector<node_id> found = named_element(name);
-        if (found.empty()) { return value::undefined(); }
-        if (found.size() == 1) { return wrap(*cx_, found.front()); }
-        const std::string wanted{name};
-        return make_live_collection(*cx_, [this, wanted, named_element] {
-            (void)this;
-            return named_element(wanted);
-        });
+        return named_value(*cx_, std::string{name});
     });
-    window_trap("get", [this, named_element](context & c, std::span<value> args) {
+    window_trap("get", [named_value](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
@@ -802,13 +825,7 @@ void dom_bindings::install_window(context & cx) {
         // after everything a page defined for itself. Several of one name is an
         // HTMLCollection rather than the first of them, which is what makes
         // `window.radios.length` answer.
-        if (const std::vector<node_id> named = named_element(name); !named.empty()) {
-            if (named.size() == 1) { return wrap(c, named.front()); }
-            return make_live_collection(c, [this, name, named_element] {
-                (void)this;
-                return named_element(name);
-            });
-        }
+        if (const value named = named_value(c, name); !named.is_undefined()) { return named; }
         // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
         // object as well as the global scope, so `window.hasOwnProperty(...)`
         // has to reach Object.prototype like any other object's would. Stopping
@@ -890,6 +907,17 @@ void dom_bindings::install_window(context & cx) {
     window->set("top", window_view);
     window->set("opener", value::null());
     window->set("frameElement", value::null());
+    // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
+    // origin serialised - "null" for a file: page, as location.origin says.
+    window->define_accessor("origin",
+                            value::object(cx.allocate<script::native_object>(
+                                "origin",
+                                [this](context & c, std::span<value>) {
+                                    const std::string origin =
+                                        location_parts(location_href_).origin;
+                                    return c.string(origin.empty() ? "null" : origin);
+                                })),
+                            value::undefined());
 }
 
 } // namespace ctbrowser::shell

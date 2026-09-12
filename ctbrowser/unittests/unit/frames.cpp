@@ -200,9 +200,33 @@ void test_a_frame_runs_no_script() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"undefined"}); }
 }
 
+void test_a_named_frame_is_its_window_on_the_window() {
+    // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
+    // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
+    // still names the element.
+    is("<iframe name=x src=inner.html id=y></iframe>",
+       "(x === document.getElementsByName('x')[0].contentWindow) + ',' + x.document.title + ','"
+       " + y.tagName",
+       "true,inner,IFRAME");
+}
+
+void test_an_inserted_frame_has_its_window_at_once() {
+    // event-global-extra.window.js: `appendChild(iframe).contentWindow` in the
+    // same statement, before any tick has reconciled the frames.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var w = document.body.appendChild(document.createElement('iframe'))"
+                   ".contentWindow; console.log(w.document.body.nodeName + ',' +"
+                   " (w.frameElement === document.querySelector('iframe')));"
+                   "</script></body></html>");
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"BODY,true"});
+}
+
 } // namespace
 
 int main() {
+    test_an_inserted_frame_has_its_window_at_once();
+    test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
     test_a_frame_with_no_source_is_still_a_document();

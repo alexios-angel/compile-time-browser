@@ -45,6 +45,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -428,7 +431,30 @@ int main(int argc, char ** argv) {
     std::printf("ctdrive: listening on 127.0.0.1:%u\n", control->port());
     std::fflush(stdout);
 
-    options.on_ready = [](ctbrowser::browser & page) {
+    // THE PAGE HAS AN ADDRESS, and it is the file's. `run_app_file` loads the
+    // page before `on_ready` hands it over, which is too late to give it a URL:
+    // its inline scripts have run and every `a.href` they read resolved
+    // against nothing. So the loop starts on an empty document and the real
+    // one is loaded from here, once its `file://` location is set - the
+    // same reload-from-a-hook `ctbrowse` uses to follow a link.
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        std::printf("ctdrive: cannot read %s\n", path.c_str());
+        return 1;
+    }
+    std::ostringstream source;
+    source << in.rdbuf();
+    const std::filesystem::path file{path};
+    const std::string absolute =
+        std::filesystem::absolute(file).lexically_normal().generic_string();
+    const std::string url = (absolute.starts_with('/') ? "file://" : "file:///") + absolute;
+    const auto kind = ctbrowser::is_xml_extension(file.filename().string())
+                          ? ctbrowser::browser::source_kind::xml
+                          : ctbrowser::browser::source_kind::html;
+    options.asset_path = file.parent_path();
+    options.on_ready = [&](ctbrowser::browser & page) {
+        page.set_location(url);
+        page.load_document(source.str(), kind);
         if (!page.script_error().empty()) {
             std::printf("script error: %s\n", page.script_error().c_str());
             std::fflush(stdout);
@@ -450,5 +476,5 @@ int main(int argc, char ** argv) {
         if (page.frames() == 0) { return; }
         control->poll(page);
     };
-    return ctbrowser::run_app_file(path, std::move(options));
+    return ctbrowser::run_app("", std::move(options));
 }
