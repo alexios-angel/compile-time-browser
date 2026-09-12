@@ -248,6 +248,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // widths when a page notices.
     if (at.on == listen_on::node && at.node) {
         if (const value * client_x = object->find("clientX")) {
+            flush_layout(); // mouse-event-retarget.html dispatches before the first frame
             const rect box = box_of(at.node);
             const value * client_y = object->find("clientY");
             object->set("offsetX", value::number(context::to_number(*client_x) - box.x));

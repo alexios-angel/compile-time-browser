@@ -223,6 +223,17 @@ void test_offset_x_is_measured_from_the_target_box() {
        " target.dispatchEvent(new MouseEvent('click', {clientX: 50, clientY: 20}));"
        " return seen; })()",
        "42,12");
+    // AND FROM A PARSER-INSERTED SCRIPT, before any frame has laid the page
+    // out - which is when the file dispatches. The box is flushed on demand.
+    browser page{browser_options{400, 300}};
+    std::string html{page_html};
+    html.insert(html.find("</body>"),
+                "<script>document.getElementById('target').addEventListener('click',"
+                " function (e) { console.log(e.offsetX); });"
+                "document.getElementById('target').dispatchEvent("
+                "new MouseEvent('click', {clientX: 50}));</script>");
+    page.load_html(html);
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"42"});
 }
 
 // --- activation behaviour ----------------------------------------------------

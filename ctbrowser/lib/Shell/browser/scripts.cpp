@@ -139,6 +139,12 @@ void browser::run_scripts() {
         flushing->retained.push_back(inner);
         script_->define_global("getComputedStyle", script::value::object(flushing));
     }
+    // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
+    bindings_->set_layout_hook([this] {
+        if (dirty_ >= dirty::styles) { resolve_styles(); }
+        if (dirty_ >= dirty::layout) { run_layout(); }
+        if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
+    });
     install_embedder_natives();
     script_error_.clear();
 

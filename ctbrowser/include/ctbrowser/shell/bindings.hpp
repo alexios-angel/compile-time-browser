@@ -1905,6 +1905,16 @@ public:
     // A FocusEvent at `target` naming `related` (the element focus came from
     // or went to): `focus`/`blur` do not bubble, `focusin`/`focusout` do.
     bool dispatch_focus(std::string_view type, node_id target, node_id related);
+    // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
+    // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
+    // LEFT IT, which before the first frame is no layout at all. The browser
+    // installs the same flush its getComputedStyle wrapper does; anything
+    // reading `box_of` calls this first. Only what is stale runs.
+    void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    void flush_layout() {
+        if (flush_layout_) { flush_layout_(); }
+    }
+    std::function<void()> flush_layout_;
 };
 
 } // namespace ctbrowser::shell
