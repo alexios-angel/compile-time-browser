@@ -1258,16 +1258,23 @@ public:
 
         [[nodiscard]] bool is_accessor() const noexcept { return has_get || has_set; }
         [[nodiscard]] bool is_data() const noexcept { return has_value || has_writable; }
-        [[nodiscard]] std::uint8_t attrs() const noexcept {
-            return static_cast<std::uint8_t>((writable ? attr_writable : 0) |
-                                             (enumerable ? attr_enumerable : 0) |
-                                             (configurable ? attr_configurable : 0));
-        }
         static property_descriptor data(value v, std::uint8_t a) {
             property_descriptor d;
             d.has_value = d.has_writable = d.has_enumerable = d.has_configurable = true;
             d.held = v;
             d.writable = (a & attr_writable) != 0;
+            d.enumerable = (a & attr_enumerable) != 0;
+            d.configurable = (a & attr_configurable) != 0;
+            return d;
+        }
+        // `a` is the entry's attrs, or for an array element the element's -
+        // freeze/seal on an array flips the element bits and never rewrites
+        // the accessor table.
+        static property_descriptor accessor(value get, value set, std::uint8_t a) {
+            property_descriptor d;
+            d.has_get = d.has_set = d.has_enumerable = d.has_configurable = true;
+            d.getter = get;
+            d.setter = set;
             d.enumerable = (a & attr_enumerable) != 0;
             d.configurable = (a & attr_configurable) != 0;
             return d;

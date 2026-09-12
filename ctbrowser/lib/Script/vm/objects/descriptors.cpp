@@ -193,12 +193,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = obj->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         // A STRING WRAPPER'S OWN `length` AND INDICES (10.4.3.1), the same two
@@ -240,12 +235,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             if ((a & array_object::elem_hole) != 0) { return false; }
             if ((a & array_object::elem_accessor) != 0 && arr->named) {
                 if (accessor_entry * entry = arr->named->find_accessor(name)) {
-                    out.has_get = out.has_set = true;
-                    out.getter = entry->getter;
-                    out.setter = entry->setter;
-                    out.has_enumerable = out.has_configurable = true;
-                    out.enumerable = (a & attr_enumerable) != 0;
-                    out.configurable = (a & attr_configurable) != 0;
+                    out = property_descriptor::accessor(entry->getter, entry->setter, a);
                     return true;
                 }
             }
@@ -289,12 +279,7 @@ bool context::own_property(value target, const std::string & name, property_desc
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
         if (accessor_entry * entry = fn->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         if (value * held = fn->find(name)) {
@@ -328,12 +313,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = closure->find_accessor(name)) {
-            out.has_get = out.has_set = true;
-            out.getter = entry->getter;
-            out.setter = entry->setter;
-            out.has_enumerable = out.has_configurable = true;
-            out.enumerable = (entry->attrs & attr_enumerable) != 0;
-            out.configurable = (entry->attrs & attr_configurable) != 0;
+            out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
         if (name == "prototype") {
