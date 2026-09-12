@@ -1,23 +1,12 @@
 // ctbrowser.script context - the interpreter loop itself. All members of
 // `context`, declared in include/ctbrowser/script/vm.hpp.
 
-#include <array>
-#include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <functional>
-#include <optional>
-#include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
 #include <vector>
 
 #include <ctbrowser/aot/aot.hpp>
-#include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {

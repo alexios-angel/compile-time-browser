@@ -4,30 +4,17 @@
 // members of `context`, declared in include/ctbrowser/script/vm.hpp - so
 // they split across translation units with nothing to declare.
 
-#include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
-#include <vector>
 
 #include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
-
-// The VM's implementation.
-//
-// `run_loop` alone is 15 KB of object code - the whole instruction dispatch -
-// and while it lived in the interface every translation unit that imported the
-// module emitted its own copy and optimised it again. The class declaration
-// stays in :vm; the bodies live here and are compiled once.
 
 namespace ctbrowser::script {
 
