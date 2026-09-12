@@ -60,6 +60,7 @@ constexpr dom_interface interface_table[] = {
     {"HTMLCollection", "", ""},
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
+    {"DOMImplementation", "", ""},
     {"DOMStringMap", "", ""},
     // DOM 6's two walkers - not nodes, not constructible; made by
     // bindings/document/traversal.cpp.
@@ -631,7 +632,8 @@ value dom_bindings::prototype_for_node(const read_txn & txn, node_id id) const {
     // walking the DOM for <title>, <style> or <script>.
     if (txn.element_ns(id) == node_ns::svg) { return interface_prototype("SVGElement"); }
     if (txn.element_ns(id) != node_ns::html) { return interface_prototype("Element"); }
-    const std::size_t at = interface_for_tag(atoms_->text(txn.tag(id).value_or(atom{})));
+    // BY LOCAL NAME: `createElementNS(HTML, "foo:span")` is an HTMLSpanElement.
+    const std::size_t at = interface_for_tag(txn.local_name(id));
     return at < interface_prototypes_.size() ? interface_prototypes_[at]
                                              : interface_prototype("HTMLElement");
 }
@@ -1092,6 +1094,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // the loop above because a table of five signatures would be longer than
     // the five functions - see install_character_data.
     install_character_data(cx);
+    install_named_node_map(cx);
 
     // EVERY OTHER OPERATION - Node's, Element's, the ParentNode and ChildNode
     // mixins', the canvas three - on the prototype WebIDL names, through one
@@ -1106,7 +1109,15 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // The document and the window are EventTargets with interfaces of their own,
     // and `passive-by-default.html` reads `eventTarget.constructor.name` for
     // both of them before it can even name its subtests.
-    if (auto * doc = document_object()) { doc->prototype = interface_prototype("Document"); }
+    if (auto * doc = document_object()) {
+        doc->prototype = interface_prototype("Document");
+        // ...and `document.implementation`, made with the document.
+        if (const value * held = doc->find("implementation");
+            held != nullptr && held->is_object()) {
+            static_cast<script::object_object *>(held->as_heap())->prototype =
+                interface_prototype("DOMImplementation");
+        }
+    }
     if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
 
     // EVERY WRAPPER THAT ALREADY EXISTS, RE-LINKED. Two of them are made by

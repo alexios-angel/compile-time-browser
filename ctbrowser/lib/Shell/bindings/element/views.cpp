@@ -28,112 +28,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // every time. See refresh_attribute_map for why it is an array-like object
     // and not a proxy.
     auto * map = static_cast<script::object_object *>(cx.make_object().as_heap());
-    const auto map_method = [&](std::string name, script::native_fn fn) {
-        map->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    // ONE ATTRIBUTE, BY WHICHEVER OF THE TWO QUESTIONS WAS ASKED, copied out of
-    // the read before anything that could open another one runs.
-    const auto found_by_name = [this, id](std::string_view qualified) {
-        const auto txn = doc_->read();
-        const attribute * held = txn.find_attribute(id, attribute_key(txn, id, qualified));
-        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
-    };
-    const auto found_by_pair = [this, id](std::string_view ns, std::string_view local) {
-        const auto txn = doc_->read();
-        const attribute * held = txn.find_attribute_ns(id, ns, local);
-        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
-    };
-    map_method("item", [this, id](context & c, std::span<value> a) {
-        std::vector<attribute> held;
-        {
-            const auto txn = doc_->read();
-            const std::span<const attribute> current = txn.attributes(id);
-            held.assign(current.begin(), current.end());
-        }
-        const double at = arg_number(a, 0);
-        if (!(at >= 0) || at >= static_cast<double>(held.size())) { return value::null(); }
-        return attribute_object(c, id, held[static_cast<std::size_t>(at)]);
-    });
-    map_method("getNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
-        const std::optional<attribute> held = found_by_name(arg_string(c, a, 0));
-        return held ? attribute_object(c, id, *held) : value::null();
-    });
-    map_method("getNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
-        const std::optional<attribute> held =
-            found_by_pair(namespace_argument(c, a, 0), arg_string(c, a, 1));
-        return held ? attribute_object(c, id, *held) : value::null();
-    });
-    // `setNamedItem` and `setNamedItemNS` ARE THE SAME OPERATION - DOM 4.9.2
-    // defines both as "set an attribute", which is keyed on the (namespace,
-    // local name) pair whichever spelling was used. What an Attr carries is
-    // read off the OBJECT rather than off a C++ type, so an Attr from
-    // `document.createAttribute` - which bindings/document.cpp makes and which
-    // is not one of these - works here too.
-    const auto set_named = [this, id, found_by_pair](context & c, std::span<value> a) {
-        const value given = arg(a, 0);
-        if (!given.is_object()) {
-            c.throw_error("TypeError", "setNamedItem: the argument is not an Attr");
-            return value::null();
-        }
-        const value ns_property = c.lookup_property(given, "namespaceURI");
-        const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
-        const std::string qualified = c.to_string(c.lookup_property(given, "name"));
-        const value text = c.lookup_property(given, "value");
-        const split_name split = split_attribute_name(qualified);
-        const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
-        // THE ONE IT REPLACES IS THE RETURN VALUE, and it has to be read before
-        // the write: "return oldAttr" is how a page takes an attribute off one
-        // element and puts it on another.
-        const std::optional<attribute> replaced = found_by_pair(ns, local);
-        (void)doc_->set_attribute_ns(id, atoms_->intern(ns), atoms_->intern(qualified),
-                                     text.is_undefined() ? std::string{} : c.to_string(text));
-        mutated();
-        return replaced ? attribute_object(c, id, *replaced) : value::null();
-    };
-    map_method("setNamedItem", set_named);
-    map_method("setNamedItemNS", set_named);
-    // ...and removing one THROWS when there is nothing to remove, which is the
-    // half that is easy to miss: "if attr is null, throw a NotFoundError".
-    map_method("removeNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
-        const std::string qualified = arg_string(c, a, 0);
-        const std::optional<attribute> held = found_by_name(qualified);
-        if (!held) {
-            throw_dom_exception(c, "NotFoundError",
-                                "removeNamedItem: no attribute called '" + qualified + "'");
-            return value::null();
-        }
-        // DETACHED, and made AFTER the removal so it cannot be read live: the
-        // Attr this hands back keeps the value it had, and no element.
-        (void)doc_->remove_attribute(id, held->name);
-        mutated();
-        return attribute_object(c, node_id{}, *held);
-    });
-    map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
-        const std::string ns = namespace_argument(c, a, 0);
-        const std::string local = arg_string(c, a, 1);
-        const std::optional<attribute> held = found_by_pair(ns, local);
-        if (!held) {
-            throw_dom_exception(c, "NotFoundError",
-                                "removeNamedItemNS: no attribute called '" + local + "'");
-            return value::null();
-        }
-        (void)doc_->remove_attribute_ns(id, ns, local);
-        mutated();
-        return attribute_object(c, node_id{}, *held);
-    });
+    // WHOSE MAP IT IS, for the methods on NamedNodeMap.prototype - see
+    // install_named_node_map. A symbol key, which getOwnPropertyNames does not
+    // report: attributes.html reads the map's own names and expects the
+    // indices and the exposed qualified names, nothing else.
+    map->define(named_node_map_owner_key, value::object(&obj), script::attr_none);
     {
         // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
         // invisible to a precise collector, so the raw pointer this closes over
         // would not keep the object alive - `retained` is the channel that
         // does, and the getter itself is reachable from the wrapper's accessor
         // table. See native_object::retained.
+        // HANDED OUT BEHIND A TRAP-LESS PROXY. `length`, `item` and the rest
+        // are on NamedNodeMap.prototype, and the engine's array-like
+        // iteration (`for (a of el.attributes)`, p5's XML module) reads
+        // `length` as an OWN property of a plain object but through the
+        // prototype chain of a proxy - so the proxy is what makes both the
+        // WebIDL property model and the iteration true at once.
         const value map_value = value::object(map);
+        const value handed =
+            value::object(cx.allocate<script::proxy_object>(map_value, cx.make_object()));
         auto * getter = cx.allocate<script::native_object>(
-            "attributes", [this, map, id](context & c, std::span<value>) {
+            "attributes", [this, map, id, handed](context & c, std::span<value>) {
                 refresh_attribute_map(c, *map, id);
-                return value::object(map);
+                return handed;
             });
         getter->retained.push_back(map_value);
+        getter->retained.push_back(handed);
         obj.define_accessor("attributes", value::object(getter), value::undefined());
     }
 
@@ -414,6 +335,12 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             set_inner_html(id, arg_string(c, a, 0));
             return value::undefined();
         });
+    tree_property(
+        "outerHTML", [this, id](context & c, std::span<value>) { return c.string(outer_html(id)); },
+        [this, id](context & c, std::span<value> a) {
+            set_outer_html(c, id, arg_string(c, a, 0));
+            return value::undefined();
+        });
     // `data` AND `nodeValue` - the text a Text or Comment node holds, which is
     // the one thing those two nodes are FOR. `childNodes` has handed them out
     // all along and there was no way to read what was in one: `.data` was
@@ -455,10 +382,17 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                 return value::undefined();
             });
     }
+    // NULL ON A DOCTYPE, both ways - DOM 4.4's table, and the four subtests
+    // of `Node-textContent.html` that a doctype gets.
+    const bool doctype =
+        doc_->read().kind(id).value_or(node_kind::element) == node_kind::document_type;
     tree_property(
         "textContent",
-        [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
-        [this, id](context & c, std::span<value> a) {
+        [this, id, doctype](context & c, std::span<value>) {
+            return doctype ? value::null() : c.string(text_content(id));
+        },
+        [this, id, doctype](context & c, std::span<value> a) {
+            if (doctype) { return value::undefined(); }
             // Text, never markup: that is the whole point of the property, and
             // the reason a page reaches for it instead of innerHTML. A nullish
             // value is the empty string (DOM 4.4: `[LegacyNullToEmptyString]`
@@ -534,9 +468,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             property, value::object(cx.allocate<script::native_object>(property, std::move(fn))),
             value::undefined());
     };
+    // `dom_parent`, not `parent()`: the document element's parent is the
+    // Document, which `wrap` hands back as the page's own `document`.
     navigate("parentNode", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
-        return wrap(c, txn.parent(id));
+        return wrap(c, dom_parent(txn, id));
     });
     // `parentElement` IS NOT `parentNode`. It is null when the parent is not an
     // element, which is exactly the case a tree-walking page tests to know it
@@ -615,7 +551,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     const auto sibling = [this, element_children](context & c, node_id self, bool forward,
                                                   bool elements_only) {
         const auto txn = doc_->read();
-        const node_id parent = txn.parent(self);
+        const node_id parent = dom_parent(txn, self);
         if (!parent) { return value::null(); }
         const std::vector<node_id> kids =
             elements_only
@@ -665,11 +601,22 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // `childNodes` is EVERY child, text nodes included; `children` is the
     // elements only. Both exist because they answer different questions, and a
     // page that wants the text nodes has no other way to reach them.
-    navigate("childNodes", [this, id](context & c, std::span<value>) {
-        value list = c.make_array();
-        auto * items = static_cast<script::array_object *>(list.as_heap());
-        const auto txn = doc_->read();
-        for (const node_id child : txn.children(id)) { items->items.push_back(wrap(c, child)); }
+    // A LIVE NodeList, and THE SAME ONE on every read - `el.childNodes ===
+    // el.childNodes` is Node-childNodes.html's first assertion. It is kept on
+    // the wrapper under a symbol key, which is what roots it and what keeps it
+    // out of `for...in` and getOwnPropertyNames.
+    navigate("childNodes", [this, id, self = &obj](context & c, std::span<value>) {
+        constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
+        if (const value * held = self->find(key); held != nullptr) { return *held; }
+        const value list = make_live_collection(
+            c,
+            [this, id] {
+                const auto txn = doc_->read();
+                const std::span<const node_id> kids = txn.children(id);
+                return std::vector<node_id>{kids.begin(), kids.end()};
+            },
+            "NodeList");
+        self->define(key, list, script::attr_none);
         return list;
     });
     // AN HTMLCollection, LIVE - not an Array. `children` is the one of these
@@ -816,21 +763,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING CHANGES: "" is a
         // SyntaxError, a token with whitespace in it an InvalidCharacterError,
         // and `add("a", "")` must leave the attribute alone.
+        //
+        // `add` and `remove` check each token in turn; `replace` checks BOTH
+        // for emptiness before either for whitespace (DOM 7.1, steps 1-2),
+        // so `replace(" ", "")` is a SyntaxError - hence `all_empty_first`.
         const auto valid_tokens = [this](context & c, std::span<value> args,
-                                         std::vector<std::string> & out) {
-            for (const value & v : args) {
-                const std::string token = c.to_string(v);
+                                         std::vector<std::string> & out,
+                                         bool all_empty_first = false) {
+            for (const value & v : args) { out.push_back(c.to_string(v)); }
+            for (std::size_t i = 0; i < out.size(); ++i) {
+                const std::string & token = out[i];
                 if (token.empty()) {
                     throw_dom_exception(c, "SyntaxError",
                                         "DOMTokenList: the empty string is not a token");
                     return false;
                 }
+                if (!all_empty_first && token.find_first_of("\t\n\f\r ") != std::string::npos) {
+                    throw_dom_exception(c, "InvalidCharacterError",
+                                        "DOMTokenList: '" + token + "' contains whitespace");
+                    return false;
+                }
+            }
+            for (const std::string & token : out) {
                 if (token.find_first_of("\t\n\f\r ") != std::string::npos) {
                     throw_dom_exception(c, "InvalidCharacterError",
                                         "DOMTokenList: '" + token + "' contains whitespace");
                     return false;
                 }
-                out.push_back(token);
             }
             return true;
         };
@@ -897,7 +856,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             return value::undefined();
                         }
                         std::vector<std::string> given;
-                        if (!valid_tokens(c, args.subspan(0, 2), given)) {
+                        if (!valid_tokens(c, args.subspan(0, 2), given, true)) {
                             return value::undefined();
                         }
                         std::vector<std::string> tokens = tokens_now();

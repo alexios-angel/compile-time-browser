@@ -88,6 +88,11 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
+    for (const auto & [packed, held] : attr_objects_) {
+        for (const auto & [key, obj] : held) {
+            if (obj != nullptr) { mark(value::object(obj)); }
+        }
+    }
     // Blob.prototype is held here as well as on the global, and the global
     // is what keeps it alive - but a page can delete a global, and a Blob
     // whose prototype was collected stops being `instanceof Blob`.
@@ -267,6 +272,8 @@ void dom_bindings::mutated() {
     // natives that change the document: this is the funnel they all already go
     // through. It costs one branch on a page that never made an observer.
     record_mutations();
+    // A "replace all" note is for the mutation it preceded and no other.
+    replace_all_.reset();
     // An `<iframe>` can only appear, change its `src` or leave through a
     // mutation, so this is where the reconcile is told there is something to
     // look at. The walk itself is not done here: it needs the script context

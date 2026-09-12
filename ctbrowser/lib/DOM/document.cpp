@@ -87,6 +87,25 @@ node_ns read_txn::element_ns(node_id id) const noexcept {
     return n != nullptr ? n->ns : node_ns::html;
 }
 
+bool read_txn::prefixed(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    return n != nullptr && n->kind == node_kind::element && n->prefixed;
+}
+
+std::string_view read_txn::local_name(node_id id) const noexcept {
+    const std::string_view qualified = doc_->atoms().text(tag(id).value_or(atom{}));
+    if (!prefixed(id)) { return qualified; }
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
+}
+
+std::string_view read_txn::prefix(node_id id) const noexcept {
+    if (!prefixed(id)) { return {}; }
+    const std::string_view qualified = doc_->atoms().text(tag(id).value_or(atom{}));
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
+}
+
 node_id read_txn::parent(node_id id) const noexcept {
     const node * n = doc_->find(id);
     return n != nullptr ? n->parent.load(std::memory_order_acquire) : node_id{};
@@ -171,8 +190,8 @@ document::document(atom_table & atoms) : atoms_(&atoms) {
 
 document::~document() = default;
 
-node_id document::create_element(atom tag, node_ns ns) {
-    return nodes_.insert(node_kind::element, tag, ns);
+node_id document::create_element(atom tag, node_ns ns, bool prefixed) {
+    return nodes_.insert(node_kind::element, tag, ns, prefixed);
 }
 
 node_id document::create_text(std::string_view value) {
@@ -236,6 +255,20 @@ void document::set_document_element(node_id id, node_id before) {
         fresh->items.insert(std::ranges::find(fresh->items, before), id);
     }
     publish(doc_node->children, static_cast<const child_list *>(fresh));
+    bump_version();
+}
+
+void document::remove_document_element() {
+    const std::lock_guard structure{structure_};
+    if (root_ == document_node_) { return; }
+    node * doc_node = find(document_node_);
+    if (doc_node == nullptr) { return; }
+    const child_list * stale = doc_node->children.load(std::memory_order_acquire);
+    auto * fresh = new child_list{stale->items};
+    const auto gone = std::ranges::remove(fresh->items, root_);
+    fresh->items.erase(gone.begin(), gone.end());
+    publish(doc_node->children, static_cast<const child_list *>(fresh));
+    root_ = document_node_;
     bump_version();
 }
 
@@ -339,6 +372,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     }
     publish(n->attributes, static_cast<const attr_list *>(fresh));
     bump_version();
+    note_write(id, name, false);
     return {};
 }
 
@@ -364,6 +398,7 @@ std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, a
     }
     publish(n->attributes, static_cast<const attr_list *>(fresh));
     bump_version();
+    note_write(id, name, false);
     return {};
 }
 
@@ -415,7 +450,27 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
     publish(n->text, static_cast<const text_block *>(new text_block{std::string{value}}));
     bump_version();
+    note_write(id, atom{}, true);
     return {};
+}
+
+void document::log_writes(bool on) {
+    log_writes_.store(on, std::memory_order_release);
+    if (!on) {
+        const std::lock_guard lock{writes_};
+        writes_log_.clear();
+    }
+}
+
+std::vector<document::write_note> document::take_writes() {
+    const std::lock_guard lock{writes_};
+    return std::exchange(writes_log_, {});
+}
+
+void document::note_write(node_id id, atom name, bool text) {
+    if (!log_writes_.load(std::memory_order_acquire)) { return; }
+    const std::lock_guard lock{writes_};
+    writes_log_.push_back(write_note{id, name, text});
 }
 
 node_id document::template_content(node_id element) const {

@@ -156,7 +156,7 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
 // `appendChild`, `append`, `replaceChildren`, `childNodes`, `children`,
 // `firstChild` and `textContent` are the same code an element uses and work on a
 // fragment unchanged, and `getElementById` comes with being a fragment - see
-// install_fragment_members. Only `mode` and `host` are a ShadowRoot's own.
+// DocumentFragment.prototype. Only `mode` and `host` are a ShadowRoot's own.
 void dom_bindings::install_shadow_root_members(context & cx, script::object_object & obj,
                                                node_id root) {
     const shadow_tree * tree = shadow_tree_of(root);
@@ -177,37 +177,6 @@ void dom_bindings::install_shadow_root_members(context & cx, script::object_obje
         value::object(cx.allocate<script::native_object>(
             "host", [this, host](context & c, std::span<value>) { return wrap(c, host); })),
         value::undefined());
-}
-
-// `getElementById` ON A FRAGMENT - a DocumentFragment method rather than an
-// Element one, DOM 4.2.6. On a shadow root an id inside the tree is scoped to
-// that tree and `document.getElementById` must NOT find it; on a <template>'s
-// contents it is the only way to reach a node by id at all, which is what
-// `DocumentFragment-getElementById.html` does with one.
-void dom_bindings::install_fragment_members(context & cx, script::object_object & obj,
-                                            node_id root) {
-    const auto method = [&](std::string name, script::native_fn fn) {
-        obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    method("getElementById", [this, root](context & c, std::span<value> args) {
-        const std::string want = arg_string(c, args, 0);
-        if (want.empty()) { return value::null(); }
-        const auto txn = doc_->read();
-        const atom id_name = atoms_->intern("id");
-        node_id found{};
-        const auto walk = [&](auto && self, node_id at) -> void {
-            for (const node_id child : txn.children(at)) {
-                if (found) { return; }
-                if (txn.attribute_value(child, id_name) == want) {
-                    found = child;
-                    return;
-                }
-                self(self, child);
-            }
-        };
-        walk(walk, root);
-        return found ? wrap(c, found) : value::null();
-    });
 }
 
 } // namespace ctbrowser::shell

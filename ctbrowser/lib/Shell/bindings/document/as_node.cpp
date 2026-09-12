@@ -32,11 +32,13 @@ using namespace detail;
 //
 // WHAT THE MODEL CANNOT DO, said here rather than guessed at each call site:
 //
-//   * `documentElement` CANNOT BE DETACHED. `document::remove_child` refuses
-//     the root - `dom_error::is_root` - because a tree whose root is gone has
-//     nothing left to be. So `removeChild(documentElement)` and
-//     `replaceChildren()` are NotSupportedError; `replaceChild(el,
-//     documentElement)` works because the new element takes the slot.
+//   * THE PAGE'S `documentElement` CANNOT BE DETACHED. `document::remove_child`
+//     refuses the root - `dom_error::is_root` - because a tree whose root is
+//     gone has nothing left to lay out. So `removeChild(documentElement)` and
+//     `replaceChildren()` are NotSupportedError on the page's own document;
+//     `replaceChild(el, documentElement)` works because the new element
+//     takes the slot. A document a page MADE is laid out by nothing, and
+//     does all three through `document::remove_document_element`.
 //   * A node from ANOTHER document is adopted on the way in, by `node_from`,
 //     and checked afterwards - see may_become_a_child.
 //
@@ -54,48 +56,6 @@ constexpr unsigned position_following = 0x04;
 constexpr unsigned position_contains = 0x08;
 constexpr unsigned position_contained_by = 0x10;
 constexpr unsigned position_implementation_specific = 0x20;
-
-// An Attr, as `createAttribute` and `createAttributeNS` hand one back.
-//
-// NOT A NODE, and for the reason `createProcessingInstruction` above is not
-// one: `node_kind` has no `attribute`, so there is nowhere in the tree to put
-// it and `attr instanceof Attr` is false. What it carries is exactly what
-// `dom/nodes/attributes.js`'s `attr_is` reads off one - nine properties, and
-// the corpus checks every one of them on every case.
-//
-// `value`, `nodeValue` and `textContent` are ONE STRING behind three
-// spellings, because on an Attr that is what they are: a page that writes
-// `attr.value` and reads `attr.nodeValue` must not see the old text. Three
-// data properties would have been three independent strings.
-[[nodiscard]] value make_attr_object(context & cx, const std::string & qualified,
-                                     const std::string & local, const std::string & prefix,
-                                     const std::string & ns) {
-    auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
-    const auto held = std::make_shared<std::string>();
-    for (const char * spelling : {"value", "nodeValue", "textContent"}) {
-        const value getter = value::object(cx.allocate<script::native_object>(
-            spelling, [held](context & c, std::span<value>) { return c.string(*held); }));
-        const value setter = value::object(
-            cx.allocate<script::native_object>(spelling, [held](context & c, std::span<value> a) {
-                *held = arg_string(c, a, 0);
-                return value::undefined();
-            }));
-        attr->define_accessor(spelling, getter, setter);
-    }
-    attr->set("name", cx.string(qualified));
-    attr->set("nodeName", cx.string(qualified));
-    attr->set("localName", cx.string(local));
-    attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
-    attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
-    attr->set("nodeType", value::number(2));
-    // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
-    // asserts it on every case it runs.
-    attr->set("specified", value::boolean(true));
-    // NULL, and it stays null: `setAttributeNode` is the only thing that would
-    // ever set it and there is none.
-    attr->set("ownerElement", value::null());
-    return value::object(attr);
-}
 
 } // namespace
 
@@ -263,8 +223,17 @@ void dom_bindings::normalize_subtree(node_id root) {
         if (child.kind == node_kind::element) { descend.push_back(child.id); }
     }
     flush();
-    for (const auto & [id, text] : rewritten) { (void)doc_->set_text(id, text); }
-    for (const node_id id : doomed) { (void)doc_->remove_child(id); }
+    // ONE `mutated()` PER STEP, because an observer counts them: DOM 4.4
+    // "normalize" replaces the run's data and then removes each absorbed node
+    // in turn, and MutationObserver-childList.html expects a record apiece.
+    for (const auto & [id, text] : rewritten) {
+        (void)doc_->set_text(id, text);
+        mutated();
+    }
+    for (const node_id id : doomed) {
+        (void)doc_->remove_child(id);
+        mutated();
+    }
     for (const node_id id : descend) { normalize_subtree(id); }
 }
 
@@ -355,10 +324,13 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         const std::span<const node_id> kids = txn.children(txn.document_node());
         return std::vector<node_id>{kids.begin(), kids.end()};
     };
-    read_only("childNodes", [this, children_now](context & c, std::span<value>) {
-        value list = c.make_array();
-        auto * items = static_cast<script::array_object *>(list.as_heap());
-        for (const node_id child : children_now()) { items->items.push_back(wrap(c, child)); }
+    // A live NodeList, the same one every read - see the element's in
+    // element/views.cpp.
+    read_only("childNodes", [this, children_now, self = &doc](context & c, std::span<value>) {
+        constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
+        if (const value * held = self->find(key); held != nullptr) { return *held; }
+        const value list = make_live_collection(c, children_now, "NodeList");
+        self->define(key, list, script::attr_none);
         return list;
     });
     read_only("firstChild", [this, children_now](context & c, std::span<value>) {
@@ -412,6 +384,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (is_the_document(given)) { return value::number(0); }
         const node_id other = handle_of(given);
         if (!other) {
+            if (const unsigned foreign = foreign_document_position(given); foreign != 0) {
+                return value::number(foreign);
+            }
             // A non-nullable Node in the IDL, so anything else fails argument
             // conversion before the method runs - a TypeError, not a 0 that
             // says "these are the same node".
@@ -480,11 +455,10 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             return value::undefined();
         }
         // "If this is an HTML document, then set localName to localName in
-        // ASCII lowercase." Every document in this engine is one - see
-        // `contentType` above - so this is unconditional, and it is why
-        // `createAttribute("TITLE").name` is "title".
-        const std::string local = ascii_lower_copy(given);
-        return make_attr_object(c, local, local, {}, {});
+        // ASCII lowercase" - and an XML one keeps `createAttribute("TITLE")`
+        // as written.
+        const std::string local = doc_->xml() ? given : ascii_lower_copy(given);
+        return attribute_object(c, node_id{}, attribute{atoms_->intern(local), std::string{}});
     });
     // `document.createAttributeNS(namespace, qualifiedName)`. The same shape as
     // `createElementNS` above and deliberately the same order: the NAME is
@@ -519,8 +493,8 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
             return fail("the XMLNS namespace is only for xmlns");
         }
-        return make_attr_object(c, qualified, std::string{split.local}, std::string{split.prefix},
-                                ns);
+        return attribute_object(
+            c, node_id{}, attribute{atoms_->intern(qualified), atoms_->intern(ns), std::string{}});
     });
 
     // --- everything that would change the document's own child list --------
@@ -648,11 +622,14 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         out = node_id{};
         if (ref.is_nullish()) { return true; }
         out = handle_of(ref);
-        if (!out) {
+        // ANOTHER DOCUMENT'S NODE is a Node that is not a child of this one -
+        // a NotFoundError, not a TypeError - and the specification checks it
+        // (step 3) before it looks at what is being inserted.
+        if (!out && owner_of(ref) == nullptr && !is_a_document(ref)) {
             c.throw_error("TypeError", "the reference node is not a Node");
             return false;
         }
-        if (!is_document_child(doc_->read(), out)) {
+        if (!out || !is_document_child(doc_->read(), out)) {
             throw_dom_exception(c, "NotFoundError",
                                 "the reference node is not a child of the document");
             return false;
@@ -684,6 +661,38 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                if (before != fresh) { place(fresh, before); }
                return arg(args, 0);
            });
+    // `moveBefore(node, child)`, DOM 4.2.3 "move" on a Document: an Element
+    // or CharacterData of THIS document only - a fragment, a doctype, a
+    // Document and another document's node are all HierarchyRequestError -
+    // and otherwise the same validity and the same placement as insertBefore,
+    // the node's current place ignored while the rules are checked.
+    method("moveBefore",
+           [this, may_become_a_child, place, reference_child](context & c, std::span<value> args) {
+               if (args.size() < 2) {
+                   c.throw_error("TypeError", "moveBefore needs a node and a reference child");
+                   return value::undefined();
+               }
+               node_id before;
+               if (!reference_child(c, arg(args, 1), before)) { return value::undefined(); }
+               const value given = arg(args, 0);
+               const node_id node = handle_of(given);
+               if (!node && owner_of(given) == nullptr && !is_a_document(given)) {
+                   c.throw_error("TypeError", "moveBefore: the argument is not a Node");
+                   return value::undefined();
+               }
+               const node_kind kind = node ? doc_->read().kind(node).value_or(node_kind::document)
+                                           : node_kind::document;
+               if (kind == node_kind::document || kind == node_kind::document_fragment ||
+                   kind == node_kind::document_type) {
+                   throw_dom_exception(c, "HierarchyRequestError",
+                                       "moveBefore takes an Element or CharacterData of this "
+                                       "document");
+                   return value::undefined();
+               }
+               if (!may_become_a_child(c, given, before, node)) { return value::undefined(); }
+               if (before != node) { place(node, before); }
+               return given;
+           });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
         if (!child) {
@@ -696,10 +705,19 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             return value::undefined();
         }
         if (child == element_child()) {
-            throw_dom_exception(c, "NotSupportedError",
-                                "this engine cannot detach the document element: it is the root "
-                                "of the tree and an emptied document has nothing to lay out");
-            return value::undefined();
+            // A DOCUMENT NOTHING LAYS OUT - one a page made - may lose its
+            // element, as DOM says; the page's own cannot, see the top of
+            // this file.
+            if (!secondary_) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    "this engine cannot detach the document element: it is the "
+                                    "root of the tree and an emptied document has nothing to lay "
+                                    "out");
+                return value::undefined();
+            }
+            doc_->remove_document_element();
+            mutated();
+            return arg(args, 0);
         }
         (void)doc_->remove_child(child);
         mutated();
@@ -722,16 +740,31 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         const node_id fresh = handle_of(arg(args, 0));
         if (fresh == stale) { return arg(args, 1); }
         if (stale == element_child()) {
-            // Only another element may take the root's slot - anything else
-            // would leave the document with no element to lay out.
-            if (doc_->read().kind(fresh).value_or(node_kind::comment) != node_kind::element) {
+            // Only another element may take the page's root's slot - anything
+            // else would leave the document with no element to lay out. A
+            // document nothing lays out takes whatever DOM allows.
+            const bool element =
+                doc_->read().kind(fresh).value_or(node_kind::comment) == node_kind::element;
+            if (!element && !secondary_) {
                 throw_dom_exception(c, "NotSupportedError",
                                     "replacing the document element with a non-element would "
                                     "detach the root of the tree, which this engine cannot do");
                 return value::undefined();
             }
-            doc_->set_document_element(fresh, node_id{});
-            mutated();
+            if (element) {
+                doc_->set_document_element(fresh, node_id{});
+                mutated();
+                return arg(args, 1);
+            }
+            node_id after;
+            {
+                const auto txn = doc_->read();
+                const std::span<const node_id> kids = txn.children(txn.document_node());
+                const auto at = std::ranges::find(kids, stale);
+                if (at != kids.end() && at + 1 != kids.end()) { after = *(at + 1); }
+            }
+            doc_->remove_document_element();
+            place(fresh, after);
             return arg(args, 1);
         }
         // The next sibling of `stale` is where the new node lands once the
@@ -793,8 +826,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     method("replaceChildren",
            [this, insert_all, element_child](context & c, std::span<value> args) {
                // `replaceChildren` has to REMOVE what is there first, which on a
-               // document with an element means detaching it.
-               if (element_child()) {
+               // document with an element means detaching it - which the
+               // page's own document cannot do, see removeChild.
+               if (element_child() && !secondary_) {
                    throw_dom_exception(c, "NotSupportedError",
                                        "replaceChildren would detach the document element, which "
                                        "this engine's document cannot do - see removeChild");
@@ -806,6 +840,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                    const std::span<const node_id> kids = txn.children(txn.document_node());
                    existing.assign(kids.begin(), kids.end());
                }
+               doc_->remove_document_element();
                for (const node_id one : existing) { (void)doc_->remove_child(one); }
                (void)insert_all(c, args, node_id{});
                return value::undefined();
@@ -831,8 +866,9 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     method("cloneNode", [this](context & c, std::span<value> args) {
         const bool deep = !args.empty() && context::truthy(args[0]);
         const value made = make_xml_document(c, {}, {}, false);
-        if (secondary_documents_.empty()) { return made; }
-        dom_bindings & fresh = *secondary_documents_.back();
+        dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+        if (top.secondary_documents_.empty()) { return made; }
+        dom_bindings & fresh = *top.secondary_documents_.back();
         fresh.doc_->set_xml(doc_->xml());
         fresh.doc_->set_quirks(doc_->quirks());
         fresh.content_type_ = content_type_;

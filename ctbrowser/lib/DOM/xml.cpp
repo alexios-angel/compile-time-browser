@@ -362,7 +362,8 @@ private:
         }
 
         const std::string_view uri = resolve(prefix_of(qualified), true);
-        const node_id id = builder_.create_element(atoms_.intern(qualified), ns_of(uri));
+        const node_id id = builder_.create_element(atoms_.intern(qualified), ns_of(uri),
+                                                   !prefix_of(qualified).empty());
         if (open_.empty()) {
             root_ = id;
             builder_.set_root(id);

@@ -608,8 +608,8 @@ private:
     // keeping the union of their options per node.
     struct mutation_node_state {
         std::vector<node_id> children;
-        std::vector<std::pair<atom, std::string>> attributes;
-        std::string text; // text and comment nodes only
+        std::vector<attribute> attributes;
+        std::string text; // CharacterData nodes only
     };
 
     void install_mutation_observer(context & cx);
@@ -1891,10 +1891,6 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
-    // What EVERY DocumentFragment has and an element does not: `getElementById`
-    // scoped to the fragment, DOM 4.2.6 NonElementParentNode. A ShadowRoot and a
-    // <template>'s contents are both fragments and both get it from here.
-    void install_fragment_members(context & cx, script::object_object & obj, node_id root);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
@@ -1970,6 +1966,61 @@ public:
         if (flush_layout_) { flush_layout_(); }
     }
     std::function<void()> flush_layout_;
+    // `compareDocumentPosition` against a node or Document of ANOTHER document
+    // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
+    // direction the specification only asks to be consistent taken from the
+    // order of the two bindings. Zero when `given` is not one of those.
+    [[nodiscard]] unsigned foreign_document_position(value given);
+    // An Attr's value accessors and ownerElement, (re)bound to `owner` - or to
+    // nowhere. See element/attributes.cpp.
+    void bind_attr_object(context & cx, script::object_object & attr, node_id owner,
+                          const attribute & held);
+    // The four parts of an Attr read off the object; an empty name when it is
+    // not one. And a detached copy of one, for cloneNode and importNode.
+    [[nodiscard]] attribute attribute_of_object(context & cx, value given);
+    [[nodiscard]] value clone_attr_object(context & cx, value given);
+    // `outerHTML`, HTML 13.2 / DOM Parsing: the element serialised WITH its own
+    // tag, and the setter that parses in the parent's context and puts the
+    // result in the element's place. See document/tree_ops.cpp.
+    [[nodiscard]] std::string outer_html(node_id target) const;
+    void set_outer_html(context & cx, node_id target, std::string_view markup);
+    [[nodiscard]] std::string serialize_html(node_id target, bool outer) const;
+    // "Validate and extract" for an ELEMENT name, DOM 4.9, shared by
+    // createElementNS and createDocument: false having thrown the
+    // InvalidCharacterError or NamespaceError the pair earns.
+    [[nodiscard]] bool validate_and_extract_element(context & cx, std::string_view where,
+                                                    const std::string & ns,
+                                                    const std::string & qualified);
+    // ONE Attr OBJECT PER (element, namespace, local name), so that
+    // `el.getAttributeNode("x") === el.attributes[0]` - an Attr is a node and
+    // a node has an identity. Keyed by pack(element), then by the pair; rooted
+    // by mark_roots like wrappers_; an entry goes when the attribute does.
+    flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
+        attr_objects_;
+    void forget_attr_object(node_id owner, std::string_view ns, std::string_view local);
+    // `new DOMParser().parseFromString(markup, type)`, HTML 8.6.2: a SECOND
+    // document - this document's HTML parser over `markup` for text/html, the
+    // XML parser for the four XML types - as a real Document or XMLDocument in
+    // the realm, so `createElement`, `documentElement.tagName` and the rest
+    // answer as the type says. See document/second_document.cpp.
+    [[nodiscard]] value parse_from_string(context & cx, std::string_view markup,
+                                          std::string_view type);
+    // The bindings for a document this one made, linked and installed - the
+    // half of make_html_document and make_xml_document they share.
+    dom_bindings & adopt_second_document(context & cx, document & fresh);
+    // NamedNodeMap's members, on its prototype - see element/attributes.cpp.
+    void install_named_node_map(context & cx);
+    // "REPLACE ALL" (DOM 4.2.3), which the diff cannot see whole: `replaceChildren(x)`
+    // where x was already a child queues ONE record removing every old child
+    // and adding x, and the tree afterwards says only that the others went.
+    // The caller notes it here before the mutated() that follows, and
+    // record_mutations emits exactly this record for the parent instead of a diff.
+    struct replace_all_note {
+        node_id parent;
+        std::vector<node_id> removed;
+        std::vector<node_id> added;
+    };
+    std::optional<replace_all_note> replace_all_;
 };
 
 } // namespace ctbrowser::shell

@@ -54,8 +54,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
     const auto sibling_of = [this](spot at, bool next) -> spot {
         if (at.document) { return no_spot; }
         const auto txn = doc_->read();
-        const node_id parent =
-            is_document_child(txn, at.id) ? txn.document_node() : txn.parent(at.id);
+        const node_id parent = dom_parent(txn, at.id);
         if (!parent) { return no_spot; }
         const std::span<const node_id> kids = txn.children(parent);
         const auto here = std::ranges::find(kids, at.id);

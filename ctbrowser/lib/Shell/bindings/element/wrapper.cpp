@@ -41,12 +41,10 @@ value dom_bindings::wrap(context & cx, node_id id) {
     install_element_views(cx, *obj, id);
     {
         const auto txn = doc_->read();
-        // AFTER both: a fragment's members are its own, and a ShadowRoot's
-        // come on top of a fragment's. See install_fragment_members.
+        // AFTER the views: a ShadowRoot's members come on top of them.
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
-        if (kind == node_kind::document_fragment) {
-            install_fragment_members(cx, *obj, id);
-            if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
+        if (kind == node_kind::document_fragment && shadow_tree_of(id) != nullptr) {
+            install_shadow_root_members(cx, *obj, id);
         }
         // A CDATASection and a ProcessingInstruction are CharacterData: `data`
         // and `nodeValue` are their text, both ways. install_element_views
@@ -214,18 +212,13 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
         // localName is the tag WITHOUT the case fold and WITHOUT the prefix:
         // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b", and
         // reporting the whole qualified name for both makes the two
-        // indistinguishable. prefix is null when there is no colon, which is
-        // every element the parser builds.
+        // indistinguishable. prefix is null when the colon is not one - see
+        // node::prefixed - which is every element the HTML parser builds and
+        // everything `createElement` makes.
         if (kind == node_kind::element) {
-            const std::string_view qualified = atoms_->text(txn.tag(id).value_or(atom{}));
-            const std::size_t colon = qualified.find(':');
-            if (colon == std::string_view::npos) {
-                obj.set("localName", cx.string(std::string{qualified}));
-                obj.set("prefix", value::null());
-            } else {
-                obj.set("localName", cx.string(std::string{qualified.substr(colon + 1)}));
-                obj.set("prefix", cx.string(std::string{qualified.substr(0, colon)}));
-            }
+            const std::string_view prefix = txn.prefix(id);
+            obj.set("localName", cx.string(std::string{txn.local_name(id)}));
+            obj.set("prefix", prefix.empty() ? value::null() : cx.string(std::string{prefix}));
             const std::string ns = namespace_of(id);
             obj.set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
         } else {

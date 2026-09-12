@@ -19,12 +19,15 @@
 // mutating CALL, which is what makes `el.id = "a"; el.id = "b"` two records
 // with the two different old values rather than one.
 //
-// THREE SHAPES A DIFF CANNOT RECOVER, named here rather than discovered later:
+// ONE SHAPE A DIFF CANNOT SEE IS LOGGED INSTEAD: a write that changes nothing.
+// `setAttribute("class", theSameValue)`, `appendData("")` and `deleteData(0,
+// 0)` all queue a record in a browser. `document::log_writes` notes every
+// set_attribute* and set_text while an observer is registered, and the diff
+// reports each note it did not already report - with the old value the
+// snapshot holds, which is the value it still has.
 //
-//   * A WRITE THAT CHANGES NOTHING. `setAttribute("class", theSameValue)`,
-//     `appendData("")` and `deleteData(0, 0)` all queue a record in a browser
-//     and are invisible to a diff. `MutationObserver-attributes.html` has four
-//     such subtests and `MutationObserver-characterData.html` five.
+// TWO SHAPES A DIFF CANNOT RECOVER, named here rather than discovered later:
+//
 //   * THE SILENT REMOVAL INSIDE `replaceChild`. Replacing a child with a node
 //     that is ALREADY a child queues two records - the pre-removal from the old
 //     position, then the replacement - and the net effect on the tree is one
@@ -265,7 +268,12 @@ void dom_bindings::collect_observed(const read_txn & txn, node_id root, bool sub
 
 void dom_bindings::take_mutation_snapshot() {
     mutation_snapshot_.clear();
-    if (doc_ == nullptr || mutation_registrations_.empty()) { return; }
+    if (doc_ == nullptr) { return; }
+    // The write log runs exactly while something observes, and a snapshot
+    // starts it afresh: what was written before `observe()` is nobody's record.
+    doc_->log_writes(!mutation_registrations_.empty());
+    (void)doc_->take_writes();
+    if (mutation_registrations_.empty()) { return; }
     const auto txn = doc_->read();
     std::vector<node_id> observed;
     for (const mutation_registration & reg : mutation_registrations_) {
@@ -277,9 +285,7 @@ void dom_bindings::take_mutation_snapshot() {
             if (mutation_snapshot_.find(key) != mutation_snapshot_.end()) { continue; }
             mutation_node_state state;
             for (const node_id child : txn.children(at)) { state.children.push_back(child); }
-            for (const attribute & held : txn.attributes(at)) {
-                state.attributes.emplace_back(held.name, held.value);
-            }
+            for (const attribute & held : txn.attributes(at)) { state.attributes.push_back(held); }
             state.text = std::string{txn.text(at)};
             mutation_snapshot_.emplace(key, std::move(state));
         }
@@ -307,10 +313,6 @@ value dom_bindings::make_mutation_record(context & cx, std::string_view type, no
     record->set("previousSibling", value::null());
     record->set("nextSibling", value::null());
     record->set("attributeName", value::null());
-    // ALWAYS NULL, and it is a DOM-layer gap rather than a binding one:
-    // `struct attribute` is (atom name, std::string value) with nowhere to put
-    // a namespace, so `setAttributeNS` has none to report. See the attribute
-    // namespaces row of docs/wpt.md.
     record->set("attributeNamespace", value::null());
     record->set("oldValue", value::null());
     return value::object(record);
@@ -325,6 +327,7 @@ void dom_bindings::record_mutations() {
     if (mutation_registrations_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
     context & cx = *cx_;
     const auto txn = doc_->read();
+    const std::vector<document::write_note> writes = doc_->take_writes();
 
     // ONE RECORD PER (observer, node, kind, attribute) FOR THIS MUTATION. An
     // observer that registered on both a node and an ancestor with `subtree`
@@ -370,7 +373,23 @@ void dom_bindings::record_mutations() {
             const node_kind kind = txn.kind(at).value_or(node_kind::element);
 
             // --- childList ------------------------------------------------
-            if (reg.options.child_list) {
+            if (reg.options.child_list && replace_all_ && replace_all_->parent == at) {
+                // "Replace all", as noted by the caller - see replace_all_.
+                if (first_time(reg.observer, pack(at), 1, std::string{})) {
+                    const value record = make_mutation_record(cx, "childList", at);
+                    auto * held = static_cast<script::object_object *>(record.as_heap());
+                    for (const auto & [name, list] :
+                         {std::pair{"removedNodes", &replace_all_->removed},
+                          std::pair{"addedNodes", &replace_all_->added}}) {
+                        const value made = cx.make_array();
+                        auto * items = static_cast<script::array_object *>(made.as_heap());
+                        for (const node_id one : *list) { items->items.push_back(wrap(cx, one)); }
+                        held->set(name, made);
+                    }
+                    queue_mutation_record(reg.observer, record);
+                    anything = true;
+                }
+            } else if (reg.options.child_list) {
                 now_children.clear();
                 for (const node_id child : txn.children(at)) { now_children.push_back(child); }
                 if (now_children != was.children) {
@@ -504,13 +523,23 @@ void dom_bindings::record_mutations() {
                     return std::ranges::find(reg.options.attribute_filter, name) !=
                            reg.options.attribute_filter.end();
                 };
-                const auto report = [&](atom name, const std::string * old_value) {
-                    const std::string spelling{atoms_->text(name)};
-                    if (!wanted(spelling)) { return; }
-                    if (!first_time(reg.observer, pack(at), 2, spelling)) { return; }
+                // The record names the attribute's LOCAL name and its
+                // namespace - `setAttributeNS(xml, "xml:lang", ..)` reports
+                // "lang" - and the filter matches the local name too.
+                const auto report = [&](const attribute & which, const std::string * old_value) {
+                    const std::string local{attribute_local_name(*atoms_, which)};
+                    if (!wanted(local)) { return; }
+                    if (!first_time(reg.observer, pack(at), 2,
+                                    std::string{atoms_->text(which.name)})) {
+                        return;
+                    }
                     const value record = make_mutation_record(cx, "attributes", at);
                     auto * held = static_cast<script::object_object *>(record.as_heap());
-                    held->set("attributeName", cx.string(spelling));
+                    held->set("attributeName", cx.string(local));
+                    if (which.ns) {
+                        held->set("attributeNamespace",
+                                  cx.string(std::string{atoms_->text(which.ns)}));
+                    }
                     if (reg.options.attribute_old_value && old_value != nullptr) {
                         held->set("oldValue", cx.string(*old_value));
                     }
@@ -519,28 +548,41 @@ void dom_bindings::record_mutations() {
                 };
                 for (const attribute & held : txn.attributes(at)) {
                     const auto before = std::ranges::find_if(
-                        was.attributes, [&](const auto & pair) { return pair.first == held.name; });
+                        was.attributes, [&](const attribute & a) { return a.name == held.name; });
                     if (before == was.attributes.end()) {
                         // A NEW attribute: its old value is null even under
                         // attributeOldValue, there being no old value.
-                        report(held.name, nullptr);
-                    } else if (before->second != held.value) {
-                        report(held.name, &before->second);
+                        report(held, nullptr);
+                    } else if (before->value != held.value) {
+                        report(held, &before->value);
                     }
                 }
-                for (const auto & [name, old_value] : was.attributes) {
+                for (const attribute & old : was.attributes) {
                     const bool still = std::ranges::any_of(
                         txn.attributes(at),
-                        [name = name](const attribute & held) { return held.name == name; });
-                    if (!still) { report(name, &old_value); }
+                        [name = old.name](const attribute & held) { return held.name == name; });
+                    if (!still) { report(old, &old.value); }
+                }
+                // THE WRITES THAT CHANGED NOTHING - see the write log. Each
+                // is reported once per observer, after anything the diff saw.
+                for (const document::write_note & note : writes) {
+                    if (note.text || note.node != at) { continue; }
+                    const attribute * held = txn.find_attribute(at, note.name);
+                    if (held == nullptr) { continue; }
+                    report(*held, &held->value);
                 }
             }
 
             // --- characterData ---------------------------------------------
-            if (reg.options.character_data &&
-                (kind == node_kind::text || kind == node_kind::comment)) {
+            if (reg.options.character_data && (is_text_kind(kind) || kind == node_kind::comment ||
+                                               kind == node_kind::processing_instruction)) {
                 const std::string_view now_text = txn.text(at);
-                if (now_text != was.text && first_time(reg.observer, pack(at), 3, std::string{})) {
+                const bool written =
+                    std::ranges::any_of(writes, [at](const document::write_note & note) {
+                        return note.text && note.node == at;
+                    });
+                if ((now_text != was.text || written) &&
+                    first_time(reg.observer, pack(at), 3, std::string{})) {
                     const value record = make_mutation_record(cx, "characterData", at);
                     auto * held = static_cast<script::object_object *>(record.as_heap());
                     if (reg.options.character_data_old_value) {
@@ -553,6 +595,7 @@ void dom_bindings::record_mutations() {
         }
     }
 
+    replace_all_.reset();
     take_mutation_snapshot();
     if (anything) {
         queue_mutation_delivery();

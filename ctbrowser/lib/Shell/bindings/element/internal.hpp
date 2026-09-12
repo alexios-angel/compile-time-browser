@@ -120,6 +120,11 @@ struct split_name {
     bool has_colon = false;
 };
 
+// The hidden slot on an element's `attributes` map holding the element's
+// wrapper - a symbol key, so getOwnPropertyNames does not report it. See
+// install_named_node_map.
+inline constexpr std::string_view named_node_map_owner_key = "@@sym:ctbrowser:attributes-owner";
+
 // The namespaces this file names by URI. Spelled out rather than derived,
 // because one wrong character makes a NamespaceError fire on the valid case and
 // not on the invalid one, and nothing about the failure says so.
