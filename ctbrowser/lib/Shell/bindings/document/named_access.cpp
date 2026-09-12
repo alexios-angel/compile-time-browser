@@ -73,24 +73,31 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
     handler->set(
         "get", native("get", [this](context & c, std::span<value> args) {
             if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
-            auto * object = static_cast<script::object_object *>(args[0].as_heap());
             const std::string name = c.to_string(args[1]);
-            if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
-                return c.lookup_property(args[0], name);
+            // THE WHOLE CHAIN FIRST, not only the own properties: a named
+            // item does not shadow `constructor`, `__proto__` or a null
+            // `onreadystatechange` from Document.prototype - which is what
+            // nameditem-no-shadowing.tentative.html asks, and what keeps
+            // `document.forms` the collection rather than a `<form
+            // name=forms>`.
+            if (const value held = c.lookup_property(args[0], name); !held.is_undefined()) {
+                return held;
             }
             if (const std::vector<node_id> named = named_document_items(name); !named.empty()) {
-                // ONE ELEMENT IS THE ELEMENT, several are a live
-                // HTMLCollection - and an `<iframe>` alone should be
-                // its content document, which this engine has no
-                // second browsing context to give. It hands back the
-                // iframe, which is wrong in a way that is visible and
-                // cheap rather than wrong in a way that is silent.
-                if (named.size() == 1) { return wrap(c, named.front()); }
+                // ONE ELEMENT IS THE ELEMENT - or, for an `<iframe>`, its
+                // content navigable's WindowProxy (HTML 3.1.5 step 3) -
+                // and several are a live HTMLCollection.
+                if (named.size() == 1) {
+                    const value element = wrap(c, named.front());
+                    if (doc_->read().local_name(named.front()) == "iframe") {
+                        const value window = c.lookup_property(element, "contentWindow");
+                        if (window.is_object_like()) { return window; }
+                    }
+                    return element;
+                }
                 return make_live_collection(c, [this, name] { return named_document_items(name); });
             }
-            // ...and failing all that the prototype chain, which now
-            // ends at `Document.prototype` and `EventTarget.prototype`.
-            return c.lookup_property(args[0], name);
+            return value::undefined();
         }));
     handler->set("has", native("has", [this](context & c, std::span<value> args) {
                      if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }

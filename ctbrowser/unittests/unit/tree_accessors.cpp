@@ -292,6 +292,19 @@ void test_a_name_never_shadows_a_real_property() {
     // does with a host object.
     is("typeof document.hasOwnProperty", "function");
     is("document.hasOwnProperty('nosuchname')", "false");
+    // Nor an INHERITED one: `constructor` and a null handler property stay
+    // what Document.prototype says (nameditem-no-shadowing), and an <iframe>
+    // alone answers its WindowProxy rather than the element (nameditem-02).
+    is("(function () {"
+       " var i = document.createElement('img'); i.setAttribute('name', 'constructor');"
+       " var j = document.createElement('img'); j.setAttribute('name', 'onreadystatechange');"
+       " document.body.appendChild(i); document.body.appendChild(j);"
+       " return (document.constructor === Document) + ',' + document.onreadystatechange; })()",
+       "true,null");
+    is("(function () {"
+       " var f = document.createElement('iframe'); f.setAttribute('name', 'fr');"
+       " document.body.appendChild(f); return document.fr === f.contentWindow; })()",
+       "true");
 }
 
 void test_several_of_one_name_is_a_collection() {
