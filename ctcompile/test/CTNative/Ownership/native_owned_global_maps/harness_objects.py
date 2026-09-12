@@ -578,6 +578,12 @@ def check_object_argument_calls(cpp, name, mode):
     if name == 'object_argument_seeded' and (
             'std::variant<double, std::shared_ptr<ctnative::identity_object>>' not in cpp):
         raise RuntimeError(f'{name}/{mode}: lost independent Number/Object key alternatives')
+    row = object_argument_cases()[name]
+    if row.get('object_payload'):
+        keys = ('double', 'js_num') if row.get('payload_only') else (
+            'std::shared_ptr<ctnative::identity_object>',)
+        if not any('map_storage<' + key + ', ctnative::object_value>' in cpp for key in keys):
+            raise RuntimeError(f'{name}/{mode}: lost the owning object payload carrier')
     if object_argument_cases()[name].get('global_key'):
         created = re.findall(r'(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)', entry[1])
         stores = re.findall(r'\bg_key = (\w+);', entry[1])
@@ -730,6 +736,8 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
                       else observer(cpp, 2, 0, global_alias=True, global_chain=('copy', 'tail', 'branch'))
                           if name == 'object_argument_siblings_global_chain'
                       else observer(cpp, 2, 0) if name == 'object_argument_siblings_named'
+                      else object_payload_lifetime_cpp(cpp, name)
+                          if object_argument_cases()[name].get('object_payload')
                       else observer(cpp))
     binary = source.with_suffix('.sanitized').resolve()
     host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
@@ -926,3 +934,141 @@ int main() {
     return 0;
 }
 '''
+
+
+def object_payload_observer_source(source, name):
+    row = object_argument_cases()[name]
+    scalar = row.get('payload_only')
+    observed = source + '''
+(function() {
+    const get = host.slot.get;
+    SAVED_CALLABLES
+    host = {};
+    const first = FIRST_OBJECT, alias = first, other = {};
+    const original = Map.prototype.has;
+    let captured;
+    Map.prototype.has = function(key) { captured = this; return original.call(this, key); };
+    const a = get(first);
+    Map.prototype.has = original;
+    const firstStored = GLOBAL_IDENTITY && captured.get(FIRST_KEY) === first;
+    const b = get(alias);
+    const aliasStored = alias === first && captured.get(FIRST_KEY) === first;
+    const c = get(other);
+    const otherStored = captured.get(OTHER_KEY) === other;
+    const distinct = first !== other && DISTINCT;
+    const deleted = DELETE_OTHER === DELETE_RESULT && !captured.has(OTHER_KEY) &&
+                    DELETE_OTHER === ABSENT_DELETE_RESULT;
+    const cleared = CLEAR_MAP === CLEAR_RESULT && captured.size === 0;
+    let future = true;
+    for (let i = 0; i < 128; ++i) {
+        const item = {}, replacement = {};
+        if (get(item) !== 1 || captured.get(ITEM_KEY) !== item) { future = false; }
+        if (get(replacement) !== 1 || captured.get(REPLACEMENT_KEY) !== replacement) { future = false; }
+        if (DELETE_REPLACEMENT !== DELETE_RESULT || captured.has(REPLACEMENT_KEY)) { future = false; }
+        if (CLEAR_MAP !== CLEAR_RESULT || captured.size !== 0) { future = false; }
+    }
+    trace = (typeof a === 'number' && a === 1 && firstStored ? 1 : 0) |
+            (typeof b === 'number' && b === 1 && aliasStored ? 2 : 0) |
+            (typeof c === 'number' && c === 1 && otherStored ? 4 : 0) |
+            (distinct ? 8 : 0) | (deleted ? 16 : 0) | (cleared ? 32 : 0) | (future ? 64 : 0);
+})();
+'''
+    replacements = dict(SAVED_CALLABLES='const erase = host.slot.erase, clear = host.slot.clear;' if scalar else '',
+        GLOBAL_IDENTITY='first === key' if row.get('global_key') else 'true',
+        FIRST_OBJECT='key' if row.get('global_key') else '{}',
+        FIRST_KEY='1' if scalar else 'first', OTHER_KEY='1' if scalar else 'other',
+        ITEM_KEY='1' if scalar else 'item', REPLACEMENT_KEY='1' if scalar else 'replacement',
+        DISTINCT='captured.get(1) !== first' if scalar else 'captured.get(first) === first',
+        DELETE_OTHER='erase()' if scalar else 'captured.delete(other)',
+        DELETE_REPLACEMENT='erase()' if scalar else 'captured.delete(replacement)',
+        ABSENT_DELETE_RESULT='0' if scalar else 'false', DELETE_RESULT='1' if scalar else 'true',
+        CLEAR_MAP='clear()' if scalar else 'captured.clear()', CLEAR_RESULT='0' if scalar else 'undefined')
+    for before, after in replacements.items():
+        observed = observed.replace(before, after)
+    return observed, 127
+
+
+def object_payload_lifetime_cpp(cpp, name):
+    row = object_argument_cases()[name]
+    scalar = row.get('payload_only')
+    changed = instrument_leaf_objects(cpp) + r'''
+int main() {
+    using Object = std::shared_ptr<ctnative::identity_object>;
+    using Map = ctnative::map_storage<KEY_TYPE, ctnative::object_value>;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 1 || ctn_test_objects[0].expired()) { return 251; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto get = table->m_get;
+    SAVED_CALLABLES
+    static_assert(std::is_same_v<decltype(get), std::function<js_num(Object)>>);
+    static_assert(!std::is_invocable_v<decltype(get), int>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired()) { return 252; }
+    auto map = std::const_pointer_cast<Map>(
+        std::static_pointer_cast<const Map>(ctn_test_maps[0].lock()));
+    DROP_GLOBAL
+    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||
+        ctn_test_objects[0].expired()) { return 253; }
+    CLEAR;
+    if (!ctn_test_objects[0].expired() || !map->empty()) { return 254; }
+    for (int call = 0; call < 128; ++call) {
+        auto first = std::make_shared<ctnative::identity_object>();
+        auto alias = first;
+        std::weak_ptr first_lifetime = first;
+        if (get(first) != 1 || get(alias) != 1 || map->at(FIRST_KEY).object != first) { return 255; }
+        first.reset(); alias.reset();
+        if (first_lifetime.expired()) { return 256; }
+        auto other = std::make_shared<ctnative::identity_object>();
+        std::weak_ptr other_lifetime = other;
+        if (get(other) != 1 || map->at(OTHER_KEY).object != other) { return 257; }
+        other.reset();
+        OVERWRITE_DELETE
+        if (!first_lifetime.expired() || other_lifetime.expired()) { return 258; }
+        CLEAR;
+        if (!other_lifetime.expired() || !map->empty()) { return 259; }
+    }
+    auto last = std::make_shared<ctnative::identity_object>();
+    std::weak_ptr last_lifetime = last;
+    if (get(last) != 1) { return 260; }
+    last.reset();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_objects.size() != 2 || ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
+        map->size() != 1 || map->begin()->second.object != last_lifetime.lock() ||
+        ctn_test_objects[1].expired() || ctn_test_objects[1].lock() == last_lifetime.lock()) { return 261; }
+    DROP_NEW_GLOBAL
+    map.reset();
+    DROP_CALLABLES
+    if (last_lifetime.expired() || ctn_test_maps[0].expired()) { return 262; }
+    get = {};
+    if (!last_lifetime.expired() || !ctn_test_maps[0].expired() ||
+        ctn_test_maps[1].expired() || ctn_test_objects[1].expired()) { return 263; }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired() || !ctn_test_objects[1].expired()) { return 264; }
+    return 0;
+}
+'''
+    replacements = dict(KEY_TYPE='js_num' if scalar else 'Object',
+        FIRST_KEY='js_num{1}' if scalar else 'first',
+        OTHER_KEY='js_num{1}' if scalar else 'other',
+        SAVED_CALLABLES='auto erase = table->m_erase; auto clear = table->m_clear;' if scalar else '',
+        DROP_CALLABLES='erase = {}; clear = {};' if scalar else '',
+        CLEAR='if (clear() != 0) { return 265; }' if scalar else 'ctnative::map_clear(map)',
+        DROP_GLOBAL=('if (g_key != ctn_test_objects[0].lock()) { return 266; } g_key.reset();'
+                     if row.get('global_key') else ''),
+        DROP_NEW_GLOBAL=('if (g_key != ctn_test_objects[1].lock()) { return 267; } g_key.reset();'
+                         if row.get('global_key') else ''),
+        OVERWRITE_DELETE=(r'''if (!first_lifetime.expired() || erase() != 1 ||
+            !other_lifetime.expired() || erase() != 0 || !map->empty()) { return 268; }
+        other = std::make_shared<ctnative::identity_object>();
+        other_lifetime = other;
+        if (get(other) != 1 || map->at(js_num{1}).object != other) { return 269; }
+        other.reset();''' if scalar else r'''auto key = first_lifetime.lock();
+        if (!key || map->at(key).object != key || !ctnative::map_delete(map, key)) { return 268; }
+        key.reset();'''))
+    for before, after in replacements.items():
+        changed = changed.replace(before, after)
+    return changed

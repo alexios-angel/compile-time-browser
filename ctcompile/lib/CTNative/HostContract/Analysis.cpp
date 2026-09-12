@@ -149,8 +149,8 @@ bool analyzer::capturedMapParameters(
                 }
                 // Every use must be an explicit argument in this Map's exact
                 // invocation census. Every sibling body independently permits
-                // object formals only as keys, so a Map can retain a key but
-                // the key cannot retain the Map or acquire an outgoing edge.
+                // object formals only as keys or payloads, so the Map can retain
+                // them but they cannot retain the Map or acquire outgoing edges.
                 for (mlir::Value alias : aliases) {
                     for (mlir::OpOperand & use : alias.getUses()) {
                         if (!step() || !dominance.dominates(alias, use.getOwner())) {

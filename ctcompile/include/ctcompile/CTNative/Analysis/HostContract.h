@@ -51,10 +51,10 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// Finite primitive categories or empty object keys, proved over the
+// Finite primitive categories or empty object arguments, proved over the
 // complete current call census. Object positions have no primitive alternatives;
-// their actual allocation and allowed uses are checked independently. Only the
-// captured Map may retain a key; the key has no outgoing ownership edges.
+// their actual allocation and allowed uses are checked independently. The
+// captured Map may retain them as keys or payloads; they have no outgoing edges.
 struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
@@ -74,9 +74,10 @@ struct HostMethodArgument {
 
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
-// primitive contents or fresh method-local leaf objects with fixed scalar
-// fields, and standard size/set/get/has/delete effects. Object payloads cannot
-// escape through a method result, field, key or unchecked use. Effects remain
+// primitive contents, fresh method-local leaves with fixed scalar fields, or
+// checked empty caller leaves, and standard size/set/get/has/delete/clear effects.
+// Caller leaves permit only key/payload uses; method-local leaves cannot be keys.
+// No object escapes through a method result, field or unchecked use. Effects remain
 // runtime; no startup value or result type is promised. Optional cell operations describe
 // the original binding; after lifting, the call reads its environment value.
 // Every handle is rederived from the current module, never from native markers.
@@ -128,7 +129,7 @@ struct HostScalarGlobalRead {
 // reached through a complete acyclic chain of those bindings. Initialization
 // belongs to this read's binding; object remains the original allocation.
 // Every read follows its store, and all uses are checked initializations or
-// keys in the completed captured-Map family. The actual loads and stores remain live.
+// key/payload arguments in the completed captured-Map family. Loads/stores remain live.
 struct HostObjectGlobalRead {
     ctjs::StoreGlobalOp initialization;
     ctjs::LoadGlobalOp read;
