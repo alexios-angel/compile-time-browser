@@ -502,7 +502,8 @@ public:
     //      the cell on the floor and the closure would see the wrong variable.
     //   3. a temporary allocated for a default expression must be released, or
     //      every default permanently widens the frame.
-    void compile_parameter_prologue(std::span<const std::int32_t> params);
+    void compile_parameter_prologue(std::span<const std::int32_t> params,
+                                    const std::function<bool(std::uint16_t)> & is_boxed);
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any

@@ -162,18 +162,24 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::make_arguments, arguments_slot});
         arguments_boxed = fn().locals.back().boxed;
     }
-    compile_parameter_prologue(params);
-    // A captured PARAMETER needs boxing too, and it arrives already
-    // holding its value - so box in place, after the arguments land.
-    for (std::size_t i = 0; i < declared_parameters && i < fn().locals.size(); ++i) {
-        const local & l = fn().locals[i];
-        // `arguments` was built above and boxes itself; a pattern name is
-        // declared and boxed by the prologue. Neither is a parameter, and
-        // neither belongs here.
-        if (l.boxed && !(wants_arguments && l.reg == arguments_slot)) {
-            proto().emit(instruction{op::new_cell, l.reg});
+    // A captured PARAMETER needs boxing too, and it arrives already holding
+    // its value - so box in place, after the arguments land and BEFORE the
+    // defaults are evaluated: a default expression reads an earlier
+    // parameter through its cell (`function f(cls, p = cls.name)` with `cls`
+    // captured by an arrow in the body - zod's _instanceof), and boxing after
+    // the prologue meant that read went through cell_get on a raw value and
+    // answered undefined. The prologue writes a boxed parameter's default
+    // through cell_set for the same reason.
+    compile_parameter_prologue(params, [&](std::uint16_t reg) {
+        for (std::size_t i = 0; i < declared_parameters && i < fn().locals.size(); ++i) {
+            const local & l = fn().locals[i];
+            if (l.reg != reg) { continue; }
+            // `arguments` was built above and boxes itself; a pattern name is
+            // declared and boxed by the prologue. Neither is a parameter.
+            return l.boxed && !(wants_arguments && l.reg == arguments_slot);
         }
-    }
+        return false;
+    });
     if (wants_arguments && arguments_boxed) {
         proto().emit(instruction{op::new_cell, arguments_slot});
     }

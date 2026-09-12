@@ -342,7 +342,8 @@ void compiler_impl::fail(std::string message) {
     }
 }
 
-void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> params) {
+void compiler_impl::compile_parameter_prologue(
+    std::span<const std::int32_t> params, const std::function<bool(std::uint16_t)> & is_boxed) {
     for (std::size_t i = 0; i < params.size(); ++i) {
         const vp::node & p = at(params[i]);
         if (p.d == 1) {
@@ -350,15 +351,33 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
                                      static_cast<std::uint16_t>(i)});
         }
     }
+    // BOX THE CAPTURED PARAMETERS HERE, between the rest gather (a raw write)
+    // and the defaults (which read earlier parameters by name, i.e. through
+    // the cell). See compile_function_body.
+    std::vector<bool> boxed(params.size(), false);
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        boxed[i] = is_boxed(static_cast<std::uint16_t>(i));
+        if (boxed[i]) { proto().emit(instruction{op::new_cell, static_cast<std::uint16_t>(i)}); }
+    }
     for (std::size_t i = 0; i < params.size(); ++i) {
         const vp::node & p = at(params[i]);
         if (p.d == 1 || p.a < 0) { continue; }
         const auto slot = static_cast<std::uint16_t>(i);
-        const std::size_t skip = proto().emit(instruction{op::jump_if_defined, slot});
         const std::uint32_t mark = reg_mark();
-        compile_expr(p.a, slot);
+        if (boxed[i]) {
+            // `jump_if_defined` on the cell would always jump: test the value.
+            const std::uint16_t current = alloc_reg();
+            proto().emit(instruction{op::cell_get, current, slot});
+            const std::size_t skip = proto().emit(instruction{op::jump_if_defined, current});
+            compile_expr(p.a, current);
+            proto().emit(instruction{op::cell_set, slot, current});
+            patch_here(skip);
+        } else {
+            const std::size_t skip = proto().emit(instruction{op::jump_if_defined, slot});
+            compile_expr(p.a, slot);
+            patch_here(skip);
+        }
         release_to(mark);
-        patch_here(skip);
     }
     // A parameter may be a SHAPE - `function f({x, y})`. Its register holds
     // the argument; the names inside come out of it. Last, so a default has
