@@ -582,7 +582,7 @@ void dom_bindings::install_range(context & cx) {
 value dom_bindings::create_range(context & cx) {
     const value ctor = cx.global("Range");
     auto * made = static_cast<script::object_object *>(cx.make_object().as_heap());
-    if (ctor.is_object()) {
+    if (ctor.is_callable()) {
         const value proto = cx.lookup_property(ctor, "prototype");
         if (proto.is_object()) { made->prototype = proto; }
     }
