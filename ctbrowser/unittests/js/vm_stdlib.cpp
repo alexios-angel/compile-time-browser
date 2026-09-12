@@ -24,6 +24,12 @@ namespace {
 // are REFUSED rather than mis-matched - neither appears in p5.js, and a
 // matcher that silently ignores an assertion is worse than one that says no.
 void test_regex() {
+    // An invalid literal is an early error - a SyntaxError of the source,
+    // reported as a parse error - not a throw when the line runs.
+    CHECK(!compiler::compile("var r = /(/;").ok);
+    CHECK(compiler::compile("var r = /(/;").error.starts_with("parse error:"));
+    CHECK(!compiler::compile("var r = /a/gg;").ok);
+    CHECK(compiler::compile("function f() { return /a(b+)c/; }").ok);
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
     // .index is the most-used feature of all, at 143 sites in p5.js

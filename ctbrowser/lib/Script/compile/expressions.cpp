@@ -7,6 +7,7 @@
 // The class is declared whole in compiler_impl.hpp beside this.
 
 #include "compiler_impl.hpp"
+#include <ctbrowser/script/regex.hpp>
 
 namespace ctbrowser::script::detail {
 
@@ -835,6 +836,18 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
     const std::size_t close = literal.rfind('/');
     if (literal.size() < 2 || literal.front() != '/' || close == 0) {
         fail("malformed regular expression literal (" + std::string{literal} + ")");
+        proto().emit(instruction{op::load_undef, dst});
+        return;
+    }
+    // AN INVALID LITERAL IS AN EARLY ERROR (13.2.7.2): the pattern and flags
+    // are checked here, with the same compiler the runtime uses, so a bad
+    // literal is a SyntaxError of the source text - "parse error:" - rather
+    // than a throw when the line is reached. test262 spells 181 files as
+    // exactly this distinction.
+    if (const rx::rx_prog probe =
+            rx::rx_compile(literal.substr(1, close - 1), literal.substr(close + 1));
+        !probe.ok) {
+        fail("parse error: " + probe.error);
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
