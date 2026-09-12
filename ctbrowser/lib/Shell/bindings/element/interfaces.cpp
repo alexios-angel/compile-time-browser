@@ -427,9 +427,10 @@ public:
         const bool closed_details = html && tag == "details" && !txn_.has_attribute(node, open_);
         // A <select> renders its options and an <optgroup> its options: text
         // beside them, and a group inside a group, has no box.
-        const std::string_view widget_children = html && tag == "select"
-                                                     ? "option optgroup"
-                                                     : (html && tag == "optgroup" ? "option" : "");
+        const bool grouped = html && tag == "optgroup" && is_html(txn_.parent(node)) &&
+                             tag_of(txn_.parent(node)) == "select";
+        const std::string_view widget_children =
+            html && tag == "select" ? "option optgroup" : (grouped ? "option" : "");
         // "Blockification": the in-flow children of a flex or grid container
         // are block-level whatever their display says.
         const bool blockify = lists_token("flex inline-flex grid inline-grid", display);
@@ -1183,6 +1184,9 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         }
     }
     if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
+    // "Window objects must also have a ... property named HTMLDocument whose
+    // value is the Document interface object" (HTML 3.1.1).
+    cx.define_global("HTMLDocument", cx.global("Document"));
 
     // EVERY WRAPPER THAT ALREADY EXISTS, RE-LINKED. Two of them are made by
     // install_document before this can run at all, and they are `document.body`
