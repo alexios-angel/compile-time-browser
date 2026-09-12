@@ -255,7 +255,7 @@ int main() {
               "{\"n\":12345678901234567890}");
     js_expect("JSON.stringify([JSON.rawJSON('\"x\"'), JSON.rawJSON('null')])", "[\"x\",null]");
     js_expect("(function(){var r=JSON.rawJSON('1');return [JSON.isRawJSON(r), JSON.isRawJSON({}),"
-              "Object.isFrozen(r), Object.getPrototypeOf(r), r.rawJSON].join();})()",
+              "Object.isFrozen(r), String(Object.getPrototypeOf(r)), r.rawJSON].join();})()",
               "true,false,true,null,1");
     js_expect("JSON.rawJSON('{}')", "THREW");
     js_expect("JSON.rawJSON(' 1')", "THREW");
