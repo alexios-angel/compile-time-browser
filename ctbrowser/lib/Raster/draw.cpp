@@ -28,11 +28,7 @@ float font8x8_advance(std::string_view text, float font_size) noexcept {
 }
 
 void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & into) {
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty()) { return; }
     for (int y = p.top; y < p.bottom; ++y) {
         const std::span<std::uint32_t> row = into.row(y);
@@ -43,11 +39,7 @@ void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & i
 }
 
 void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface & into) {
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
 
     const float cx = where.x + where.width / 2;
@@ -112,11 +104,7 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
         fill_rect(where, c, clip, into);
         return;
     }
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
 
     const bool hollow = ring > 0;
@@ -254,11 +242,7 @@ void draw_text_run(const rect & where, const paint_command & c, const pixel_rect
 void draw_image(const rect & where, const paint_command & c, const pixel_rect & clip,
                 surface & into) {
     if (!c.pixels || c.pixels->empty() || where.width <= 0 || where.height <= 0) { return; }
-    pixel_rect p = to_pixels(where, into.width(), into.height());
-    p.left = std::max(p.left, clip.left);
-    p.top = std::max(p.top, clip.top);
-    p.right = std::min(p.right, clip.right);
-    p.bottom = std::min(p.bottom, clip.bottom);
+    const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty()) { return; }
 
     const float scale_x = static_cast<float>(c.pixels->width) / where.width;
@@ -288,9 +272,7 @@ void draw_commands(const std::vector<paint_command> & commands, const rect & are
         switch (c.op) {
         case paint_op::push_clip: {
             clips.push_back(clip);
-            const pixel_rect next = to_pixels(local, into.width(), into.height());
-            clip = pixel_rect{std::max(clip.left, next.left), std::max(clip.top, next.top),
-                              std::min(clip.right, next.right), std::min(clip.bottom, next.bottom)};
+            clip = intersect(clip, to_pixels(local, into.width(), into.height()));
             break;
         }
         case paint_op::pop_clip:

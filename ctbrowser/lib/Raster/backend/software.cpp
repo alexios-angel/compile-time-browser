@@ -106,9 +106,7 @@ void software_backend::blit(const surface & from, float at_x, float at_y, const 
     const int dy = round_to_pixel(at_y);
     pixel_rect window{0, 0, target_.width(), target_.height()};
     if (!clip.empty()) {
-        const pixel_rect c = to_pixels(clip, target_.width(), target_.height());
-        window = pixel_rect{std::max(window.left, c.left), std::max(window.top, c.top),
-                            std::min(window.right, c.right), std::min(window.bottom, c.bottom)};
+        window = intersect(window, to_pixels(clip, target_.width(), target_.height()));
     }
     for (int y = 0; y < from.height(); ++y) {
         const int ty = dy + y;
