@@ -19,7 +19,8 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     // built by install_document, not a wrapper - so `handle_of` answers nothing
     // for it. It IS a Node, and inserting one is step 4's HierarchyRequestError,
     // not a TypeError: `el.insertBefore(document, a)` is a subtest by name.
-    const bool node_is_document = !child && is_the_document(node_arg);
+    // ANY document - a frame's or a created one is a Node just the same.
+    const bool node_is_document = !child && is_a_document(node_arg);
     if (!child && !node_is_document) {
         // Not a Node at all. WebIDL reports a failed conversion as a TypeError
         // rather than a DOMException, which is the one case in these steps that
@@ -622,7 +623,7 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id fresh = handle_of(node_arg);
         const node_id stale = handle_of(child_arg);
         // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
-        if ((!fresh && !is_the_document(node_arg)) || (!stale && !is_the_document(child_arg))) {
+        if ((!fresh && !is_a_document(node_arg)) || (!stale && !is_a_document(child_arg))) {
             c.throw_error("TypeError", "replaceChild: the argument is not a Node");
             return value::undefined();
         }
@@ -788,7 +789,9 @@ void dom_bindings::install_node_methods(context & cx) {
             // The document object is a Node with no handle - see
             // pre_insert_valid - and it is nobody's child, so `s.removeChild
             // (document)` is the NotFoundError below rather than a TypeError.
-            if (is_the_document(arg(args, 0))) {
+            // So is a node of ANOTHER document: `Node-removeChild.html` hands
+            // this one a frame's and a synthetic document's nodes.
+            if (is_a_document(arg(args, 0)) || owner_of(arg(args, 0)) != nullptr) {
                 throw_dom_exception(c, "NotFoundError",
                                     "removeChild: the node is not a child of this one");
                 return value::undefined();
