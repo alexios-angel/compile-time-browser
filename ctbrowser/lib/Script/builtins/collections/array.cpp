@@ -94,7 +94,7 @@ void install_array(context & cx) {
                 "53 - 1);"
                 "  if (!custom && len > 4294967295) { throw new RangeError('Invalid array "
                 "length'); }"
-                "  for (; i < len; i++) {"
+                "  while (i < len) {"
                 "    const v = await items[i];"
                 "    put(mapping ? await mapfn.call(thisArg, v, i) : v);"
                 "  }"
