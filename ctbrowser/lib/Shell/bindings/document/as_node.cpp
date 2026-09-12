@@ -540,8 +540,11 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         bool doctype_at_or_after_before = false;
         bool passed_before = false;
         for (const node_id child : txn.children(txn.document_node())) {
-            if (child == ignore) { continue; }
+            // The reference is reached even when it is the child being
+            // replaced: replaceChild passes the same node as both, and "a
+            // doctype following child" is asked relative to it.
             if (child == before) { passed_before = true; }
+            if (child == ignore) { continue; }
             const node_kind held = txn.kind(child).value_or(node_kind::comment);
             if (held == node_kind::element) {
                 has_element = true;
