@@ -54,11 +54,16 @@ void test_create_html_document_builds_a_whole_document() {
        "made,HTML,HEAD,BODY");
     is("document.implementation.createHTMLDocument('made').nodeType", "9");
     // THE ARGUMENT'S ABSENCE IS OBSERVABLE: with none there is no <title>
-    // element at all, and with `undefined` there is one holding "undefined".
+    // element at all - and `undefined` IS absence, the argument being an
+    // optional DOMString (WebIDL; DOMImplementation-createHTMLDocument.js
+    // tests it beside `null`, which is the four letters).
     is("document.implementation.createHTMLDocument()"
        ".getElementsByTagName('title').length",
        "0");
-    is("document.implementation.createHTMLDocument(undefined).title", "undefined");
+    is("document.implementation.createHTMLDocument(undefined)"
+       ".getElementsByTagName('title').length",
+       "0");
+    is("document.implementation.createHTMLDocument(null).title", "null");
     // AND IT IS NOT THE PAGE'S DOCUMENT, which is the whole point.
     is("document.implementation.createHTMLDocument('made') === document", "false");
     is("(function () {"

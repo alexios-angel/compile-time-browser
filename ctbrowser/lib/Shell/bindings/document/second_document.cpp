@@ -84,7 +84,9 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
         const node_id element = fresh.create_element(atoms_->intern_lower("title"));
         if (head && element) {
             (void)fresh.append_child(head, element);
-            made.set_text(element, *title);
+            // A Text node EVEN WHEN EMPTY: `createHTMLDocument("")` has a
+            // title with one child whose data is "" (HTML 8.6 step 5).
+            (void)fresh.append_child(element, fresh.create_text(*title));
         }
     }
     made.install_document(cx);

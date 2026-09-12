@@ -733,10 +733,12 @@ void dom_bindings::install_document(context & cx) {
                             value::object(cx.allocate<script::native_object>(
                                 "createHTMLDocument", [this](context & c, std::span<value> args) {
                                     // THE ARGUMENT'S ABSENCE IS OBSERVABLE: with no argument
-                                    // there is no `<title>` element at all, and with `undefined`
-                                    // there is one containing the string "undefined". HTML says
-                                    // so in as many words and createHTMLDocument.js tests both.
-                                    if (args.empty()) { return make_html_document(c, nullptr); }
+                                    // there is no `<title>` element at all - and `undefined`
+                                    // IS absence, the argument being an optional DOMString
+                                    // (WebIDL), which createHTMLDocument.js tests beside null.
+                                    if (args.empty() || args[0].is_undefined()) {
+                                        return make_html_document(c, nullptr);
+                                    }
                                     const std::string title = c.to_string(args[0]);
                                     return make_html_document(c, &title);
                                 })));
