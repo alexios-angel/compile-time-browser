@@ -362,8 +362,14 @@ int main() {
               " return r.length + ':' + (2 in r) + ':' + r[3]; })()",
               "4:false:3");
     js_expect("[1].concat(Object('ab')).length", "2"); // a String wrapper is one element
+    // (A spread past detail::max_generic_walk is the RangeError ceiling that
+    // helper documents; the specification would walk 2^53-1 indices first.)
     js_expect("(function () { try { [].concat({length: 2 ** 53 - 1, [Symbol.isConcatSpreadable]: "
               "true}, 1);"
+              " return 'no'; } catch (e) { return e.name; } })()",
+              "RangeError");
+    js_expect("(function () { try { [1].concat({length: 2 ** 53 - 1, [Symbol.isConcatSpreadable]: "
+              "true});"
               " return 'no'; } catch (e) { return e.name; } })()",
               "TypeError");
 
