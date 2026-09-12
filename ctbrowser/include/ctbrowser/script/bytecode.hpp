@@ -354,6 +354,16 @@ struct function_proto {
     // to resolve `./x.js` against the module that WROTE it.
     std::string module;
     std::string name;
+    // NamedEvaluation (8.4.5): the name an ANONYMOUS function or class took
+    // from the binding, property or default it initialised - `var f =
+    // function () {}` reads f.name as "f". Kept apart from `name`, which
+    // stays what the source wrote, because every consumer of the bytecode
+    // derives a symbol from `name` and "" is what an anonymous function is
+    // there. display_name() is what `.name` and a stack trace read.
+    std::string inferred_name;
+    [[nodiscard]] const std::string & display_name() const noexcept {
+        return name.empty() ? inferred_name : name;
+    }
     std::uint16_t param_count = 0;
     std::uint16_t frame_size = 1; // registers this body needs
     // An arrow does not get its own `this`; it sees the one where it was

@@ -283,7 +283,8 @@ bool context::own_property(value target, const std::string & name, property_desc
         if (closure->proto != nullptr) {
             // 10.2.5 again: both are { false, false, true }.
             if (name == "name") {
-                out = property_descriptor::data(string(closure->proto->name), attr_configurable);
+                out = property_descriptor::data(string(closure->proto->display_name()),
+                                                attr_configurable);
                 out.virtual_slot = true;
                 return true;
             }

@@ -267,7 +267,7 @@ std::string context::describe_callee(const function_proto & fn, std::string_view
     return what + " is " + std::string{type_of(callee)} +
            (callee.is_undefined() || callee.is_null() ? "" : " (" + to_string(callee) + ")") +
            ", not a function - in " +
-           (fn.name.empty() ? std::string{"<anonymous>"} : "`" + fn.name + "`");
+           (fn.display_name().empty() ? std::string{"<anonymous>"} : "`" + fn.display_name() + "`");
 }
 
 // The handler's trap of this name, if it has one. An ABSENT trap is not an

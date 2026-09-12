@@ -283,6 +283,7 @@ load_result load_image(std::span<const std::byte> bytes,
         const auto where = [fi] { return "function " + std::to_string(fi) + ": "; };
         fn.module = in.text();
         fn.name = in.text();
+        fn.inferred_name = in.text();
         fn.param_count = in.u16();
         fn.frame_size = in.u16();
         const std::uint8_t arrow = in.u8();

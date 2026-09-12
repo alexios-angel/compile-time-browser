@@ -291,7 +291,7 @@ value context::lookup_property(value target, const std::string & name) {
         // to the other undefined it is being tested against - so a nameless
         // class reported a MATCH against anything else with no name.
         if (closure->proto != nullptr) {
-            if (name == "name") { return string(closure->proto->name); }
+            if (name == "name") { return string(closure->proto->display_name()); }
             if (name == "length") { return value::number(closure->proto->param_count); }
         }
         // `static get w()` on a class - the constructor IS the closure, so its

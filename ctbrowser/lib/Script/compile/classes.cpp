@@ -148,7 +148,8 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // starts with; an explicit constructor kept its own member span.
     if (!proto().code.empty() && proto().code.back().code == op::closure) {
         function_proto & ctor = out_.functions[proto().code.back().bx()];
-        ctor.name = std::string{n.text.empty() ? inferred_name : n.text};
+        ctor.name = std::string{n.text};
+        if (n.text.empty()) { ctor.inferred_name = std::string{inferred_name}; }
         if (n.end > n.begin) {
             ctor.source_begin = n.begin;
             ctor.source_end = n.end;

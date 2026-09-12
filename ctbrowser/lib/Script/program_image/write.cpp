@@ -388,6 +388,7 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     for (const function_proto & fn : from.functions) {
         out.text(fn.module);
         out.text(fn.name);
+        out.text(fn.inferred_name);
         out.u16(fn.param_count);
         out.u16(fn.frame_size);
         out.u8(fn.is_arrow ? 1u : 0u);
