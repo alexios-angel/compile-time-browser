@@ -12,7 +12,6 @@ add_library(ctcompile-ctjs-lowering
   EmitC/Constants.cpp
   EmitC/Support.cpp
   EmitC/Admission.cpp
-  CTJSToRuntime.cpp
   DropUncompiled.cpp
   EmitCBlockArguments.cpp
   LiftToSCF.cpp
