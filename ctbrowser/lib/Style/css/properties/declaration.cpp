@@ -148,8 +148,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // one way wherever they stand: `.5%` is `0.5%` in a `background-position`
     // this table leaves freeform exactly as it is in a `width` it types. Only
     // those three token kinds are respelled; every other byte is the author's.
-    const std::string verbatim{text};
-    const std::string normalized = normalize_value_tokens(ts, text);
+    // ...WITH THE BLOCKS EOF CLOSED WRITTEN OUT: a value kept as
+    // `attr(data-foo type(<color>)` would swallow the declaration after it
+    // when the block is serialised and parsed again (attr-all-types).
+    std::string verbatim{text};
+    verbatim.append(static_cast<std::size_t>(found.unclosed), ')');
+    std::string normalized = normalize_value_tokens(ts, text);
+    normalized.append(static_cast<std::size_t>(found.unclosed), ')');
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.

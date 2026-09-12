@@ -326,6 +326,11 @@ void test_the_rest_of_the_math_functions() {
     bad("opacity", "calc(1ms * sibling-index())");
     bad("animation-duration", "calc(1deg * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
+    // The blocks EOF closed are written out, or the serialised declaration
+    // swallows the one after it (attr-all-types 59-61).
+    ok("background-color", "attr(data-foo type(<color>)", "attr(data-foo type(<color>))");
+    ok("width", "attr(data-foo type(<length> | <percentage>)",
+       "attr(data-foo type(<length> | <percentage>))");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
     // (CSS Values 5 §calc-size, calc-size-parsing).
@@ -800,7 +805,7 @@ void test_the_random_item_argument_list() {
        "random-item(auto, {Times, serif}, sans-serif)");
     // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
     // is a value and not a parse error.
-    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif)");
 }
 
 // `interpolate-size` is a real property with a real two-keyword grammar. As an

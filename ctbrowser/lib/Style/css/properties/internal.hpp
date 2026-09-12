@@ -41,6 +41,9 @@ struct scan {
     // reads it: `el.style` still stores such a value, because CSSOM says a page
     // may set a property this engine has never heard of and read it back.
     bool unknown_function = false;
+    // The blocks EOF closed: `attr(data-foo type(<color>)` is one short. A
+    // serialisation writes them, or the next declaration is swallowed.
+    int unclosed = 0;
 };
 
 // DOES A PERCENTAGE MEAN ANYTHING FOR THIS PROPERTY? It is the property that

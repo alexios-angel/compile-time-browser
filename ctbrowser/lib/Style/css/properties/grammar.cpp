@@ -359,6 +359,7 @@ namespace detail {
     // over with `calc(min(1em, 21px) * 2`, and refusing it deleted a declaration
     // every browser folds to 40px. A block closed too MANY times still is
     // malformed, because there is no rule that invents an opener.
+    out.unclosed = depth > 0 ? depth : 0;
     return out;
 }
 
