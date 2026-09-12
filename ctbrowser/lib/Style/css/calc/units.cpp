@@ -174,6 +174,11 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
     }
     if (ascii_iequals(unit, "ex")) { return value * ctx.font_size / 2; }
     if (ascii_iequals(unit, "rex")) { return value * ctx.root_font_size / 2; }
+    // `cap` is the cap height, and where that cannot be determined CSS Values 4
+    // §6.1.1 says the font's ASCENT is used - which is 0.8em, layout's own
+    // fallback ascent (layout/values.hpp). No backend here exposes either.
+    if (ascii_iequals(unit, "cap")) { return value * ctx.font_size * 0.8; }
+    if (ascii_iequals(unit, "rcap")) { return value * ctx.root_font_size * 0.8; }
     // `ic` is the advance of the CJK water ideograph, and CSS's own fallback
     // for a font without one is 1em. `lh` and `rlh` are the line heights the
     // context carries - see length_context.

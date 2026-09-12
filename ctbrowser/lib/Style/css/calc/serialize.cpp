@@ -131,8 +131,22 @@ std::string serialize_calc(const calc_result & value) {
     // `calc(infinity)`, `calc(-infinity)`, `calc(NaN * 1px)`. Printing `infpx`
     // or `nan%` - which `std::to_string` would have done - is not a CSS value at
     // all, and a page reading it back gets something it cannot re-parse.
+    const auto word_of = [](double v) -> std::string {
+        return std::isnan(v) ? "NaN" : (v > 0 ? "infinity" : "-infinity");
+    };
+    // ...AND A PERCENTAGE BESIDE IT IS KEPT, finite or not: `calc(infinity *
+    // 1px - infinity * 1%)` is a NaN once the basis exists, and printing only
+    // the length would make it the bound instead (calc-infinity-nan-computed).
+    if (value.has_percent && !percent_only &&
+        (!std::isfinite(value.px) || !std::isfinite(value.percent))) {
+        const auto one = [&](double v, std::string_view u) {
+            return std::isfinite(v) ? format_number(v) + std::string{u}
+                                    : word_of(v) + " * 1" + std::string{u};
+        };
+        return "calc(" + one(value.percent, "%") + " + " + one(value.px, unit) + ")";
+    }
     if (!std::isfinite(lead)) {
-        const std::string word = std::isnan(lead) ? "NaN" : (lead > 0 ? "infinity" : "-infinity");
+        const std::string word = word_of(lead);
         if (unit.empty()) { return "calc(" + word + ")"; }
         return "calc(" + word + " * 1" + std::string{unit} + ")";
     }

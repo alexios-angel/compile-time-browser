@@ -394,6 +394,7 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                 std::signbit(computed.px) != std::signbit(computed.percent)) {
                 computed.px = 0.0;
                 computed.percent = 0.0;
+                computed.has_percent = false;
             }
             computed.px = clamped(computed.px);
             computed.percent = clamped(computed.percent);

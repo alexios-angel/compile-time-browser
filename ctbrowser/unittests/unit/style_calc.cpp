@@ -508,6 +508,52 @@ void test_the_line_height_units() {
     }
 }
 
+// `cap` takes the ascent when no cap height is known (CSS Values 4 §6.1.1),
+// which is what makes `-0cap` a signed zero rather than an unresolved term
+// (typed_arithmetic); an infinite length beside an opposite infinite
+// percentage keeps both terms specified and is zero computed
+// (calc-infinity-nan-computed); and random() draws by ORDINAL - the first
+// random() of a value shares with the first of another whatever component it
+// sits in, and two inside one calc() are two (random-computed, random-in-if).
+void test_cap_infinities_and_random_ordinals() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    length_context ctx;
+    ctx.font_size = 10.0f;
+    CHECK_EQ(fold_math("calc(1cap + 1px)", ctx).text, std::string{"9px"});
+    CHECK_EQ(fold_math("clamp(-1, 1 / sign(atan2(-0cap / 1px, 0em / 1px)), 1)", ctx).text,
+             std::string{"-1"});
+    CHECK_EQ(check_declaration("width", "calc(infinity * 1px - infinity * 1%)").serialized,
+             std::string{"calc(-infinity * 1% + infinity * 1px)"});
+    CHECK_EQ(fold_math("calc(-infinity * 1% + infinity * 1px)", ctx).text, std::string{"0px"});
+
+    ctx.property = "animation-iteration-count";
+    ctx.element_key = 1;
+    const std::string two = fold_math("random(property-index-scoped, 0, 300000), "
+                                      "random(property-index-scoped, 0, 300000)",
+                                      ctx)
+                                .text;
+    const std::string one = fold_math("300, random(property-index-scoped, 0, 300000)", ctx).text;
+    const std::size_t comma = two.find(", ");
+    CHECK(comma != std::string::npos);
+    CHECK_EQ(one, "300, " + two.substr(0, comma));
+    CHECK(two.substr(0, comma) != two.substr(comma + 2));
+    // Two inside one calc() draw differently - the sum is not double either.
+    ctx.property = "scale";
+    const std::string sum = fold_math("calc(random(property-index-scoped, 0, 1) + "
+                                      "random(property-index-scoped, 0, 1))",
+                                      ctx)
+                                .text;
+    const std::string first = fold_math("random(property-index-scoped, 0, 1)", ctx).text;
+    CHECK(std::fabs(std::stod(sum) - 2 * std::stod(first)) > 1e-9);
+    // The bounds are bounds even when they are identifiers: `infinity` is
+    // the first bound and A wins an out-of-order range.
+    CHECK_EQ(check_declaration("scale", "random(infinity, 100)").serialized,
+             std::string{"random(element-scoped ua-scale-1, infinity, 100)"});
+    CHECK_EQ(fold_math("random(NaN, 100)", ctx).text, std::string{"0"});
+}
+
 } // namespace
 
 int main() {
@@ -516,5 +562,6 @@ int main() {
     test_comparison_functions();
     test_calc_in_the_cascade();
     test_the_line_height_units();
+    test_cap_infinities_and_random_ordinals();
     REPORT("style_calc");
 }
