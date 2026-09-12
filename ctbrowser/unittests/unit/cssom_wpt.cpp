@@ -211,6 +211,26 @@ void test_flat_tree_and_pseudo_arguments() {
              std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
 
+// ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -
+// its `length` follows a removed <style> - and it still iterates, indexes and
+// answers `item()`, and is one object.
+void test_live_sheet_list() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>a { color: red }</style><style></style></head><body>
+        <script>
+        const list = document.styleSheets;
+        const before = list.length + ',' + [...list].length + ',' + Array.from(list).length;
+        list.item(0).ownerNode.remove();
+        console.log('live=' + before + '|' + list.length + ',' + [...list].length + ',' +
+                    (list.item(1) === null) + ',' + (list[0] === document.styleSheets[0]) + ',' +
+                    (list === document.styleSheets) + ',' + (list instanceof StyleSheetList) + ',' +
+                    Object.prototype.toString.call(list));
+        </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "live="),
+             std::string{"live=2,2,2|1,1,true,true,true,true,[object StyleSheetList]"});
+}
+
 // tree-counting/sibling-function-descriptors: a descriptor is on no element,
 // so a tree-counting function in one is invalid and the earlier value stays.
 void test_descriptors_refuse_tree_counting() {
@@ -233,6 +253,7 @@ void test_descriptors_refuse_tree_counting() {
 int main() {
     test_resolved_colours();
     test_flat_tree_and_pseudo_arguments();
+    test_live_sheet_list();
     test_descriptors_refuse_tree_counting();
     test_class_strings_and_iterators();
     test_removed_rules_charset_keyframes_and_container();
