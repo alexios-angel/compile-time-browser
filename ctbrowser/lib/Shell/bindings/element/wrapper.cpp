@@ -238,67 +238,10 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     // assigning `el.id = 'x'` changed the wrapper and nothing else, and the
     // next refresh put the old value back. p5.js names its canvas and sizes it
     // that way, so both writes vanished.
-    const std::string_view tag_text = atoms_->text(txn.tag(id).value_or(atom{}));
-
-    const rect box = box_of(id);
-    obj.set("offsetLeft", value::number(static_cast<double>(box.x)));
-    obj.set("offsetTop", value::number(static_cast<double>(box.y)));
-    obj.set("offsetWidth", value::number(static_cast<double>(box.width)));
-    obj.set("offsetHeight", value::number(static_cast<double>(box.height)));
-    // `clientWidth`/`clientHeight` - the CONTENT box, and the only way a page
-    // asks how big the viewport is: p5's own windowWidth and windowHeight are
-    // `document.documentElement.clientWidth`, so both of them read `undefined`
-    // and every sketch that sizes itself to the window got NaN.
-    //
-    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT, and its two axes come from
-    // different places on purpose:
-    //
-    //   width  - the root element's own box. That box fills the initial
-    //            containing block, so its width IS the layout viewport: 15px
-    //            narrower than the window when the page overflows and a
-    //            scrollbar appears. Reading it from the box rather than from a
-    //            number the shell pushes in removes an ordering hazard - script
-    //            bindings are installed lazily, so whichever of layout and
-    //            install ran last decided the answer, and the wrong one won.
-    //            Bootstrap's `.container` centred itself in 1009px while the
-    //            page was told it had 1024.
-    //   height - the VIEWPORT's, not the box's. The root box is as tall as the
-    //            document, and `document.documentElement.clientHeight` means
-    //            "how tall is the window", which is what p5's windowHeight and
-    //            every self-sizing sketch is asking.
-    //
-    // The body is an ordinary element here: its client box is its own, which is
-    // what Chrome reports and differs from the root's whenever the UA margin is
-    // in play. For anything else the content box is the border box - nothing
-    // here has a scrollbar of its own, and borders are not yet in the box
-    // arithmetic.
-    //
-    // Before the first layout the root has no box, and a sketch that sizes itself
-    // in `setup()` would read zero - which is how p5's windowWidth broke when
-    // this moved off the number the shell pushes in. The window stands in, FOR
-    // THE ROOT ONLY: an ordinary element with no box has a client width of zero,
-    // and handing it the viewport instead told Babylon its canvas was
-    // window-sized before layout had given it any size at all, which failed
-    // WebGL setup outright. "No box" and "as wide as the window" are the same
-    // thing for the root and nothing else.
-    const bool is_root = tag_text == "html";
-    obj.set("clientWidth",
-            value::number(is_root && box.width <= 0 ? viewport_width_
-                                                    : static_cast<double>(box.width)));
-    obj.set("clientHeight",
-            value::number(is_root ? viewport_height_ : static_cast<double>(box.height)));
-    // `element.attributes` IS NOT SET HERE ANY MORE. It used to be a fresh
-    // array of {name, value} pairs rebuilt on every sync, which is two wrong
-    // answers at once: it was a SNAPSHOT, so `el.setAttribute(...)` followed by
-    // `el.attributes[0].value` in the same statement read the old text, and its
-    // members were plain objects rather than Attr nodes - no localName, no
-    // prefix, no namespaceURI, no ownerElement, and nothing to write through.
-    // It is a live accessor over a real NamedNodeMap now; see
-    // install_element_views.
-    obj.set("clientLeft", value::number(0));
-    obj.set("clientTop", value::number(0));
-    obj.set("scrollWidth", value::number(static_cast<double>(box.width)));
-    obj.set("scrollHeight", value::number(static_cast<double>(box.height)));
+    // The box metrics - offsetWidth and its nine siblings - are accessors
+    // installed by install_element_views too: they flush layout and read the
+    // box as of now, where a number copied in here was as stale as the last
+    // frame.
 }
 
 rect dom_bindings::box_of(node_id id) const {

@@ -589,11 +589,13 @@ reading twice.
   the fragment-derived `width`/`height`.
 * **Assignment to a computed style does not throw**, and **pseudo-elements are
   still ignored** (~37 subtests) because nothing generates those boxes.
-* **`getBoundingClientRect`, `offsetWidth` and `clientHeight` do not flush.**
-  They have exactly the same staleness `getComputedStyle` had, in
-  `lib/Shell/bindings/element/views.cpp`. One shared flush hook on `dom_bindings` is
-  the shape, and the `getComputedStyle` wrapper is deliberately written so it can
-  be deleted when that exists.
+* **`getBoundingClientRect`, `offsetWidth` and `clientHeight` flush since
+  2026-09-12.** The shared hook is `dom_bindings::flush_layout`
+  (`set_layout_hook`, installed by `browser`); `getBoundingClientRect` calls
+  it, and the ten box metrics are accessors in
+  `lib/Shell/bindings/element/views.cpp` that call it before reading the box,
+  where they used to be numbers copied into the wrapper at its last refresh
+  (0 before the first frame, whatever the previous statement left after).
 
 ## 7. Re-running this
 

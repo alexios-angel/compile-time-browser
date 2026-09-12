@@ -21,6 +21,77 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // view onto ONE element and it has to be installed as its wrapper is made.
     install_sheet_property(cx, obj, id);
 
+    // --- the box metrics: offsetLeft/Top/Width/Height, clientWidth/Height,
+    // clientLeft/Top, scrollWidth/Height.
+    //
+    // ACCESSORS THAT FLUSH LAYOUT, not numbers copied in at refresh. Reading
+    // `offsetWidth` is how a page - Bootstrap's `reflow(el)`, every WPT file
+    // that sizes a box with a style and measures it in the same script - asks
+    // for the layout AS OF NOW; a copy taken before the first frame said 0 and
+    // a copy taken at the last refresh said whatever the previous statement
+    // left. `flush_layout` runs only what is stale (set_layout_hook).
+    //
+    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT, and its two axes come from
+    // different places on purpose: the width is the root box's own (the layout
+    // viewport, 15px narrower than the window when a scrollbar appears - which
+    // is what Bootstrap's `.container` centred itself in), the height the
+    // window's, because `documentElement.clientHeight` means "how tall is the
+    // window" to p5's windowHeight. Before the first layout the root has no
+    // box and the window stands in FOR THE ROOT ONLY: an ordinary element with
+    // no box has a client width of zero, and handing it the viewport told
+    // Babylon its canvas was window-sized before layout had sized it, which
+    // failed WebGL setup outright. The body is an ordinary element here, as in
+    // Chrome. clientLeft/Top are 0: borders are not in the box arithmetic.
+    {
+        enum class metric : std::uint8_t {
+            offset_left,
+            offset_top,
+            offset_width,
+            offset_height,
+            client_width,
+            client_height,
+            client_left,
+            client_top,
+            scroll_width,
+            scroll_height
+        };
+        constexpr std::pair<const char *, metric> metrics[] = {
+            {"offsetLeft", metric::offset_left},   {"offsetTop", metric::offset_top},
+            {"offsetWidth", metric::offset_width}, {"offsetHeight", metric::offset_height},
+            {"clientWidth", metric::client_width}, {"clientHeight", metric::client_height},
+            {"clientLeft", metric::client_left},   {"clientTop", metric::client_top},
+            {"scrollWidth", metric::scroll_width}, {"scrollHeight", metric::scroll_height},
+        };
+        for (const auto & [name, which] : metrics) {
+            auto * getter = cx.allocate<script::native_object>(
+                name, [this, id, which](context &, std::span<value>) {
+                    flush_layout();
+                    const rect box = box_of(id);
+                    const bool is_root = [&] {
+                        const auto txn = doc_->read();
+                        return atoms_->text(txn.tag(id).value_or(atom{})) == "html";
+                    }();
+                    double v = 0;
+                    switch (which) {
+                    case metric::offset_left: v = box.x; break;
+                    case metric::offset_top: v = box.y; break;
+                    case metric::offset_width:
+                    case metric::scroll_width: v = box.width; break;
+                    case metric::offset_height:
+                    case metric::scroll_height: v = box.height; break;
+                    case metric::client_width:
+                        v = is_root && box.width <= 0 ? viewport_width_ : box.width;
+                        break;
+                    case metric::client_height: v = is_root ? viewport_height_ : box.height; break;
+                    case metric::client_left:
+                    case metric::client_top: v = 0; break;
+                    }
+                    return value::number(v);
+                });
+            obj.define_accessor(name, value::object(getter), value::undefined());
+        }
+    }
+
     // --- element.attributes
     //
     // THE MAP IS BUILT ONCE and refilled by the accessor, so it keeps its
