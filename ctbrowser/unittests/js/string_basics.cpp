@@ -337,13 +337,14 @@ int main() {
     js_expect("\"a2c\".search(2)", "1");
     js_expect("\"abc\".search(\"z\")", "-1");
     // matchAll builds its RegExp with `g`, which is what makes this three
-    // matches rather than the first one forever.
-    js_expect("\"aaa\".matchAll(\"a\").length", "3");
-    js_expect("\"abc\".matchAll(\"z\").length", "0");
+    // matches rather than the first one forever - and answers an ITERATOR
+    // (22.1.3.14 step 5, since 2026-09-12; it was an array).
+    js_expect("[...\"aaa\".matchAll(\"a\")].length", "3");
+    js_expect("[...\"abc\".matchAll(\"z\")].length", "0");
     // ...and REFUSES a RegExp that has no `g`, because the answer would be
     // wrong either way (22.1.3.14 step 2b).
     js_expect(throws("\"aaa\".matchAll(/a/)"), "TypeError");
-    js_expect("\"aaa\".matchAll(/a/g).length", "3");
+    js_expect("[...\"aaa\".matchAll(/a/g)].length", "3");
     js_expect(throws("\"aaa\".replaceAll(/a/, \"b\")"), "TypeError");
     js_expect("\"aaa\".replaceAll(/a/g, \"b\")", "bbb");
 

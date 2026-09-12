@@ -7,7 +7,7 @@
 // functions' declarations - is in ../internal.hpp; nothing is shared between
 // these four alone, so there is no second header.
 
-#include "../internal.hpp"
+#include "internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
@@ -69,17 +69,11 @@ using text_body = std::function<value(context &, const std::string &, std::span<
 // The three are specified to throw rather than stringify: `'a/b'.includes(/b/)`
 // searching for the six characters of the pattern's source is a mistake often
 // enough that the specification made it loud. This engine stringified, found
-// nothing, and answered false.
-//
-// @@match WINS over the internal slot when it is present at all, which is the
-// whole reason the operation is written this way: an ordinary object can claim
-// to be a pattern and a real RegExp can disclaim it. `__regex` is this engine's
-// [[RegExpMatcher]] - see install_regexp, which defines it on every instance.
-[[nodiscard]] bool is_regexp(context & cx, value v) {
-    if (!v.is_object()) { return false; }
-    const value matcher = cx.lookup_property(v, "@@match");
-    if (!matcher.is_undefined()) { return context::truthy(matcher); }
-    return context::truthy(cx.lookup_property(v, "__regex"));
+// nothing, and answered false. The operation itself is regexp.cpp's; this is
+// the yes/no form for a caller that has no separate throw path.
+[[nodiscard]] bool is_regexp_value(context & cx, value v) {
+    bool out = false;
+    return builtins_detail::is_regexp(cx, v, out) && out;
 }
 
 // ToUint32 (7.1.7) over an argument that MAY BE AN OBJECT, for the one place a
@@ -202,44 +196,26 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
     }
 }
 
-// RegExpCreate, 22.2.3.2, for the three methods whose argument is a PATTERN and
-// not a string: `match`, `search` and `matchAll` are each specified to build a
-// RegExp out of whatever they were handed and then invoke the pattern's own
-// protocol on it.
-//
-// All three answered "no match" for a non-object instead - `"1234".match(3)`
-// was null, `"abc".search("b")` was -1 - which is the commonest spelling of
-// all and is SILENT: a page's `if (s.match(x))` reads null as "absent".
-//
-// The factory is the RESERVED global the compiler emits for a regex literal,
-// not `RegExp`, so a page that shadows RegExp cannot change what its own
-// `String.prototype.match` means.
-[[nodiscard]] value as_regexp(context & cx, value pattern, const char * flags) {
-    if (pattern.is_object() && cx.lookup_property(pattern, "exec").is_callable()) {
-        return pattern;
-    }
-    const value factory = cx.global(regexp_factory_name);
-    if (!factory.is_callable()) { return value::undefined(); }
-    // RegExpInitialize step 1: an undefined pattern is the EMPTY source, which
-    // matches at 0 - it is not the four letters of "undefined".
-    const value args[2] = {pattern.is_undefined() ? cx.string(std::string{})
-                                                  : cx.string(cx.to_string(pattern)),
-                           cx.string(std::string{flags})};
-    return cx.call(factory, args);
-}
-
-// 22.1.3.14 step 2b and 22.1.3.20 step 2b: `matchAll` and `replaceAll` REFUSE a
-// RegExp without `g`, because both mean "every match" and a non-global pattern
-// cannot deliver one. Answering the first match twice, or once, is the wrong
-// answer either way, so the specification made it a TypeError.
+// 22.1.3.14 step 2.b and 22.1.3.20 step 2.b: `matchAll` and `replaceAll`
+// REFUSE a RegExp without `g`, because both mean "every match" and a
+// non-global pattern cannot deliver one. The flags are read through [[Get]]
+// (a getter may throw), RequireObjectCoercible'd and ToString'd, in that
+// order. TRUE means a throw is in flight.
 [[nodiscard]] bool refuse_non_global(context & cx, value pattern, const char * method) {
-    if (!is_regexp(cx, pattern)) { return false; }
+    bool regexp = false;
+    if (!builtins_detail::is_regexp(cx, pattern, regexp)) { return true; }
+    if (!regexp) { return false; }
+    const detail::unwind_watch watch{cx};
     const value flags = cx.lookup_property(pattern, "flags");
+    if (watch.threw()) { return true; }
     if (flags.is_nullish()) {
         cx.throw_error("TypeError", std::string{method} + " requires flags on its pattern");
         return true;
     }
-    if (cx.to_string(flags).find('g') != std::string::npos) { return false; }
+    if (!stringable_arg(cx, flags)) { return true; }
+    const std::string text = cx.to_string(flags);
+    if (watch.threw()) { return true; }
+    if (text.find('g') != std::string::npos) { return false; }
     cx.throw_error("TypeError", std::string{method} + " must be called with a global RegExp");
     return true;
 }
@@ -249,8 +225,8 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
 // @@matchAll (GetMethod, 7.3.10 - a getter that throws propagates, a value
 // that is neither callable nor nullish is a TypeError), and when it has one
 // the answer is that method's, called on the argument with the ORIGINAL
-// receiver first. A real RegExp carries none here and takes the built-in
-// path below, so this is the extension point and nothing else.
+// receiver first. A real RegExp carries all five on RegExp.prototype
+// (regexp.cpp), so this is how a pattern reaches them.
 //
 // TRUE means `out` is the answer (or a throw is in flight) and the caller
 // returns it at once.
@@ -270,6 +246,33 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
     for (std::size_t i = 1; i < a.size(); ++i) { args.push_back(a[i]); }
     out = cx.call(method, args, target);
     return true;
+}
+
+// The tail of match, matchAll and search: RegExpCreate over the argument and
+// Invoke(rx, @@method, [S]) (22.1.3.13 steps 3-5 and its siblings).
+[[nodiscard]] value create_and_invoke(context & cx, value pattern, const char * flags,
+                                      const char * symbol, const std::string & self) {
+    const value rx =
+        regexp_create(cx, pattern, flags == nullptr ? value::undefined() : cx.string(flags));
+    if (rx.is_undefined()) { return value::undefined(); }
+    const context::rooted keep{cx, rx};
+    const value method = cx.lookup_property(rx, symbol);
+    if (cx.throw_pending()) { return value::undefined(); }
+    if (!method.is_callable()) {
+        cx.throw_error("TypeError", std::string{symbol} + " is not a function");
+        return value::undefined();
+    }
+    const value subject = cx.string(self);
+    return cx.call(method, std::span<const value>{&subject, 1}, rx);
+}
+
+// StringIndexOf, 6.1.4.1: an empty search string is found at any position
+// up to and including the length, which is what makes
+// `"abc".replaceAll("", "_")` "_a_b_c_".
+[[nodiscard]] std::size_t string_index_of(const std::string & s, const std::string & search,
+                                          std::size_t from) {
+    if (search.empty()) { return from <= s.size() ? from : std::string::npos; }
+    return s.find(search, from);
 }
 
 } // namespace
@@ -421,7 +424,7 @@ void install_string(context & cx) {
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("includes", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
-        if (is_regexp(c, arg_at(a, 0))) {
+        if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.includes must not be a regular "
                           "expression");
@@ -433,7 +436,7 @@ void install_string(context & cx) {
         return value::boolean(s.find(needle, from) != std::string::npos);
     });
     text("startsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
-        if (is_regexp(c, arg_at(a, 0))) {
+        if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.startsWith must not be a regular "
                           "expression");
@@ -445,7 +448,7 @@ void install_string(context & cx) {
         return value::boolean(std::string_view{s}.substr(from).starts_with(needle));
     });
     text("endsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
-        if (is_regexp(c, arg_at(a, 0))) {
+        if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.endsWith must not be a regular "
                           "expression");
@@ -504,11 +507,15 @@ void install_string(context & cx) {
         const auto count = static_cast<std::size_t>(std::min(want, size - start));
         return c.string(s.substr(from, count));
     });
+    // 22.1.3.23. A separator with @@split - every RegExp - answers through it
+    // (regexp.cpp's [@@split] is the specification's sticky walk); the string
+    // form is here.
     text("split", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
         if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@split", a, dispatched)) {
             return dispatched;
         }
         value out = c.make_array();
+        const context::rooted keep{c, out};
         auto * result = static_cast<array_object *>(out.as_heap());
         // THE LIMIT, which this used to ignore completely - so
         // `"a,b,c".split(",", 2)` handed back all three and `split(x, 0)` handed
@@ -517,73 +524,28 @@ void install_string(context & cx) {
         // large number (which is why 2**32-1 and "no limit" behave alike).
         const std::size_t limit = has_index(a, 1) ? static_cast<std::size_t>(uint32_arg(c, a[1]))
                                                   : std::numeric_limits<std::size_t>::max();
-        // Every exit goes through here, because the limit truncates whichever
-        // branch produced the parts.
-        const auto finish = [&]() -> value {
-            if (result->items.size() > limit) { result->items.resize(limit); }
-            return out;
-        };
-        // A REGEXP SEPARATOR. `str.split(/\r?\n/)` is how essentially every
-        // library splits lines, and coercing the pattern to a string made it a
-        // separator that never matched - so the whole input came back as one
-        // element and nothing said anything. p5.js splits text into lines that
-        // way, then takes Math.max over the widths, which for an unsplit line
-        // is fine and for an EMPTY list is -Infinity.
-        //
-        // Driven through the pattern's own `exec`, like matchAll, so there is
-        // one regex path and split cannot disagree with match about a boundary.
-        // Searching the remainder each round rather than moving lastIndex means
-        // a non-global pattern works too, which is the form this is written in.
-        const value separator = arg_at(a, 0);
-        const value exec =
-            separator.is_object() ? c.lookup_property(separator, "exec") : value::undefined();
+        if (c.throw_pending()) { return value::undefined(); }
         // ToString(separator) is step 5 and the `lim = 0` return is step 6, IN
         // THAT ORDER: a separator with a `toString` is coerced even when the
-        // limit already says the answer is []. Only the string path does it -
-        // the regexp path stands in for RegExp.prototype[@@split], whose own
-        // step 12 returns before touching the pattern.
-        const std::string sep = exec.is_callable() ? std::string{} : c.to_string(separator);
+        // limit already says the answer is [].
+        const value separator = arg_at(a, 0);
+        if (!stringable_arg(c, separator)) { return value::undefined(); }
+        const std::string sep = c.to_string(separator);
+        if (c.throw_pending()) { return value::undefined(); }
         if (limit == 0) { return out; }
-        if (exec.is_callable()) {
-            std::string rest = s;
-            while (!rest.empty()) {
-                // RESET EVERY ROUND, because the subject shrinks. A global
-                // pattern's exec resumes from `lastIndex`, and this hands it a
-                // fresh remainder each time - so a stale index points past the
-                // start of the new string and finds nothing. `'a b,c'
-                // .split(/[ ,]/g)` split once and stopped.
-                c.store_property(separator, "lastIndex", value::number(0));
-                const value args[1] = {c.string(rest)};
-                const value m = c.call(exec, args, separator);
-                if (!m.is_array()) { break; }
-                auto * parts = static_cast<array_object *>(m.as_heap());
-                if (parts->items.empty()) { break; }
-                const auto index =
-                    static_cast<std::size_t>(std::max(0.0, context::to_number(parts->index)));
-                const std::string whole = c.to_string(parts->items[0]);
-                if (index >= rest.size()) { break; }
-                result->items.push_back(c.string(rest.substr(0, index)));
-                // A CAPTURE IN THE SEPARATOR IS KEPT, which is the one reason to
-                // put a group in a split pattern at all.
-                for (std::size_t g = 1; g < parts->items.size(); ++g) {
-                    result->items.push_back(parts->items[g]);
-                }
-                // An empty match would otherwise never advance.
-                rest = rest.substr(index + std::max<std::size_t>(whole.size(), 1));
-            }
-            result->items.push_back(c.string(rest));
-            return finish();
-        }
         if (separator.is_undefined()) {
             result->items.push_back(c.string(s));
-            return finish();
+            return out;
         }
         if (sep.empty()) {
-            for (const char ch : s) { result->items.push_back(c.string(std::string{ch})); }
-            return finish();
+            for (const char ch : s) {
+                if (result->items.size() >= limit) { break; }
+                result->items.push_back(c.string(std::string{ch}));
+            }
+            return out;
         }
         std::size_t at = 0;
-        while (true) {
+        while (result->items.size() < limit) {
             const std::size_t found = s.find(sep, at);
             if (found == std::string::npos) {
                 result->items.push_back(c.string(s.substr(at)));
@@ -592,205 +554,81 @@ void install_string(context & cx) {
             result->items.push_back(c.string(s.substr(at, found - at)));
             at = found + sep.size();
         }
-        return finish();
-    });
-    // ONE REPLACEMENT, shared by `replace` and `replaceAll`.
-    //
-    // The pattern may be a STRING or a REGEXP, and the replacement may be a
-    // string with `$` references or a FUNCTION - four combinations, and the
-    // only difference between the two methods is how many matches they take.
-    //
-    // Regexes did not work here at all: the pattern was coerced with to_string
-    // and looked for with std::string::find, so `s.replace(/ /g, '|')` searched
-    // for the literal text of the regex object and, finding none, returned the
-    // string unchanged. Silent, and it is the commonest use of the method -
-    // acorn builds its keyword tables with exactly that call, so every keyword
-    // matcher inside p5's own parser was a pattern that could never match.
-    const auto substitute = [](const std::string & replacement, const std::string & matched,
-                               const std::vector<std::string> & groups, std::size_t at,
-                               const std::string & subject) {
-        std::string out;
-        for (std::size_t i = 0; i < replacement.size(); ++i) {
-            if (replacement[i] != '$' || i + 1 >= replacement.size()) {
-                out += replacement[i];
-                continue;
-            }
-            const char next = replacement[i + 1];
-            if (next == '$') {
-                out += '$';
-            } else if (next == '&') {
-                out += matched;
-            } else if (next == '`') {
-                out += subject.substr(0, at);
-            } else if (next == '\'') {
-                out += subject.substr(std::min(subject.size(), at + matched.size()));
-            } else if (next >= '1' && next <= '9') {
-                // Two digits when there is a group to match them - `$12` is
-                // group 12 where one exists and group 1 followed by "2" where
-                // it does not.
-                std::size_t which = static_cast<std::size_t>(next - '0');
-                std::size_t used = 1;
-                if (i + 2 < replacement.size() && replacement[i + 2] >= '0' &&
-                    replacement[i + 2] <= '9') {
-                    const std::size_t wider =
-                        which * 10 + static_cast<std::size_t>(replacement[i + 2] - '0');
-                    if (wider <= groups.size()) {
-                        which = wider;
-                        used = 2;
-                    }
-                }
-                if (which <= groups.size()) { out += groups[which - 1]; }
-                i += used;
-                continue;
-            } else {
-                out += replacement[i];
-                continue;
-            }
-            ++i;
-        }
         return out;
-    };
-
-    const auto replace_with = [substitute](context & c, const std::string & self,
-                                           std::span<value> a, bool all) {
-        const value pattern = a.empty() ? value::undefined() : a[0];
-        const value replacement = a.size() > 1 ? a[1] : value::undefined();
-
-        // A REGEXP PATTERN, driven through its own `exec` so there is one regex
-        // path and replace cannot disagree with match about a boundary.
-        if (pattern.is_object() && c.lookup_property(pattern, "exec").is_callable()) {
-            const value exec = c.lookup_property(pattern, "exec");
-            // `g` on the pattern means every match even for `replace`; a plain
-            // `replace` with a non-global pattern takes the first only.
-            const bool every = all || context::truthy(c.lookup_property(pattern, "global"));
-            std::string out;
-            std::string rest = self;
-            std::size_t consumed = 0;
-            // An empty pattern matches at the END position too - `'ab'
-            // .replace(/x*/g, '-')` is "-a-b-" and not "-a-b" - so one pass
-            // runs with nothing left, and only a second one stops.
-            bool tail_seen = false;
-            for (std::size_t guard = 0; guard <= self.size() + 2; ++guard) {
-                if (rest.empty()) {
-                    if (tail_seen) { break; }
-                    tail_seen = true;
-                }
-                c.store_property(pattern, "lastIndex", value::number(0));
-                const value subject = c.string(rest);
-                const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
-                if (!found.is_array()) { break; }
-                auto * parts = static_cast<array_object *>(found.as_heap());
-                if (parts->items.empty()) { break; }
-                const std::string matched = c.to_string(parts->items[0]);
-                const auto at =
-                    static_cast<std::size_t>(std::max(0.0, context::to_number(parts->index)));
-                if (at > rest.size()) { break; }
-                std::vector<std::string> groups;
-                for (std::size_t g = 1; g < parts->items.size(); ++g) {
-                    groups.push_back(parts->items[g].is_undefined() ? std::string{}
-                                                                    : c.to_string(parts->items[g]));
-                }
-                out += rest.substr(0, at);
-                if (replacement.is_callable()) {
-                    // (match, p1..pn, offset, whole) - the offset is into the
-                    // ORIGINAL string, not into what is left of it.
-                    std::vector<value> args;
-                    args.push_back(c.string(matched));
-                    for (const std::string & g : groups) { args.push_back(c.string(g)); }
-                    args.push_back(value::number(static_cast<double>(consumed + at)));
-                    args.push_back(c.string(self));
-                    out += c.to_string(c.call(replacement, args));
-                } else {
-                    out +=
-                        substitute(c.to_string(replacement), matched, groups, consumed + at, self);
-                }
-                // An empty match must still advance, or this never terminates.
-                const std::size_t step = at + std::max<std::size_t>(matched.size(), 1);
-                if (matched.empty() && at < rest.size()) { out += rest[at]; }
-                consumed += step;
-                rest = step >= rest.size() ? std::string{} : rest.substr(step);
-                if (!every) { break; }
-            }
-            out += rest;
-            return c.string(out);
+    });
+    // 22.1.3.19 replace and 22.1.3.20 replaceAll, THE STRING FORMS. A pattern
+    // with @@replace - every RegExp - answered above through symbol_dispatch,
+    // and regexp.cpp's [@@replace] is where the matching loop lives; what is
+    // left is a literal search string, replaced once or at every position.
+    //
+    // Regexes did not work here at all once: the pattern was coerced with
+    // to_string and looked for with std::string::find, so `s.replace(/ /g,
+    // '|')` searched for the literal text of the regex object and, finding
+    // none, returned the string unchanged. Silent, and it is the commonest use
+    // of the method - acorn builds its keyword tables with exactly that call.
+    const auto replace_string = [](context & c, const std::string & self, std::span<value> a,
+                                   bool all) -> value {
+        const detail::unwind_watch watch{c};
+        // Steps 3-8: ToString(searchValue), then IsCallable(replaceValue), then
+        // ToString(replaceValue) - in that order, each observable.
+        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const std::string search = c.to_string(arg_at(a, 0));
+        if (watch.threw()) { return value::undefined(); }
+        const value replace_value = arg_at(a, 1);
+        const bool functional = replace_value.is_callable();
+        std::string tpl;
+        if (!functional) {
+            if (!stringable_arg(c, replace_value)) { return value::undefined(); }
+            tpl = c.to_string(replace_value);
+            if (watch.threw()) { return value::undefined(); }
         }
-
-        // A STRING pattern: the first occurrence, or all of them.
-        const std::string from = c.to_string(pattern);
-        if (from.empty()) { return c.string(self); }
+        std::vector<std::size_t> positions;
+        const std::size_t advance = std::max<std::size_t>(1, search.size());
+        for (std::size_t at = string_index_of(self, search, 0); at != std::string::npos;
+             at = string_index_of(self, search, at + advance)) {
+            positions.push_back(at);
+            if (!all) { break; }
+        }
         std::string out;
-        std::size_t at = 0;
-        while (true) {
-            const std::size_t found = self.find(from, at);
-            if (found == std::string::npos) {
-                out += self.substr(at);
-                break;
+        std::size_t end_of_last = 0;
+        const value subject = c.string(self);
+        const context::rooted keep{c, subject};
+        for (const std::size_t at : positions) {
+            std::string replacement;
+            if (functional) {
+                const value args[3] = {c.string(search), value::number(static_cast<double>(at)),
+                                       subject};
+                const value produced = c.call(replace_value, args);
+                if (watch.threw() || !stringable_arg(c, produced)) { return value::undefined(); }
+                replacement = c.to_string(produced);
+                if (watch.threw()) { return value::undefined(); }
+            } else if (!get_substitution(c, search, self, at, {}, value::undefined(), tpl,
+                                         replacement)) {
+                return value::undefined();
             }
-            out += self.substr(at, found - at);
-            if (replacement.is_callable()) {
-                const value args[3] = {c.string(from), value::number(static_cast<double>(found)),
-                                       c.string(self)};
-                out += c.to_string(c.call(replacement, args));
-            } else {
-                out += substitute(c.to_string(replacement), from, {}, found, self);
-            }
-            at = found + from.size();
-            if (!all) {
-                out += self.substr(at);
-                break;
-            }
+            out += self.substr(end_of_last, at - end_of_last);
+            out += replacement;
+            end_of_last = at + search.size();
         }
+        if (end_of_last < self.size()) { out += self.substr(end_of_last); }
         return c.string(out);
     };
 
     text("replace", 2,
-         [replace_with](context & c, const std::string & s, std::span<value> a) -> value {
+         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
              if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
                  return dispatched;
              }
-             return replace_with(c, s, a, false);
+             return replace_string(c, s, a, false);
          });
-    // `match` - the single commonest thing done with a regular expression, and
-    // it simply was not here. A page calling it got "undefined is not a
-    // function" from inside whatever library it was using.
-    //
-    // The two forms return DIFFERENT SHAPES, which is the part that is easy to
-    // get wrong: with `g` it is a flat list of the matched strings and nothing
-    // else, and without it a single exec result carrying index, input and the
-    // capture groups. Code branches on that difference.
+    // `match` - the single commonest thing done with a regular expression.
+    // 22.1.3.13: the argument's own @@match, else RegExpCreate and the new
+    // pattern's @@match, which is where the `g` / no-`g` shapes are decided.
     text("match", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
         if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@match", a, dispatched)) {
             return dispatched;
         }
-        // 22.1.3.13 step 3: a non-RegExp argument is RegExpCreate'd, not
-        // rejected. `"1234567890".match(3).index` is 2.
-        const value pattern = as_regexp(c, arg_at(a, 0), "");
-        if (!pattern.is_object()) { return value::null(); }
-        const value exec = c.lookup_property(pattern, "exec");
-        if (!exec.is_callable()) { return value::null(); }
-        const value subject = c.string(self);
-        const bool all = context::truthy(c.lookup_property(pattern, "global"));
-        c.store_property(pattern, "lastIndex", value::number(0));
-        if (!all) {
-            const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
-            return found.is_nullish() ? value::null() : found;
-        }
-        value list = c.make_array();
-        auto * items = static_cast<array_object *>(list.as_heap());
-        double previous = -1;
-        for (std::size_t guard = 0; guard <= self.size() + 1; ++guard) {
-            const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
-            if (!found.is_array()) { break; }
-            auto * parts = static_cast<array_object *>(found.as_heap());
-            if (parts->items.empty()) { break; }
-            items->items.push_back(parts->items[0]);
-            const double now = context::to_number(c.lookup_property(pattern, "lastIndex"));
-            if (!(now > previous)) { break; }
-            previous = now;
-        }
-        // A global match that found nothing is NULL, not an empty array - the
-        // usual guard is `if (m)`, and an empty array is truthy.
-        return items->items.empty() ? value::null() : list;
+        return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match", self);
     });
     // `search` - WHERE a pattern matches, or -1. It is the smallest of the
     // regular-expression string methods and it was the one missing, which is
@@ -801,75 +639,33 @@ void install_string(context & cx) {
     // rejection was inside a promise the engine does not surface - and the
     // canvas simply showed the clear colour. One missing method, and a whole
     // renderer draws nothing.
-    //
-    // ON `exec`, LIKE `match` AND `matchAll`, so the three cannot disagree
-    // about what matched. `search` ignores `lastIndex` and the `g` flag by
-    // specification, so it is reset first and the search always starts at 0.
     text("search", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
         if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@search", a, dispatched)) {
             return dispatched;
         }
-        // 22.1.3.21 step 3, the same RegExpCreate `match` does:
-        // `"abc".search("b")` is 1 and used to be -1.
-        const value pattern = as_regexp(c, arg_at(a, 0), "");
-        if (!pattern.is_object()) { return value::number(-1); }
-        const value exec = c.lookup_property(pattern, "exec");
-        if (!exec.is_callable()) { return value::number(-1); }
-        const value subject = c.string(self);
-        const value saved = c.lookup_property(pattern, "lastIndex");
-        c.store_property(pattern, "lastIndex", value::number(0));
-        const value found = c.call(exec, std::span<const value>{&subject, 1}, pattern);
-        c.store_property(pattern, "lastIndex", saved);
-        if (found.is_nullish() || !found.is_array()) { return value::number(-1); }
-        return value::number(context::to_number(c.lookup_property(found, "index")));
+        return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search", self);
     });
-    // `matchAll` is exec RUN TO EXHAUSTION, which is exactly what it means -
-    // so it is built on exec rather than on a second copy of the regex
-    // plumbing, and it cannot disagree with `match` about what matched.
-    //
-    // It hands back an ARRAY where the spec says an iterator. Both work with
-    // `for (const m of ...)` and with a spread, which is all anyone does with
-    // one; a real iterator would only differ for a caller that stops early on a
-    // pattern expensive enough to notice.
+    // 22.1.3.14 matchAll: the non-global refusal first, then the argument's
+    // @@matchAll, then RegExpCreate with "g" - which is what makes
+    // `"aaa".matchAll("a")` three matches rather than the first forever.
     text("matchAll", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
-        value list = c.make_array();
-        auto * items = static_cast<array_object *>(list.as_heap());
-        if (refuse_non_global(c, arg_at(a, 0), "String.prototype.matchAll")) { return list; }
+        if (refuse_non_global(c, arg_at(a, 0), "String.prototype.matchAll")) {
+            return value::undefined();
+        }
         if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@matchAll", a, dispatched)) {
             return dispatched;
         }
-        // 22.1.3.14 step 3 creates the RegExp with "g", which is what makes
-        // `"aaa".matchAll("a")` three matches rather than the first forever.
-        const value pattern = as_regexp(c, arg_at(a, 0), "g");
-        if (!pattern.is_object()) { return list; }
-        const value exec = c.lookup_property(pattern, "exec");
-        if (!exec.is_callable()) { return list; }
-        const value subject = c.string(self);
-        c.store_property(pattern, "lastIndex", value::number(0));
-        double previous = -1;
-        // Bounded by the subject: each round must advance lastIndex, and a
-        // pattern that matches empty - or one without `g`, whose exec always
-        // restarts at 0 - would otherwise spin forever.
-        for (std::size_t guard = 0; guard <= self.size() + 1; ++guard) {
-            const value args[1] = {subject};
-            const value found = c.call(exec, args, pattern);
-            if (found.is_nullish()) { break; }
-            items->items.push_back(found);
-            const double now = context::to_number(c.lookup_property(pattern, "lastIndex"));
-            if (!(now > previous)) { break; }
-            previous = now;
-        }
-        return list;
+        return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self);
     });
     text("replaceAll", 2,
-         [replace_with](context & c, const std::string & s, std::span<value> a) -> value {
+         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
              if (refuse_non_global(c, arg_at(a, 0), "String.prototype.replaceAll")) {
-                 return c.string(s);
+                 return value::undefined();
              }
              if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
                  return dispatched;
              }
-             return replace_with(c, s, a, true);
+             return replace_string(c, s, a, true);
          });
     // ASCII-ONLY, on purpose and for the whole family: core/algorithms.hpp
     // folds A-Z and nothing else so that a rendered page cannot depend on the
