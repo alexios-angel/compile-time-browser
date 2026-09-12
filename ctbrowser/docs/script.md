@@ -316,7 +316,9 @@ back by one native job (`context::await_job`) queued at the await, so `await
 1` runs after the microtasks queued before it - which is what every ordering
 test and every MutationObserver callback relies on. A classic script's top
 level keeps the synchronous read (`return await 3` in a test script has no
-caller to hand a promise to).
+caller to hand a promise to) - and when what it awaits is a PENDING promise
+it drains the microtask queue first, because with every inner await a job,
+`return await g()` for an async `g` is pending until those jobs run.
 
 ### Strict mode, the part that changes what runs (since 2026-09-12)
 

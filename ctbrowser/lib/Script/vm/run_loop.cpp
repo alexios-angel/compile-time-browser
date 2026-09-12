@@ -846,8 +846,19 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // list when it is pending, from a job queued now when it is
                 // not. A SCRIPT'S TOP LEVEL is the exception it always was:
                 // `return await x` in a classic script (no closure, no caller
-                // to hand a promise to) reads a settled value straight out.
-                const bool suspends = is_pending_promise(awaited) || vm_frame->closure != nullptr;
+                // to hand a promise to) reads a settled value straight out -
+                // and when the value is a PENDING promise it runs the queue
+                // first, since the jobs that settle it are the ones an async
+                // callee just queued. Draining re-enters the VM, so the
+                // frame and its window are re-derived afterwards.
+                const bool top_level = vm_frame->closure == nullptr;
+                if (top_level && is_pending_promise(awaited)) {
+                    drain_microtasks();
+                    if (failed_) { break; }
+                    vm_frame = &frames_.back();
+                    base = vm_frame->base;
+                }
+                const bool suspends = is_pending_promise(awaited) || !top_level;
                 if (suspends && pending_promise_factory_ && promise_settler_) {
                     if (vm_frame->async_promise.is_undefined()) {
                         vm_frame->async_promise = pending_promise_factory_(*this);
