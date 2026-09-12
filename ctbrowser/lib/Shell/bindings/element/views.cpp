@@ -302,7 +302,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // case-insensitive match for 'important', return." - CSSOM 6.7.2.
             // The VALUE may not carry one; the third argument is the only way
             // a page can ask for it.
-            const std::string priority = args.size() > 2 ? c.to_string(args[2]) : std::string{};
+            // [LegacyNullToEmptyString], and optional: null and undefined are "".
+            const std::string priority =
+                args.size() > 2 && !args[2].is_nullish() ? c.to_string(args[2]) : std::string{};
             if (!priority.empty() && !ascii_iequals(priority, "important")) {
                 return value::undefined();
             }
