@@ -676,12 +676,12 @@ private:
             // the only such callers are `querySelector` and `matches`, and Selectors
             // API §2 gives them no namespace resolver at all: `ns|div` there is a
             // SyntaxError in every browser.
+            const namespace_declaration * bound = nullptr;
             if (kind == ns_prefix::named) {
-                bool declared = false;
                 for (const namespace_declaration & each : sheet_->namespaces) {
-                    declared = declared || (!each.prefix.empty() && each.prefix == prefix);
+                    if (!each.prefix.empty() && each.prefix == prefix) { bound = &each; }
                 }
-                if (!declared) { return false; }
+                if (bound == nullptr) { return false; }
             }
             if (at + 1 >= run.size() || run[at + 1].kind != cv_kind::token) { return false; }
             const css_token & local = token(run[at + 1]);
@@ -694,11 +694,14 @@ private:
                 return false;
             }
             b.part.ns = kind;
-            if (kind == ns_prefix::named) { b.part.ns_name = atoms_->intern(prefix); }
-            // The null namespace and a named one are answered by nothing in the
-            // matcher, which knows an element's namespace only as html, svg or
-            // other; `*|` constrains nothing and matches as the bare name does.
-            if (kind != ns_prefix::any) { dead = true; }
+            if (kind == ns_prefix::named) {
+                b.part.ns_name = atoms_->intern(prefix);
+                b.part.ns_uri = atoms_->intern(bound->uri);
+            }
+            // The null namespace is answered by nothing in the matcher, which
+            // knows an element's namespace only as html, svg or other; `*|`
+            // constrains nothing and matches as the bare name does.
+            if (kind == ns_prefix::none) { dead = true; }
             return true;
         };
 
@@ -946,6 +949,16 @@ private:
         if (dead) {
             compounds.back().part.never_matches = true;
             compounds.back().part.dropped = lossy;
+        }
+
+        // A DEFAULT NAMESPACE PUTS EVERY UNPREFIXED COMPOUND IN IT, the implied
+        // `*` of `.style1` included (Selectors 4 §6.1.1): with `@namespace
+        // url(xhtml)` declared, `.style1` no longer names an <svg>.
+        for (const namespace_declaration & each : sheet_->namespaces) {
+            if (!each.prefix.empty()) { continue; }
+            for (building & b : compounds) {
+                if (b.part.ns == ns_prefix::unset) { b.part.ns_uri = atoms_->intern(each.uri); }
+            }
         }
 
         compiled_selector out;

@@ -385,10 +385,32 @@ void test_resolving_twice_does_not_leak_siblings() {
     CHECK(g.value_of(g.find_id("first"), "color").empty());
 }
 
+// A NAMESPACED TYPE SELECTOR MATCHES BY URI, and a default `@namespace` puts
+// every unprefixed compound in it - the implied `*` of `.c` included (Selectors
+// 4 §6.1.1). cssom/CSSStyleRule-set-selectorText-namespace asks both.
+void test_namespaces() {
+    fixture f;
+    f.load("<p id=p class=c></p><svg id=s class=c></svg>",
+           "@namespace url(http://www.w3.org/1999/xhtml);"
+           "@namespace svg url(http://www.w3.org/2000/svg);"
+           "svg|*.c { color: #010101 }"
+           ".c { background-color: #020202 }"
+           "*|*.c { outline-color: #030303 }"
+           "|*.c { caret-color: #040404 }");
+    expect_value(f, f.find_id("s"), "color", "#010101", "svg|* names the <svg>");
+    expect_value(f, f.find_id("p"), "color", "", "...and not the <p>");
+    expect_value(f, f.find_id("p"), "background-color", "#020202", ".c is xhtml|*.c");
+    expect_value(f, f.find_id("s"), "background-color", "", "...so not the <svg>");
+    expect_value(f, f.find_id("s"), "outline-color", "#030303", "*|* is any");
+    expect_value(f, f.find_id("p"), "outline-color", "#030303", "*|* is any");
+    expect_value(f, f.find_id("p"), "caret-color", "", "|* is the null namespace");
+}
+
 } // namespace
 
 int main() {
     test_simple_selectors();
+    test_namespaces();
     test_bucketing_uses_the_rightmost_compound();
     test_descendant_and_child_combinators();
     test_a_selector_is_compiled_once_per_selector();

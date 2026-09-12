@@ -656,8 +656,18 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     // tokenizer preserves case inside foreign content - which is what makes the
     // spec's ~95 adjustment tables unnecessary here - so folding unconditionally
     // meant no selector could ever name `linearGradient` or `[viewBox]`.
-    const bool folds = txn.element_ns(node) == node_ns::html;
+    const node_ns ns = txn.element_ns(node);
+    const bool folds = ns == node_ns::html;
     if (c.tag && (folds ? c.tag : c.tag_exact) != f.tag) { return false; }
+    // THE NAMESPACE, when the selector names one: `svg|*` and, under a default
+    // `@namespace`, every unprefixed compound. The DOM keeps an element's
+    // namespace as html, svg or other, so those are the two URIs that match.
+    if (c.ns_uri) {
+        const std::string_view uri = atoms_->text(c.ns_uri);
+        const bool fits = (ns == node_ns::html && uri == "http://www.w3.org/1999/xhtml") ||
+                          (ns == node_ns::svg && uri == "http://www.w3.org/2000/svg");
+        if (!fits) { return false; }
+    }
     if (c.id && c.id != f.id) { return false; }
     for (const atom want : c.classes) {
         if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
