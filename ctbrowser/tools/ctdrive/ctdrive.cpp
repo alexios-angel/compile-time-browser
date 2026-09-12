@@ -363,10 +363,8 @@ private:
                 written = ctbrowser::write_ppm(path, image);
             }
             if (!written) { return fail("cannot write " + path); }
-            return json::value{{"ok", true},
-                               {"path", path},
-                               {"width", image.width()},
-                               {"height", image.height()}};
+            return json::value{
+                {"ok", true}, {"path", path}, {"width", image.width()}, {"height", image.height()}};
         }
         if (cmd == "info") {
             return json::value{{"ok", true},
