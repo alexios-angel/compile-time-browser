@@ -76,31 +76,27 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
-    case vp::nk::array_pattern: {
-        const std::span<const std::int32_t> elements = kids(n);
-        for (std::size_t i = 0; i < elements.size(); ++i) {
-            if (elements[i] < 0) { continue; } // a hole binds nothing
-            const std::uint32_t mark = reg_mark();
-            const std::uint16_t item = alloc_reg();
-            if (at(elements[i]).kind == vp::nk::rest_element) {
-                // everything from here on, as a new array
-                emit_slice_from(item, src, i);
-                compile_pattern(at(elements[i]).a, item);
-            } else {
-                const std::uint16_t index = alloc_reg();
-                emit_const(index, value::number(static_cast<double>(i)));
-                proto().emit(instruction{op::get_index, item, src, index});
-                compile_pattern(elements[i], item);
-            }
-            release_to(mark);
-        }
+    case vp::nk::array_pattern:
+        compile_array_pattern(
+            kids(n), src, vp::nk::rest_element,
+            [this](std::int32_t element, std::uint16_t item) { compile_pattern(element, item); });
         return;
-    }
 
     case vp::nk::object_pattern: {
+        // RequireObjectCoercible (8.6.2 / 13.15.5.2): `{} = null` is a
+        // TypeError even though nothing is read. A pattern with a named
+        // property throws from its own get_prop; an empty or rest-first one
+        // has to ask.
+        const std::span<const std::int32_t> entries = kids(n);
+        if (entries.empty() || at(entries.front()).kind == vp::nk::rest_element) {
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t scratch = alloc_reg();
+            emit_iterator_native(require_object_name, scratch, src);
+            release_to(mark);
+        }
         // The keys already taken, so an object rest knows what to leave out.
         std::vector<std::string> taken;
-        for (const std::int32_t entry : kids(n)) {
+        for (const std::int32_t entry : entries) {
             const vp::node & e = at(entry);
             const std::uint32_t mark = reg_mark();
             const std::uint16_t item = alloc_reg();
@@ -127,29 +123,90 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
     }
 }
 
+void compiler_impl::emit_iterator_native(std::string_view name, std::uint16_t dst,
+                                         std::uint16_t arg, int flag) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee, intern_name(std::string{name})));
+    const std::uint16_t first = alloc_reg();
+    proto().emit(instruction{op::move, first, arg});
+    std::uint16_t argc = 1;
+    if (flag >= 0) {
+        const std::uint16_t second = alloc_reg();
+        proto().emit(instruction{flag != 0 ? op::load_true : op::load_false, second});
+        argc = 2;
+    }
+    proto().emit(instruction{op::call, callee, argc});
+    proto().emit(instruction{op::move, dst, callee});
+    release_to(mark);
+}
+
+// 8.6.2 IteratorBindingInitialization and 13.15.5.5, which are the same
+// walk: GetIterator once, IteratorStep per element (a hole steps and drops),
+// every remaining step into a rest array, and IteratorClose at the end when
+// the iterator is not done - and also on a THROW out of an element's default
+// or nested pattern, with `return()`'s own failure suppressed because the
+// original throw wins (7.4.10). A `next()` that threw or answered a
+// non-object marks the record done, so no close follows it.
+void compiler_impl::compile_array_pattern(
+    std::span<const std::int32_t> elements, std::uint16_t src, vp::nk rest_kind,
+    const std::function<void(std::int32_t, std::uint16_t)> & bind) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t record = alloc_reg();
+    emit_iterator_native(iterator_open_name, record, src);
+    const std::uint16_t caught = alloc_reg();
+    const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
+    ++handler_depth_;
+    for (const std::int32_t element : elements) {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t item = alloc_reg();
+        if (element >= 0 && at(element).kind == rest_kind) {
+            proto().emit(instruction{op::new_array, item});
+            const std::uint16_t step = alloc_reg();
+            const std::uint16_t done = alloc_reg();
+            const std::size_t top = proto().code.size();
+            emit_iterator_native(iterator_next_name, step, record);
+            proto().emit(instruction{op::get_prop, done, record, name_operand("done")});
+            const std::size_t exit = proto().emit(instruction{op::jump_if_true, done});
+            proto().emit(instruction{op::append, item, step});
+            patch_jump(proto().emit(instruction{op::jump}), top);
+            patch_here(exit);
+            bind(at(element).a, item);
+        } else {
+            emit_iterator_native(iterator_next_name, item, record);
+            if (element >= 0) { bind(element, item); } // a hole steps and binds nothing
+        }
+        release_to(inner);
+    }
+    --handler_depth_;
+    proto().emit(instruction{op::pop_handler});
+    emit_iterator_native(iterator_close_name, caught, record, 0);
+    const std::size_t leave = proto().emit(instruction{op::jump});
+    patch_here(guard);
+    emit_iterator_native(iterator_close_name, record, record, 1);
+    proto().emit(instruction{op::throw_value, caught});
+    patch_here(leave);
+    release_to(mark);
+}
+
 void compiler_impl::compile_literal_as_pattern(std::int32_t literal, std::uint16_t src) {
     const vp::node & n = at(literal);
     if (n.kind == vp::nk::array) {
-        const std::span<const std::int32_t> elements = kids(n);
-        for (std::size_t i = 0; i < elements.size(); ++i) {
-            if (elements[i] < 0) { continue; } // `[, x] = pair` skips one
-            const std::uint32_t mark = reg_mark();
-            const std::uint16_t item = alloc_reg();
-            if (at(elements[i]).kind == vp::nk::spread) {
-                emit_slice_from(item, src, i);
-                compile_literal_target(at(elements[i]).a, item);
-            } else {
-                const std::uint16_t index = alloc_reg();
-                emit_const(index, value::number(static_cast<double>(i)));
-                proto().emit(instruction{op::get_index, item, src, index});
-                compile_literal_target(elements[i], item);
-            }
-            release_to(mark);
-        }
+        compile_array_pattern(kids(n), src, vp::nk::spread,
+                              [this](std::int32_t element, std::uint16_t item) {
+                                  compile_literal_target(element, item);
+                              });
         return;
     }
+    const std::span<const std::int32_t> entries = kids(n);
+    if (entries.empty() || at(entries.front()).kind == vp::nk::spread) {
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t scratch = alloc_reg();
+        emit_iterator_native(require_object_name, scratch, src);
+        release_to(mark);
+    }
     std::vector<std::string> taken;
-    for (const std::int32_t entry : kids(n)) {
+    for (const std::int32_t entry : entries) {
         const vp::node & e = at(entry);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t item = alloc_reg();
@@ -194,28 +251,6 @@ void compiler_impl::compile_literal_target(std::int32_t target, std::uint16_t sr
     }
     const reference ref = prepare_reference(t);
     emit_store(ref, src);
-}
-
-void compiler_impl::emit_slice_from(std::uint16_t dst, std::uint16_t source, std::size_t from) {
-    proto().emit(instruction{op::new_array, dst});
-    const std::uint32_t mark = reg_mark();
-    const std::uint16_t length = alloc_reg();
-    proto().emit(instruction{op::get_prop, length, source, name_operand("length")});
-    const std::uint16_t index = alloc_reg();
-    emit_const(index, value::number(static_cast<double>(from)));
-    const std::uint16_t one = alloc_reg();
-    emit_const(one, value::number(1));
-    const std::uint16_t test = alloc_reg();
-    const std::uint16_t item = alloc_reg();
-    const std::size_t top = proto().code.size();
-    proto().emit(instruction{op::less, test, index, length});
-    const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
-    proto().emit(instruction{op::get_index, item, source, index});
-    proto().emit(instruction{op::append, dst, item});
-    proto().emit(instruction{op::add, index, index, one});
-    patch_jump(proto().emit(instruction{op::jump}), top);
-    patch_here(exit);
-    release_to(mark);
 }
 
 void compiler_impl::emit_rest_object(std::uint16_t dst, std::uint16_t source,

@@ -319,4 +319,74 @@ void install_generator(context & cx) {
     cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 
+// See iterator_open_name: the three natives an array pattern is compiled
+// around. The record is an ordinary object so the collector sees it through
+// the register that holds it; `done` starts true and is cleared only by a
+// step that produced a value, which is exactly 7.4.8's rule that a throwing
+// or malformed `next()` marks the record done and forbids a close.
+namespace {
+[[nodiscard]] value slot(object_object * record, const char * name) {
+    const value * found = record->find(name);
+    return found != nullptr ? *found : value::undefined();
+}
+} // namespace
+
+void install_destructuring_iteration(context & cx) {
+    cx.define_native(std::string{iterator_open_name}, [](context & c, std::span<value> a) {
+        const value iterator = c.get_iterator(a.empty() ? value::undefined() : a[0]);
+        auto * record = detail::new_table(c);
+        record->set("iterator", iterator);
+        record->set("next", iterator.is_object() ? c.lookup_property(iterator, "next")
+                                                 : value::undefined());
+        record->set("done", value::boolean(!iterator.is_object()));
+        return value::object(record);
+    });
+    cx.define_native(std::string{iterator_next_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * record = static_cast<object_object *>(a[0].as_heap());
+        if (context::truthy(slot(record, "done"))) { return value::undefined(); }
+        record->set("done", value::boolean(true));
+        bool done = true;
+        const value item = c.iterator_step(slot(record, "iterator"), slot(record, "next"), done);
+        if (!done && !c.throw_pending()) { record->set("done", value::boolean(false)); }
+        return item;
+    });
+    cx.define_native(std::string{require_object_name}, [](context & c, std::span<value> a) {
+        const value v = a.empty() ? value::undefined() : a[0];
+        if (v.is_nullish()) {
+            c.throw_error("TypeError", "Cannot destructure '" + c.to_string(v) + "' as it is " +
+                                           std::string{context::type_of(v)} + ".");
+        }
+        return value::undefined();
+    });
+    cx.define_native(std::string{iterator_close_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * record = static_cast<object_object *>(a[0].as_heap());
+        if (context::truthy(slot(record, "done"))) { return value::undefined(); }
+        record->set("done", value::boolean(true));
+        const bool suppress = a.size() > 1 && context::truthy(a[1]);
+        const value iterator = slot(record, "iterator");
+        // 7.4.10 IteratorClose: GetMethod(iterator, "return") - undefined and
+        // null mean nothing to do - then Call; with a throw already in flight
+        // the original wins over anything `return()` does.
+        const value back = c.lookup_property(iterator, "return");
+        if (back.is_nullish() || (suppress && c.throw_pending())) { return value::undefined(); }
+        if (!back.is_callable()) {
+            if (!suppress) { c.throw_error("TypeError", "iterator.return is not a function"); }
+            return value::undefined();
+        }
+        if (suppress) {
+            bool threw = false;
+            value thrown = value::undefined();
+            (void)c.call_fenced(back, {}, iterator, threw, thrown);
+            return value::undefined();
+        }
+        const value result = c.call(back, {}, iterator);
+        if (!c.throw_pending() && !result.is_object()) {
+            c.throw_error("TypeError", "iterator.return() did not return an object");
+        }
+        return value::undefined();
+    });
+}
+
 } // namespace ctbrowser::script::builtins_detail

@@ -736,6 +736,10 @@ public:
     // through, so a host that drives callbacks must ask.
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
+    // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s and is
+    // parked for rethrow at its call site, or the run has failed outright.
+    // Every further `call` would answer undefined without running anything.
+    [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
     // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
     // constructor rather than print it (`tools/ct262` on a `negative:` test).
     // Undefined when a run failed WITHOUT a throw (the allocation ceiling, the
@@ -755,6 +759,14 @@ public:
     // for-of, spread and Array.from share. See the definition for what it
     // covers.
     [[nodiscard]] value iterable_values(value v);
+    // GetIterator(v, sync) (7.4.3): `v[Symbol.iterator]()`, checked to be an
+    // object. A TypeError (thrown, catchable) and undefined when it is not
+    // iterable or the method answers a non-object.
+    [[nodiscard]] value get_iterator(value v);
+    // IteratorStep + IteratorValue (7.4.8): `next()` on the iterator; `done`
+    // says whether the result was the end. Throws (catchable) when the
+    // result is not an object.
+    [[nodiscard]] value iterator_step(value iterator, value next, bool & done);
 
     // `new callee(...args)` where the argument count is only known at run time.
     // op::construct keeps its own inline path because it does not need a nested

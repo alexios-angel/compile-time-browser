@@ -1293,6 +1293,8 @@ void install_typed_arrays(context & cx);
 void install_dynamic_function(context & cx);
 void install_generator(context & cx);
 void install_class_defined(context & cx);
+// See iterator_open_name and its two siblings.
+void install_destructuring_iteration(context & cx);
 
 // Used by more than one of those, so defined once here rather than duplicated.
 // inline, because a header five translation units include may not define a

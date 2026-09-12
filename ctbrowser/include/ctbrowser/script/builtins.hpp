@@ -51,6 +51,19 @@ inline constexpr std::string_view class_defined_name = "__ctbrowser_class_define
 // record (CreateAsyncFromSyncIterator, 27.1.6.1). The loop itself is bytecode:
 // `next()` through call_receiver, await_value, get_prop done/value.
 inline constexpr std::string_view async_iterator_name = "__ctbrowser_async_iterator";
+// THE ITERATOR RECORD of an array destructuring (8.6.2 IteratorBindingInitialization,
+// 13.15.5.5 IteratorDestructuringAssignmentEvaluation), as three natives over
+// one plain object {iterator, next, done}: `open(v)` is GetIterator(v) into a
+// record, `next(rec)` is IteratorStep + IteratorValue writing rec.done, and
+// `close(rec, suppress)` is IteratorClose - `return()` when the record is not
+// done, its own throw swallowed when `suppress` is true because a throw is
+// already in flight. The pattern itself is bytecode around these calls.
+inline constexpr std::string_view iterator_open_name = "__ctbrowser_iter_open";
+inline constexpr std::string_view iterator_next_name = "__ctbrowser_iter_next";
+inline constexpr std::string_view iterator_close_name = "__ctbrowser_iter_close";
+// RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
+// (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
+inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";
 
 // Install the standard library into a context.
 //

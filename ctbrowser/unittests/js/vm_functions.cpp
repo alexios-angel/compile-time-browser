@@ -767,6 +767,58 @@ void test_anonymous_functions_take_the_binding_name() {
                   "");
 }
 
+// AN ARRAY PATTERN IS THE ITERATOR PROTOCOL (8.6.2), not `src[i]`: it takes
+// anything with a Symbol.iterator, steps exactly as many times as it has
+// elements, and closes the iterator (`return()`) when it stops early - also
+// on a throw out of a default. A `next()` that throws marks the record done,
+// so nothing is closed after it. Each of these was wrong before 2026-09-12:
+// a user iterable destructured to undefineds, and a generator was drained
+// to the end however many elements the pattern had.
+void test_array_patterns_iterate() {
+    const std::string counter =
+        "var steps = 0, closed = 0;"
+        "var it = { [Symbol.iterator]() { return { next() { steps++; return { value: steps,"
+        " done: steps > 5 }; }, return() { closed++; return {}; } }; } };";
+    expect_result(
+        counter + "var [a, b] = it; return a + ',' + b + ' steps ' + steps + ' closed ' + closed;",
+        "1,2 steps 2 closed 1");
+    // exhausted by the pattern: nothing left to close
+    expect_result(
+        counter +
+            "var [a, b, c, d, e, f] = it; return f + ' steps ' + steps + ' closed ' + closed;",
+        "undefined steps 6 closed 0");
+    expect_result(counter + "var [x, ...rest] = it; return rest.join('') + ' closed ' + closed;",
+                  "2345 closed 0");
+    expect_result(counter + "var [, , third] = it; return third + ' steps ' + steps;", "3 steps 3");
+    // a throw from a default closes, and the throw is the original one
+    expect_result(counter + "try { var [q = (function () { throw new Error('dflt'); })()] ="
+                            " { [Symbol.iterator]() { return { next() { return { done: false }; },"
+                            " return() { closed++; return {}; } }; } }; }"
+                            " catch (e) { return e.message + ' closed ' + closed; }",
+                  "dflt closed 1");
+    // a throwing next() is not closed after
+    expect_result("var closed = 0; try { var [z] = { [Symbol.iterator]() { return { next() {"
+                  " throw new Error('step'); }, return() { closed++; } }; } }; }"
+                  " catch (e) { return e.message + ' closed ' + closed; }",
+                  "step closed 0");
+    // a generator is pulled lazily: two elements, two resumes
+    expect_result("var pulled = 0; function* g() { for (;;) { pulled++; yield pulled; } }"
+                  "var [m, n] = g(); return m + n + ' pulled ' + pulled;",
+                  "3 pulled 2");
+    // not iterable, and null or undefined as an object pattern: TypeError
+    expect_result("try { var [w] = 5; } catch (e) { return e.constructor.name; }", "TypeError");
+    expect_result("try { var {} = null; } catch (e) { return e.constructor.name; }", "TypeError");
+    expect_result("try { (function ({}) {})(undefined); } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    // assignment patterns take the same walk
+    expect_result(counter + "var a, b; [a, b] = it; return a + b + ' closed ' + closed;",
+                  "3 closed 1");
+    // for-of and spread see a user iterable too
+    expect_result(counter + "var got = []; for (var v of it) got.push(v); return got.join('');",
+                  "12345");
+    expect_result(counter + "return [...it].length + ',' + Math.max(...it);", "5,5");
+}
+
 } // namespace
 
 int main() {
@@ -796,5 +848,6 @@ int main() {
     test_arguments();
     test_named_function_expressions();
     test_anonymous_functions_take_the_binding_name();
+    test_array_patterns_iterate();
     REPORT("vm_functions");
 }

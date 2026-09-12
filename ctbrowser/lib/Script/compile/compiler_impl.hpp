@@ -598,7 +598,6 @@ public:
     void compile_literal_target(std::int32_t target, std::uint16_t src);
 
     // `[a, ...rest] = xs` - rest is everything from `from` onward.
-    void emit_slice_from(std::uint16_t dst, std::uint16_t source, std::size_t from);
 
     // `{a, ...rest} = o` - every own property except the ones already named.
     void emit_rest_object(std::uint16_t dst, std::uint16_t source,
@@ -878,6 +877,17 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // An array pattern over the iterator protocol - see iterator_open_name.
+    // `elements` are the pattern's children; `bind` binds one element node to
+    // the register holding its value (a binding pattern and an assignment
+    // pattern bind differently, the iteration is the same).
+    void compile_array_pattern(std::span<const std::int32_t> elements, std::uint16_t src,
+                               vp::nk rest_kind,
+                               const std::function<void(std::int32_t, std::uint16_t)> & bind);
+    // One call of one of the three iterator natives; the record (or the
+    // item) lands in `dst`.
+    void emit_iterator_native(std::string_view name, std::uint16_t dst, std::uint16_t arg,
+                              int flag = -1);
 
     // `/ab+c/gi`. The lexer hands the literal over whole, delimiters and all,
     // so the source is between the first `/` and the last one and the flags are

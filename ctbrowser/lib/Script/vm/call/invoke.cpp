@@ -379,6 +379,25 @@ value context::iterable_values(value v) {
             static_cast<array_object *>(items->as_heap())->items;
         return out;
     }
+    // AN ITERABLE OF THE PAGE'S OWN - `[Symbol.iterator]() { ... }` on a
+    // class or a literal - run through the protocol (7.4.3-7.4.8) and drained.
+    // Everything above is the standard library's fast path for values whose
+    // iterator is known; this is everything else, and it is eager like the
+    // rest of this function: an infinite iterator here is the bound below.
+    if (const value method = lookup_property(v, "@@iterator"); method.is_callable()) {
+        const value iterator = get_iterator(v);
+        value out = make_array();
+        if (!iterator.is_object()) { return out; }
+        auto * items = static_cast<array_object *>(out.as_heap());
+        const value next = lookup_property(iterator, "next");
+        for (std::size_t guard = 0; guard < 1u << 24 && !throw_pending(); ++guard) {
+            bool done = false;
+            const value item = iterator_step(iterator, next, done);
+            if (done || throw_pending()) { break; }
+            items->items.push_back(item);
+        }
+        return out;
+    }
     // An ARRAY-LIKE: anything with a numeric length and indexed properties, which
     // is what a NodeList, `arguments` and a page's own collection look like.
     if (value * length = obj->find("length"); length != nullptr && length->is_number()) {
@@ -391,6 +410,38 @@ value context::iterable_values(value v) {
         return out;
     }
     return make_array();
+}
+
+value context::get_iterator(value v) {
+    const value method = lookup_property(v, "@@iterator");
+    if (!method.is_callable()) {
+        throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
+        return value::undefined();
+    }
+    const value iterator = call(method, {}, v);
+    if (throw_pending()) { return value::undefined(); }
+    if (!iterator.is_object()) {
+        throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
+        return value::undefined();
+    }
+    return iterator;
+}
+
+value context::iterator_step(value iterator, value next, bool & done) {
+    done = true;
+    if (!next.is_callable()) {
+        throw_error("TypeError", "iterator.next is not a function");
+        return value::undefined();
+    }
+    const value result = call(next, {}, iterator);
+    if (throw_pending()) { return value::undefined(); }
+    if (!result.is_object()) {
+        throw_error("TypeError", "Iterator result is not an object");
+        return value::undefined();
+    }
+    done = truthy(lookup_property(result, "done"));
+    if (done || throw_pending()) { return value::undefined(); }
+    return lookup_property(result, "value");
 }
 
 std::vector<value> context::spread_arguments(value arg_array) {
