@@ -347,6 +347,17 @@ void dom_bindings::run_inserted_scripts() {
         }
     }
     for (auto & [id, source, src, type] : batch) {
+        // AN EARLIER SCRIPT OF THE BATCH MAY HAVE REMOVED THIS ONE, and a
+        // script that is not connected when its turn comes does not run - it
+        // was never started, so it stays on the list for a later insertion
+        // (later-script-removed-by-earlier-script.html).
+        {
+            const auto txn = doc_->read();
+            if (root_of_tree(txn, id, true) != txn.root()) {
+                unstarted_scripts_.push_back(id);
+                continue;
+            }
+        }
         // A classic script only. A data block (`type="text/plain"`) runs
         // nothing; a module's loader is the browser's and is not reached from
         // a mutation.
