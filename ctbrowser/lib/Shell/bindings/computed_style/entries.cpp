@@ -64,6 +64,30 @@ constexpr std::array<std::string_view, 12> length_properties{
     return std::string{width_property.substr(0, width_property.size() - 5)} + "style";
 }
 
+// DOM 4.2.2.3 "find a slot", for one light-DOM child of a shadow host: the
+// child's `slot` attribute names the slot it wants - the empty name is the
+// default slot - and the first `<slot>` of that name in the host's shadow
+// tree takes it. Nothing here assigns the slot for rendering; this answers
+// only whether the child is in the flat tree at all.
+[[nodiscard]] bool slotted_into(const read_txn & txn, atom_table & atoms, node_id root,
+                                node_id child) {
+    const std::string_view wanted = txn.attribute_value(child, atoms.intern("slot"));
+    const atom slot_tag = atoms.intern_lower("slot");
+    const atom name_attribute = atoms.intern("name");
+    bool found = false;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (txn.tag(at).value_or(atom{}) == slot_tag && txn.element_ns(at) == node_ns::html &&
+            txn.attribute_value(at, name_attribute) == wanted) {
+            found = true;
+            return;
+        }
+        for (const node_id next : txn.children(at)) { self(self, next); }
+    };
+    walk(walk, root);
+    return found;
+}
+
 [[nodiscard]] const layout::box_node * box_for(const layout::box_node * root, node_id id) {
     if (root == nullptr || !id) { return nullptr; }
     if (root->source == id) { return root; }
@@ -199,6 +223,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             up = next;
         }
         connected = !at.chain.empty() && at.chain.back() == txn.root();
+        // ...AND IN THE FLAT TREE. A light-DOM child of a shadow host is
+        // rendered only through a `<slot>` in the host's shadow tree that
+        // takes it (DOM 4.2.2.3 "find a slot"); without one it is outside the
+        // flat tree and has no computed style, which is what CSS Scoping 3 §3.2
+        // says and getComputedStyle-detached-subtree asserts ("outside the flat
+        // tree"). The host itself is in the tree; only what is beneath it is
+        // in question.
+        for (std::size_t up = 1; connected && up < at.chain.size(); ++up) {
+            const node_id root = shadow_root_of(at.chain[up]);
+            if (root && !slotted_into(txn, *atoms_, root, at.chain[up - 1])) { connected = false; }
+        }
         at.is_root = id == txn.root();
         // A pseudo-element's parent is its originating element, so the element
         // takes the parent's place in the chain and the pseudo has no box.
@@ -815,6 +850,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "transform" && !ascii_iequals(trim(text, html_whitespace), "none")) {
             return transform_matrix_text(trim(text, html_whitespace));
         }
+        // 3e. A SHADOW LIST: colour first, resolved, and lengths in px - see
+        //     shadow_text. A colour it left as `currentcolor` is substituted
+        //     with the rest of them below.
+        if (property == "box-shadow" || property == "text-shadow") {
+            return shadow_text(text, at.font_size, property == "box-shadow");
+        }
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
@@ -905,6 +946,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
+        // ...and inside a shadow list, where it is one shadow's colour.
+        if (p.name == "box-shadow" || p.name == "text-shadow") {
+            for (std::size_t at = text.find("currentcolor"); at != std::string::npos;
+                 at = text.find("currentcolor", at + current_color.size())) {
+                text.replace(at, 12, current_color);
+            }
+        }
         answers.emplace_back(std::string{p.name}, std::move(text));
     }
     // SORTED, WHICH THE TABLE IS NOT. css/cssom's getComputedStyle-property-order

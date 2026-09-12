@@ -156,18 +156,59 @@ void test_sheet_attribute_and_origin() {
 void test_resolved_colours() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
-        #t { background-color: Menu; border: 1px solid Menu; color: Menu; caret-color: Menu }
-        </style></head><body><div id=t></div><script>
+        #t { background-color: Menu; border: 1px solid Menu; color: Menu; caret-color: Menu;
+             box-shadow: 1px 1px Menu, inset 2px 3px 4px; text-shadow: 1em 0 red }
+        #u { color: blue; box-shadow: 0 0 0 1px currentcolor }
+        </style></head><body><div id=t></div><div id=u></div><script>
         const cs = getComputedStyle(document.getElementById('t'));
         console.log('sys=' + ['background-color', 'border-top-color', 'border-block-end-color',
                               'border-inline-start-color', 'color', 'caret-color',
                               'border-block-start-width', 'border-inline-end-style']
                         .map(p => cs.getPropertyValue(p)).join('|'));
+        console.log('shadow=' + cs.boxShadow + '|' + cs.textShadow + '|' +
+                    getComputedStyle(document.getElementById('u')).boxShadow);
     </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "sys="),
              std::string{"sys=rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|"
                          "rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|1px|solid"});
+    // A shadow's colour first and resolved - the system colour, an omitted
+    // one as the element's own `color` - and its lengths in px, padded.
+    CHECK_EQ(logged(page, "shadow="),
+             std::string{"shadow=rgb(247, 247, 247) 1px 1px 0px 0px, "
+                         "rgb(247, 247, 247) 2px 3px 4px 0px inset|"
+                         "rgb(255, 0, 0) 16px 0px 0px|rgb(0, 0, 255) 0px 0px 0px 1px"});
+}
+
+// getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
+// element outside the flat tree - a light child of a shadow host that no
+// `<slot>` takes - has no computed style, while a slotted one keeps its own;
+// a node of another document answers the same empty declaration; and a
+// functional pseudo-element argument parses as the selector grammar does.
+void test_flat_tree_and_pseudo_arguments() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body>
+        <div id=host><div id=unslotted></div></div>
+        <div id=slotting><div id=slotted></div><div id=named slot=n></div></div>
+        <iframe id=f srcdoc="<html></html>" style="display: none"></iframe>
+        <script>
+        host.attachShadow({mode: 'open'});
+        slotting.attachShadow({mode: 'open'}).innerHTML = '<slot></slot>';
+        const empty = el => getComputedStyle(el).length == 0 && getComputedStyle(el).color === '';
+        console.log('flat=' + empty(unslotted) + ',' + empty(slotted) + ',' + empty(named) + ',' +
+                    empty(host) + ',' + empty(f.contentDocument.documentElement));
+        const parses = p => getComputedStyle(host, p).length != 0;
+        console.log('fn=' + ['::highlight(name)', '::highlight( n\\61me ', '::picker(select)',
+                             '::view-transition-old(x)']
+                        .map(parses).join() + '|' +
+                    ['::highlight()', '::highlight(1)', '::highlight(name)a', ':highlight(name)',
+                     '::picker(div)', '::before(x)', '::highlight (name)']
+                        .map(parses).join());
+        </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "flat="), std::string{"flat=true,false,true,false,true"});
+    CHECK_EQ(logged(page, "fn="),
+             std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
 
 // tree-counting/sibling-function-descriptors: a descriptor is on no element,
@@ -191,6 +232,7 @@ void test_descriptors_refuse_tree_counting() {
 
 int main() {
     test_resolved_colours();
+    test_flat_tree_and_pseudo_arguments();
     test_descriptors_refuse_tree_counting();
     test_class_strings_and_iterators();
     test_removed_rules_charset_keyframes_and_container();

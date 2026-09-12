@@ -85,5 +85,6 @@ namespace ctbrowser::shell::detail {
 [[nodiscard]] std::optional<color> system_color(std::string_view text);
 [[nodiscard]] std::string transform_matrix_text(std::string_view text);
 [[nodiscard]] std::string collapse_keyword(std::string_view text);
+[[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box);
 
 } // namespace ctbrowser::shell::detail
