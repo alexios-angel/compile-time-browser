@@ -18,6 +18,7 @@
 #include <ctbrowser/dom/dom.hpp>
 
 #include <ctbrowser/style/computed.hpp>
+#include <ctbrowser/style/css/boolean.hpp>
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
@@ -806,9 +807,50 @@ public:
         // PASS ONE: the custom properties, stored verbatim. A custom property's value
         // is never parsed and never validated - it is a token stream that means
         // whatever the var() reading it makes of it.
+        //
+        // ...EXCEPT FOR AN `inherit()` IN ONE, which is replaced NOW (CSS Values
+        // 5 §inherit-notation): it names the PARENT's computed value, and the
+        // parent's cascade has just produced it - a lazy reading later would
+        // have to re-run the parent's substitution in the parent's scope, and
+        // its grandparent's, which is how `--v: e2 inherit(--v)` under `--v:
+        // e1` failed to accumulate (inherit-function-basic). A var() in the
+        // same value stays lazy, as every var() in a custom property is.
         fold([&](const declaration & d) {
             if (!atoms_->text(d.property).starts_with("--")) { return; }
-            put(d);
+            if (d.value.find("inherit(") == std::string::npos) {
+                put(d);
+                return;
+            }
+            const css::token_stream s = css::tokenize(d.value);
+            std::string value;
+            for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
+                const css::css_token & t = s.tokens[i];
+                if (t.type != css::token_type::function ||
+                    !ascii_iequals(s.text_of(t), "inherit(")) {
+                    value += s.text_of(t);
+                    continue;
+                }
+                const std::size_t close = css::end_of_block(s, i);
+                const std::size_t last =
+                    s.tokens[close - 1].type == css::token_type::close_paren ? close - 1 : close;
+                std::string inner;
+                for (std::size_t v = i + 1; v < last; ++v) { inner += s.text_of(s.tokens[v]); }
+                const std::size_t comma = inner.find(',');
+                const std::string_view name =
+                    trim(std::string_view{inner}.substr(0, comma), html_whitespace);
+                const std::string_view held =
+                    parent && name.starts_with("--") ? parent->get(atoms_->intern(name)) : "";
+                if (!held.empty() && held != guaranteed_invalid) {
+                    value += held;
+                } else if (comma != std::string::npos) {
+                    value += trim(std::string_view{inner}.substr(comma + 1), html_whitespace);
+                } else {
+                    value = std::string{guaranteed_invalid};
+                    break;
+                }
+                i = close - 1;
+            }
+            put(declaration{d.property, std::move(value)});
         });
 
         // `nullopt` means NOT DEFINED, which is what makes `var()` take its
