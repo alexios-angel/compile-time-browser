@@ -286,6 +286,11 @@ constexpr property_syntax table[] = {
     {"animation-duration", k::time, "", "0s", false, false},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
+    // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
+    // Nothing transitions here; it is the property ident-function-computed
+    // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
+    // did not publish it at all.
+    {"view-transition-name", k::freeform, "", "none", false, false},
     {"animation-iteration-count", k::freeform, "", "1", false, false},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
