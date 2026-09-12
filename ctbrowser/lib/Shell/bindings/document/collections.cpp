@@ -499,6 +499,11 @@ value dom_bindings::make_live_collection(context & cx,
                           }),
                    script::attr_none);
 
+    // ONCE NOW: `Object.getOwnPropertyNames(list)` reads the target through no
+    // trap at all, and a collection nothing has touched must already own its
+    // indices.
+    refresh(cx);
+
     handler->set("get", native("get", [this, held, refresh](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::undefined(); }
                      refresh(c);

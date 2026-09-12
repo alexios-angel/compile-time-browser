@@ -91,7 +91,7 @@ void test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed() {
     is(R"JS((function () {
         var p = document.getElementById('p1');
         var a = p.getAttributeNode('class');
-        var same = a === p.attributes[0] && a === p.attributes.getNamedItem('class');
+        var same = a === p.attributes[1] && a === p.attributes.getNamedItem('class');
         p.removeAttribute('class');
         return same + ',' + (a.ownerElement === null) + ',' + a.value;
     })())JS",
