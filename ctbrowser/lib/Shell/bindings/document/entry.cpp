@@ -328,7 +328,12 @@ void dom_bindings::run_inserted_scripts() {
                 {},
                 std::string{txn.attribute_value(id, src_name)},
                 ascii_lower_copy(trim(txn.attribute_value(id, type_name), html_whitespace))};
-            for (const node_id child : txn.children(id)) { script.source += txn.text(child); }
+            // "Child text content": the Text children only, not a comment's.
+            for (const node_id child : txn.children(id)) {
+                if (is_text_kind(txn.kind(child).value_or(node_kind::comment))) {
+                    script.source += txn.text(child);
+                }
+            }
             if ((script.src.empty() && script.source.empty()) ||
                 root_of_tree(txn, id, true) != txn.root()) {
                 ++i;
