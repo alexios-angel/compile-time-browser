@@ -21,6 +21,9 @@
 // the entire subject here - so the two directions cannot share a module.
 //
 // RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-calledby.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CALLEDBY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CALLS
@@ -29,7 +32,7 @@
 // RUN:   | FileCheck %s --check-prefix=STRING
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/absent-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=CALLEDBY
+// RUN:   | FileCheck %s --check-prefix=ABSENT
 
 // --- FORWARDS: a refused callee refuses its caller --------------------------
 //
@@ -48,28 +51,25 @@
 // CALLS: ctjs.func {{.*}}@good$2
 // CALLS-SAME: ctnative.not_native = "calls `bad$1`, which is not native"
 
-// --- BACKWARDS: a refused caller refuses its callee -------------------------
-//
-// `helper` is native by every rule the admission check has: one numeric
-// parameter a caller proves, one multiplication, one numeric return. It is
-// refused anyway, because the top level stores an absent global and keeps a
-// ctjs.call_direct that must still find a ctjs.func with a body.
-//
-// THIS IS THE DIRECTION THAT SURPRISES PEOPLE, and it is the one that makes a
-// single unsupported construct at the top level refuse an entire program. If
-// this line ever goes green with `helper` lowered, the module is inconsistent
-// rather than improved.
-//
-// CALLEDBY: ctjs.func {{.*}}@_script_$0
-// CALLEDBY-SAME: ctnative.not_native = "store to global `t` may be null or undefined; native global observations require a definite Number, Boolean or String"
-// CALLEDBY: ctjs.func {{.*}}@helper$1
-// CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
+// A nullable caller no longer excludes its otherwise native callee. Preserve
+// this original source as a positive; the separate unsupported String/Number
+// global below still checks backwards refusal through the same helper call.
+// ABSENT-NOT: ctnative.not_native
+// ABSENT: emitc.func @main
+// ABSENT: call_opaque "ctnative::print_scalar"
+// ABSENT: emitc.func @helper_1
+// ABSENT-NOT: ctnative.not_native
 
 // The original String global now emits both functions and a typed observation.
 // STRING: emitc.func @main
 // STRING: call_opaque "ctnative::global_string"
 // STRING: emitc.func @helper_1
 // STRING-NOT: ctnative.not_native
+
+// CALLEDBY: ctjs.func {{.*}}@_script_$0
+// CALLEDBY-SAME: ctnative.not_native = "store to global `t` has inconsistent global observation types"
+// CALLEDBY: ctjs.func {{.*}}@helper$1
+// CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
 
 //--- calls.js
 function bad(x) { return this ? x * 2 : x * 4; }
@@ -84,4 +84,10 @@ var r = helper(3);
 //--- absent-calledby.js
 function helper(x) { return x * 2; }
 var t = null;
+var r = helper(3);
+
+//--- mixed-calledby.js
+function helper(x) { return x * 2; }
+var t = "text";
+t = 1;
 var r = helper(3);

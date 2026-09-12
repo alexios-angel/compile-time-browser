@@ -137,21 +137,14 @@
 
 // --- THE FIELD INDEX IS OVER THE ALIAS GROUP, AND THIS IS ITS PROOF ---------
 //
-// A METHOD'S `this.flag` IS THE SAME FIELD AS THE CALLER'S `o.flag`, and
-// TypeInference has to say so: two values, `%arg0` and the literal, name one
-// object, so `groupReceivers` fans every store out to every member. Drop that
-// and `this.flag` finds no store, reads `undefined`, and undefined's carrier is
-// a double - so `get` returns `double`, `look` returns `double`, the global
-// store is admitted as a number, and the binary prints `shown=1` where the
-// interpreter prints `shown=true`. MEASURED, exactly that, on the box.
-//
-// The refusal below is what the group buys: with it, `this.flag` is a BOOLEAN,
-// so the global store is refused by name and no wrong answer is printed. A
-// boolean global is Phase 62½'s own limit and not this slice's, which is why
-// this is a refusal here and not a fixture.
-//
-// BOOLFIELD: ctjs.func {{.*}}@_script_$0
-// BOOLFIELD-SAME: ctnative.not_native = "store to global `shown` may be null or undefined; native global observations require a definite Number, Boolean or String"
+// The receiver and literal name the same object: the joined field index
+// preserves the Boolean write. The nullable return keeps its tag at global
+// output instead of converting true to Number 1 or absence to NaN.
+// BOOLFIELD-NOT: ctnative.not_native
+// BOOLFIELD: emitc.global static @g_shown : !emitc.opaque<"ctnative::nullable_scalar">
+// BOOLFIELD: call_opaque "ctnative::print_scalar"
+// BOOLFIELD: emitc.func @look_1() -> !emitc.opaque<"ctnative::nullable_scalar">
+// BOOLFIELD-NOT: ctnative.not_native
 
 // --- A `this.other()` WHOSE CALLEE WAS REFUSED ------------------------------
 //

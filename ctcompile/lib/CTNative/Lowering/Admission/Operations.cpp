@@ -567,24 +567,22 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
-        // Tagged storage preserves early reads as undefined. Output requires
-        // one definite Number, Boolean or String tag across every source store,
-        // including writes in callees and on other paths. A single local
-        // dominating write cannot establish the final observation type.
+        // One carrier must preserve every source store, including writes in
+        // callees and on other paths. A narrowed read cannot select storage.
         const std::string where = ("store to global `" + store.getName() + "`").str();
-        const auto stored = carrierOf(typeOf(store.getValue()));
-        if ((stored != carrier::number && stored != carrier::boolean &&
-             stored != carrier::nullable && stored != carrier::string) ||
-            !printable(store.getValue(), where)) {
-            return refuse(where + " requires a Number, Boolean or String global");
-        }
+        if (!printable(store.getValue(), where)) { return false; }
+        mlir::Type joined = typeOf(store.getValue());
         bool consistent = true;
         store->getParentOfType<mlir::ModuleOp>().walk([&](StoreGlobalOp other) {
             if (other.getName() != store.getName()) { return; }
-            consistent &=
-                carrierOf(typeOf(other.getValue())) == stored &&
-                llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(other.getValue()));
+            const auto type = typeOf(other.getValue());
+            if (!type) {
+                consistent = false;
+            } else {
+                joined = meet(joined, type);
+            }
         });
+        consistent &= isScalarCarrier(carrierOf(joined)) || isStringCarrier(carrierOf(joined));
         return consistent || refuse(where + " has inconsistent global observation types");
     }
     if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }

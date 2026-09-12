@@ -31,7 +31,7 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 mlir::Type lowering::globalStorageType(llvm::StringRef name) const {
     // The entire source-store census selects one owning carrier per binding.
     // Its initial absence tag preserves early reads independently of output.
-    return carrierType(context, llvm::isa_and_nonnull<StrType>(globalTypes.lookup(name))
+    return carrierType(context, isStringCarrier(carrierOf(globalTypes.lookup(name)))
                                     ? carrier::nullableString
                                     : carrier::nullable);
 }

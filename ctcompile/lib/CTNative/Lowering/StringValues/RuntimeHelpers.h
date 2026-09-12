@@ -59,6 +59,14 @@ inline void print_string(const char * name, const std::string & value) {
     }
     std::printf("\"\n");
 }
+inline void print_scalar(const char * name, const nullable_string & value) {
+    switch (value.tag) {
+    case nullable_string::kind::undefined: std::printf("%s=undefined\n", name); return;
+    case nullable_string::kind::null_value: std::printf("%s=null\n", name); return;
+    case nullable_string::kind::string: print_string(name, value.value); return;
+    }
+    std::terminate();
+}
 template <class L, class R> bool string_strict_equal(const L & left, const R & right) {
     const auto a = to_nullable_string(left), b = to_nullable_string(right);
     return a.tag == b.tag && (a.tag != nullable_string::kind::string || a.value == b.value);
