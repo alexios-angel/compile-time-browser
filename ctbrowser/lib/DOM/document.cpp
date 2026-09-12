@@ -87,6 +87,25 @@ node_ns read_txn::element_ns(node_id id) const noexcept {
     return n != nullptr ? n->ns : node_ns::html;
 }
 
+bool read_txn::prefixed(node_id id) const noexcept {
+    const node * n = doc_->find(id);
+    return n != nullptr && n->kind == node_kind::element && n->prefixed;
+}
+
+std::string_view read_txn::local_name(node_id id) const noexcept {
+    const std::string_view qualified = doc_->atoms().text(tag(id).value_or(atom{}));
+    if (!prefixed(id)) { return qualified; }
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
+}
+
+std::string_view read_txn::prefix(node_id id) const noexcept {
+    if (!prefixed(id)) { return {}; }
+    const std::string_view qualified = doc_->atoms().text(tag(id).value_or(atom{}));
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
+}
+
 node_id read_txn::parent(node_id id) const noexcept {
     const node * n = doc_->find(id);
     return n != nullptr ? n->parent.load(std::memory_order_acquire) : node_id{};
@@ -171,8 +190,8 @@ document::document(atom_table & atoms) : atoms_(&atoms) {
 
 document::~document() = default;
 
-node_id document::create_element(atom tag, node_ns ns) {
-    return nodes_.insert(node_kind::element, tag, ns);
+node_id document::create_element(atom tag, node_ns ns, bool prefixed) {
+    return nodes_.insert(node_kind::element, tag, ns, prefixed);
 }
 
 node_id document::create_text(std::string_view value) {

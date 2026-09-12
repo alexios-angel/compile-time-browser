@@ -631,7 +631,8 @@ value dom_bindings::prototype_for_node(const read_txn & txn, node_id id) const {
     // walking the DOM for <title>, <style> or <script>.
     if (txn.element_ns(id) == node_ns::svg) { return interface_prototype("SVGElement"); }
     if (txn.element_ns(id) != node_ns::html) { return interface_prototype("Element"); }
-    const std::size_t at = interface_for_tag(atoms_->text(txn.tag(id).value_or(atom{})));
+    // BY LOCAL NAME: `createElementNS(HTML, "foo:span")` is an HTMLSpanElement.
+    const std::size_t at = interface_for_tag(txn.local_name(id));
     return at < interface_prototypes_.size() ? interface_prototypes_[at]
                                              : interface_prototype("HTMLElement");
 }

@@ -214,18 +214,13 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
         // localName is the tag WITHOUT the case fold and WITHOUT the prefix:
         // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b", and
         // reporting the whole qualified name for both makes the two
-        // indistinguishable. prefix is null when there is no colon, which is
-        // every element the parser builds.
+        // indistinguishable. prefix is null when the colon is not one - see
+        // node::prefixed - which is every element the HTML parser builds and
+        // everything `createElement` makes.
         if (kind == node_kind::element) {
-            const std::string_view qualified = atoms_->text(txn.tag(id).value_or(atom{}));
-            const std::size_t colon = qualified.find(':');
-            if (colon == std::string_view::npos) {
-                obj.set("localName", cx.string(std::string{qualified}));
-                obj.set("prefix", value::null());
-            } else {
-                obj.set("localName", cx.string(std::string{qualified.substr(colon + 1)}));
-                obj.set("prefix", cx.string(std::string{qualified.substr(0, colon)}));
-            }
+            const std::string_view prefix = txn.prefix(id);
+            obj.set("localName", cx.string(std::string{txn.local_name(id)}));
+            obj.set("prefix", prefix.empty() ? value::null() : cx.string(std::string{prefix}));
             const std::string ns = namespace_of(id);
             obj.set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
         } else {

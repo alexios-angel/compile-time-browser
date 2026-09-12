@@ -195,7 +195,13 @@ inline const text_block & empty_text = empty_payload<text_block>;
 struct node {
     node_kind kind = node_kind::element;
     node_ns ns = node_ns::html; // elements only; see node_ns - this is free
-    atom tag;                   // elements only
+    // Elements only, and free for the same reason: does a colon in `tag`
+    // introduce a PREFIX? `createElementNS(ns, "a:b")` and an XML-parsed
+    // `<a:b>` have prefix `a` and local name `b`; `createElement("a:b")` and
+    // an HTML-parsed `<a:b>` have no prefix and the local name `a:b`. The
+    // atom alone cannot say which, and DOM 4.9 makes both observable.
+    bool prefixed = false;
+    atom tag; // elements only
 
     // 8 bytes and lock-free on every target we care about; a reader that
     // races a reparent sees the old parent or the new one, never a mix.
@@ -206,8 +212,9 @@ struct node {
     std::atomic<const text_block *> text{&empty_text};
 
     node() = default;
-    explicit node(node_kind k, atom t = {}, node_ns n = node_ns::html) noexcept
-        : kind(k), ns(n), tag(t) {}
+    explicit node(node_kind k, atom t = {}, node_ns n = node_ns::html,
+                  bool has_prefix = false) noexcept
+        : kind(k), ns(n), prefixed(has_prefix), tag(t) {}
 
     // The slab stores these in place; atomics make them immovable anyway.
     node(const node &) = delete;
@@ -218,8 +225,9 @@ struct node {
     // replicated object in the engine, so "free" is worth asserting rather than
     // believing: if a future field pushes this over, that is a real cost and
     // should be a decision rather than a surprise.
-    static_assert(sizeof(node_kind) + sizeof(node_ns) <= alignof(atom) + sizeof(atom),
-                  "kind and ns must share the padding ahead of `tag`");
+    static_assert(sizeof(node_kind) + sizeof(node_ns) + sizeof(bool) <=
+                      alignof(atom) + sizeof(atom),
+                  "kind, ns and prefixed must share the padding ahead of `tag`");
 
     ~node() {
         // Only the shared empties survive a document teardown untouched;

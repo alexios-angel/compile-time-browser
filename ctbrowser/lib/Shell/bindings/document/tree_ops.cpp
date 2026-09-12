@@ -12,7 +12,8 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
     if (from.kind(node).value_or(node_kind::element) == node_kind::text) {
         made = doc_->create_text(from.text(node));
     } else {
-        made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node));
+        made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node),
+                                    from.prefixed(node));
         // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
     }
@@ -47,7 +48,8 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     // `<html>` the root and nothing sits above it.
     case node_kind::document:
     case node_kind::element:
-        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source));
+        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source),
+                                    from.prefixed(source));
         // AND ITS NAMESPACE, which is not on the node: a clone of an element
         // createElementNS made must report the same namespaceURI, and reading
         // it off `element_ns` alone would answer for the wrong one.

@@ -90,6 +90,12 @@ public:
     // intern to the SAME atom, so this is the only way to tell a tooltip from
     // the window title.
     [[nodiscard]] node_ns element_ns(node_id) const noexcept;
+    // Does a colon in the tag introduce a prefix? See node::prefixed. The two
+    // halves of the qualified name follow from it: a prefixed `a:b` is (`a`,
+    // `b`) and anything else is (none, the whole tag).
+    [[nodiscard]] bool prefixed(node_id) const noexcept;
+    [[nodiscard]] std::string_view local_name(node_id) const noexcept;
+    [[nodiscard]] std::string_view prefix(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
     // The returned span points into an IMMUTABLE block held alive by this
@@ -167,7 +173,9 @@ public:
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
     // --- creation: the new node is DETACHED until it is appended ----------
-    [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html);
+    // `prefixed`: whether a colon in `tag` is a prefix - see node::prefixed.
+    [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
+                                         bool prefixed = false);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
     // A DocumentFragment. Detached like everything else here, and it stays
@@ -244,8 +252,9 @@ public:
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
-        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html) {
-            return doc_->create_element(tag, ns);
+        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
+                                             bool prefixed = false) {
+            return doc_->create_element(tag, ns, prefixed);
         }
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }

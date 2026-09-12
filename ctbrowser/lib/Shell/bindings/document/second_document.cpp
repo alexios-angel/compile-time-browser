@@ -130,7 +130,9 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
         // INTERNED AS WRITTEN: an XML document is case-sensitive, so the
         // qualified name is the tag and folding it would lose the case the
         // page asked for.
-        const node_id root = fresh.create_element(atoms_->intern(qualified_name), kind);
+        const node_id root =
+            fresh.create_element(atoms_->intern(qualified_name), kind,
+                                 qualified_name.find(':') != std::string_view::npos);
         auto builder = fresh.build();
         builder.set_root(root);
         if (kind == node_ns::other || ns.empty()) {
