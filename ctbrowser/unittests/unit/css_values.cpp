@@ -878,6 +878,38 @@ void test_random_spells_its_key() {
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
 }
 
+// urls/url-request-modifiers-*: the modifiers in one order, the unknown ones
+// dropped, duplicates and anything that is not an ident or a function refused.
+void test_url_request_modifiers() {
+    const std::string u = "url(\"a.png\"";
+    ok("background-image", u + " cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\"))");
+    ok("background-image",
+       u + " referrer-policy(no-referrer) integrity(\"sha384-x\") cross-origin(anonymous))",
+       u + " cross-origin(anonymous) integrity(\"sha384-x\") referrer-policy(no-referrer))");
+    ok("background-image", u + " integrity(\"\"))", u + " integrity(\"\"))");
+    ok("background-image", u + " foobar(baz))", u + ")");
+    ok("background-image", u + " foobar cross-origin(anonymous))", u + " cross-origin(anonymous))");
+    ok("background-image", u + " foobar([brackets {braces}]) referrer-policy(same-origin))",
+       u + " referrer-policy(same-origin))");
+    ok("background-image", u + " crossorigin(anonymous))", u + ")");
+    ok("background-image", u + " foobar foobar(42))", u + ")");
+    bad("background-image", u + " cross-origin())");
+    bad("background-image", u + " cross-origin(,))");
+    bad("background-image", u + " cross-origin(anonymous,))");
+    bad("background-image", u + " cross-origin(anonymous foobar))");
+    bad("background-image", u + " cross-origin(anonymous) cross-origin(use-credentials))");
+    bad("background-image", u + " integrity(sha384-x))");
+    bad("background-image", u + " referrer-policy(no-referrer same-origin))");
+    bad("background-image", u + " foobar(baz) foobar(qux))");
+    bad("background-image", u + " FooBar foobar)");
+    bad("background-image", u + " 42)");
+    bad("background-image", u + " \"foobar\")");
+    bad("background-image", "url(a.png cross-origin(anonymous))");
+    CHECK(supports_declaration("background-image", u + " cross-origin(anonymous))"));
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -958,6 +990,7 @@ int main() {
     test_the_random_item_argument_list();
     test_calc_size();
     test_random_spells_its_key();
+    test_url_request_modifiers();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

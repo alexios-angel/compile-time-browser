@@ -153,7 +153,9 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // when the block is serialised and parsed again (attr-all-types).
     std::string verbatim{text};
     verbatim.append(static_cast<std::size_t>(found.unclosed), ')');
-    std::string normalized = normalize_value_tokens(ts, text);
+    bool bad_url = false;
+    std::string normalized = normalize_value_tokens(ts, text, &bad_url);
+    if (bad_url) { return {}; }
     normalized.append(static_cast<std::size_t>(found.unclosed), ')');
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table

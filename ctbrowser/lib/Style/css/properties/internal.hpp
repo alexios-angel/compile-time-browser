@@ -89,7 +89,9 @@ struct scan {
 [[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
                                   std::string_view text);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
-[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
+// `invalid`, when given, is set for a value whose `url()` modifiers are wrong.
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
+                                                 bool * invalid = nullptr);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
 // Defined in color.cpp.
