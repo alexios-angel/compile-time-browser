@@ -1485,6 +1485,7 @@ void install_math(context & cx, std::uint64_t seed);
 void install_array(context & cx);
 void install_string(context & cx);
 void install_base64(context & cx);
+void install_uri(context & cx);
 void install_structured_clone(context & cx);
 void install_boolean(context & cx);
 void install_number(context & cx);
