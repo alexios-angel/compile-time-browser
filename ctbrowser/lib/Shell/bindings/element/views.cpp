@@ -508,6 +508,12 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const node_id top = root_of_tree(txn, id, true);
         return value::boolean(is_document_root(txn, top));
     });
+    // `baseURI` is the node document's base URL, DOM 4.4 - the document's
+    // address here, there being no <base>; the same string `document.baseURI`
+    // answers, connected or not. Node-baseURI.html compares the two.
+    navigate("baseURI", [this](context & c, std::span<value>) {
+        return c.string(secondary_ ? std::string{"about:blank"} : location_href_);
+    });
     // --- ParentNode and NonDocumentTypeChildNode -----------------------------
     //
     // THE ELEMENT-ONLY HALF OF THE TREE, which this wrapper had none of. Every

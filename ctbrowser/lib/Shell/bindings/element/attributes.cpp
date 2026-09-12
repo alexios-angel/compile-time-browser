@@ -141,6 +141,7 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
     attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
     attr->set("nodeType", value::number(2));
+    attr->set("baseURI", cx.string(secondary_ ? std::string{"about:blank"} : location_href_));
     // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
     // asserts it on every case it runs.
     attr->set("specified", value::boolean(true));
