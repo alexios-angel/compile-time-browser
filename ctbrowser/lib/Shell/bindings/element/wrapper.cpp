@@ -41,12 +41,10 @@ value dom_bindings::wrap(context & cx, node_id id) {
     install_element_views(cx, *obj, id);
     {
         const auto txn = doc_->read();
-        // AFTER both: a fragment's members are its own, and a ShadowRoot's
-        // come on top of a fragment's. See install_fragment_members.
+        // AFTER the views: a ShadowRoot's members come on top of them.
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
-        if (kind == node_kind::document_fragment) {
-            install_fragment_members(cx, *obj, id);
-            if (shadow_tree_of(id) != nullptr) { install_shadow_root_members(cx, *obj, id); }
+        if (kind == node_kind::document_fragment && shadow_tree_of(id) != nullptr) {
+            install_shadow_root_members(cx, *obj, id);
         }
         // A CDATASection and a ProcessingInstruction are CharacterData: `data`
         // and `nodeValue` are their text, both ways. install_element_views

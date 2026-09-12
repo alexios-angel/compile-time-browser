@@ -820,6 +820,9 @@ void dom_bindings::install_document(context & cx) {
                     }
                     return made;
                 })));
+        // Linked to DOMImplementation.prototype by install_dom_interfaces,
+        // which runs later - the interfaces are built on the first wrap().
+        implementation->prototype = interface_prototype("DOMImplementation");
         doc->set("implementation", value::object(implementation));
     }
     // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.

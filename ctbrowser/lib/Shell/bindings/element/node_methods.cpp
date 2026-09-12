@@ -664,6 +664,31 @@ void dom_bindings::install_node_methods(context & cx) {
         mutated();
         return child_arg;
     });
+    // `getElementById` ON A FRAGMENT - DOM 4.2.6 NonElementParentNode, on
+    // DocumentFragment.prototype and so on a ShadowRoot and a <template>'s
+    // contents. An id inside a shadow tree is scoped to that tree and
+    // `document.getElementById` must NOT find it; on a template's contents
+    // this is the only way to reach a node by id at all.
+    method({"DocumentFragment"}, "getElementById", 1, [this](context & c, std::span<value> args) {
+        const node_id root = receiver(c);
+        const std::string want = arg_string(c, args, 0);
+        if (!root || want.empty()) { return value::null(); }
+        const auto txn = doc_->read();
+        const atom id_name = atoms_->intern("id");
+        node_id found{};
+        const auto walk = [&](auto && self, node_id at) -> void {
+            for (const node_id child : txn.children(at)) {
+                if (found) { return; }
+                if (txn.attribute_value(child, id_name) == want) {
+                    found = child;
+                    return;
+                }
+                self(self, child);
+            }
+        };
+        walk(walk, root);
+        return found ? wrap(c, found) : value::null();
+    });
     // `cloneNode(deep)` - a DETACHED copy, and without it there is no way at all
     // to duplicate a template, which is how a page builds a list from one row.
     method(node, "cloneNode", 0, [this](context & c, std::span<value> args) {

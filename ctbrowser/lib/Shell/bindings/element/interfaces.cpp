@@ -60,6 +60,7 @@ constexpr dom_interface interface_table[] = {
     {"HTMLCollection", "", ""},
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
+    {"DOMImplementation", "", ""},
     {"DOMStringMap", "", ""},
     // DOM 6's two walkers - not nodes, not constructible; made by
     // bindings/document/traversal.cpp.
@@ -1107,7 +1108,15 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // The document and the window are EventTargets with interfaces of their own,
     // and `passive-by-default.html` reads `eventTarget.constructor.name` for
     // both of them before it can even name its subtests.
-    if (auto * doc = document_object()) { doc->prototype = interface_prototype("Document"); }
+    if (auto * doc = document_object()) {
+        doc->prototype = interface_prototype("Document");
+        // ...and `document.implementation`, made with the document.
+        if (const value * held = doc->find("implementation");
+            held != nullptr && held->is_object()) {
+            static_cast<script::object_object *>(held->as_heap())->prototype =
+                interface_prototype("DOMImplementation");
+        }
+    }
     if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
 
     // EVERY WRAPPER THAT ALREADY EXISTS, RE-LINKED. Two of them are made by
