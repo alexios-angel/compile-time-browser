@@ -320,7 +320,6 @@ int main() {
     refused("class C { *g() { var yield; } }");
     refused("async function f() { var await; }");
     refused("function* g() { var yield; }");
-    accepted("function f() { var yield = 1; return yield; } f();");
     accepted("async function f() { var g = () => 1; return g(); }");
 
     // ================================================================

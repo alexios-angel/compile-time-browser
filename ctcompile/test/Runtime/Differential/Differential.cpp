@@ -327,8 +327,8 @@ int main() {
          "for-of",
          {{"total", 0u, &ctc_total}, {"chars", 0u, &ctc_chars}},
          "the ORDER the values drain in and the non-object arm - `chars` prepends, so a "
-         "reversed drain answers abc, and a sum could not tell",
-         "6/cba/0"},
+         "reversed drain answers abc, and a sum could not tell; a number is the TypeError",
+         "6/cba/TypeError"},
         {24u,
          "spread",
          {{"spread", 0u, &ctc_spread}, {}},

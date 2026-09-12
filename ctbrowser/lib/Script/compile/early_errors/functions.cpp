@@ -116,7 +116,6 @@ void checker::check_class(std::int32_t idx) {
     for (const std::int32_t m : kids(n)) {
         const vp::node & member = at(m);
         const bool is_static = (member.d & 1) != 0;
-        const bool computed = (member.d & 2) != 0;
         const bool is_method = member.c == 1;
         const bool is_accessor = member.c == 2;
         const bool is_field = member.c == 0;
@@ -128,11 +127,22 @@ void checker::check_class(std::int32_t idx) {
         const std::int32_t bits = body.c > 0 ? body.c : 0;
         const bool is_generator = is_method && (bits & 2) != 0;
         const bool is_async = is_method && (bits & 1) != 0;
+        // THE PROPERTY NAME AS WRITTEN. The parser files a string-literal
+        // key (`'constructor'`) as a computed key holding a str node, and
+        // 15.7.1's PropName rules are about the literal, so it is read back
+        // here without its quotes. A real computed key has no PropName.
+        std::string_view literal = member.text;
+        bool computed = (member.d & 2) != 0;
+        if (computed && at(member.a).kind == nk::str && at(member.a).text.size() >= 2) {
+            literal = at(member.a).text;
+            literal = literal.substr(1, literal.size() - 2);
+            computed = literal.find('\\') != std::string_view::npos; // an escape: not read
+        }
 
         // 15.7.1. A class body may define at most one constructor, and
         // "constructor" may not be a getter, a setter, a generator, an
         // async method or a field - a static field included.
-        if (!computed && !is_static && member.text == "constructor") {
+        if (!computed && !is_static && literal == "constructor") {
             if (is_method && !is_generator && !is_async) {
                 ++constructors;
                 if (constructors > 1) { report("a class may define only one `constructor`", m); }
@@ -140,11 +150,11 @@ void checker::check_class(std::int32_t idx) {
                 report("`constructor` may not be an accessor, a generator or async", m);
             }
         }
-        if (!computed && is_field && member.text == "constructor") {
+        if (!computed && is_field && literal == "constructor") {
             report("a class field may not be named `constructor`", m);
         }
         // 15.7.1: a static member may not be named `prototype`.
-        if (!computed && is_static && member.text == "prototype") {
+        if (!computed && is_static && literal == "prototype") {
             report("a static class member may not be named `prototype`", m);
         }
         // 15.7.1: `#constructor` is not a private name a class may bind.
@@ -183,7 +193,7 @@ void checker::check_class(std::int32_t idx) {
             // THE ONE PLACE `super(...)` IS ALLOWED: the constructor of a
             // class that has a heritage.
             const bool is_constructor =
-                is_method && !is_static && !computed && member.text == "constructor";
+                is_method && !is_static && !computed && literal == "constructor";
             check_function(member.b, frame_kind::method, derived && is_constructor);
         } else {
             frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0, false, true});
