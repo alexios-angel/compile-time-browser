@@ -58,7 +58,8 @@ void checker::check_pattern_target(std::int32_t idx) {
 // `a.b` - and a nested pattern is a miss, never a refusal.
 [[nodiscard]] bool checker::comma_follows(std::int32_t target) const {
     const vp::node & n = at(target);
-    if (n.kind != nk::ident && n.kind != nk::member) { return false; }
+    if (n.kind != nk::ident && n.kind != nk::member && n.kind != nk::param) { return false; }
+    if (n.kind == nk::param && n.b >= 0) { return false; } // `...[a],`: a pattern
     const std::size_t where = offset_of(target);
     if (where == early_error::nowhere) { return false; }
     for (std::size_t i = where + n.text.size(); i < source_.size(); ++i) {
@@ -137,6 +138,9 @@ void checker::walk_pattern(std::int32_t idx) {
     }
     case nk::prop:
         if ((n.d & 1) != 0) { walk_expression(n.a); }
+        // A shorthand in a pattern - `({ eval } = o)`, `({ default } = o)` -
+        // is bound, not read.
+        if (n.c == 2 && (n.d & 1) == 0) { check_strict_binding(n.text, idx); }
         walk_pattern(n.b);
         return;
     case nk::pattern_prop:

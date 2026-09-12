@@ -369,6 +369,16 @@ void checker::walk_expression(std::int32_t idx) {
 
     case nk::unary:
         if (n.text == "delete") { check_delete(n.a); }
+        if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
+            report("`await` is not allowed in the parameters of an async function", idx);
+        }
+        walk_expression(n.a);
+        return;
+
+    case nk::yield_expr:
+        if (in_parameters_ && frames_.back().is_generator) {
+            report("`yield` is not allowed in the parameters of a generator", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -442,11 +452,7 @@ void checker::walk_expression(std::int32_t idx) {
             report("the private name " + quoted(n.text) + " is not an expression", idx);
             return;
         }
-        if (strict() && n.text != "eval" && n.text != "arguments") {
-            check_strict_binding(n.text, idx);
-        } else {
-            check_contextual_name(n.text, idx);
-        }
+        check_identifier_reference(n.text, idx, escaped(idx));
         // 15.7.1: a field initialiser may not ContainsArguments - through
         // an arrow, which has no `arguments` of its own, but not through a
         // function, which does.
@@ -519,7 +525,11 @@ void checker::walk_property(std::int32_t idx) {
     if ((n.d & 1) == 0 && n.text.starts_with('#')) {
         report("the private name " + quoted(n.text) + " is not a property name", idx);
     }
+    // `{ default }`: a shorthand is an IdentifierReference (13.2.5.1), where
+    // a keyword may not stand - unlike `{ default: 1 }`, whose key is a name.
+    if (n.c == 2 && (n.d & 1) == 0) { check_identifier_reference(n.text, idx, true); }
     if (n.c == 1 || n.c == 3) {
+        if (n.c == 3) { check_accessor_arity(n.b, (n.d & 4) != 0); }
         check_function(n.b, frame_kind::method);
         return;
     }
