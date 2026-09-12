@@ -567,6 +567,10 @@ private:
     // any other resource. Called when real fonts are turned on and again on
     // every navigation, because the rules belong to the document.
     void load_page_fonts();
+    // The style engine's `ch` measurement, re-handed whenever the faces change:
+    // the engine caches the advance of `0` per face and size, and this is what
+    // clears that cache (engine::set_text_measure).
+    void install_text_measure();
 
     // Every <img src> in the document, decoded once. A missing or undecodable
     // image is remembered as a null so the element lays out at zero size rather
