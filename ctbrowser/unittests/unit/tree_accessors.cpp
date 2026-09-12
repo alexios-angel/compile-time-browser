@@ -57,6 +57,22 @@ void is(const std::string & expression, const std::string & expected) {
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
+// --- document.dir and the body colours --------------------------------------
+
+void test_the_document_reflects_dir_and_the_body_colours() {
+    // reflection-sections.html's #document rows: `dir` is the html element's,
+    // limited to the known values; `fgColor` is the body's `text`, and null
+    // writes "" ([LegacyNullToEmptyString]).
+    is("(function () { var out = [document.dir]; document.dir = 'RTL'; out.push(document.dir,"
+       " document.documentElement.getAttribute('dir')); document.dir = 'x';"
+       " out.push(document.dir); return out.join(); })()",
+       ",rtl,RTL,");
+    is("(function () { var out = [document.fgColor]; document.fgColor = 'red';"
+       " out.push(document.body.getAttribute('text')); document.bgColor = null;"
+       " out.push(document.body.getAttribute('bgcolor')); return JSON.stringify(out); })()",
+       "[\"\",\"red\",\"\"]");
+}
+
 // --- document.title --------------------------------------------------------
 
 void test_the_title_is_stripped_and_collapsed() {
@@ -330,6 +346,7 @@ void test_the_document_is_still_itself_through_the_proxy() {
 } // namespace
 
 int main() {
+    test_the_document_reflects_dir_and_the_body_colours();
     test_the_title_is_stripped_and_collapsed();
     test_the_title_element_is_found_wherever_it_is();
     test_the_collections_count_what_they_name();

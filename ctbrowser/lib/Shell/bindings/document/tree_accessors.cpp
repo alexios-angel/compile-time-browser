@@ -99,6 +99,65 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             return value::undefined();
         });
 
+    // `document.dir`, HTML 3.2.6.4: the html element's `dir`, limited to the
+    // three known values on the way out and written verbatim on the way in -
+    // "" when there is no html element. reflection-sections.html's 68
+    // #document.dir rows and document-dir.html.
+    const auto html_element = [this]() -> node_id {
+        const auto txn = doc_->read();
+        const node_id root = txn.root();
+        if (txn.element_ns(root) != node_ns::html) { return node_id{}; }
+        return txn.local_name(root) == "html" ? root : node_id{};
+    };
+    accessor(
+        "dir",
+        [this, html_element](context & c, std::span<value>) {
+            const node_id html = html_element();
+            if (!html) { return c.string(""); }
+            const std::string folded =
+                ascii_lower_copy(doc_->read().attribute_value(html, atoms_->intern("dir")));
+            return c.string(folded == "ltr" || folded == "rtl" || folded == "auto" ? folded
+                                                                                   : std::string{});
+        },
+        [this, html_element](context & c, std::span<value> a) {
+            if (const node_id html = html_element()) {
+                (void)doc_->set_attribute(html, atoms_->intern("dir"), arg_string(c, a, 0));
+                mutated();
+            }
+            return value::undefined();
+        });
+    // The five body colours, HTML 16.3 (obsolete, and 190 rows of
+    // reflection-sections.html): [LegacyNullToEmptyString] DOMStrings over
+    // the BODY element's attribute, "" when the body element is not a body.
+    for (const auto & [idl, content] :
+         {std::pair{"fgColor", "text"}, std::pair{"bgColor", "bgcolor"},
+          std::pair{"linkColor", "link"}, std::pair{"vlinkColor", "vlink"},
+          std::pair{"alinkColor", "alink"}}) {
+        const auto body = [this]() -> node_id {
+            const node_id found = body_element();
+            if (!found) { return found; }
+            return doc_->read().local_name(found) == "body" ? found : node_id{};
+        };
+        const std::string attribute{content};
+        accessor(
+            idl,
+            [this, body, attribute](context & c, std::span<value>) {
+                const node_id element = body();
+                if (!element) { return c.string(""); }
+                return c.string(
+                    std::string{doc_->read().attribute_value(element, atoms_->intern(attribute))});
+            },
+            [this, body, attribute](context & c, std::span<value> a) {
+                if (const node_id element = body()) {
+                    (void)doc_->set_attribute(element, atoms_->intern(attribute),
+                                              arg(a, 0).is_null() ? std::string{}
+                                                                  : arg_string(c, a, 0));
+                    mutated();
+                }
+                return value::undefined();
+            });
+    }
+
     // `document.title`, HTML 4.2.2, both halves.
     //
     // THE GETTER STRIPS AND COLLAPSES and the setter does not: the DOM keeps
