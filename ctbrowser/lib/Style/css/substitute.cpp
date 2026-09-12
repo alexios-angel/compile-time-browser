@@ -648,8 +648,16 @@ private:
         if (!cyclic) {
             if (const std::optional<std::string_view> held = (*lookup_)(name)) {
                 resolving_.push_back(name.id);
-                // A custom property's own value may itself contain var().
+                // A custom property's own value may itself contain var() -
+                // and its attr()s are ITS OWN, computed as they would be for
+                // the property itself: `--x: attr(data-foo)` read through
+                // var(--x) while data-foo is being substituted is the string
+                // it always is, not a ring (attr-cycle 26, 27). A ring through
+                // var() is still caught, by this stack.
+                std::vector<std::string> attrs_outside;
+                attrs_outside.swap(attrs_resolving_);
                 ok = run(*held, expansion, depth + 1);
+                attrs_resolving_.swap(attrs_outside);
                 resolving_.pop_back();
             }
         }

@@ -383,8 +383,10 @@ void test_attr_substitution() {
         if (name == "data-raw-ring2") { return "attr(data-raw-ring)"; }
         if (name == "data-unclosed") { return "attr(data-unclosed"; }
         if (name == "data-hz") { return "3kHz"; }
+        if (name == "data-via-var") { return "attr(data-str, 11) var(--raw, 3)"; }
         return std::nullopt;
     };
+
     const auto sub = [&](std::string_view value) {
         return substitute_var(value, none, atoms, attrs).value_or("<invalid>");
     };
@@ -400,6 +402,18 @@ void test_attr_substitution() {
     CHECK_EQ(sub("attr(data-raw-ring type(*))"), std::string{"<invalid>"});
     CHECK_EQ(sub("attr(data-unclosed type(*), abc)"), std::string{"abc"});
     CHECK_EQ(sub("attr(data-hz type(<frequency>))"), std::string{"3khz"});
+    // ...but a custom property read through var() computes its own attr()s
+    // as the strings they are, whatever attribute is being substituted
+    // around it (attr-cycle 26).
+    {
+        const custom_lookup raw = [&atoms](atom name) -> std::optional<std::string_view> {
+            if (atoms.text(name) == "--raw") { return "attr(data-via-var)"; }
+            return std::nullopt;
+        };
+        CHECK_EQ(
+            substitute_var("attr(data-via-var type(*))", raw, atoms, attrs).value_or("<invalid>"),
+            std::string{"\"ab\\\"c\" \"attr(data-str, 11) var(--raw, 3)\""});
+    }
     // No type: a string, whatever the text says.
     CHECK_EQ(sub("attr(data-foo)"), std::string{"\"10\""});
     CHECK_EQ(sub("attr(data-str)"), std::string{"\"ab\\\"c\""});
