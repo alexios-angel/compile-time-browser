@@ -239,19 +239,18 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             return c.string(std::string{declared_value(c.to_string(*found))});
         }
         const std::string css = css_name_of(name);
-        const value * found = store->find(css);
-        if (found == nullptr) {
-            // A SUPPORTED PROPERTY THAT IS NOT SET IS "", NOT undefined.
-            // CSSOM 6.7.2 gives every property in the IDL a getter that
-            // returns the empty string when the declaration block has none,
-            // and `serialize-values.html` reads exactly that for the ones it
-            // could not set. `undefined` is reserved for a name that is not a
-            // property at all - `el.style.toString`, `el.style.constructor` -
-            // because answering "" there would break every ordinary lookup.
-            if (style::css::find_property(css) != nullptr) { return c.string(""); }
+        // A SUPPORTED PROPERTY THAT IS NOT SET IS "", NOT undefined.
+        // CSSOM 6.7.2 gives every property in the IDL a getter that
+        // returns the empty string when the declaration block has none,
+        // and `serialize-values.html` reads exactly that for the ones it
+        // could not set. `undefined` is reserved for a name that is not a
+        // property at all - `el.style.toString`, `el.style.constructor` -
+        // because answering "" there would break every ordinary lookup.
+        // A shorthand is read from its longhands (declarations.cpp).
+        if (store->find(css) == nullptr && style::css::find_property(css) == nullptr) {
             return value::undefined();
         }
-        return c.string(std::string{declared_value(c.to_string(*found))});
+        return c.string(read_declaration(*store, c, css));
     });
     trap("set", [this, reseed, wrote](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
@@ -272,9 +271,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // The IDL spelling, canonicalised, and the value through the
             // grammar. A refusal is silent - CSSOM says an unparseable value
             // leaves the declaration alone, and a throw here would break every
-            // page that sets a property this engine has not implemented.
-            (void)store_declaration(*store, c, css_name_of(name), c.to_string(args[2]), false,
-                                    false);
+            // page that sets a property this engine has not implemented - and
+            // writes nothing, so no mutation record is queued for it.
+            if (!store_declaration(*store, c, css_name_of(name), c.to_string(args[2]), false)) {
+                return value::boolean(true);
+            }
         }
         wrote(c, *store);
         mutated();
@@ -306,11 +307,14 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                 return value::undefined();
             }
             reseed(c, *held);
-            (void)store_declaration(*held, c, asked_name(c, args),
-                                    args.size() > 1 ? c.to_string(args[1]) : std::string{}, false,
-                                    !priority.empty());
-            wrote(c, *held);
-            mutated();
+            // [LegacyNullToEmptyString]: null is "", and an undefined value is
+            // the string "undefined", which no grammar accepts.
+            const std::string text =
+                args.size() > 1 && !args[1].is_null() ? c.to_string(args[1]) : std::string{};
+            if (store_declaration(*held, c, asked_name(c, args), text, !priority.empty())) {
+                wrote(c, *held);
+                mutated();
+            }
             return value::undefined();
         });
     // ...and it ANSWERS with the value it removed, which is what CSSOM says and
@@ -318,28 +322,23 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     declaration_method("removeProperty", [this, held, asked_name, reseed,
                                           wrote](context & c, std::span<value> args) {
         reseed(c, *held);
-        const std::string name = asked_name(c, args);
-        const value * found = held->find(name);
-        const std::string was =
-            found == nullptr ? std::string{} : std::string{declared_value(c.to_string(*found))};
-        held->erase(name);
-        wrote(c, *held);
-        mutated();
+        bool removed = false;
+        const std::string was = remove_stored_declaration(*held, c, asked_name(c, args), removed);
+        if (removed) {
+            wrote(c, *held);
+            mutated();
+        }
         return c.string(was);
     });
     declaration_method("getPropertyValue",
                        [held, asked_name, reseed](context & c, std::span<value> args) {
                            reseed(c, *held);
-                           const value * found = held->find(asked_name(c, args));
-                           if (found == nullptr) { return c.string(""); }
-                           return c.string(std::string{declared_value(c.to_string(*found))});
+                           return c.string(read_declaration(*held, c, asked_name(c, args)));
                        });
     declaration_method("getPropertyPriority",
                        [held, asked_name, reseed](context & c, std::span<value> args) {
                            reseed(c, *held);
-                           const value * found = held->find(asked_name(c, args));
-                           if (found == nullptr) { return c.string(""); }
-                           return c.string(std::string{declared_priority(c.to_string(*found))});
+                           return c.string(read_priority(*held, c, asked_name(c, args)));
                        });
     declaration_method("item", [held, reseed](context & c, std::span<value> args) {
         reseed(c, *held);

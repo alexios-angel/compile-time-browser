@@ -166,8 +166,12 @@ std::string css_text_of(script::object_object & held, context & cx);
 [[nodiscard]] std::string_view declared_value(std::string_view stored);
 [[nodiscard]] std::string_view declared_priority(std::string_view stored);
 bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
-                       std::string_view text, bool allow_important, bool force_important);
+                       std::string_view text, bool important);
 void seed_declarations(script::object_object & held, context & cx, std::string_view text);
+std::string read_declaration(script::object_object & held, context & cx, std::string_view name);
+std::string read_priority(script::object_object & held, context & cx, std::string_view name);
+std::string remove_stored_declaration(script::object_object & held, context & cx,
+                                      std::string_view name, bool & removed);
 
 // What an attribute may be called, the two halves of a qualified name, and a
 // nullable namespace argument. Defined in attributes.cpp, which explains the
