@@ -91,6 +91,18 @@ void test_the_rows_the_element_tables_name_are_all_there() {
     is("(function () { var o = document.createElement('object');"
        " o.data = 'http://site.example/x'; return o.data; })()",
        "http://site.example/x");
+    // reflection-tabular, `td.rowSpan: setAttribute() to -36`: a clamped
+    // unsigned long parses with the NON-NEGATIVE rules, so a negative fails
+    // the parse and is the default 1, not the clamp's floor of 0.
+    is("(function () { var t = document.createElement('td');"
+       " t.setAttribute('rowspan', '-36'); var a = t.rowSpan;"
+       " t.setAttribute('rowspan', '0'); return a + ',' + t.rowSpan; })()",
+       "1,0");
+    // reflection-forms: `select.autocomplete` and `textarea.autocomplete`
+    // reflect as strings.
+    is("(function () { var s = document.createElement('select'); s.autocomplete = 'off';"
+       " return typeof s.autocomplete + ':' + s.getAttribute('autocomplete'); })()",
+       "string:off");
 }
 
 // --- HTMLHyperlinkElementUtils ----------------------------------------------

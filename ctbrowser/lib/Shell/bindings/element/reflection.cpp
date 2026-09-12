@@ -575,6 +575,7 @@ constexpr reflected_attribute reflection_table[] = {
     enum_attr("HTMLButtonElement", "formMethod", "get post dialog", "", "get", "formmethod"),
     enum_attr("HTMLButtonElement", "type", "submit reset button", "submit", "submit"),
     text_attr("HTMLSelectElement", "name"),
+    text_attr("HTMLSelectElement", "autocomplete"),
     bool_attr("HTMLSelectElement", "disabled"),
     bool_attr("HTMLSelectElement", "multiple"),
     bool_attr("HTMLSelectElement", "required"),
@@ -584,6 +585,7 @@ constexpr reflected_attribute reflection_table[] = {
     bool_attr("HTMLOptionElement", "disabled"),
     bool_attr("HTMLOptionElement", "defaultSelected", "selected"),
     text_attr("HTMLTextAreaElement", "dirName", "dirname"),
+    text_attr("HTMLTextAreaElement", "autocomplete"),
     text_attr("HTMLTextAreaElement", "name"),
     text_attr("HTMLTextAreaElement", "placeholder"),
     text_attr("HTMLTextAreaElement", "wrap"),
@@ -789,7 +791,10 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
             // "If it succeeds but the value is less than min, min must be
             // returned; if greater than max, max." Only a FAILED parse falls
             // back to the default, so `<td colspan=0>` is 1 and
-            // `<td colspan=x>` is 1 for two different reasons.
+            // `<td colspan=x>` is 1 for two different reasons - and the parse
+            // is the NON-NEGATIVE one, so `<td rowspan=-36>` fails it and is
+            // the default 1 rather than the clamp's floor of 0.
+            if (parsed < 0) { break; }
             answer = parsed < row.low ? row.low : (parsed > row.high ? row.high : parsed);
             break;
         default: break;
