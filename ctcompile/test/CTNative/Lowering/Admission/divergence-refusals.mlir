@@ -27,7 +27,14 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/typeof.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=TYPEOF
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bitwise.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=BITWISE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CONCAT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/globalstring.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=GLOBALSTRING
+// RUN: cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/globalstring.js -DOUTPUT=%t/globalstring.mlir -P %S/../../Checks/pipeline.cmake
+// RUN: FileCheck %s --check-prefix=GLOBALSTRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/globalstring.mlir
+// RUN: ctjs-translate --mlir-to-cpp %t/globalstring.mlir > %t/globalstring.cpp
+// RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-gcc
+// RUN: %t/globalstring-gcc | FileCheck %s --check-prefix=GLOBALSTRINGOUT --match-full-lines
+// RUN: clang++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-clang
+// RUN: %t/globalstring-clang | FileCheck %s --check-prefix=GLOBALSTRINGOUT --match-full-lines
+// RUN: nm -C %t/globalstring-gcc | FileCheck %s --check-prefix=GLOBALSTRINGBIN --implicit-check-not=ctbrowser::script
 
 // Tagged optional scalars distinguish absent values from present NaN. Equality,
 // numeric ordering and typeof now lower; the source differential fixture
@@ -55,15 +62,15 @@
 
 // CONCAT: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 
-// --- AN UNPROVED CALL RESULT CANNOT BECOME A GLOBAL OBSERVATION ------------
-//
-// The historical source is unchanged: the definite String store to `label`
-// now has owning storage, but the direct call's return value is not yet proved
-// definite at the store to `f`. Pin that remaining refusal by the destination
-// global, rather than keeping the obsolete String-load refusal.
-//
-// GLOBALSTRING: ctjs.func @_script_$0
-// GLOBALSTRING-SAME: ctnative.not_native = "store to global `f` requires a Number, Boolean or String global"
+// The unchanged global String load returns through its owning optional carrier.
+// Its actual String tag survives the call and is printed without narrowing.
+// GLOBALSTRING: emitc.func @main()
+// GLOBALSTRING: call_opaque "ctnative::print_scalar"
+// GLOBALSTRING: emitc.func @readlabel_1()
+// GLOBALSTRINGOUT: f="n"
+// GLOBALSTRINGOUT-NEXT: label="n"
+// GLOBALSTRINGOUT-NOT: {{.}}
+// GLOBALSTRINGBIN: {{.*}} T main
 
 //--- equality.js
 function equality() {
