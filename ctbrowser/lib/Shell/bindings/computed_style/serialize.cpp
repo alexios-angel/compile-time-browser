@@ -311,10 +311,11 @@ namespace detail {
         std::size_t start = 0;
         for (std::size_t i = 0; i <= in.size(); ++i) {
             const bool end = i == in.size();
-            const char c = end ? ',' : in[i];
-            if (!end && c == '(') { ++depth; }
-            if (!end && c == ')') { --depth; }
-            const bool cut = depth == 0 && (on_comma ? c == ',' : html_whitespace.contains(c));
+            const char c = end ? '\0' : in[i];
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            const bool cut =
+                end || (depth == 0 && (on_comma ? c == ',' : html_whitespace.contains(c)));
             if (!cut) { continue; }
             const std::string_view piece = trim(in.substr(start, i - start), html_whitespace);
             if (!piece.empty()) { out.push_back(piece); }
