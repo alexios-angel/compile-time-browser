@@ -14,7 +14,9 @@
 //
 // THE ORDERING IS THE POINT of the last two: a page's own `load` handler is
 // where a test reads `frame.contentDocument`, so the frame's document has to
-// exist BEFORE that event and the frame's own `load` has to arrive after it.
+// exist BEFORE that event - and the frame's own `load`, like a sheet's, is
+// settled just before it, since HTML delays the window's load until the
+// subresources have (bindings/events/input.cpp, dispatch).
 
 #include <ctbrowser.hpp>
 
@@ -52,12 +54,10 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     browser page{browser_options{400, 300}};
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
-    // A `setTimeout` INSIDE the window's load handler, and the nesting is the
-    // point. One tick does, in order: reconcile the frames, dispatch the page's
-    // own `load`, drain the frame load events, then run the timers. So a check
-    // written directly in the load handler runs BEFORE the frame's own `load`
-    // has been announced, and anything a frame listener sets is not there yet.
-    // The timer is the first moment both have happened.
+    // A `setTimeout` INSIDE the window's load handler. One tick does, in
+    // order: reconcile the frames, settle the frame and sheet loads, dispatch
+    // the page's own `load`, then run the timers - so the timer is a moment at
+    // which everything has happened, whichever way the middle two are ordered.
     const std::string html =
         "<!DOCTYPE html><html><head><title>the page</title></head><body>" + body +
         "<script>window.addEventListener('load', function () {"
@@ -94,6 +94,24 @@ void test_a_frame_has_a_document_of_its_own() {
     is(one_frame, "document.getElementById('f').contentWindow.frameElement.id", "f");
     is(one_frame, "document.getElementById('f').contentWindow.document.title", "inner");
     is(one_frame, "document.getElementById('f').contentWindow.parent === window", "true");
+    // THE FRAME'S WINDOW REACHES THE PAGE'S GLOBALS, because the realm is one:
+    // `assert_throws_dom` is handed `root.ownerDocument.defaultView
+    // .DOMException` and needs a constructor whose `.name` is "DOMException"
+    // and whose prototype an exception the frame's DOM threw is on.
+    is(one_frame,
+       "document.getElementById('f').contentDocument.defaultView === "
+       "document.getElementById('f').contentWindow",
+       "true");
+    is(one_frame, "document.getElementById('f').contentWindow.DOMException.name", "DOMException");
+    is(one_frame,
+       "(function () { var d = document.getElementById('f').contentDocument;"
+       " try { d.querySelector(''); } catch (e) {"
+       " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
+       "true");
+    is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
+    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame has no location of
+    // its own here, and the page's must not be reachable through it.
+    is(one_frame, "typeof document.getElementById('f').contentWindow.location", "undefined");
 }
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {

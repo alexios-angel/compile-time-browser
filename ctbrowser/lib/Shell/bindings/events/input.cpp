@@ -38,6 +38,20 @@ void dom_bindings::observe_viewport(int width, int height) {
 
 bool dom_bindings::dispatch(std::string_view type, node_id target) {
     if (cx_ == nullptr) { return false; }
+    // THE SUBRESOURCES SETTLE BEFORE THE WINDOW'S `load`. HTML delays the
+    // document's load event until every sheet, script and frame has finished,
+    // so a `<link onload>` or `<style onload>` counted in a `window` load
+    // handler has already run - css/cssom/HTML{Link,Style}Element-load-event
+    // count exactly that. They were queued beside the timers, which run AFTER
+    // this dispatch, so every count read zero.
+    if (!target && type == "load" && !frame_loads_.empty()) {
+        std::vector<pending_frame> due;
+        due.swap(frame_loads_);
+        for (const pending_frame & waiting : due) {
+            settle_frame(*cx_, waiting);
+            note_callback_fault("frame load");
+        }
+    }
     return dispatch_event(type, target, make_event(*cx_, type, target));
 }
 
