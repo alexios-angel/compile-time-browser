@@ -135,11 +135,17 @@ node_id dom_bindings::node_from(context & cx, value v) {
         return doc_->create_text(cx.to_string(v));
     }
     const node_id source = owner->handle_of(v);
-    if (!source || owner->shadow_tree_of(source) != nullptr) { return node_id{}; }
+    if (!source) { return node_id{}; }
+    // A SHADOW ROOT STAYS WITH ITS HOST: inserting one moves its CHILDREN,
+    // as any fragment's, and the root itself is never adopted (DOM 4.2.3 -
+    // adoption.window.js "appendChild() and ShadowRoot"). They arrive in a
+    // fragment of this document so the caller's flattening still applies.
+    const bool shadow = owner->shadow_tree_of(source) != nullptr;
     node_id made;
+    std::vector<node_id> moved;
     {
         const auto from = owner->doc_->read();
-        made = clone_node(from, source, true, owner);
+        made = shadow ? doc_->create_fragment() : clone_node(from, source, true, owner);
         const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
             if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
@@ -162,9 +168,19 @@ node_id dom_bindings::node_from(context & cx, value v) {
                 self(self, olds[i], news[i]);
             }
         };
-        rebind(rebind, source, made);
+        if (shadow) {
+            for (const node_id child : from.children(source)) {
+                const node_id copy = clone_node(from, child, true, owner);
+                (void)doc_->append_child(made, copy);
+                rebind(rebind, child, copy);
+                moved.push_back(child);
+            }
+        } else {
+            rebind(rebind, source, made);
+            moved.push_back(source);
+        }
     }
-    (void)owner->doc_->remove_child(source);
+    for (const node_id gone : moved) { (void)owner->doc_->remove_child(gone); }
     owner->mutated();
     return made;
 }
