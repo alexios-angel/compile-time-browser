@@ -1411,9 +1411,6 @@ private:
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
 
-    // The element with this `id`, or nothing.
-    [[nodiscard]] node_id node_by_id(const read_txn & txn, std::string_view want);
-
     // The control a <label> labels, per HTML: its `for` attribute resolved by
     // id, or failing that the FIRST labelable element inside it.
     //
