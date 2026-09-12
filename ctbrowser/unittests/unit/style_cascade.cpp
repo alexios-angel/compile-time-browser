@@ -274,6 +274,18 @@ void test_explicit_defaulting_keywords() {
         f.load("<div><p id=child></p></div>", "div { display: inline } p { display: inherit }");
         expect_value(f, f.find_id("child"), "display", "inline", "display: inherit");
     }
+    {
+        // `revert` is the user-agent origin's answer, and `unset` where the UA
+        // said nothing (CSS Cascade 4 §7.3, attr-css-wide-keywords).
+        fixture f;
+        f.load("<div><em id=a></em><em id=b></em></div>",
+               "#a { font-style: revert; color: revert } #b { font-style: normal }"
+               "div { color: #010101 }",
+               "em { font-style: italic }");
+        expect_value(f, f.find_id("a"), "font-style", "italic", "revert to the UA's italic");
+        expect_value(f, f.find_id("a"), "color", "#010101", "revert with no UA value inherits");
+        expect_value(f, f.find_id("b"), "font-style", "normal", "the author's value stands");
+    }
 }
 
 // @media, EVALUATED. Every block used to flatten in unconditionally - the prelude was

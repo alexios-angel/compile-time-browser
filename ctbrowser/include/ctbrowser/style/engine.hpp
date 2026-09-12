@@ -723,6 +723,20 @@ public:
         const auto put = [&out, &parent, this](const declaration & d) {
             std::string value = d.value;
             const std::string_view property = atoms_->text(d.property);
+            // `revert` IS THE USER-AGENT ORIGIN'S ANSWER (CSS Cascade 4 §7.3):
+            // the value the cascade would have had with no author declaration
+            // at all, which is the last UA rule that matched and declared this
+            // property - `em { font-style: italic }` under an author
+            // `font-style: revert`. With none it is `unset`. Scanned when it
+            // happens rather than remembered per property: a revert is rare
+            // and the matched rules are a handful (attr-css-wide-keywords).
+            if (value == "revert") {
+                for (const rule & r : matches_) {
+                    if (r.origin != 0) { continue; } // 0 is the user-agent origin (ua.hpp)
+                    const declaration & ua = declarations_[r.declaration];
+                    if (ua.property == d.property) { value = ua.value; }
+                }
+            }
             if (value == "inherit") {
                 value = std::string{parent ? parent->get(d.property) : std::string_view{}};
             } else if (value == "unset" || value == "revert") {
