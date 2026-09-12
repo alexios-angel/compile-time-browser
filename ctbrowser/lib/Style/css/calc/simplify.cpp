@@ -189,6 +189,12 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
         if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
             if (std::string text = serialize_symbolic(sum); !text.empty()) { return text; }
         }
+        // A sum around a comparison layout has to decide is simplified over
+        // its tree (tree.cpp): `(min(10%, 30px) + 10px) * 2 + 10px` is
+        // `10px + (2 * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+        if (lone_math_function(trim(one, html_whitespace)).empty()) {
+            if (const std::optional<std::string> tree = simplify_sum_text(one)) { return *tree; }
+        }
         return simplify_math(one);
     });
 }
@@ -397,6 +403,16 @@ std::string simplify_math(std::string_view value) {
                 } else {
                     out.append("calc(").append(text).append(")");
                 }
+                continue;
+            }
+        }
+        // ...AND A calc() AROUND SUCH A COMPARISON IS STILL A TREE, simplified
+        // by §10.12 and written in §10.13's order: `calc((min(10px, 20%) +
+        // max(1rem, 2%)) * 2)` is `calc(2 * (min(10px, 20%) + max(1rem, 2%)))`
+        // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+        if (ascii_iequals(name, "calc(")) {
+            if (const std::optional<std::string> tree = simplify_sum_text(body)) {
+                out.append("calc(").append(*tree).append(")");
                 continue;
             }
         }

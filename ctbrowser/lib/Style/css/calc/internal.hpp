@@ -136,6 +136,15 @@ struct function_span {
 [[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
                                                               bool size_symbol = false);
 
+// A <calc-sum> THAT WILL NOT FOLD, simplified over its tree (CSS Values 4
+// §10.12) and written in §10.13's order, without a calc() around it:
+// `(min(10px, 20%) + max(1rem, 2%)) * 2` is `2 * (min(10px, 20%) + max(1rem,
+// 2%))`. With `ctx` it is a computed value - relative lengths in pixels and
+// the nested functions folded; without one a specified value. `nullopt` when
+// the text is not one <calc-sum> of arithmetic. Defined in tree.cpp.
+[[nodiscard]] std::optional<std::string> simplify_sum_text(std::string_view expression,
+                                                           const length_context * ctx = nullptr);
+
 // The inside of a symbolic calc() in §10.13's order, or empty when the sum has
 // no canonical spelling. Defined in serialize.cpp.
 [[nodiscard]] std::string serialize_symbolic(const term & value);

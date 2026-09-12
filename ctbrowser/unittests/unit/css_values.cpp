@@ -542,6 +542,24 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     ok("width", "calc(1 * min(NaN * 2px, NaN * 4em))", "calc(1 * min(NaN * 1px, NaN * 1em))");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
+
+    // A SUM AROUND SUCH A COMPARISON IS A TREE (CSS Values 4 §10.12, §10.13):
+    // what folds around the min() folds, a product's number comes first, a
+    // product inside a sum is parenthesised, and a sum's terms are sorted -
+    // numbers, percentages, dimensions by unit, then the rest in order
+    // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+    ok("width", "calc((min(10px, 20%) + max(1rem, 2%)) * 2)",
+       "calc(2 * (min(10px, 20%) + max(1rem, 2%)))");
+    ok("width", "calc(0px - (1 * (-10px + min(20%, 20px))))",
+       "calc(0px - (1 * (-10px + min(20%, 20px))))");
+    ok("width", "calc(min(1px, 1in) + max(100px + 1em, 10px + 1in) + 1px)",
+       "calc(2px + max(1em + 100px, 106px))");
+    ok("width", "calc(2 * (.2 * min(1em, 1px)) + 1px)", "calc(1px + (0.4 * min(1em, 1px)))");
+    ok("width", "calc(min(1%, 2%) + max(3%, 4%) + 10%)", "calc(10% + min(1%, 2%) + max(3%, 4%))");
+    ok("width", "max((min(10%, 30px) + 10px) * 2 + 10px, 5em + 5%)",
+       "max(10px + (2 * (10px + min(10%, 30px))), 5% + 5em)");
+    // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers.
+    ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(pow(2, sign(1em - 18px)) * 1px)");
 }
 
 // ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.

@@ -510,10 +510,31 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                     }
                     return text;
                 }
+                // A sum around a comparison with no answer is simplified over
+                // its tree against the bases (tree.cpp): `5em + 5%` is `5% +
+                // 80px` and `(min(10%, 30px) + 10px) * 2 + 10px` is `10px + (2
+                // * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+                if (arg.outcome == math_outcome::unresolved &&
+                    math_name_at(trim(one, html_whitespace), 0).empty()) {
+                    if (const std::optional<std::string> tree = simplify_sum_text(one, &ctx)) {
+                        return *tree;
+                    }
+                }
                 return fold_math(one, ctx).text;
             }));
             at = span.end;
             continue;
+        }
+        if (is_calc && answer.outcome == math_outcome::unresolved) {
+            // The same tree for a calc() the bases cannot finish:
+            // `calc(min(1%, 2%) + max(3%, 4%) + 10%)` computes to `calc(10% +
+            // min(1%, 2%) + max(3%, 4%))` (minmax-percentage-serialize).
+            if (const std::optional<std::string> tree =
+                    simplify_sum_text(body_of(value, at, name, span), &ctx)) {
+                out.append("calc(").append(*tree).append(")");
+                at = span.end;
+                continue;
+            }
         }
         if (!is_calc || answer.outcome == math_outcome::unresolved) {
             out.append(whole);
