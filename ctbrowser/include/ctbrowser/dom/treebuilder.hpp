@@ -209,7 +209,7 @@ private:
         // where it would be thrown away again.
         const bool foreign = ns == node_ns::svg;
         const node_id element =
-            builder_->create_element(foreign ? atoms_->intern(tag) : atoms_->intern_lower(tag), ns);
+            doc_->create_element(foreign ? atoms_->intern(tag) : atoms_->intern_lower(tag), ns);
         for (const token_attribute & a : attributes) {
             builder_->set_attribute(
                 element, foreign ? atoms_->intern(a.name) : atoms_->intern_lower(a.name), a.value);

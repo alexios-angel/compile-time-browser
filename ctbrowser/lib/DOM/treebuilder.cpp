@@ -12,8 +12,8 @@ node_id tree_builder::parse(std::string_view input) {
     foreign_sources_.clear();
     foreign_node_ = node_id{};
 
-    root_ = builder.create_element(atoms_->intern_lower("html"));
-    builder.set_root(root_);
+    root_ = doc_->create_element(atoms_->intern_lower("html"));
+    doc_->set_document_element(root_);
     open_.push_back(entry{root_, "html"});
 
     tokenizer lexer{input};
@@ -84,7 +84,7 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
         if (before_html()) {
             doc_->set_quirks(t.force_quirks);
             const node_id doctype =
-                builder_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
+                doc_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
             builder_->insert_before(doc_->document_node(), doctype, root_);
         }
         return;
@@ -104,8 +104,8 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
     case token_kind::processing_instruction: {
         const node_id comment =
             t.kind == token_kind::comment
-                ? builder_->create_comment(t.data)
-                : builder_->create_processing_instruction(atoms_->intern(t.name), t.data);
+                ? doc_->create_comment(t.data)
+                : doc_->create_processing_instruction(atoms_->intern(t.name), t.data);
         if (before_html()) {
             builder_->insert_before(doc_->document_node(), comment, root_);
         } else {
@@ -134,7 +134,7 @@ void tree_builder::insert_text(const std::string & text) {
     // Forcing <body> here is what put a <title>'s text into the body and
     // left the title empty.
     if (is_text_content_element(current_tag())) {
-        builder_->append(current(), builder_->create_text(text));
+        builder_->append(current(), doc_->create_text(text));
         return;
     }
     // Text before <body> that is only whitespace is dropped; text with
@@ -143,7 +143,7 @@ void tree_builder::insert_text(const std::string & text) {
     if (!in_body_ && text.find_first_not_of(" \t\n\r\f") == std::string::npos) { return; }
     ensure_body();
     reconstruct_formatting();
-    insert_at(where_to_insert(), builder_->create_text(text));
+    insert_at(where_to_insert(), doc_->create_text(text));
 }
 
 bool tree_builder::is_text_content_element(std::string_view tag) {
@@ -284,7 +284,7 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
     // children out of the element is what stops a document query, a
     // <script> or a <style> inside one from being seen by the page.
     if (tag == "template") {
-        const node_id contents = builder_->create_fragment();
+        const node_id contents = doc_->create_fragment();
         doc_->set_template_content(element, contents);
         open_.push_back(entry{contents, tag, ns});
         return;
@@ -324,7 +324,7 @@ void tree_builder::ensure_head() {
         if (current_tag() != "head") { open_.push_back(entry{head_, "head"}); }
         return;
     }
-    head_ = builder_->create_element(atoms_->intern_lower("head"));
+    head_ = doc_->create_element(atoms_->intern_lower("head"));
     builder_->append(root_, head_);
     open_.push_back(entry{head_, "head"});
 }
@@ -338,7 +338,7 @@ void tree_builder::ensure_body() {
     // Leaving <head> is what "after head" means; anything that is not
     // head-only content does it.
     while (open_.size() > 1 && open_.back().tag != "html") { open_.pop_back(); }
-    body_ = builder_->create_element(atoms_->intern_lower("body"));
+    body_ = doc_->create_element(atoms_->intern_lower("body"));
     builder_->append(root_, body_);
     open_.push_back(entry{body_, "body"});
     in_body_ = true;
@@ -559,7 +559,7 @@ bool tree_builder::adoption_agency(const std::string & tag) {
     const entry block = open_[furthest];
     const node_id common_ancestor = at > 0 ? open_[at - 1].id : root_;
 
-    const node_id clone = builder_->create_element(atoms_->intern_lower(target.tag));
+    const node_id clone = doc_->create_element(atoms_->intern_lower(target.tag));
     for (const token_attribute & a : target.attributes) {
         builder_->set_attribute(clone, atoms_->intern_lower(a.name), a.value);
     }

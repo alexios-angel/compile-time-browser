@@ -234,8 +234,8 @@ std::vector<node_id> dom_bindings::all_by_class(node_id root,
         for (const node_id child : txn.children(at)) { self(self, child, true); }
     };
     // THE DOCUMENT'S ROOT IS THE <html> ELEMENT, not a Document node - this
-    // tree builder makes `<html>` and calls set_root with it, and there is no
-    // node above it. So a document-wide search must INCLUDE the root, or
+    // tree builder makes `<html>` and calls set_document_element with it, and
+    // there is no node above it. So a document-wide search must INCLUDE the root, or
     // `document.getElementsByClassName` silently cannot return the one element
     // that is most often given a class. An element-rooted search excludes it.
     walk(walk, root ? root : txn.root(), !root);

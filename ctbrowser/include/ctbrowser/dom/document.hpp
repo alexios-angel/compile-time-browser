@@ -258,23 +258,8 @@ public:
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
-        [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
-                                             bool prefixed = false) {
-            return doc_->create_element(tag, ns, prefixed);
-        }
-        [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
-        [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
-        [[nodiscard]] node_id create_fragment() { return doc_->create_fragment(); }
-        [[nodiscard]] node_id create_document_type(atom name, std::string_view public_id,
-                                                   std::string_view system_id) {
-            return doc_->create_document_type(name, public_id, system_id);
-        }
-        [[nodiscard]] node_id create_processing_instruction(atom target, std::string_view data) {
-            return doc_->create_processing_instruction(target, data);
-        }
-        [[nodiscard]] node_id create_cdata_section(std::string_view v) {
-            return doc_->create_cdata_section(v);
-        }
+        // Nodes are made by the document's own create_* - detached nodes need
+        // no in-place path - and set_document_element roots them.
         void append(node_id parent, node_id child);
         // Appends, without looking for a duplicate: a start tag's attribute list
         // has already been deduplicated by the tokenizer and this runs once per
@@ -296,10 +281,6 @@ public:
         // table, not after it, and "after" puts it below the whole table on
         // screen.
         void insert_before(node_id parent, node_id child, node_id before);
-        // Make `id` the document element. It also takes the previous one's
-        // place in the Document node's child list - see document_node - so a
-        // doctype inserted ahead of it stays ahead of it.
-        void set_root(node_id id) { doc_->set_document_element(id, node_id{}); }
 
     private:
         document * doc_;

@@ -140,11 +140,11 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 // IS THE TOP OF A WALK THE DOCUMENT? Two answers, because this tree has two
 // shapes of document and only one of them keeps a Document node.
 //
-// `document::document` inserts one and `build().set_root()` REPLACES it, so a
-// PARSED document's root is the `<html>` element and the Document node above it
-// is gone - which CLAUDE.md states outright and `install_document_as_node`
-// already works around. A document from `createDocument(null, "")` never had
-// `set_root` called on it and still has its Document node.
+// `document::document` inserts one and `set_document_element()` REPLACES it,
+// so a PARSED document's root is the `<html>` element and the Document node
+// above it is gone - which CLAUDE.md states outright and
+// `install_document_as_node` already works around. A document from `createDocument(null, "")` never
+// had `set_document_element` called on it and still has its Document node.
 //
 // So "connected" is "the walk ended at the node the document calls its root",
 // and it has to be asked that way: `kind == document` alone is false for every
