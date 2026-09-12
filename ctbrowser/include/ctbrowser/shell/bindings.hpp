@@ -1606,8 +1606,12 @@ private:
     // also carries a non-empty `name`, which is the asymmetry
     // `nameditem-01.html` tests by removing one attribute at a time.
     [[nodiscard]] std::vector<node_id> named_document_items(std::string_view name);
-    // The Proxy a page sees as `document`. Installs the `get` and `has` traps
-    // over `document_target_` and returns it.
+    // The other direction: every name the rule above answers to, once each, in
+    // tree order - the document's "supported property names".
+    [[nodiscard]] std::vector<std::string> document_property_names();
+    // The Proxy a page sees as `document`. Installs the `get`, `has`, `ownKeys`
+    // and `getOwnPropertyDescriptor` traps over `document_target_` and returns
+    // it.
     [[nodiscard]] value make_document_proxy(context & cx, value target);
     // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
     // FF and CR, all five - and drop duplicates. `split` above splits on spaces
