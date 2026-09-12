@@ -131,6 +131,18 @@ void dom_bindings::install_node_methods(context & cx) {
                             unsigned length, script::native_fn fn) {
         define_operation(cx, on, name, length, std::move(fn));
     };
+    // THE NODE AN INSERTION WAS HANDED: ours by handle, or ANOTHER DOCUMENT'S
+    // adopted first (DOM 4.2.3 step 1 of insert is adopt) - dom/common.js
+    // appends an XML document's CDATA section into the page, and three
+    // whole files reported nothing until it could. Anything else stays
+    // empty and pre_insert_valid names the TypeError.
+    const auto insertable = [this](context & c, value v) {
+        if (const node_id held = handle_of(v)) { return held; }
+        if (is_a_document(v)) { return node_id{}; }
+        dom_bindings * owner = owner_of(v);
+        if (owner == nullptr || owner == this) { return node_id{}; }
+        return node_from(c, v);
+    };
 
     // "INSERT ADJACENT", DOM 4.9 - ONE ALGORITHM FOR THREE METHODS, which is
     // the point of it. `insertAdjacentHTML` did this by hand and the other two
@@ -280,7 +292,7 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         return value::undefined();
     });
-    method(node, "insertBefore", 2, [this](context & c, std::span<value> args) {
+    method(node, "insertBefore", 2, [this, insertable](context & c, std::span<value> args) {
         // TWO REQUIRED ARGUMENTS: `insertBefore(node)` is a TypeError, and
         // `Node-insertBefore.html` asks for it by name. A null SECOND argument is
         // a different thing - it means "at the end", which is what makes
@@ -291,7 +303,7 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::undefined();
         }
         const node_id parent = receiver(c);
-        const node_id child = handle_of(arg(args, 0));
+        const node_id child = insertable(c, arg(args, 0));
         const node_id before = handle_of(arg(args, 1));
         if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
             return value::undefined();
@@ -626,11 +638,11 @@ void dom_bindings::install_node_methods(context & cx) {
     // checks with `child` as the reference - so a `child` that is not this
     // node's is a NotFoundError - and then the swap. Replacing a node WITH
     // ITSELF leaves it where it is, which `Node-replaceChild.html` asserts.
-    method(node, "replaceChild", 2, [this](context & c, std::span<value> args) {
+    method(node, "replaceChild", 2, [this, insertable](context & c, std::span<value> args) {
         const node_id parent = receiver(c);
         const value node_arg = arg(args, 0);
         const value child_arg = arg(args, 1);
-        const node_id fresh = handle_of(node_arg);
+        const node_id fresh = insertable(c, node_arg);
         const node_id stale = handle_of(child_arg);
         // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
         if ((!fresh && !is_a_document(node_arg)) || (!stale && !is_a_document(child_arg))) {
@@ -780,11 +792,11 @@ void dom_bindings::install_node_methods(context & cx) {
         set("bottom", box.y + box.height);
         return value::object(out);
     });
-    method(node, "appendChild", 1, [this](context & c, std::span<value> args) {
+    method(node, "appendChild", 1, [this, insertable](context & c, std::span<value> args) {
         // THROUGH insert_node, which is where a DocumentFragment is flattened:
         // appending one must move its children and leave the fragment behind.
         const node_id parent = receiver(c);
-        const node_id child = handle_of(arg(args, 0));
+        const node_id child = insertable(c, arg(args, 0));
         if (!pre_insert_valid(c, parent, child, arg(args, 0), value::null())) {
             return value::undefined();
         }
