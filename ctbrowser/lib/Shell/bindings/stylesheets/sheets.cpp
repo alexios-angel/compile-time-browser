@@ -124,6 +124,7 @@ std::string dom_bindings::author_style_text() {
 }
 
 void dom_bindings::style_sheets_changed() {
+    ++style_generation_;
     if (on_author_styles_) { on_author_styles_(author_style_text()); }
     // MARKED DIRTY EITHER WAY. With no hook the cascade does not observe the
     // change and the frame is identical, which costs one recomposite on an

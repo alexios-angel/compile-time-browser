@@ -1024,6 +1024,15 @@ private:
                                              std::string & error);
     // The CSSOM changed something the cascade would care about.
     void style_sheets_changed();
+
+public:
+    // Counts style_sheets_changed(): a CSSOM edit changes what an element
+    // computes to without touching the document, so a cached computed style
+    // compares this beside the document version.
+    [[nodiscard]] std::uint64_t style_stamp() const noexcept { return style_generation_; }
+
+private:
+    std::uint64_t style_generation_ = 0;
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
     // The media query list `this` is a view of - a sheet's or a media rule's.
