@@ -520,6 +520,10 @@ left open and contradicts one thing it concluded.
   coroutines. Two must agree, and **two are declared divergences whose exact
   shape the test asserts**. It is outside the MLIR guard: it compiles no IR.
 
+  **Both files were retired on 2026-09-12** (audit CTC-04): nothing emits
+  `ctnative::generator<T>` and the test was the header's only include site.
+  The header, the test and the measurements below are in commit efdc6df1.
+
 **Nothing lowers.** The `ctnative` dialect does not exist yet, and the
 importer's `may_suspend` pre-walk (design (a) above) still refuses every
 `function*` for the reason it already gives. Stage 58B is a refusal, and the
