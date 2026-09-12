@@ -17,11 +17,6 @@ using namespace detail;
 // `document.title` answer "Chart".
 namespace {
 
-// The five, and not `isspace`: the same set `dom_whitespace` further down
-// names, spelled again here because that one is defined after its first use
-// and one constant cannot be in two anonymous namespaces at once.
-constexpr std::string_view ascii_whitespace = "\t\n\f\r ";
-
 [[nodiscard]] std::string_view local_name_of(std::string_view qualified) {
     const std::size_t colon = qualified.find(':');
     return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
@@ -127,25 +122,6 @@ node_id dom_bindings::title_element() {
     return found;
 }
 
-// Infra's "strip and collapse ASCII whitespace": the five ASCII whitespace
-// characters, not `isspace`, and a run of them becomes exactly one space.
-// `document.title-03.html` writes "two\t\ttabs" and reads back "two tabs".
-std::string dom_bindings::strip_and_collapse(std::string_view text) {
-    std::string out;
-    out.reserve(text.size());
-    bool pending = false;
-    for (const char c : text) {
-        if (ascii_whitespace.find(c) != std::string_view::npos) {
-            pending = !out.empty();
-            continue;
-        }
-        if (pending) { out.push_back(' '); }
-        pending = false;
-        out.push_back(c);
-    }
-    return out;
-}
-
 node_id dom_bindings::find_by_tag(std::string_view tag) {
     const auto txn = doc_->read();
     const atom want = atoms_->intern_lower(tag);
@@ -159,10 +135,6 @@ node_id dom_bindings::find_by_tag(std::string_view tag) {
 }
 
 namespace {
-
-// ASCII whitespace, as the DOM defines it: TAB, LF, FF, CR and SPACE. Not
-// `isspace`, which is locale-dependent and includes vertical tab.
-constexpr std::string_view dom_whitespace = "\t\n\f\r ";
 
 // A property key that is a whole non-negative integer and nothing else. "1x" is
 // not index 1, and neither is " 1", "+1" or "1.0" - a collection has to say no
@@ -183,7 +155,7 @@ std::string dom_bindings::namespace_of(node_id id) const {
     if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
     switch (doc_->read().element_ns(id)) {
     case node_ns::svg: return std::string{svg_namespace};
-    case node_ns::html: return std::string{html_namespace};
+    case node_ns::html: return std::string{xhtml_namespace};
     // An `other` element with no recorded URI cannot happen - the only thing
     // that makes one records it - but a stale handle resolves to `html` and
     // then to this, and the null namespace is the honest answer for a node that
@@ -196,9 +168,9 @@ std::string dom_bindings::namespace_of(node_id id) const {
 std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
     std::vector<std::string> out;
     for (std::size_t at = 0; at < text.size();) {
-        const std::size_t start = text.find_first_not_of(dom_whitespace, at);
+        const std::size_t start = text.find_first_not_of(html_whitespace, at);
         if (start == std::string_view::npos) { break; }
-        std::size_t end = text.find_first_of(dom_whitespace, start);
+        std::size_t end = text.find_first_of(html_whitespace, start);
         if (end == std::string_view::npos) { end = text.size(); }
         std::string token{text.substr(start, end - start)};
         // AN ORDERED *SET*: "a a" asks for one class twice, and a duplicate in
@@ -335,7 +307,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
     // Array, which Node-childNodes.html asserts of `list.keys()`.
     const auto live_iterator = [&native](const char * name, int kind) {
         return native(name, 0, [kind](context & c, std::span<value>) {
-            auto * it = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * it = c.allocate<script::object_object>();
             it->define("@@sym:ctbrowser:iterated", c.current_this(), script::attr_configurable);
             it->define("@@sym:ctbrowser:index", value::number(0), script::attr_configurable);
             it->define("next",
@@ -418,8 +390,8 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
 value dom_bindings::make_live_collection(context & cx,
                                          std::function<std::vector<node_id>()> members,
                                          std::string_view interface_name) {
-    auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * target = cx.allocate<script::object_object>();
+    auto * handler = cx.allocate<script::object_object>();
     // The table is built lazily on the first `wrap()`, and a page can ask for a
     // collection before it has touched a single element - `document.images`
     // reaches here without wrapping anything. Without this the prototype was

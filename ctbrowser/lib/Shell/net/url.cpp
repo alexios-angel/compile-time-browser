@@ -1,8 +1,8 @@
 #include <ctbrowser/shell/net/url.hpp>
 
 // THE ONLY TRANSLATION UNIT THAT KNOWS BOOST.URL EXISTS. url.hpp declares three
-// plain structs and three functions; everything RFC 3986 is in here, which is
-// what keeps 1.2 MB of headers off every consumer of the engine.
+// plain structs and a handful of functions; everything RFC 3986 is in here,
+// which is what keeps 1.2 MB of headers off every consumer of the engine.
 #include <boost/url.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -14,14 +14,10 @@ namespace ctbrowser::shell {
 
 namespace urls = boost::urls;
 
-namespace {
-
-// A data: URL's non-base64 form is percent-encoded text. NOT Boost.URL's
-// `pct_string_view`, which validates and throws on a stray `%` - and a browser
-// shows the image anyway. Ten lines with the engine's own hex_value is the
-// lenient answer, and this is the rare form: every generator this engine has
-// met, Phaser's textures included, writes base64.
-[[nodiscard]] std::string percent_decode(std::string_view text) {
+// NOT Boost.URL's `pct_string_view`, which validates and throws on a stray `%`
+// - and a browser shows the image anyway. Ten lines with the engine's own
+// hex_value is the lenient answer.
+std::string percent_decode(std::string_view text) {
     std::string out;
     out.reserve(text.size());
     for (std::size_t i = 0; i < text.size(); ++i) {
@@ -36,6 +32,8 @@ namespace {
     }
     return out;
 }
+
+namespace {
 
 // LENIENCY, AND IT HAS TO COME FIRST.
 //

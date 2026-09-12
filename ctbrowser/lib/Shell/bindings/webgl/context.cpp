@@ -95,7 +95,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         return value::object(seen->second);
     }
 
-    auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * obj = cx.allocate<script::object_object>();
     // So `gl instanceof WebGLRenderingContext` is true, which Phaser asks - and
     // `instanceof WebGL2RenderingContext` for a version 2 context, which is a
     // DIFFERENT interface rather than a subclass. A page gets the same answer

@@ -19,7 +19,7 @@ namespace ctbrowser::shell {
 // names, the mutating ones being `invertSelf`, `multiplySelf` and so on. Getting
 // that backwards would leave a page's base matrix quietly modified.
 value dom_bindings::matrix_object(context & cx, const transform & t) {
-    auto * out = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * out = cx.allocate<script::object_object>();
     out->set("a", value::number(t.a));
     out->set("b", value::number(t.b));
     out->set("c", value::number(t.c));
@@ -106,7 +106,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         canvases_->context_for(id, attribute("width", 300), attribute("height", 150));
     if (canvas == nullptr) { return value::null(); }
 
-    auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * obj = cx.allocate<script::object_object>();
     if (canvas2d_prototype_.is_object()) { obj->prototype = canvas2d_prototype_; }
     const value self = value::object(obj);
     obj->set("canvas", wrap(cx, id));
@@ -228,9 +228,11 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                                              number(a, 8));
                    return;
                }
+               // The five-argument form is the whole source into a rectangle.
                const float w = a.size() >= 4 ? number(a, 3) : natural_w;
                const float h = a.size() >= 5 ? number(a, 4) : natural_h;
-               canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
+               canvas->draw_image_region(*source, 0, 0, natural_w, natural_h, number(a, 1),
+                                         number(a, 2), w, h);
            }));
     // `fill(path)` and `stroke(path)` REPLAY a Path2D rather than using the
     // context's own current path. p5.js draws every shape that way: it builds
@@ -413,7 +415,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // is NOT the engine's packed ARGB, so both directions unpack rather than
     // memcpy: getting that wrong swaps red and blue and looks almost right.
     const auto image_data = [](context & c, int width, int height) {
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         out->set("width", value::number(width));
         out->set("height", value::number(height));
         value bytes = c.make_array();
@@ -501,7 +503,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
            }));
     method("measureText", [canvas, sync](context & c, std::span<value> a) {
         sync(c);
-        auto * metrics = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * metrics = c.allocate<script::object_object>();
         const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
         // Through the canvas, so the object that measures is the object that
         // draws - see docs/raster.md. Measuring with font8x8 while fillText

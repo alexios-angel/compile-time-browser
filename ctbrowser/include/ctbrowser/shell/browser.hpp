@@ -1,6 +1,5 @@
 #pragma once
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -324,19 +323,6 @@ public:
     // design exists to keep this number down: a caret blink or a scroll must
     // not increment it.
     [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
-
-    // WHAT THE LAST FRAME SPENT ITS TIME ON, in milliseconds, per stage.
-    //
-    // Zero for a stage the frame SKIPPED, which is the interesting half: the
-    // dirty-level design is about not running these, so a zero is the design
-    // working rather than missing data.
-    struct frame_timing {
-        double styles_ms = 0;
-        double layout_ms = 0;
-        double record_ms = 0;
-        double raster_ms = 0;
-    };
-    [[nodiscard]] const frame_timing & last_frame_timing() const noexcept { return timing_; }
 
     // Collect the script heap now, and how many objects it has. Exposed
     // because "does a collection free what the page is still using" is only
@@ -949,7 +935,6 @@ private:
     [[nodiscard]] static std::string masked_text(std::string_view text);
     // What the user SEES for a stretch of the value.
     [[nodiscard]] static std::string shown(std::string_view text, bool masked);
-    [[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at);
 
     // Where in a control's value a point falls. The nearest character boundary
     // on the line the point is on - which is the ONLY way a click can put the
@@ -986,7 +971,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - want); distance < best_distance) {
@@ -1026,7 +1011,7 @@ private:
         std::size_t best = 0;
         float best_distance = std::numeric_limits<float>::infinity();
         for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? next_code_point(line, at) : line.size() + 1) {
+             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
             const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
                                           geometry.metrics_face);
             if (const float distance = std::fabs(where - column); distance < best_distance) {
@@ -1403,9 +1388,6 @@ private:
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
 
-    // The element with this `id`, or nothing.
-    [[nodiscard]] node_id node_by_id(const read_txn & txn, std::string_view want);
-
     // The control a <label> labels, per HTML: its `for` attribute resolved by
     // id, or failing that the FIRST labelable element inside it.
     //
@@ -1578,7 +1560,6 @@ private:
     source_kind source_kind_ = source_kind::html;
     std::string xml_error_;
     std::size_t layouts_ = 0;
-    frame_timing timing_;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;

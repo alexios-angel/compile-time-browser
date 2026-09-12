@@ -29,7 +29,7 @@
 namespace ctbrowser::shell {
 
 void dom_bindings::install_css_interface(context & cx) {
-    auto * css = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * css = cx.allocate<script::object_object>();
     // `length` is the number of REQUIRED arguments - one for both, `supports`
     // being an overload pair whose shorter form takes one. `escape.html`
     // asserts it beside the TypeError a call with no argument throws.
@@ -116,13 +116,11 @@ void dom_bindings::install_css_interface(context & cx) {
             c.throw_error("TypeError", "CSS.escape requires an argument");
             return value::undefined();
         }
-        // CSSOM §2.1's "serialize an identifier", which is exactly what a
-        // selector's type, id, class and attribute names are serialised with
-        // too - so it lives on dom_bindings and bindings/stylesheets/rules.cpp
-        // owns it. Two copies of an escape are two answers to "what is a valid
-        // identifier", and a page building `'#' + CSS.escape(id)` and this
-        // engine printing that same rule back must agree.
-        return c.string(dom_bindings::serialize_css_identifier(c.to_string(args[0])));
+        // CSSOM §2.1's "serialize an identifier" - style/'s one copy, the same
+        // one a serialised selector's type, id, class and attribute names go
+        // through, so a page building `'#' + CSS.escape(id)` and this engine
+        // printing that rule back agree.
+        return c.string(style::css::serialize_identifier(c.to_string(args[0])));
     });
 
     css_interface_ = value::object(css);
@@ -142,7 +140,7 @@ void dom_bindings::install_css_interface(context & cx) {
     // re-evaluation when a page needs the event.
     cx.define_native("matchMedia", [this](context & c, std::span<value> args) {
         const std::string text = args.empty() ? std::string{} : c.to_string(args[0]);
-        auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * list = c.allocate<script::object_object>();
         list->set("media", c.string(detail::serialize_media_query_list(
                                detail::parse_media_query_list(text))));
         list->set("matches",

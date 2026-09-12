@@ -9,50 +9,6 @@ using namespace detail;
 
 namespace detail {
 
-// WHAT AN ATTRIBUTE MAY BE CALLED - and it is NOT the XML `Name` production,
-// which is what this used to approximate.
-//
-// `setAttribute` must throw an InvalidCharacterError for a name that is not a
-// valid one (DOM 4.9.1). This refused everything `Name` refuses, and
-// `dom/nodes/productions.js` is blunt about how wrong that is:
-//
-//     var invalid_names = [""]
-//     var valid_names = ["x", "X", ":", "a:0", "invalid^Name", "\\", "'",
-//                        '"', "0", "0:a", ":a", "x:y:x", "~"]
-//
-// Thirteen names, twelve of which `Name` refuses and every one of which
-// `attributes.html` and `Document-createAttribute.html` require to SUCCEED.
-// Only the empty string throws. The rule the platform enforces is a
-// SERIALISATION one: a name has to survive being written into a start tag and
-// read back, and the HTML tokenizer's attribute name state ends a name on
-// whitespace, `/`, `=` and `>` and on nothing else. There is no
-// first-character rule at all - `"0"` and `":a"` are legal attribute names and
-// illegal ELEMENT names, which is exactly the pair productions.js draws.
-//
-// THE SECOND COPY OF THIS RULE is `is_valid_attribute_name` in
-// bindings/document.cpp, which createAttribute and createAttributeNS answer
-// to. That file's comment records that the two disagreed and that reconciling
-// them was this one's to do; they agree now. Two translation units' worth of a
-// four-line rule rather than one shared helper because `core/algorithms.hpp`
-// is for what three callers share and this has two, both of them bindings.
-//
-// BYTE-WISE ON PURPOSE, and exact rather than approximate: every character the
-// rule names is ASCII, and no byte of a multi-byte UTF-8 sequence is. So no
-// decoder, and no dependence on how the VM happens to store a string.
-
-[[nodiscard]] bool valid_attribute_name(std::string_view name) {
-    // U+0000 is the one character the tokenizer cannot carry - it becomes
-    // U+FFFD, so a name holding one does not read back as itself.
-    return !name.empty() && name.find_first_of(attribute_name_breaks) == std::string_view::npos &&
-           name.find('\0') == std::string_view::npos;
-}
-
-[[nodiscard]] split_name split_attribute_name(std::string_view name) {
-    const std::size_t colon = name.find(':');
-    if (colon == std::string_view::npos) { return split_name{{}, name, false}; }
-    return split_name{name.substr(0, colon), name.substr(colon + 1), true};
-}
-
 // A NULLABLE DOMString argument. `null` and `undefined` are both the null
 // namespace, and so is the empty string - `attributes.html`'s "null and the
 // empty string should result in a null namespace" is that sentence as a test.
@@ -134,7 +90,7 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
             if (known == key) { return value::object(obj); }
         }
     }
-    auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * attr = cx.allocate<script::object_object>();
     attr->set("name", cx.string(qualified));
     attr->set("nodeName", cx.string(qualified));
     attr->set("localName", cx.string(local));
@@ -499,7 +455,7 @@ void dom_bindings::install_named_node_map(context & cx) {
         const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
         const std::string qualified = c.to_string(c.lookup_property(given, "name"));
         const value text = c.lookup_property(given, "value");
-        const split_name split = split_attribute_name(qualified);
+        const qualified_name split = split_qualified(qualified);
         const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
         const std::optional<attribute> replaced = found_by_pair(at, ns, local);
         value old = value::null();
@@ -587,9 +543,9 @@ void dom_bindings::install_named_node_map(context & cx) {
 // createAttributeNS in bindings/document.cpp.
 bool dom_bindings::validate_and_extract(context & cx, std::string_view where,
                                         const std::string & ns, const std::string & qualified) {
-    const split_name split = split_attribute_name(qualified);
-    if ((split.has_colon && !valid_namespace_prefix(split.prefix)) ||
-        !valid_attribute_name(split.local)) {
+    const qualified_name split = split_qualified(qualified);
+    if ((split.has_colon && !is_valid_namespace_prefix(split.prefix)) ||
+        !is_valid_attribute_name(split.local)) {
         throw_dom_exception(cx, "InvalidCharacterError",
                             std::string{where} + ": '" + qualified +
                                 "' is not a qualified attribute name");
@@ -622,7 +578,7 @@ void dom_bindings::install_attribute_methods(context & cx) {
     method("setAttribute", 2, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string name = arg_string(c, args, 0);
-        if (!valid_attribute_name(name)) {
+        if (!is_valid_attribute_name(name)) {
             throw_dom_exception(c, "InvalidCharacterError",
                                 "setAttribute: '" + name + "' is not a valid attribute name");
             return value::undefined();
@@ -785,7 +741,7 @@ void dom_bindings::install_attribute_methods(context & cx) {
     method("toggleAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string name = arg_string(c, args, 0);
-        if (!valid_attribute_name(name)) {
+        if (!is_valid_attribute_name(name)) {
             throw_dom_exception(c, "InvalidCharacterError",
                                 "toggleAttribute: '" + name + "' is not a valid attribute name");
             return value::boolean(false);
@@ -914,7 +870,7 @@ void dom_bindings::install_attribute_methods(context & cx) {
     // check comes before the receiver so a bad name throws on any `this`.
     pi_method("setAttribute", 2, [this, pi_receiver](context & c, std::span<value> args) {
         const std::string name = arg_string(c, args, 0);
-        if (!valid_attribute_name(name)) {
+        if (!is_valid_attribute_name(name)) {
             throw_dom_exception(c, "InvalidCharacterError",
                                 "setAttribute: '" + name + "' is not a valid attribute name");
             return value::undefined();
@@ -934,7 +890,7 @@ void dom_bindings::install_attribute_methods(context & cx) {
     });
     pi_method("toggleAttribute", 1, [this, pi_receiver](context & c, std::span<value> args) {
         const std::string name = arg_string(c, args, 0);
-        if (!valid_attribute_name(name)) {
+        if (!is_valid_attribute_name(name)) {
             throw_dom_exception(c, "InvalidCharacterError",
                                 "toggleAttribute: '" + name + "' is not a valid attribute name");
             return value::boolean(false);

@@ -169,11 +169,12 @@ void test_script_mutates_what_is_drawn() {
     browser page{browser_options{400, 200}};
     page.load_html(
         "<html><body><div id=a>original</div>"
-        "<script>document.getElementById('a').setText('replaced');</script></body></html>");
+        "<script>document.getElementById('a').textContent = 'replaced';</script></body></html>");
     page.frame();
     check(page.script_error().empty(), "the script ran without error");
     // The whole point: the mutation reached the pixels, not just the DOM.
-    check(rendered_text(page).find("replaced") != std::string::npos, "setText changed the page");
+    check(rendered_text(page).find("replaced") != std::string::npos,
+          "textContent changed the page");
     check(rendered_text(page).find("original") == std::string::npos, "and removed the old text");
 }
 
@@ -184,10 +185,10 @@ void test_attributes_and_classes() {
     </style></head><body><div id=a>x</div><script>
     var el = document.getElementById('a');
     el.setAttribute('data-role', 'banner');
-    el.addClass('hot');
+    el.classList.add('hot');
     console.log('role=' + el.getAttribute('data-role'));
-    console.log('hot=' + el.hasClass('hot'));
-    console.log('cold=' + el.hasClass('cold'));
+    console.log('hot=' + el.classList.contains('hot'));
+    console.log('cold=' + el.classList.contains('cold'));
     </script></body></html>)");
     page.frame();
     check(page.script_error().empty(), "the script ran without error");
@@ -196,13 +197,13 @@ void test_attributes_and_classes() {
     check(log.size() == 3, "three console lines");
     if (log.size() == 3) {
         check(log[0] == "role=banner", "setAttribute then getAttribute round-trips");
-        check(log[1] == "hot=true", "hasClass sees the class it added");
+        check(log[1] == "hot=true", "classList sees the class it added");
         check(log[2] == "cold=false", "and does not see one it did not");
     }
     // And the class actually restyled the element, which is the part that
     // matters: adding a class that changes nothing on screen is not a binding
     // that works.
-    check(count_fill(page, color::rgba(255, 0, 0)) == 1, "addClass restyled the element");
+    check(count_fill(page, color::rgba(255, 0, 0)) == 1, "classList.add restyled the element");
 }
 
 // --- the document's own properties ------------------------------------------
@@ -217,7 +218,7 @@ void test_document_title_and_tag_lookup() {
     <script>
     console.log('title=' + document.title);
     console.log('paragraphs=' + document.getElementsByTagName('p').length);
-    console.log('second=' + document.getElementsByTagName('p')[1].getText());
+    console.log('second=' + document.getElementsByTagName('p')[1].textContent);
     console.log('star=' + (document.getElementsByTagName('*').length > 5));
     console.log('none=' + document.getElementsByTagName('blink').length);
     </script></body></html>)");
@@ -237,7 +238,7 @@ void test_document_title_and_tag_lookup() {
     // ...and the title is LIVE, not a snapshot taken when the document object
     // was built. Rewriting the <title> has to be visible, which is the same bug
     // class location.href had: set once at install and wrong ever after.
-    (void)page.run_script("document.getElementsByTagName('title')[0].setText('renamed');");
+    (void)page.run_script("document.getElementsByTagName('title')[0].textContent = 'renamed';");
     page.frame();
     (void)page.run_script("console.log('after=' + document.title);");
     check(log.size() == 6 && log[5] == "after=renamed", "document.title follows the element");
@@ -300,17 +301,17 @@ void test_removeclass_undoes_it() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>.hot { background-color: #ff0000 }</style></head>
     <body><div id=a class=hot>x</div><script>
-    document.getElementById('a').removeClass('hot');
+    document.getElementById('a').classList.remove('hot');
     </script></body></html>)");
     page.frame();
-    check(count_fill(page, color::rgba(255, 0, 0)) == 0, "removeClass unstyled the element");
+    check(count_fill(page, color::rgba(255, 0, 0)) == 0, "classList.remove unstyled the element");
 }
 
 void test_create_and_append() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=host></div><script>
     var el = document.createElement('p');
-    el.setText('made by script');
+    el.textContent = 'made by script';
     document.getElementById('host').appendChild(el);
     </script></body></html>)");
     page.frame();
@@ -335,8 +336,8 @@ void test_a_stale_handle_is_inert() {
     page.load_html(R"(<html><body><div id=host><p id=doomed>text</p></div><script>
     var doomed = document.getElementById('doomed');
     document.getElementById('host').removeChild(doomed);
-    doomed.setText('written to a dead node');
-    doomed.addClass('whatever');
+    doomed.textContent = 'written to a dead node';
+    doomed.classList.add('whatever');
     console.log('survived');
     </script></body></html>)");
     page.frame();

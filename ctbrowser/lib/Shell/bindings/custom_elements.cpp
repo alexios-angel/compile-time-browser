@@ -342,7 +342,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     // --- HTMLElement, CONSTRUCTIBLE. Defined here, before install_dom_interfaces
     // --- builds the table, which adopts a global that already exists rather
     // --- than replacing it with the throwing stub every other interface gets.
-    auto * html_element_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * html_element_proto = cx.allocate<script::object_object>();
     auto * html_element_ctor = cx.allocate<script::native_object>(
         "HTMLElement", [this](context & c, std::span<value>) -> value {
             const value self = c.current_this();
@@ -368,7 +368,6 @@ void dom_bindings::install_custom_elements(context & cx) {
             // author's class.
             auto * obj = static_cast<script::object_object *>(self.as_heap());
             obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(made))));
-            install_element_methods(c, *obj);
             install_element_views(c, *obj, made);
             refresh_element(c, *obj, made);
             wrappers_.emplace(pack(made), obj);
@@ -383,7 +382,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     cx.define_global("HTMLElement", value::object(html_element_ctor));
 
     // --- CustomElementRegistry.prototype -----------------------------------
-    auto * registry_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * registry_proto = cx.allocate<script::object_object>();
     const auto method = [&cx, registry_proto](const char * name, script::native_fn fn) {
         registry_proto->define(
             name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
@@ -560,7 +559,7 @@ void dom_bindings::install_custom_elements(context & cx) {
 
     // `window.customElements` - a bare global, which the window proxy answers
     // for `window.customElements` and `self.customElements` too.
-    auto * registry = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * registry = cx.allocate<script::object_object>();
     registry->prototype = value::object(registry_proto);
     cx.define_global("customElements", value::object(registry));
 }

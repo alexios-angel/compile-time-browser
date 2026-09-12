@@ -98,7 +98,7 @@ std::vector<std::string> dom_bindings::document_property_names() {
 // makes, and the same answer if it ever shows in a measurement: an id and name
 // index on the document rather than a special case here.
 value dom_bindings::make_document_proxy(context & cx, value target) {
-    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = cx.allocate<script::object_object>();
     const auto native = [&](std::string name, script::native_fn fn) {
         return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
     };

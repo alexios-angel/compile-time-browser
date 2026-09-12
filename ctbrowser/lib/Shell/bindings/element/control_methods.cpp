@@ -163,7 +163,7 @@ void dom_bindings::install_control_methods(context & cx) {
         const value callback = arg(args, 0);
         if (!callback.is_callable()) { return value::undefined(); }
         std::vector<std::byte> png = canvas_bytes(c);
-        auto * blob = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * blob = c.allocate<script::object_object>();
         value bytes = c.make_array();
         auto * out = static_cast<script::array_object *>(bytes.as_heap());
         out->elements = script::element_kind::u8;

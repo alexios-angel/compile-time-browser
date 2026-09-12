@@ -204,11 +204,7 @@ bool browser::save_download(const std::string & href, const std::string & sugges
 
 void browser::scroll_to_fragment(std::string_view id) {
     if (id.empty()) { return; }
-    node_id target;
-    {
-        const auto txn = doc_->read();
-        target = node_by_id(txn, id);
-    }
+    const node_id target = bindings_->find_by_id(std::string{id});
     if (!target) { return; }
     // Fragment bounds are relative to the containing block, so finding the
     // element is not enough - the walk has to accumulate to get an absolute

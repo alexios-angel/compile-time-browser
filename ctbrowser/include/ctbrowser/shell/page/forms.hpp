@@ -200,11 +200,14 @@ public:
         return node_id{};
     }
 
+    // The UTF-8 code point boundary on either side of a byte offset - a caret
+    // moves by these, never by bytes. Clamped: past the end is the end. The
+    // browser's caret and password masking step with the same two.
+    [[nodiscard]] static std::size_t previous_code_point(std::string_view text, std::size_t at);
+    [[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at);
+
 private:
     void erase_selection(control_state & control);
-
-    [[nodiscard]] static std::size_t previous_code_point(const std::string & text, std::size_t at);
-    [[nodiscard]] static std::size_t next_code_point(const std::string & text, std::size_t at);
 
     flat_map<std::uint64_t, control_state> states_;
 };

@@ -152,7 +152,7 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
 // THE MEMBERS A ShadowRoot HAS THAT A PLAIN DocumentFragment DOES NOT.
 //
 // Everything else it needs it already has: `wrap` gives every node
-// install_element_methods and install_element_views, so `innerHTML`,
+// the interface prototypes and install_element_views, so `innerHTML`,
 // `appendChild`, `append`, `replaceChildren`, `childNodes`, `children`,
 // `firstChild` and `textContent` are the same code an element uses and work on a
 // fragment unchanged, and `getElementById` comes with being a fragment - see

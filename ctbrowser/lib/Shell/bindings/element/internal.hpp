@@ -1,5 +1,8 @@
 #pragma once
-// Private to lib/Shell/bindings/element/ - not installed.
+// Private to lib/Shell/bindings/element/ - not installed. The name rules shared
+// with document/ are in ../names.hpp; the namespace URIs are dom/xml.hpp's.
+
+#include "../names.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -109,29 +112,13 @@ struct reflected_attribute {
     return false;
 }
 
-// The prefix and the local part of a qualified name, split at the FIRST colon.
-// `a:b:c` is prefix `a` and local `b:c`, which is the DOM's split and not the
-// XML QName production's - the two disagree and the DOM is what a page is
-// measured against. Deliberately the same answers as `split_qualified` in
-// bindings/document.cpp, and the same reason as above for there being two.
-struct split_name {
-    std::string_view prefix; // empty when there is no colon
-    std::string_view local;
-    bool has_colon = false;
-};
-
 // The hidden slot on an element's `attributes` map holding the element's
 // wrapper - a symbol key, so getOwnPropertyNames does not report it. See
 // install_named_node_map.
 inline constexpr std::string_view named_node_map_owner_key = "@@sym:ctbrowser:attributes-owner";
 
-// The namespaces this file names by URI. Spelled out rather than derived,
-// because one wrong character makes a NamespaceError fire on the valid case and
-// not on the invalid one, and nothing about the failure says so.
-inline constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
-inline constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
-inline constexpr std::string_view html_namespace = "http://www.w3.org/1999/xhtml";
-inline constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+// The one namespace URI dom/xml.hpp does not name, because nothing upstream of
+// the bindings distinguishes MathML.
 inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Math/MathML";
 
 // "SHADOW-INCLUDING ROOT", DOM 4.4. Up until there is no parent, and then -
@@ -178,20 +165,7 @@ std::string read_priority(script::object_object & held, context & cx, std::strin
 std::string remove_stored_declaration(script::object_object & held, context & cx,
                                       std::string_view name, bool & removed);
 
-// What an attribute may be called, the two halves of a qualified name, and a
-// nullable namespace argument. Defined in attributes.cpp, which explains the
-// rule; the break set is here because refresh_attribute_map reads it too.
-inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
-[[nodiscard]] bool valid_attribute_name(std::string_view name);
-// A "valid namespace prefix" (DOM 4.9, whatwg/dom#1079): not empty, no ASCII
-// whitespace, U+0000, `/` or `>` - and NOT the attribute rule, which also
-// refuses `=`: `setAttributeNS(ns, "=:attr", v)` is legal
-// (dom/nodes/name-validation.html). document/internal.hpp spells the same.
-[[nodiscard]] inline bool valid_namespace_prefix(std::string_view prefix) {
-    return !prefix.empty() && prefix.find_first_of("\t\n\f\r />") == std::string_view::npos &&
-           prefix.find('\0') == std::string_view::npos;
-}
-[[nodiscard]] split_name split_attribute_name(std::string_view name);
+// A nullable namespace argument. Defined in attributes.cpp.
 [[nodiscard]] std::string namespace_argument(context & cx, std::span<value> args, std::size_t i);
 
 // Does the reflection table already answer `width` for this tag? Defined with

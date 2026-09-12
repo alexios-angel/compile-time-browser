@@ -148,7 +148,7 @@ struct nodes {
 } // namespace
 
 void dom_bindings::install_range(context & cx) {
-    auto * proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * proto = cx.allocate<script::object_object>();
     const value proto_value = value::object(proto);
     const auto method = [&cx, proto](const char * name, script::native_fn fn) {
         proto->define(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
@@ -323,7 +323,7 @@ void dom_bindings::install_range(context & cx) {
     method("cloneRange", [self_of, proto_value](context & c, std::span<value>) {
         script::object_object * self = self_of(c);
         if (self == nullptr) { return value::undefined(); }
-        auto * made = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * made = c.allocate<script::object_object>();
         made->prototype = proto_value;
         for (const char * name : {"startContainer", "startOffset", "endContainer", "endOffset"}) {
             made->set(name, c.lookup_property(value::object(self), name));
@@ -581,7 +581,7 @@ void dom_bindings::install_range(context & cx) {
 // `document.createRange()`: a range collapsed at (this document, 0).
 value dom_bindings::create_range(context & cx) {
     const value ctor = cx.global("Range");
-    auto * made = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * made = cx.allocate<script::object_object>();
     if (ctor.is_callable()) {
         const value proto = cx.lookup_property(ctor, "prototype");
         if (proto.is_object()) { made->prototype = proto; }

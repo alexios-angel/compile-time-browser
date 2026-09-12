@@ -167,12 +167,12 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     }
 
     reader->set("readyState", value::number(2)); // DONE, either way
-    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * event = cx.allocate<script::object_object>();
     event->set("target", waiting.reader);
     if (!readable) {
         // NOT a silent empty string. A page that reads something that is not a
         // blob gets the error branch, which is what it is written for.
-        auto * failure = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * failure = cx.allocate<script::object_object>();
         failure->set("name", cx.string("NotReadableError"));
         failure->set("message", cx.string("FileReader was given something with no bytes"));
         reader->set("error", value::object(failure));
@@ -210,7 +210,7 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     case read_kind::array_buffer: {
         // The shape install_typed_arrays recognises, so `new Uint8Array(result)`
         // is a view over these bytes rather than a copy of nothing.
-        auto * buffer = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * buffer = cx.allocate<script::object_object>();
         value stored = cx.make_array();
         auto * items = static_cast<script::array_object *>(stored.as_heap());
         items->elements = script::element_kind::u8;
@@ -246,7 +246,7 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
             : images_->load(*assets_, waiting.url);
     const bool ok = image != nullptr;
 
-    auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * event = cx.allocate<script::object_object>();
     event->set("type", cx.string(ok ? "load" : "error"));
     event->set("target", waiting.target);
     if (!ok) { event->set("message", cx.string("could not load " + waiting.url)); }
@@ -260,7 +260,7 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
             // The ERROR OBJECT, not make_rejection's rejected promise: settling
             // one promise with another gave `undefined` to the catch branch,
             // which is a message about nothing.
-            auto * failure = static_cast<script::object_object *>(cx.make_object().as_heap());
+            auto * failure = cx.allocate<script::object_object>();
             failure->set("name", cx.string("EncodingError"));
             failure->set("message", cx.string("could not decode " + waiting.url));
             outcome = value::object(failure);
@@ -310,7 +310,7 @@ void dom_bindings::install_resources(context & cx) {
     // GET, so a POST would be a wrong answer either way - and a page that sets
     // one can at least see what it set.
     cx.define_native("Request", [](context & c, std::span<value> a) {
-        auto * request = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * request = c.allocate<script::object_object>();
         request->set("url", c.string(a.empty() ? std::string{} : c.to_string(a[0])));
         std::string method = "GET";
         std::string mode = "cors";
@@ -365,7 +365,7 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
     // for at least one turn, so a page has somewhere to call abort() from.
     if (waiting.signal.is_object() &&
         context::truthy(cx.lookup_property(waiting.signal, "aborted"))) {
-        auto * error = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * error = cx.allocate<script::object_object>();
         error->set("name", cx.string("AbortError"));
         error->set("message", cx.string("fetch of " + waiting.url + " was aborted"));
         cx.settle_promise(waiting.promise, value::object(error), true);
@@ -424,7 +424,7 @@ value dom_bindings::fetch_now(context & cx, const std::string & url) {
 }
 
 value dom_bindings::make_rejection(context & cx, const std::string & message) {
-    auto * error = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * error = cx.allocate<script::object_object>();
     error->set("message", cx.string(message));
     error->set("name", cx.string("TypeError"));
     return cx.make_promise(value::object(error), true);

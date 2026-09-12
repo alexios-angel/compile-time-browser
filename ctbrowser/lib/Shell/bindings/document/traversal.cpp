@@ -353,7 +353,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             c.throw_error("TypeError", "the filter is neither a function nor an object");
             return value::undefined();
         }
-        auto * made = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * made = c.allocate<script::object_object>();
         if (const value proto = interface_prototype(iterator ? "NodeIterator" : "TreeWalker");
             proto.is_object()) {
             made->prototype = proto;
@@ -386,7 +386,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
     // `NodeFilter` is a callback interface with constants and no constructor:
     // one global, defined once, for the realm the primary document is in.
     if (!secondary_) {
-        auto * node_filter = static_cast<script::object_object *>(cx.make_object().as_heap());
+        auto * node_filter = cx.allocate<script::object_object>();
         for (const auto & [name, bits] : std::initializer_list<std::pair<const char *, double>>{
                  {"FILTER_ACCEPT", filter_accept},
                  {"FILTER_REJECT", filter_reject},

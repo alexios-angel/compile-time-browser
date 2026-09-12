@@ -158,7 +158,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     // A handle: a JS object carrying the integer the context knows it by. The
     // page only passes it back, so this is the whole of what one needs.
     const auto handle = [](context & c, std::uint32_t made_id, const char * kind) {
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         out->set("__id", value::number(made_id));
         out->set("__kind", c.string(kind));
         return value::object(out);
@@ -375,7 +375,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     });
     method("getUniformLocation", [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::null(); }
-        auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * out = c.allocate<script::object_object>();
         out->set("__name", c.string(c.to_string(a[1])));
         return value::object(out);
     });

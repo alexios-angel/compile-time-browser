@@ -145,7 +145,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
     // The tokenizer DECODES escapes, so `[\30 zonk]` reaches the compiled form
     // as the name `0zonk`; printing that back unescaped produces a selector that
     // is not a selector, because an identifier may not begin with a digit.
-    const auto ident = &dom_bindings::serialize_css_identifier;
+    const auto ident = &style::css::serialize_identifier;
     // THE NAMESPACE PREFIX, CSSOM §6.7 "serialize a simple selector": written
     // when it maps to a namespace that is neither the default nor the null one,
     // `|` alone for the null one. `*|` means any namespace, which is what an
@@ -356,52 +356,19 @@ namespace detail {
 // `(max-width: 23px) and (max-width: 45px)` is a query a page may have written
 // on purpose and de-duplicating it is an open CSSWG issue.
 
-[[nodiscard]] std::string collapse_whitespace(std::string_view text) {
-    std::string out;
-    bool space = false;
-    for (const char c : trim(text, html_whitespace)) {
-        if (html_whitespace.find(c) != std::string_view::npos) {
-            space = true;
-            continue;
-        }
-        if (space && !out.empty()) { out += ' '; }
-        space = false;
-        out += c;
-    }
-    return out;
-}
-
 // The top-level commas of a media query list. Top-level because a feature's
 // parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
 // `url()` in a `@supports` prelude does, and this splitter is used for both.
+// EMPTY PARTS ARE KEPT - `"screen,"` is two queries and the second serialises
+// as `not all` - which is why this is not core's split_top_level.
 [[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text) {
     std::vector<std::string_view> out;
-    std::size_t depth = 0;
-    std::size_t start = 0;
-    char quote = '\0';
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        if (quote != '\0') {
-            if (c == '\\') {
-                ++i;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            quote = c;
-        } else if (c == '(') {
-            ++depth;
-        } else if (c == ')' && depth != 0) {
-            --depth;
-        } else if (c == ',' && depth == 0) {
-            out.push_back(text.substr(start, i - start));
-            start = i + 1;
-        }
+    for (std::size_t start = 0;;) {
+        const std::size_t comma = scan_to(text, start, ",");
+        out.push_back(text.substr(start, comma - start));
+        if (comma >= text.size()) { return out; }
+        start = comma + 1;
     }
-    out.push_back(text.substr(start));
-    return out;
 }
 
 } // namespace detail
@@ -413,13 +380,13 @@ namespace {
     const std::string_view inside = part.substr(1, part.size() - 2);
     const std::size_t colon = inside.find(':');
     if (colon == std::string_view::npos) {
-        return "(" + ascii_lower_copy(collapse_whitespace(inside)) + ")";
+        return "(" + ascii_lower_copy(collapse_whitespace(inside, html_whitespace)) + ")";
     }
     // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
     // and `(Color)` and `(color)` are one feature; a value may be a string, a
     // `url()` or a number with a unit, none of which fold.
-    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon))) + ": " +
-           collapse_whitespace(inside.substr(colon + 1)) + ")";
+    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon), html_whitespace)) +
+           ": " + collapse_whitespace(inside.substr(colon + 1), html_whitespace) + ")";
 }
 
 } // namespace

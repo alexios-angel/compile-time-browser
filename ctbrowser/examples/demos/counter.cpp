@@ -34,8 +34,8 @@ int main() {
     document.getElementById("panel").addEventListener("click", function () {
         clicks = clicks + 1;
         var el = document.getElementById("count");
-        el.setText(String(clicks));
-        if (clicks >= 5) { el.addClass("hot"); }
+        el.textContent = String(clicks);
+        if (clicks >= 5) { el.classList.add("hot"); }
     });
 </script>)",
                               options);

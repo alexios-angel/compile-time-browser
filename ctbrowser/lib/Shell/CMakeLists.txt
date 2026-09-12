@@ -3,7 +3,8 @@
 # browser/ is the assembly itself, bindings/ the web platform bound to the VM,
 # net/ where bytes come from, image/ the codecs (each behind a two-function
 # header, none of them SDL) and page/ what a PAGE can do. Every subdirectory's
-# internal.hpp is private to it.
+# internal.hpp is private to it; bindings/names.hpp is the one header two of
+# them share.
 add_library(ctbrowser-shell)
 ctbrowser_subsystem_sources(ctbrowser-shell shell)
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)

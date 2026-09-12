@@ -101,6 +101,25 @@ inline constexpr std::string_view js_whitespace = " \t\n\r\f\v";
     return text.substr(first, text.find_last_not_of(set) - first + 1);
 }
 
+// Infra's "strip and collapse": trim, then every interior run of the set
+// becomes ONE space. `document.title` and a CSSOM prelude both read this way
+// (`two\t\ttabs` comes back "two tabs"), and having them collapse differently
+// was the two-decoder bug base64 had.
+[[nodiscard]] inline std::string collapse_whitespace(std::string_view text, std::string_view set) {
+    std::string out;
+    bool space = false;
+    for (const char c : trim(text, set)) {
+        if (set.find(c) != std::string_view::npos) {
+            space = true;
+            continue;
+        }
+        if (space) { out += ' '; }
+        space = false;
+        out += c;
+    }
+    return out;
+}
+
 // --- utf-8 ----------------------------------------------------------------
 
 // One code point, appended as UTF-8. A byte encoder and nothing more: the

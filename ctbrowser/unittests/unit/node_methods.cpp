@@ -300,7 +300,7 @@ void test_element_query_selector() {
         <span class=hit>outside</span>
         <script>
           const box = document.getElementById('box');
-          console.log('one=' + box.querySelector('.hit').getText());
+          console.log('one=' + box.querySelector('.hit').textContent);
           console.log('all=' + box.querySelectorAll('.hit').length);
           // The document's own search still sees everything, including the one
           // outside the box - that is what makes the scoping meaningful.

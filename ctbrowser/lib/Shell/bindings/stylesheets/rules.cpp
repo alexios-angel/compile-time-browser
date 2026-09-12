@@ -31,13 +31,6 @@ namespace {
 
 } // namespace
 
-// CSSOM §2.1. Shared with `CSS.escape` in bindings/css.cpp, which is the same
-// algorithm asked for by a page rather than by a serialiser; the algorithm is
-// style/'s, because a declaration block escapes a custom property's name too.
-std::string dom_bindings::serialize_css_identifier(std::string_view text) {
-    return style::css::serialize_identifier(text);
-}
-
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
@@ -65,7 +58,9 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     if (rule.type == namespace_rule) {
         std::string out = "@namespace ";
-        if (!rule.selector.empty()) { out += serialize_css_identifier(rule.selector) + " "; }
+        if (!rule.selector.empty()) {
+            out += style::css::serialize_identifier(rule.selector) + " ";
+        }
         return out + serialize_url(rule.prelude) + ";";
     }
     // `@font-feature-values <family>#`, whose block is feature blocks each a
@@ -79,7 +74,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
                 type = f.type;
                 out += " @" + type + " {";
             }
-            out += " " + serialize_css_identifier(f.name) + ":";
+            out += " " + style::css::serialize_identifier(f.name) + ":";
             for (const double n : f.numbers) {
                 out += " " + std::to_string(static_cast<long long>(n));
             }
@@ -256,7 +251,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         frame.type = keyframe_rule;
         for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
             if (!frame.selector.empty()) { frame.selector += ", "; }
-            frame.selector += collapse_whitespace(part);
+            frame.selector += collapse_whitespace(part, html_whitespace);
         }
         collect_into(frame, one.substr(brace + 1, shut - brace - 1));
         return css_rule_store_.size() - 1;
@@ -344,7 +339,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
                 if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
                 if (!extra.empty()) { extra += ' '; }
-                extra += collapse_whitespace(part);
+                extra += collapse_whitespace(part, html_whitespace);
                 after = probe;
             }
             if (!href.empty()) {
@@ -371,7 +366,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 // The prefix DECODED, as the selector parser decodes the one
                 // in `x\*|test` - so the two meet (selectorSerialize.html,
                 // "escaped character (*) in element prefix"). cssText
-                // re-escapes it through serialize_css_identifier.
+                // re-escapes it through style::css::serialize_identifier.
                 std::string prefix;
                 if (!second.empty()) {
                     const style::css::token_stream tokens = style::css::tokenize(first);
@@ -393,7 +388,8 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             // `@<feature-type> { <custom-ident>: <integer>+; ... }`. A block
             // whose name is not one of the seven, and an entry whose value is
             // not integers, are dropped as the parser drops them.
-            made.prelude = style::css::serialize_font_family(collapse_whitespace(made.prelude));
+            made.prelude = style::css::serialize_font_family(
+                collapse_whitespace(made.prelude, html_whitespace));
             static constexpr std::string_view feature_types[] = {
                 "stylistic", "historical-forms", "styleset",  "character-variant",
                 "swash",     "ornaments",        "annotation"};
@@ -511,7 +507,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // collapsed either way, so `span  div  ` is `span div` in both.
     made.selector = representable(selectors.selectors)
                         ? serialize_selector_list(selectors.selectors, *atoms_, namespaces)
-                        : collapse_whitespace(prelude);
+                        : collapse_whitespace(prelude, html_whitespace);
     collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;
 }

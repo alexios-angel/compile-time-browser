@@ -49,7 +49,7 @@ int main() {
         if (held["Space"] && markers.length < 40) {
             markers.push({ x: x, y: y });
             held["Space"] = false;
-            document.getElementById("score").setText("markers: " + markers.length);
+            document.getElementById("score").textContent = "markers: " + markers.length;
         }
 
         ctx.fillStyle = "#1c1c28";

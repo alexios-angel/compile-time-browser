@@ -862,7 +862,7 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
         }
     }
     if (!read_keyframes(cx, keyframes, made.keyframes)) { return value::undefined(); }
-    auto * object = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * object = cx.allocate<script::object_object>();
     object->prototype = keyframe_effect_prototype_;
     object->define(effect_index_key, value::number(static_cast<double>(effects_.size())),
                    script::attr_none);
@@ -873,7 +873,7 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
 }
 
 value dom_bindings::make_animation(context & cx, std::size_t effect) {
-    auto * object = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * object = cx.allocate<script::object_object>();
     object->prototype = animation_prototype_;
     object->define(animation_index_key, value::number(static_cast<double>(animations_.size())),
                    script::attr_none);
@@ -910,7 +910,7 @@ void dom_bindings::install_animations(context & cx) {
     };
 
     // --- DocumentTimeline, and the one the document has -------------------
-    auto * timeline_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * timeline_proto = cx.allocate<script::object_object>();
     accessor(timeline_proto, "currentTime",
              [this](context &, std::span<value>) { return value::number(now_ms_); });
     auto * timeline_ctor = cx.allocate<script::native_object>(
@@ -924,12 +924,12 @@ void dom_bindings::install_animations(context & cx) {
     timeline_ctor->define("prototype", value::object(timeline_proto), script::attr_none);
     timeline_proto->define("constructor", value::object(timeline_ctor), script::attr_builtin);
     cx.define_global("DocumentTimeline", value::object(timeline_ctor));
-    auto * timeline = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * timeline = cx.allocate<script::object_object>();
     timeline->prototype = value::object(timeline_proto);
     timeline_ = value::object(timeline);
 
     // --- KeyframeEffect -----------------------------------------------------
-    auto * effect_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * effect_proto = cx.allocate<script::object_object>();
     keyframe_effect_prototype_ = value::object(effect_proto);
     const auto effect_of = [this](context & c) -> keyframe_effect_record * {
         const std::size_t i = effect_index(c.current_this());
@@ -963,7 +963,7 @@ void dom_bindings::install_animations(context & cx) {
         if (e == nullptr) { return illegal(c); }
         const value list = c.make_array();
         for (const animation_keyframe & k : e->keyframes) {
-            auto * frame = static_cast<script::object_object *>(c.make_object().as_heap());
+            auto * frame = c.allocate<script::object_object>();
             frame->set("offset", k.offset_given ? value::number(k.offset) : value::null());
             frame->set("computedOffset", value::number(k.offset));
             frame->set("easing", c.string(k.easing));
@@ -988,7 +988,7 @@ void dom_bindings::install_animations(context & cx) {
                return value::undefined();
            });
     const auto timing_object = [](context & c, const effect_timing & t) {
-        auto * o = static_cast<script::object_object *>(c.make_object().as_heap());
+        auto * o = c.allocate<script::object_object>();
         o->set("delay", value::number(t.delay));
         o->set("endDelay", value::number(t.end_delay));
         o->set("fill", c.string(t.fill));
@@ -1055,7 +1055,7 @@ void dom_bindings::install_animations(context & cx) {
     cx.define_global("KeyframeEffect", value::object(effect_ctor));
 
     // --- Animation ------------------------------------------------------------
-    auto * proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * proto = cx.allocate<script::object_object>();
     // An Animation IS an EventTarget - `addEventListener('finish', ...)` must
     // exist even though nothing here fires it.
     proto->prototype = event_target_prototype_;

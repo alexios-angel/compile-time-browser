@@ -297,7 +297,7 @@ void dom_bindings::take_mutation_snapshot() {
 // --- the record -------------------------------------------------------------
 
 value dom_bindings::make_mutation_record(context & cx, std::string_view type, node_id target) {
-    auto * record = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * record = cx.allocate<script::object_object>();
     // The prototype FIRST, so `records[0] instanceof MutationRecord` is true of
     // an object that is already complete.
     record->prototype = mutation_record_prototype_;
@@ -639,7 +639,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
     // --- constructor. `records[0] instanceof MutationRecord` is what
     // --- MutationObserver-callback-arguments.html asks, and a marker object
     // --- makes that silently false.
-    auto * record_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * record_proto = cx.allocate<script::object_object>();
     mutation_record_prototype_ = value::object(record_proto);
     auto * record_ctor =
         cx.allocate<script::native_object>("MutationRecord", [](context & c, std::span<value>) {
@@ -651,7 +651,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
     cx.define_global("MutationRecord", value::object(record_ctor));
 
     // --- MutationObserver.prototype ----------------------------------------
-    auto * observer_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * observer_proto = cx.allocate<script::object_object>();
     mutation_observer_prototype_ = value::object(observer_proto);
     const auto method = [&cx, observer_proto](const char * name, script::native_fn fn) {
         observer_proto->define(
