@@ -613,7 +613,9 @@ which is precisely what a pawl that records the blocker is for:
   and `for await` lowers to the real protocol (see `docs/test262.md`). Still
   not done: closing the iterator on `break`/throw in the sync loop. Array
   DESTRUCTURING runs the real protocol since 2026-09-12 (three natives,
-  `__ctbrowser_iter_open/next/close`, IteratorClose included), and a
+  `__ctbrowser_iter_open/next/close`, IteratorClose on the normal early exit;
+  not on a throw out of a default - a handler there costs the function its
+  native body in ctcompile), and a
   page's own `[Symbol.iterator]()` iterates everywhere `iterable_values`
   is asked - still eagerly.
 

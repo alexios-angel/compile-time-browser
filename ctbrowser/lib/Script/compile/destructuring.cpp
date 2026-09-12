@@ -144,19 +144,21 @@ void compiler_impl::emit_iterator_native(std::string_view name, std::uint16_t ds
 // 8.6.2 IteratorBindingInitialization and 13.15.5.5, which are the same
 // walk: GetIterator once, IteratorStep per element (a hole steps and drops),
 // every remaining step into a rest array, and IteratorClose at the end when
-// the iterator is not done - and also on a THROW out of an element's default
-// or nested pattern, with `return()`'s own failure suppressed because the
-// original throw wins (7.4.10). A `next()` that threw or answered a
-// non-object marks the record done, so no close follows it.
+// the iterator is not done. A `next()` that threw or answered a non-object
+// marks the record done, so no close follows it.
+//
+// NOT CLOSED ON A THROW out of an element's default or a nested pattern
+// (7.4.10's throw completion path), deliberately: that needs a handler round
+// the pattern, and a protected region is what ctcompile's importer refuses a
+// function for - `const [a, b] = pair` is in every modern bundle, so the
+// handler cost every such function its native body. The normal-path close
+// is the observable half.
 void compiler_impl::compile_array_pattern(
     std::span<const std::int32_t> elements, std::uint16_t src, vp::nk rest_kind,
     const std::function<void(std::int32_t, std::uint16_t)> & bind) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t record = alloc_reg();
     emit_iterator_native(iterator_open_name, record, src);
-    const std::uint16_t caught = alloc_reg();
-    const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
-    ++handler_depth_;
     for (const std::int32_t element : elements) {
         const std::uint32_t inner = reg_mark();
         const std::uint16_t item = alloc_reg();
@@ -178,14 +180,7 @@ void compiler_impl::compile_array_pattern(
         }
         release_to(inner);
     }
-    --handler_depth_;
-    proto().emit(instruction{op::pop_handler});
-    emit_iterator_native(iterator_close_name, caught, record, 0);
-    const std::size_t leave = proto().emit(instruction{op::jump});
-    patch_here(guard);
-    emit_iterator_native(iterator_close_name, record, record, 1);
-    proto().emit(instruction{op::throw_value, caught});
-    patch_here(leave);
+    emit_iterator_native(iterator_close_name, record, record, 0);
     release_to(mark);
 }
 
