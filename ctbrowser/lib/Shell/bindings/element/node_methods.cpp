@@ -830,7 +830,12 @@ void dom_bindings::install_node_methods(context & cx) {
     const auto compiled = [this](context & c, std::span<value> args, bool & bad) {
         return style::css::parse_selector_text(arg_string(c, args, 0), *atoms_, bad);
     };
-    method(element, "matches", 1, [this, compiled](context & c, std::span<value> args) {
+    // `webkitMatchesSelector` IS `matches` under its legacy name - DOM 4.9
+    // defines it as an alias, and `Element-webkitMatchesSelector.html` runs
+    // the whole of `matches`' battery against it.
+    const script::native_fn matches = [this, compiled, needs_selector](context & c,
+                                                                       std::span<value> args) {
+        if (!needs_selector(c, args, "matches")) { return value::boolean(false); }
         const node_id self = receiver(c);
         bool bad = false;
         const style::css::stylesheet parsed = compiled(c, args, bad);
@@ -847,27 +852,31 @@ void dom_bindings::install_node_methods(context & cx) {
         if (!self || parsed.selectors.empty()) { return value::boolean(false); }
         const auto txn = doc_->read();
         return value::boolean(selector_engine().element_matches(txn, self, parsed.selectors));
-    });
-    method(element, "closest", 1, [this, compiled](context & c, std::span<value> args) {
-        const node_id self = receiver(c);
-        bool bad = false;
-        const style::css::stylesheet parsed = compiled(c, args, bad);
-        if (bad) {
-            throw_dom_exception(c, "SyntaxError",
-                                "closest: '" + arg_string(c, args, 0) +
-                                    "' is not a valid selector");
-            return value::null();
-        }
-        if (!self || parsed.selectors.empty()) { return value::null(); }
-        const auto txn = doc_->read();
-        // INCLUSIVE, and upward: the element itself is the first candidate.
-        for (node_id at = self; at; at = txn.parent(at)) {
-            if (selector_engine().element_matches(txn, at, parsed.selectors)) {
-                return wrap(c, at);
-            }
-        }
-        return value::null();
-    });
+    };
+    method(element, "matches", 1, matches);
+    method(element, "webkitMatchesSelector", 1, matches);
+    method(element, "closest", 1,
+           [this, compiled, needs_selector](context & c, std::span<value> args) {
+               if (!needs_selector(c, args, "closest")) { return value::null(); }
+               const node_id self = receiver(c);
+               bool bad = false;
+               const style::css::stylesheet parsed = compiled(c, args, bad);
+               if (bad) {
+                   throw_dom_exception(c, "SyntaxError",
+                                       "closest: '" + arg_string(c, args, 0) +
+                                           "' is not a valid selector");
+                   return value::null();
+               }
+               if (!self || parsed.selectors.empty()) { return value::null(); }
+               const auto txn = doc_->read();
+               // INCLUSIVE, and upward: the element itself is the first candidate.
+               for (node_id at = self; at; at = txn.parent(at)) {
+                   if (selector_engine().element_matches(txn, at, parsed.selectors)) {
+                       return wrap(c, at);
+                   }
+               }
+               return value::null();
+           });
 
     // `isEqualNode` and `isSameNode` - so an element, a text node, a comment and
     // a fragment all have them. The Document has its OWN pair as own properties
