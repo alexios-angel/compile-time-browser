@@ -602,17 +602,79 @@ namespace detail {
 // An ident or function name with an ESCAPE in it was decoded by the tokenizer
 // and has no source span left to copy - it would need serialize-an-identifier
 // to write back - so a value holding one is returned as written.
+//
+// ...AND `counter()`/`counters()` LOSE A `decimal` STYLE, which is the one
+// function argument CSSOM canonicalises: `decimal` is the default and
+// `counter(par-num, decimal)` reads back as `counter(par-num)` in every engine
+// (serialize-values asks for it through `content`). Token-level: the trailing
+// `, decimal` before the function's own `)` is simply not written out.
+[[nodiscard]] std::pair<std::size_t, std::size_t> default_counter_style_in(const token_stream & ts,
+                                                                           std::size_t open) {
+    const std::string_view fn = function_name(ts, ts.tokens[open]);
+    if (!ascii_iequals(fn, "counter") && !ascii_iequals(fn, "counters")) { return {0, 0}; }
+    int depth = 1;
+    std::size_t close = open + 1;
+    for (; close < ts.tokens.size() && depth > 0; ++close) {
+        const token_type type = ts.tokens[close].type;
+        if (type == token_type::eof) { return {0, 0}; }
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren && --depth == 0) { break; }
+    }
+    if (depth != 0) { return {0, 0}; }
+    const auto back = [&ts](std::size_t at) {
+        while (at > 0 && ts.tokens[at - 1].type == token_type::whitespace) { --at; }
+        return at;
+    };
+    const std::size_t style = back(close);
+    if (style == 0 || ts.tokens[style - 1].type != token_type::ident ||
+        !ascii_iequals(ts.text_of(ts.tokens[style - 1]), "decimal")) {
+        return {0, 0};
+    }
+    const std::size_t comma = back(style - 1);
+    if (comma == 0 || ts.tokens[comma - 1].type != token_type::comma) { return {0, 0}; }
+    return {comma - 1, close};
+}
+
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text) {
     std::string out;
     out.reserve(text.size());
-    for (const css_token & t : ts.tokens) {
+    std::pair<std::size_t, std::size_t> skip{0, 0};
+    // A NEGATIVE ZERO INSIDE A MATH FUNCTION KEEPS ITS SIGN. A lone `-0` is
+    // `0` (serialize-values), but `sign(calc(-0))` is -0 and `1 / sign(...)`
+    // tells the two apart - `signed-zero` reads it back through `scale` - and
+    // the arithmetic has not happened yet when this runs. The math function's
+    // own serialisation prints what it computed; this only has to not destroy
+    // the input. A PERCENTAGE IS EXCLUDED: nothing reads the sign of `-0%`
+    // back, and `min(-0%, 0%)` serialises as `min(0%, 0%)` in every engine
+    // (minmax-percentage-serialize).
+    int depth = 0;
+    int math_from = 0; // the depth at which the outermost math function opened
+    const auto number = [&](double value) {
+        return math_from != 0 && value == 0 && std::signbit(value) ? std::string{"-0"}
+                                                                   : number_text(value);
+    };
+    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+        const css_token & t = ts.tokens[i];
         if (t.type == token_type::eof) { break; }
+        if (i >= skip.first && i < skip.second) { continue; }
+        if (t.type == token_type::function) {
+            skip = default_counter_style_in(ts, i);
+            ++depth;
+            if (math_from == 0 && in_list(math_functions, function_name(ts, t))) {
+                math_from = depth;
+            }
+        } else if (t.type == token_type::open_paren) {
+            ++depth;
+        } else if (t.type == token_type::close_paren) {
+            if (depth == math_from) { math_from = 0; }
+            --depth;
+        }
         const std::string_view body = ts.text_of(t);
         switch (t.type) {
-        case token_type::number: out += number_text(t.number); break;
+        case token_type::number: out += number(t.number); break;
         case token_type::percentage: out += number_text(t.number) + "%"; break;
         case token_type::dimension:
-            out += number_text(t.number) + ascii_lower_copy(ts.unit_of(t));
+            out += number(t.number) + ascii_lower_copy(ts.unit_of(t));
             break;
         case token_type::string:
             if (body.size() < 2) { return std::string{text}; }

@@ -118,6 +118,7 @@ struct probe {
     float basis = 0;        // the containing block's content width
     float basis_height = 0; // and its content height, for a relative inset
     float font_size = 16;
+    float root_font_size = 16; // the <html> element's, for a `rem` folded here
     // Is this element a FLEX ITEM? A fact about its parent rather than about it,
     // and the two properties whose reported value depends on it - `min-width`
     // and `min-height` - are answered nowhere else, so it is gathered with the
@@ -215,6 +216,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
 
         at.basis = static_cast<float>(viewport_width_);
         at.basis_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+        // The ROOT ELEMENT's font size, for a `rem` folded at used-value time:
+        // the chain ends at the document, and the element before it is <html>.
+        if (at.chain.size() >= 2) {
+            const layout::box_node * root_box = box_for(boxes_, at.chain[at.chain.size() - 2]);
+            if (root_box != nullptr) { at.root_font_size = root_box->font_size; }
+        }
         if (at.chain.size() >= 2) {
             const node_id parent = at.chain[1];
             const layout::box_node * up_box = box_for(boxes_, parent);
@@ -594,6 +601,29 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             // `10%` rather than as a share of a containing block it does not
             // have. Same sentence, same rule, as `width` above.
             if (!at.has_box) { return computed_length(text); }
+            // A MATH FUNCTION THE CASCADE COULD NOT FOLD is folded here, against
+            // the containing block: this is the used value, and the used value
+            // is where `round(10%, 1px)` finally has a basis. A percentage in a
+            // min or max survives as one below and never comes this way.
+            if (style::css::may_have_math(text) && !is_min_or_max_property(property)) {
+                style::css::length_context ctx;
+                ctx.font_size = at.font_size;
+                ctx.root_font_size = at.root_font_size;
+                ctx.viewport_width = static_cast<float>(viewport_width_);
+                ctx.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+                ctx.percent_basis = at.basis;
+                const style::css::math_answer used = style::css::evaluate_math(text, ctx);
+                if (used.outcome == style::css::math_outcome::resolved &&
+                    used.value.type == style::css::numeric_type::length &&
+                    !used.value.has_percent) {
+                    // The same bound the cascade's fold applies (calc/fold.cpp):
+                    // an infinity lands on it and a NaN on zero.
+                    double px = used.value.px;
+                    if (std::isnan(px)) { px = 0; }
+                    if (std::isinf(px)) { px = std::copysign(33554432.0, px); }
+                    return px_text(static_cast<float>(px));
+                }
+            }
             const layout::length len = layout::parse_length(text);
             if (len.is_auto()) { return "auto"; }
             // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the
@@ -644,8 +674,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         // 3c. THE FONT FAMILY LIST, whose case is the author's and whose quoting
         //     is CSSOM's. Answered before the keyword fold below, which would
-        //     lowercase it - see `font_family_text`.
-        if (property == "font-family") { return font_family_text(text); }
+        //     lowercase it.
+        if (property == "font-family") { return style::css::serialize_font_family(text); }
+        // 3d. A TRANSFORM LIST, multiplied out to the `matrix()` CSS Transforms
+        //     says its resolved value is - see `transform_matrix_text`.
+        if (property == "transform" && !ascii_iequals(trim(text, html_whitespace), "none")) {
+            return transform_matrix_text(trim(text, html_whitespace));
+        }
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
@@ -745,17 +780,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         return {};
     };
-    const auto sides = [&longhand](std::string_view t, std::string_view r, std::string_view b,
-                                   std::string_view l) -> std::string {
-        const std::string top = longhand(t);
-        const std::string right = longhand(r);
-        const std::string bottom = longhand(b);
-        const std::string left = longhand(l);
-        if (top.empty() || right.empty() || bottom.empty() || left.empty()) { return {}; }
-        if (left != right) { return top + " " + right + " " + bottom + " " + left; }
-        if (bottom != top) { return top + " " + right + " " + bottom; }
-        if (right != top) { return top + " " + right; }
-        return top;
+    const auto collapse = [](const std::array<std::string, 4> & c) -> std::string {
+        if (c[0].empty() || c[1].empty() || c[2].empty() || c[3].empty()) { return {}; }
+        if (c[3] != c[1]) { return c[0] + " " + c[1] + " " + c[2] + " " + c[3]; }
+        if (c[2] != c[0]) { return c[0] + " " + c[1] + " " + c[2]; }
+        if (c[1] != c[0]) { return c[0] + " " + c[1]; }
+        return c[0];
+    };
+    const auto sides = [&longhand, &collapse](std::string_view t, std::string_view r,
+                                              std::string_view b, std::string_view l) {
+        return collapse({longhand(t), longhand(r), longhand(b), longhand(l)});
     };
     // Two components of DIFFERENT properties rather than two sides, so the only
     // collapse is the whole-value one: `gap: normal` when both axes are normal.
@@ -787,8 +821,34 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         } else if (p.name == "border-radius") {
             // CORNERS, clockwise from the top left - not the top/right/bottom/left
             // of the edge shorthands, though the collapsing rule is the same one.
-            text = sides("border-top-left-radius", "border-top-right-radius",
-                         "border-bottom-right-radius", "border-bottom-left-radius");
+            // EACH CORNER IS A PAIR: a horizontal radius and a vertical one,
+            // written `h v` in the longhand and as `h h h h / v v v v` in the
+            // shorthand, the slash and its half omitted when the two lists agree
+            // (getComputedStyle-border-radius-001 and -003).
+            std::array<std::string, 4> h;
+            std::array<std::string, 4> v;
+            const std::array<std::string_view, 4> corners{
+                "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius",
+                "border-bottom-left-radius"};
+            for (std::size_t i = 0; i < 4; ++i) {
+                const std::string both = longhand(corners[i]);
+                // The split is at the one top-level space: a `calc(25% + 10px)`
+                // has spaces of its own and keeps them.
+                int depth = 0;
+                std::size_t split = std::string::npos;
+                for (std::size_t k = 0; k < both.size(); ++k) {
+                    if (both[k] == '(') { ++depth; }
+                    if (both[k] == ')') { --depth; }
+                    if (both[k] == ' ' && depth == 0) {
+                        split = k;
+                        break;
+                    }
+                }
+                h[i] = split == std::string::npos ? both : both.substr(0, split);
+                v[i] = split == std::string::npos ? both : both.substr(split + 1);
+            }
+            text = collapse(h);
+            if (!text.empty() && h != v) { text += " / " + collapse(v); }
         } else if (p.name == "gap") {
             text = both("row-gap", "column-gap");
         } else if (p.name == "overflow") {

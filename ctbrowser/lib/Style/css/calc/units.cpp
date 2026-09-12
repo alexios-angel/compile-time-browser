@@ -168,13 +168,41 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     if (ascii_iequals(unit, "ch") || ascii_iequals(unit, "ex")) {
         return value * ctx.font_size / 2;
     }
-    if (ascii_iequals(unit, "vw")) { return value * ctx.viewport_width / 100.0f; }
-    if (ascii_iequals(unit, "vh")) { return value * ctx.viewport_height / 100.0f; }
-    if (ascii_iequals(unit, "vmin")) {
-        return value * std::min(ctx.viewport_width, ctx.viewport_height) / 100.0f;
+    if (ascii_iequals(unit, "rch") || ascii_iequals(unit, "rex")) {
+        return value * ctx.root_font_size / 2;
     }
-    if (ascii_iequals(unit, "vmax")) {
-        return value * std::max(ctx.viewport_width, ctx.viewport_height) / 100.0f;
+    // `ic` is the advance of the CJK water ideograph, and CSS's own fallback
+    // for a font without one is 1em. `lh` and `rlh` are the line heights the
+    // context carries - see length_context.
+    if (ascii_iequals(unit, "ic")) { return value * ctx.font_size; }
+    if (ascii_iequals(unit, "ric")) { return value * ctx.root_font_size; }
+    if (ascii_iequals(unit, "lh")) { return value * ctx.line_height; }
+    if (ascii_iequals(unit, "rlh")) { return value * ctx.root_line_height; }
+    // THE VIEWPORT UNITS, all six spellings of each axis. There is no dynamic
+    // toolbar here, so the small, large, dynamic and default viewports are one
+    // and the same; and the writing mode is horizontal, so `vi` is `vw` and
+    // `vb` is `vh`. viewport-units-compute asks for all twenty-four.
+    //
+    // ponytail: horizontal-tb assumed for `vi`/`vb`; thread the writing mode
+    // through length_context when a vertical page asks.
+    const auto viewport_axis = [&](std::string_view suffix) -> std::optional<float> {
+        if (suffix == "w" || suffix == "i") { return ctx.viewport_width; }
+        if (suffix == "h" || suffix == "b") { return ctx.viewport_height; }
+        if (suffix == "min") { return std::min(ctx.viewport_width, ctx.viewport_height); }
+        if (suffix == "max") { return std::max(ctx.viewport_width, ctx.viewport_height); }
+        return std::nullopt;
+    };
+    if (unit.size() >= 2 && (unit[0] == 'v' || unit[0] == 'V')) {
+        if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(1)))) {
+            return value * *axis / 100.0f;
+        }
+    }
+    if (unit.size() >= 3 && (unit[1] == 'v' || unit[1] == 'V') &&
+        (unit[0] == 's' || unit[0] == 'l' || unit[0] == 'd' || unit[0] == 'S' || unit[0] == 'L' ||
+         unit[0] == 'D')) {
+        if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(2)))) {
+            return value * *axis / 100.0f;
+        }
     }
     // The absolute units, all defined against the CSS inch of 96px.
     if (ascii_iequals(unit, "in")) { return value * 96.0f; }

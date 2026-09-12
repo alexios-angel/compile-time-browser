@@ -31,6 +31,14 @@ struct length_context {
     // circular.
     float font_size = 16.0f;
     float root_font_size = 16.0f;
+    // THE LINE HEIGHT `lh` MEASURES, and the root's for `rlh` (CSS Values 4
+    // §6.1.1). The same asymmetry as `em`: in `line-height` itself `lh` is the
+    // parent's, everywhere else the element's own, and the caller passes the
+    // right one. `normal` is 1.25 times the font size here, which is the factor
+    // layout uses for it - not the font's metrics, which are injected and
+    // pinned by the goldens.
+    float line_height = 20.0f;
+    float root_line_height = 20.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
@@ -39,6 +47,14 @@ struct length_context {
     // but the cascade's, and leaves both functions unresolved.
     std::uint32_t sibling_index = 0;
     std::uint32_t sibling_count = 0;
+    // WHAT A PERCENTAGE IS A PERCENTAGE OF, when the caller has it: the
+    // containing block's width, at USED-value time. The cascade never sets it -
+    // a computed value keeps `calc(50% + 12px)` - and getComputedStyle sets it
+    // for a margin or a padding, whose resolved value CSSOM says is the used
+    // one: `round(10%, 1px)` against a 75px block is `8px`, and no linear sum
+    // can say so before the basis exists (round-mod-rem-computed,
+    // signs-abs-computed, hypot-pow-sqrt-computed).
+    std::optional<float> percent_basis;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2

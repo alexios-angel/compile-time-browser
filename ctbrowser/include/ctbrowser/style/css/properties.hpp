@@ -140,6 +140,16 @@ struct value_check {
                                             std::string_view writing_mode,
                                             std::string_view direction);
 
+// A `font-family` LIST WRITTEN AS CSSOM WRITES ONE: a family name that is a
+// valid identifier sequence loses its quotes (`'Times New Roman'` is `Times
+// New Roman`), one that is not keeps them as DOUBLE quotes (`'34J'` is
+// `"34J"`, and so is a quoted `"serif"`, which is not the generic family), the
+// author's case survives, and the separator is `, `. The same string is the
+// specified value `el.style.fontFamily` reads back and the computed value
+// `getComputedStyle` reports - css/cssom's serialize-values and
+// font-family-serialization-001 ask for it from each side.
+[[nodiscard]] std::string serialize_font_family(std::string_view text);
+
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.
 [[nodiscard]] bool supports_declaration(std::string_view property, std::string_view value);

@@ -413,8 +413,15 @@ private:
         }
         case token_type::percentage: {
             ++at_;
-            saw_percent_ = true;
             term out;
+            // WITH A BASIS IT IS A LENGTH, and every non-linear function that
+            // could not be applied to `10%` applies to `7.5px`.
+            if (basis_ == basis::against_context && ctx_.percent_basis) {
+                out.set_type(numeric_type::length);
+                out.value = tok.number / 100.0 * static_cast<double>(*ctx_.percent_basis);
+                return out;
+            }
+            saw_percent_ = true;
             // A percentage has no type of its own until the property says what it
             // is a percentage OF, and every property this engine resolves one
             // for takes a length. So it travels as a length carrying an
@@ -791,7 +798,13 @@ private:
         // with nothing left to resolve; but `progress(5%, 0px, 10px)` does not
         // have three arguments that agree on what they measure, and that is a
         // type error rather than a comparison awaiting layout.
+        // ...AND EACH IS A <number>, A <dimension> OR A <percentage>, which is
+        // what the specification's "the argument calculations can resolve to
+        // any" lists. Typed arithmetic makes `10px * 10px` a term with a
+        // type, and the three would agree on it - but an area is not one of
+        // the three and `progress-invalid` says the whole is a syntax error.
         for (const term & one : *args) {
+            if (!one.simple()) { return fail(); }
             if (one.dims != args->front().dims || one.has_percent != args->front().has_percent) {
                 return fail();
             }
