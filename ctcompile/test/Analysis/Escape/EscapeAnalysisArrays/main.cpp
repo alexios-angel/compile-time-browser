@@ -29,9 +29,10 @@ int main() {
     checkArithmeticUnaryProducers(context);
     checkBigIntPlusErrors(context);
     checkBigIntMixedSubErrors(context);
-    checkBigIntMixedMulDivModErrors(context, ctjs::BinaryKind::Mul);
-    checkBigIntMixedMulDivModErrors(context, ctjs::BinaryKind::Div);
-    checkBigIntMixedMulDivModErrors(context, ctjs::BinaryKind::Mod);
+    checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Mul);
+    checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Div);
+    checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Mod);
+    checkBigIntMixedArithmeticErrors(context, ctjs::BinaryKind::Pow);
     checkBigIntUnaryProducers(context);
     checkBigIntBinaryProducers(context);
     checkStringBigIntConcatenation(context);
