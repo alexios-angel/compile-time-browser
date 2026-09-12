@@ -106,7 +106,7 @@ std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClos
     if (auto why = whyCapturesDoNotReach(c, c)) { return "returned closure: " + *why; }
     if (auto why = whyUpvalueReadsDoNotLift(c, target)) { return why; }
     for (mlir::Operation * site : plan.calls) {
-        if (argsOfCallSite(site).size() > entry.getNumArguments() - 3) {
+        if (argsOfCallSite(site).size() > entry.getNumArguments() - ctjs::implicit_arguments) {
             return "returned closure call has surplus arguments with frame semantics";
         }
         auto caller = site->getParentOfType<ctjs::FuncOp>();

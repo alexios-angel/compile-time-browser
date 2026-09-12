@@ -237,7 +237,8 @@ void closureLifter::argumentCensus() {
         if (admissionIsDeclaration(c)) { continue; }
         ctjs::FuncOp target = targetOf(c);
         if (!target || target.getBody().empty()) { continue; }
-        const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+        const unsigned parameters =
+            target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
         llvm::SmallVector<unsigned, 2> slots;
         for (unsigned j = 0; j < parameters; ++j) {
             if (slotIsACandidate(c, j)) { slots.push_back(j); }
@@ -536,7 +537,7 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
         }
         return "nothing calls it";
     }
-    const unsigned parameters = entry.getNumArguments() - 3;
+    const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     for (methodCall at : calls->second) {
         if (at.call.getArgs().size() > parameters) {
             return "a call passes " + std::to_string(at.call.getArgs().size()) +

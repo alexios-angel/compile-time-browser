@@ -103,7 +103,8 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                 refuse("callers do not supply one known capture-free callback target");
                 continue;
             }
-            const unsigned arity = callback.getBody().front().getNumArguments() - 3;
+            const unsigned arity =
+                callback.getBody().front().getNumArguments() - ctjs::implicit_arguments;
             bool callbackReadsArguments = false;
             callback.walk([&](mlir::Operation * operation) {
                 callbackReadsArguments |=

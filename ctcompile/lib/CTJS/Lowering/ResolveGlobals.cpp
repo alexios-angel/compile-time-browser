@@ -464,7 +464,7 @@ std::optional<std::string> dynamic_global_writes(
                    ")";
         }
         mlir::Block & entry = target.getBody().front();
-        const unsigned parameters = entry.getNumArguments() - 3;
+        const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
         if (supplied > parameters) {
             return std::string{name_of(kind)} + " is passed to " + target.getSymName().str() +
                    " beyond its " + std::to_string(parameters) +
@@ -711,7 +711,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             FuncOp target = answer.target;
             ++resolvedGlobals;
             ++resolved_here;
-            const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+            const unsigned parameters =
+                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
 
             // ---- the rewrite, per load ----------------------------------------
             std::optional<std::string> open;
@@ -856,7 +857,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
                 continue;
             }
-            const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+            const unsigned parameters =
+                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
             // ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO
             // SOMEBODY ELSE. CallDirectOp::verifySymbolUses holds the operand
             // count equal to the entry block's, so a surplus call must be

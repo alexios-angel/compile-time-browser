@@ -124,7 +124,7 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
     mlir::Block & entry = target.getBody().front();
-    const unsigned parameters = entry.getNumArguments() - 3;
+    const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     // GUARD 5, before the generic clauses, so the diagnostic names the
     // prototype rather than whatever else the read happens to be.
     if (const std::optional<std::string> why = whyPrototypeIsTouched(c)) { return why; }

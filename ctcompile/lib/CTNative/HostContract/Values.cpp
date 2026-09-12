@@ -348,7 +348,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     auto & body = function.getBody().front();
     if (prepared) {
         if (function.getUpvalueCount() != 0 || body.getNumArguments() < 4 || !direct ||
-            direct.getArgs().size() != body.getNumArguments() - 3) {
+            direct.getArgs().size() != body.getNumArguments() - ctjs::implicit_arguments) {
             return {};
         }
         result.argument = direct.getArgs().front().getDefiningOp<ctjs::LoadUpvalueOp>();
@@ -798,7 +798,8 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
         const auto receiver = direct ? direct.getReceiver() : call.getReceiver();
         const auto owner = object(publication.getObject());
         if (!owner || !before(read, operation) || object(receiver) != owner ||
-            args.size() != body.getNumArguments() - 3 || (prepared && !direct) ||
+            args.size() != body.getNumArguments() - ctjs::implicit_arguments ||
+            (prepared && !direct) ||
             (direct && (target(direct) != function || !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(
                                                           primitive(direct.getNewTarget()))))) {
             return mlir::WalkResult::interrupt();

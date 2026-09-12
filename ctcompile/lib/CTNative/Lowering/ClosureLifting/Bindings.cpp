@@ -43,7 +43,8 @@ bool closureLifter::readsRawArguments(ctjs::FuncOp target) {
 // call this step can write, at an arity the callee's entry block accepts.
 std::optional<std::string> closureLifter::whyReadIsNotACall(mlir::Value read, ctjs::FuncOp target,
                                                             unsigned & calls) {
-    const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+    const unsigned parameters =
+        target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
     for (mlir::OpOperand & use : read.getUses()) {
         auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
         if (!call || use.getOperandNumber() != 0) {
@@ -272,7 +273,8 @@ std::optional<std::string> closureLifter::examineFunctionBinding(ctjs::CreateCel
 // of the closure value - and that is sound only because condition 5 has
 // proved the callee has no capture left for a lift to prepend.
 void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target) {
-    const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+    const unsigned parameters =
+        target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
     mlir::OpBuilder at(call);
     const auto valueType = ctjs::ValueType::get(context);
     const mlir::Value undefined =
