@@ -412,6 +412,79 @@ std::string simplify_math(std::string_view value) {
     return out;
 }
 
+std::optional<std::string> calc_size_text(std::string_view value, std::string_view keywords) {
+    constexpr std::string_view name = "calc-size(";
+    const std::string_view whole = trim(value, html_whitespace);
+    if (!ascii_iequals(whole.substr(0, name.size()), name)) { return std::nullopt; }
+    const function_span span = span_of(whole, 0, name);
+    if (span.end != whole.size()) { return std::nullopt; }
+    const std::string_view inner =
+        whole.substr(name.size(), whole.size() - name.size() - (span.closed ? 1 : 0));
+    const std::vector<std::string_view> args = top_level_arguments(inner);
+    if (args.size() != 2) { return std::nullopt; }
+    const std::string_view basis = trim(args[0], html_whitespace);
+    const std::string_view calculation = trim(args[1], html_whitespace);
+    if (basis.empty() || calculation.empty()) { return std::nullopt; }
+
+    // THE BASIS: `any`, an intrinsic size keyword, one of the property's own
+    // keywords, another calc-size(), or a <length-percentage>.
+    std::string out{name};
+    bool any = false;
+    const token_stream ts = tokenize(basis);
+    const bool one_token = ts.tokens.size() == 2; // the token and eof
+    if (one_token && ts.tokens.front().type == token_type::ident) {
+        const std::string word = ascii_lower_copy(basis);
+        const auto listed = [&](std::string_view list) {
+            std::size_t i = 0;
+            while (i <= list.size()) {
+                const std::size_t end = std::min(list.find(' ', i), list.size());
+                if (list.substr(i, end - i) == word) { return true; }
+                i = end + 1;
+            }
+            return false;
+        };
+        any = word == "any";
+        if (!any && !listed("min-content max-content fit-content stretch") && !listed(keywords)) {
+            return std::nullopt;
+        }
+        out += word;
+    } else if (ascii_iequals(basis.substr(0, name.size()), name)) {
+        const std::optional<std::string> nested = calc_size_text(basis, keywords);
+        if (!nested) { return std::nullopt; }
+        out += *nested;
+    } else {
+        const auto [outcome, sum] = evaluate_symbolic(basis);
+        if (outcome == math_outcome::invalid) { return std::nullopt; }
+        if (outcome == math_outcome::resolved) {
+            if (sum.type() != numeric_type::length || !sum.simple()) { return std::nullopt; }
+            const std::string text = serialize_symbolic(sum);
+            out += text.empty() ? std::string{basis} : text;
+        } else {
+            out += simplify_math(basis);
+        }
+    }
+    out += ", ";
+
+    // THE CALCULATION: a <calc-sum> over `size`, a length, and no calc-size()
+    // inside it. What has no answer here - `sign(size) * size` - keeps its bytes.
+    for (std::size_t i = 0; i < calculation.size(); ++i) {
+        if (ascii_iequals(calculation.substr(i, name.size()), name) &&
+            (i == 0 || !is_name_char(calculation[i - 1]))) {
+            return std::nullopt;
+        }
+    }
+    const auto [outcome, sum] = evaluate_symbolic(calculation, !any);
+    if (outcome == math_outcome::invalid) { return std::nullopt; }
+    if (outcome == math_outcome::resolved) {
+        if (sum.type() != numeric_type::length || !sum.simple()) { return std::nullopt; }
+        const std::string text = serialize_symbolic(sum);
+        out += text.empty() ? std::string{calculation} : text;
+    } else {
+        out += simplify_math(calculation);
+    }
+    return out + ')';
+}
+
 bool math_syntax_ok(std::string_view value) {
     // ...AND OF THE RIGHT KIND FOR WHERE IT SITS, which for the angle-only
     // functions is a question about position rather than about contents.

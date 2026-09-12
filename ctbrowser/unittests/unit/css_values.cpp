@@ -800,6 +800,43 @@ void test_the_random_item_argument_list() {
 // UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
 // did not publish the property at all - which is the two assertions of
 // `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+// calc-size-parsing: the basis is judged against the property, the
+// calculation is a length over `size`, and both are written canonically.
+void test_calc_size() {
+    ok("width", "calc-size(auto, size)", "calc-size(auto, size)");
+    ok("min-height", "calc-size(auto, size)", "calc-size(auto, size)");
+    bad("max-width", "calc-size(auto, size)");
+    bad("width", "calc-size(none, size)");
+    ok("max-height", "calc-size(max-content, size)", "calc-size(max-content, size)");
+    ok("height", "calc-size(min-content, size * 2)", "calc-size(min-content, 2 * size)");
+    ok("max-width", "calc-size(max-content, size / 2)", "calc-size(max-content, 0.5 * size)");
+    ok("max-height", "calc-size(fit-content, 30px + size / 2)",
+       "calc-size(fit-content, 30px + (0.5 * size))");
+    ok("width", "calc-size(fit-content, 50% + size / 2)",
+       "calc-size(fit-content, 50% + (0.5 * size))");
+    ok("width", "calc-size(any, 25em)", "calc-size(any, 25em)");
+    ok("width", "calc-size(any, 40%)", "calc-size(any, 40%)");
+    ok("width", "calc-size(any, 50px + 30%)", "calc-size(any, 30% + 50px)");
+    ok("width", "calc-size(calc-size(any, 30px), size)", "calc-size(calc-size(any, 30px), size)");
+    bad("width", "calc-size(any, size)");
+    bad("width", "calc-size(any, fit-content)");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    bad("width", "size");
+    bad("width", "calc-size(any, calc-size(10px, sign(size) * size))");
+    bad("width", "calc(calc-size(auto, size))");
+    ok("width", "calc-size(calc-size(2in, 30px), 25em)", "calc-size(calc-size(192px, 30px), 25em)");
+    ok("width", "calc-size(calc-size(min-content, size), size)",
+       "calc-size(calc-size(min-content, size), size)");
+    bad("width", "calc-size(30px)");
+    bad("width", "calc-size(any)");
+    bad("width", "calc-size(calc-size(fit-content, size * 2))");
+    ok("flex-basis", "calc-size(content, size)", "calc-size(content, size)");
+    bad("width", "calc-size(content, size)");
+    ok("width", "calc-size(0px, 0px)", "calc-size(0px, 0px)");
+    bad("width", "calc-size(0, 0px)");
+    bad("width", "calc-size(0px, 0)");
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -878,6 +915,7 @@ int main() {
     test_css_supports();
     test_an_integer_property_rounds_its_math();
     test_the_random_item_argument_list();
+    test_calc_size();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

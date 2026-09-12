@@ -247,6 +247,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes
+    // one (CSS Values 5 §calc-size): the basis is judged against the
+    // property's keywords and the calculation is simplified with `size` in it.
+    if (p->kind == k::length_percentage && ascii_istarts_with(text, "calc-size(")) {
+        std::optional<std::string> sized = calc_size_text(text, p->keywords);
+        if (!sized) { return {}; }
+        return yes(std::move(*sized));
+    }
+
     // A math function over the whole value: `calc/` owns the evaluation and
     // has a third answer besides folded and invalid.
     //

@@ -76,8 +76,9 @@ namespace detail {
     if (value.has_percent) { append(value.percent, "%"); }
     for (const auto & [unit, coefficient] : sorted) {
         // A FUNCTION TERM: `360deg * sibling-count()`, `2 * sibling-index()`,
-        // or the bare function when nothing multiplies it.
-        if (unit.ends_with("()")) {
+        // or the bare function when nothing multiplies it - and calc-size()'s
+        // `size`, which is one for this purpose: `30px + (0.5 * size)`.
+        if (unit.ends_with("()") || unit == "size" || unit.ends_with("*size")) {
             const std::size_t star = unit.find('*');
             const std::string_view dimension = star == std::string::npos
                                                    ? std::string_view{}

@@ -132,7 +132,9 @@ struct function_span {
 
 // One expression with NO bases at all, answered as a term. Defined in
 // evaluator.cpp.
-[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression);
+// `size_symbol` admits `size` as a length term: the calculation of a calc-size().
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
+                                                              bool size_symbol = false);
 
 // The inside of a symbolic calc() in §10.13's order, or empty when the sum has
 // no canonical spelling. Defined in serialize.cpp.

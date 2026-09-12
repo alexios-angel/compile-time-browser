@@ -92,7 +92,7 @@ struct arithmetic {
 // A SYMBOL THAT IS A FUNCTION rather than a unit - `sibling-index()` in a
 // specified value - and a term made only of those.
 [[nodiscard]] bool function_symbol(std::string_view key) noexcept {
-    return key.ends_with("()");
+    return key.ends_with("()") || key == "size";
 }
 [[nodiscard]] bool function_only(const term & t) noexcept {
     return !t.symbols.empty() && t.value == 0.0 && !t.has_percent &&
@@ -325,8 +325,8 @@ enum class basis : std::uint8_t {
 class evaluator {
 public:
     evaluator(const token_stream & tokens, const length_context & ctx,
-              basis measure = basis::against_context)
-        : t_(tokens), ctx_(ctx), basis_(measure) {}
+              basis measure = basis::against_context, bool size_symbol = false)
+        : t_(tokens), ctx_(ctx), basis_(measure), size_symbol_(size_symbol) {}
 
     [[nodiscard]] math_answer run() {
         const std::optional<term> value = settle();
@@ -542,6 +542,11 @@ private:
             out.value = -std::numeric_limits<double>::infinity();
         } else if (ascii_iequals(name, "nan")) {
             out.value = std::nan("");
+        } else if (size_symbol_ && basis_ == basis::symbolic && ascii_iequals(name, "size")) {
+            // `size` INSIDE calc-size(): the basis, a <length> with no
+            // magnitude until layout (CSS Values 5 §calc-size).
+            out.set_type(numeric_type::length);
+            add_symbol(out, "size", 1.0);
         } else {
             return fail();
         }
@@ -1173,6 +1178,7 @@ private:
     const token_stream & t_;
     const length_context & ctx_;
     basis basis_ = basis::against_context;
+    bool size_symbol_ = false; // `size` is a term: the calculation of a calc-size()
     math_outcome outcome_ = math_outcome::invalid;
     std::size_t at_ = 0;
     bool ok_ = true;
@@ -1236,10 +1242,11 @@ namespace detail {
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,
 // because a sum of units that could not be added has no single magnitude.
-[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression) {
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
+                                                              bool size_symbol) {
     const token_stream tokens = tokenize(expression);
     const length_context none; // deliberately unused: nothing is measured here
-    evaluator run{tokens, none, basis::symbolic};
+    evaluator run{tokens, none, basis::symbolic, size_symbol};
     return run.run_symbolic();
 }
 

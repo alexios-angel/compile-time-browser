@@ -192,6 +192,17 @@ enum class math_context : std::uint8_t {
 // cannot be settled without a basis, such as `min(10px, 5%)`.
 [[nodiscard]] std::optional<calc_result> math_type_of(std::string_view expression);
 
+// calc-size( <calc-size-basis>, <calc-sum> ), CSS Values 5 §calc-size, AS A
+// SPECIFIED VALUE: the basis canonical - a keyword, a nested calc-size() or a
+// <length-percentage> - and the calculation simplified with `size` as a term
+// of its own, so `size * 2` is `2 * size`. `keywords` are the property's own
+// size keywords (`auto` for width, `none` for max-width); the intrinsic ones
+// and `any` are always a basis, and `size` may not be used over `any`.
+// `nullopt` when `value` is not one valid calc-size() and nothing else
+// (calc-size-parsing).
+[[nodiscard]] std::optional<std::string> calc_size_text(std::string_view value,
+                                                        std::string_view keywords);
+
 // A folded value, and whether every calc() in it actually evaluated.
 //
 // The flag is not a nicety. `margin-top: calc(-1 * var(--bs-gutter-y))` with a
