@@ -164,7 +164,17 @@ bool checker::has_use_strict_directive(std::int32_t body) const {
     return false;
 }
 
+void checker::check_contextual_name(std::string_view name, std::int32_t node) {
+    if (frames_.empty()) { return; }
+    if (name == "await" && frames_.back().is_async) {
+        report("`await` is not an identifier in an async function", node);
+    } else if (name == "yield" && frames_.back().is_generator) {
+        report("`yield` is not an identifier in a generator", node);
+    }
+}
+
 void checker::check_strict_binding(std::string_view name, std::int32_t node) {
+    check_contextual_name(name, node);
     if (!strict()) { return; }
     if (name == "eval" || name == "arguments") {
         report(quoted(name) + " may not be bound or assigned in strict mode code", node);
@@ -180,7 +190,6 @@ void checker::check_strict_binding(std::string_view name, std::int32_t node) {
 }
 
 void checker::check_strict_bindings(const std::vector<binding> & names) {
-    if (!strict()) { return; }
     for (const binding & b : names) { check_strict_binding(b.name, b.node); }
 }
 

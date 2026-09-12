@@ -63,7 +63,9 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         }
     }
 
-    frames_.push_back(frame{what, {}, {}, 0, 0, super_call_ok, strict_body});
+    const std::int32_t bits = n.c > 0 ? n.c : 0; // see check_class: -1 is neither
+    frames_.push_back(
+        frame{what, {}, {}, 0, 0, super_call_ok, strict_body, (bits & 1) != 0, (bits & 2) != 0});
     check_strict_bindings(names);
     if (strict_body && n.kind == nk::func_expr) { check_strict_binding(n.text, idx); }
     for (const std::int32_t p : params) {
@@ -85,6 +87,21 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
 
 void checker::check_class(std::int32_t idx) {
     const vp::node & n = at(idx);
+    // ClassHeritage is `extends LeftHandSideExpression` (15.7): an arrow, an
+    // assignment, a conditional or an operator there is not in the grammar,
+    // whatever the parser let through.
+    switch (at(n.a).kind) {
+    case nk::arrow:
+    case nk::assign:
+    case nk::ternary:
+    case nk::binary:
+    case nk::logical:
+    case nk::unary:
+    case nk::update:
+    case nk::seq:
+    case nk::yield_expr: report("`extends` takes a left-hand-side expression", n.a); break;
+    default: break;
+    }
     walk_expression(n.a); // `extends <expr>`
     const bool derived = n.a >= 0;
     // 15.7.1: all parts of a class are strict mode code.
@@ -114,16 +131,17 @@ void checker::check_class(std::int32_t idx) {
 
         // 15.7.1. A class body may define at most one constructor, and
         // "constructor" may not be a getter, a setter, a generator, an
-        // async method or a field.
+        // async method or a field - a static field included.
         if (!computed && !is_static && member.text == "constructor") {
             if (is_method && !is_generator && !is_async) {
                 ++constructors;
                 if (constructors > 1) { report("a class may define only one `constructor`", m); }
             } else if (is_accessor || is_generator || is_async) {
                 report("`constructor` may not be an accessor, a generator or async", m);
-            } else if (is_field) {
-                report("a class field may not be named `constructor`", m);
             }
+        }
+        if (!computed && is_field && member.text == "constructor") {
+            report("a class field may not be named `constructor`", m);
         }
         // 15.7.1: a static member may not be named `prototype`.
         if (!computed && is_static && member.text == "prototype") {

@@ -300,6 +300,30 @@ int main() {
     accepted("class C { #x = 1; m() { return this.#x; } } new C().m();");
 
     // ================================================================
+    // 9. MORE OF 15.7.1, AND THE CONTEXTUAL NAMES - 15.5.1, 15.8.1
+    // ================================================================
+    // A field initialiser may not mention `arguments`, through an arrow but
+    // not through a function; no field may be named `constructor`, static or
+    // not; `extends` takes a left-hand-side expression; `await` is not a name
+    // in an async function and `yield` is not one in a generator.
+    refused("class C { x = arguments; }");
+    refused("class C { x = () => arguments; }");
+    refused("class C { static #x = arguments.length; }");
+    accepted("class C { x = function () { return arguments; }; }");
+    refused("class C { static 'constructor' = 1; }");
+    refused("class C { constructor = 1; }");
+    refused("class C extends () => {} {}");
+    refused("class C extends a = b {}");
+    accepted("var b = class {}; var a = class extends b {}; var c = class extends (b) {};");
+    refused("class C { async m() { var await; } }");
+    refused("class C { async m(await) {} }");
+    refused("class C { *g() { var yield; } }");
+    refused("async function f() { var await; }");
+    refused("function* g() { var yield; }");
+    accepted("function f() { var yield = 1; return yield; } f();");
+    accepted("async function f() { var g = () => 1; return g(); }");
+
+    // ================================================================
     // 9. TWO `__proto__` IN ONE OBJECT LITERAL - B.3.1
     // ================================================================
     refused("var o = { __proto__: null, __proto__: null };");

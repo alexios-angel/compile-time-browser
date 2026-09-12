@@ -108,6 +108,12 @@ struct frame {
     // identifiers, a duplicate in a simple parameter list, `with`, `delete`
     // of a plain name, a legacy octal literal.
     bool strict = false;
+    // 15.8.1 / 15.5.1: inside an async function `await` is not an
+    // identifier, inside a generator `yield` is not - as a binding or a
+    // reference, strict or not. An arrow is its own frame here and only an
+    // async arrow says async: a plain arrow's body is FunctionBody[~Await].
+    bool is_async = false;
+    bool is_generator = false;
 };
 
 class checker {
@@ -191,6 +197,8 @@ private:
     // be `eval` or `arguments`, and `yield`, `let`, `static`, `implements`,
     // `interface`, `package`, `private`, `protected`, `public` are reserved.
     void check_strict_binding(std::string_view name, std::int32_t node);
+    // The two rules above, for a binding or a reference named `await`/`yield`.
+    void check_contextual_name(std::string_view name, std::int32_t node);
     void check_strict_bindings(const std::vector<binding> & names);
     void lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
                        std::vector<binding> & out) const;

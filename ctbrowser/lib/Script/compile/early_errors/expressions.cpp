@@ -409,6 +409,14 @@ void checker::walk_expression(std::int32_t idx) {
     case nk::ident:
         if (strict() && n.text != "eval" && n.text != "arguments") {
             check_strict_binding(n.text, idx);
+        } else {
+            check_contextual_name(n.text, idx);
+        }
+        // 15.7.1: a field initialiser may not ContainsArguments - through
+        // an arrow, which has no `arguments` of its own, but not through a
+        // function, which does.
+        if (n.text == "arguments" && enclosing_non_arrow() == frame_kind::field_init) {
+            report("`arguments` in a class field initialiser", idx);
         }
         return;
 
