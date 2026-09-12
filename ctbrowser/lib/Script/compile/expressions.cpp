@@ -210,6 +210,13 @@ void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
 }
 
 void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
+    if (tdz_frame_ == frames_.size() - 1 &&
+        std::find(tdz_names_.begin(), tdz_names_.end(), n.text) != tdz_names_.end()) {
+        emit_throw("ReferenceError",
+                   "Cannot access '" + std::string{n.text} + "' before initialization");
+        proto().emit(instruction{op::load_undef, dst});
+        return;
+    }
     if (const local * l = find_local_entry(fn(), n.text)) {
         if (l->boxed) {
             proto().emit(instruction{op::cell_get, dst, l->reg});

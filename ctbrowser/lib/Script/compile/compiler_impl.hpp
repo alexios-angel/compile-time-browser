@@ -526,6 +526,17 @@ public:
     //      every default permanently widens the frame.
     void compile_parameter_prologue(std::span<const std::int32_t> params,
                                     const std::function<bool(std::uint16_t)> & is_boxed);
+    // THE PARAMETERS STILL UNINITIALISED WHILE A DEFAULT RUNS (10.2.11 step
+    // 21-28: each parameter's binding is initialised in order, and a default
+    // reading a later one - or its own - is the ReferenceError of an
+    // uninitialised binding). Set around one default's compilation, for the
+    // frame it belongs to: `function f(x = y, y)` reads y in this frame and
+    // throws; `function f(x = () => y, y)` reads it from another frame, later,
+    // and does not. compile_ident asks.
+    std::vector<std::string> tdz_names_;
+    std::size_t tdz_frame_ = static_cast<std::size_t>(-1);
+    // `throw new <kind>(message)`, through the global constructor.
+    void emit_throw(std::string_view kind, std::string message);
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
