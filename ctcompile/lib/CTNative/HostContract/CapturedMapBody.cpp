@@ -274,9 +274,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
-        while (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
-            if (!step()) { return false; }
-            condition = truthy.getValue();
+        while (true) {
+            if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+                if (!step()) { return false; }
+                condition = truthy.getValue();
+            } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
+                       unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                if (!step()) { return false; }
+                branch = !branch;
+                condition = unary.getOperand();
+            } else {
+                break;
+            }
         }
         if (auto found = alternatives.find(condition); found != alternatives.end()) {
             found->second = found->second.filtered(branch);

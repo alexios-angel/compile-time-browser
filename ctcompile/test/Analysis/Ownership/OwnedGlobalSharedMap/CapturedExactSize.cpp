@@ -337,6 +337,138 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
             "a negative frame register count cannot acquire an ownership proof");
     check(rows == 44, "all exact-size and original-frame lifecycle controls ran");
 
+    const std::string maybeSeed = "    %seedFlag = ctjs.truthy %choice\n"
+                                  "    scf.if %seedFlag {\n" +
+                                  seed + "      scf.yield\n    }\n";
+    const std::string observe = "    %hasKey = ctjs.constant #ctjs.string<\"has\">\n"
+                                "    %hasMethod = ctjs.get_property %state[%hasKey]\n"
+                                "    %observed = ctjs.call %hasMethod(%state, %one)\n";
+    const std::string negate = "    %inverted = ctjs.unary not %observed\n"
+                               "    %guard = ctjs.truthy %inverted\n";
+    const std::string leafRead = "      %loaded = ctjs.call %reader(%state, %one)\n"
+                                 "      %answer = ctjs.get_property %loaded[%fieldKey]\n";
+    const std::string scalarYield = "      scf.yield %one : !ctjs.value\n";
+    const std::string readYield = leafRead + "      scf.yield %answer : !ctjs.value\n";
+    const auto selection = [&](bool readOnTrue) {
+        return "    %selected = scf.if %guard -> (!ctjs.value) {\n" +
+               (readOnTrue ? readYield : scalarYield) + "    } else {\n" +
+               (readOnTrue ? scalarYield : readYield) +
+               "    }\n"
+               "    ctjs.return %selected\n  }\n}\n";
+    };
+    const auto inverted = replaced(fixture, clear + seed + size + read,
+                                   clear + maybeSeed + observe + negate + selection(false));
+    variant(inverted, true, "the false arm of not-has restores only the observed key's presence");
+    variant(replaced(inverted, negate, "    %guard = ctjs.truthy %observed\n"), false,
+            "a false has arm cannot inherit the sibling's positive membership");
+    const auto direct = replaced(replaced(inverted, negate, "    %guard = ctjs.truthy %observed\n"),
+                                 selection(false), selection(true));
+    variant(direct, true, "the positive has arm retains its existing membership proof");
+    variant(replaced(direct, "    %guard = ctjs.truthy %observed\n",
+                     "    %firstNot = ctjs.unary not %observed\n"
+                     "    %secondNot = ctjs.unary not %firstNot\n"
+                     "    %guard = ctjs.truthy %secondNot\n"),
+            true, "two nested not operations restore positive guard polarity");
+    variant(replaced(inverted, negate,
+                     "    %firstNot = ctjs.unary not %observed\n"
+                     "    %secondNot = ctjs.unary not %firstNot\n"
+                     "    %thirdNot = ctjs.unary not %secondNot\n"
+                     "    %guard = ctjs.truthy %thirdNot\n"),
+            true, "three nested not operations retain inverse guard polarity");
+    variant(replaced(inverted, "%hasMethod(%state, %one)", "%hasMethod(%state, %two)"), false,
+            "an inverted guard for another key cannot authorize the object read");
+    variant(replaced(inverted, negate, "    %lateClear = ctjs.call %clearer(%state)\n" + negate),
+            false, "an inverted saved has cannot survive a later clear");
+    variant(
+        replaced(inverted, leafRead, "      %lateClear = ctjs.call %clearer(%state)\n" + leafRead),
+        false, "a mutation in the proved arm revokes its acquired membership");
+
+    // CFG-to-SCF places Data's remaining effects in the opposite arm of
+    // if (!has) return. Both structural paths retain one common frame exit.
+    const std::string continuation = "    scf.if %guard {\n"
+                                     "      scf.yield\n    } else {\n" +
+                                     leafRead + "      scf.yield\n    }\n" + exit +
+                                     "    ctjs.return %one\n  }\n}\n";
+    const auto continued =
+        enterFrame(replaced(inverted, selection(false), continuation), "put$4", "frame");
+    variant(continued, true, "an inverted early-return guard proves its structural continuation");
+    variant(replaced(continued, negate, "    %guard = ctjs.truthy %observed\n"), false,
+            "the opposite structural continuation cannot borrow a returned arm's membership");
+    variant(replaced(continued, "    scf.if %guard {\n",
+                     "    scf.if %guard {\n      ctjs.frame_exit %frame\n"),
+            false, "a frame exit in only one arm cannot authorize the common continuation");
+
+    const std::string selectedKey = "    %keyFlag = ctjs.truthy %choice\n"
+                                    "    %selectedKey = scf.if %keyFlag -> (!ctjs.value) {\n"
+                                    "      scf.yield %stringOne : !ctjs.value\n"
+                                    "    } else {\n      scf.yield %false : !ctjs.value\n    }\n"
+                                    "    %inverted = ctjs.unary not %selectedKey\n"
+                                    "    %guard = ctjs.truthy %inverted\n";
+    const std::string filteredRead =
+        "      %otherKey = ctjs.call %setter(%state, %selectedKey, %one)\n" +
+        replaced(readYield, "%state, %one", "%state, %stringOne");
+    const std::string filteredBody = "    %selected = scf.if %guard -> (!ctjs.value) {\n" +
+                                     filteredRead + "    } else {\n" + scalarYield +
+                                     "    }\n    ctjs.return %selected\n  }\n}\n";
+    const auto filtered =
+        replaced(fixture, clear + seed + size + read,
+                 clear + replaced(seed, "%one", "%stringOne") + selectedKey + filteredBody);
+    variant(filtered, true,
+            "an inverted scalar guard distinguishes the falsy Boolean key from a String key");
+    variant(
+        replaced(filtered, "%guard = ctjs.truthy %inverted", "%guard = ctjs.truthy %selectedKey"),
+        false, "the truthy String key may overwrite the independently retained object");
+    check(rows == 57, "all polarity, structural continuation and scalar filtering controls ran");
+
+    for (const auto & [text, label] :
+         {std::pair{inverted, "inverted"}, {continued, "continued"}, {filtered, "filtered"}}) {
+        auto guarded = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(guarded), "source/prepared guard budget fixture parses");
+        if (!guarded) { continue; }
+        const auto contract = requested(*guarded);
+        OwnedGlobalRoots complete(*guarded, contract);
+        const unsigned completion = complete.steps();
+        check(complete.proved() && completion < 20000,
+              "guard ownership has a complete bounded proof");
+        if (!complete.proved() || completion >= 20000) { continue; }
+        for (unsigned budget = 0; budget < completion; ++budget) {
+            OwnedGlobalRoots limited(*guarded, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*guarded, limited),
+                  "every incomplete guard budget withholds all ownership records");
+        }
+        OwnedGlobalRoots exact(*guarded, contract, completion);
+        check(exact.proved() && exact.steps() == completion,
+              "the exact guard budget reproduces its complete current proof");
+        auto function = guarded->lookupSymbol<ctjs::FuncOp>("put$4");
+        ctjs::UnaryOp negation;
+        ctjs::ConstantOp wrong;
+        function.walk([&](ctjs::UnaryOp op) { negation = op; });
+        function.walk([&](ctjs::ConstantOp op) {
+            if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(op.getValue());
+                boolean && !boolean.getValue()) {
+                wrong = op;
+            }
+        });
+        check(negation && wrong, "guard mutation retains its source negation and unrelated false");
+        if (!negation || !wrong) { continue; }
+        const auto operand = negation.getOperand();
+        negation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
+        negation->setOperand(0, wrong.getResult());
+        OwnedGlobalRoots stale(*guarded, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*guarded, stale),
+              "a changed guard operand invalidates the original source fingerprint");
+        OwnedGlobalRoots fresh(*guarded, requested(*guarded));
+        check(!fresh.proved() && !fresh.exhausted() && empty(*guarded, fresh),
+              "a fresh fingerprint and forged membership report cannot replace the live guard");
+        negation->setOperand(0, operand);
+        negation->removeAttr("ctnative.map_present");
+        check(OwnedGlobalRoots(*guarded, contract).proved(),
+              "restoring the original guard restores its independent ownership proof");
+        std::printf("guard owner %s %s: all %u incomplete budgets and live mutation checked\n",
+                    prepared ? "prepared" : "source", label, completion);
+    }
+
     auto foreign = enterFrame(straight, "get$3", "otherFrame");
     foreign = replaced(foreign, "    ctjs.return %size",
                        "    ctjs.frame_exit %otherFrame\n    ctjs.return %size");
