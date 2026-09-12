@@ -432,19 +432,42 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
 bool engine::element_matches(const read_txn & txn, node_id node,
                              std::span<const compiled_selector> list, node_id scope) {
     if (list.empty()) { return false; }
-    if (txn.kind(node).value_or(node_kind::text) != node_kind::element) { return false; }
+    scope_ = scope ? scope : node;
+    ancestor_filter ancestors;
+    const std::optional<std::size_t> at = cursor_to(txn, node, ancestors);
+    if (!at) { return false; }
+    for (const compiled_selector & sel : list) {
+        if (matches(txn, ancestors, sel, *at)) { return true; }
+    }
+    return false;
+}
+
+computed_style_ptr engine::resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
+                                          const computed_style_ptr & element) {
+    scope_ = node_id{};
+    ancestor_filter ancestors;
+    const std::optional<std::size_t> at = cursor_to(txn, node, ancestors);
+    if (!at) { return {}; }
+    pseudo_wanted_ = pseudo;
+    const element_facts & self = levels_[*at][path_[*at]].facts;
+    computed_style_ptr out = resolve(txn, node, self, ancestors, *at, element);
+    pseudo_wanted_ = atom{};
+    return out;
+}
+
+std::optional<std::size_t> engine::cursor_to(const read_txn & txn, node_id node,
+                                             ancestor_filter & ancestors) {
+    if (txn.kind(node).value_or(node_kind::text) != node_kind::element) { return std::nullopt; }
     // The element chain from the document down to `node`. Only elements occupy a
     // depth, exactly as resolve_subtree has it, or `+` would mean two things.
     std::vector<node_id> chain;
     for (node_id at = node; at; at = txn.parent(at)) {
         if (txn.kind(at).value_or(node_kind::text) == node_kind::element) { chain.push_back(at); }
     }
-    if (chain.empty()) { return false; }
+    if (chain.empty()) { return std::nullopt; }
     std::ranges::reverse(chain);
-    scope_ = scope ? scope : node;
 
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
-    ancestor_filter ancestors;
     for (std::size_t depth = 0; depth < chain.size(); ++depth) {
         if (levels_.size() <= depth) { levels_.resize(depth + 1); }
         if (path_.size() <= depth) { path_.resize(depth + 1); }
@@ -459,7 +482,7 @@ bool engine::element_matches(const read_txn & txn, node_id node,
             // so it is built by hand: one element, index 1 of 1, which is what
             // `:only-child` and `:first-child` correctly answer for a node that
             // is in no tree at all.
-            if (depth != 0) { return false; } // chain[depth-1] is always a real element
+            if (depth != 0) { return std::nullopt; } // chain[depth-1] is always an element
             levels_[depth].clear();
             totals_[depth] = level_totals{};
             element_facts facts = facts_of(txn, chain[0]);
@@ -489,7 +512,7 @@ bool engine::element_matches(const read_txn & txn, node_id node,
             levels_[depth].push_back(visited_element{child, std::move(facts)});
             if (child == chain[depth]) { break; }
         }
-        if (levels_[depth].empty()) { return false; } // the chain left the tree
+        if (levels_[depth].empty()) { return std::nullopt; } // the chain left the tree
         path_[depth] = levels_[depth].size() - 1;
         // The filter holds the SUBJECT's ancestors and not the subject itself.
         if (depth + 1 < chain.size()) {
@@ -497,11 +520,7 @@ bool engine::element_matches(const read_txn & txn, node_id node,
             ancestors.push(mine.tag, mine.id, mine.classes);
         }
     }
-    const std::size_t at = chain.size() - 1;
-    for (const compiled_selector & sel : list) {
-        if (matches(txn, ancestors, sel, at)) { return true; }
-    }
-    return false;
+    return chain.size() - 1;
 }
 
 const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_id id) {

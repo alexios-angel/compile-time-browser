@@ -49,36 +49,67 @@ struct computed_cache {
 // it does not parse, or names a pseudo-element the engine has no styles for - an
 // EMPTY CSSStyleDeclaration.
 //
-// THIS ENGINE HAS NO PSEUDO-ELEMENT STYLING AT ALL. `style/selector.hpp` models
-// pseudo-CLASSES and nothing else, so `::before` matches no rule, generates no
-// box and has no style to report. That makes the second answer the right one for
-// every colon-prefixed argument, and it is a very different answer from the one
-// this used to give: ignoring the argument reported the ORIGINATING ELEMENT's
-// style as the pseudo-element's, so `getComputedStyle(div, "::before").width`
-// came back as the div's `100px` where every engine says `""`. CSSOM is explicit
-// that a pseudo-element that does not exist reports an empty declaration -
-// `length === 0`, every property the empty string - and that is what
-// getComputedStyle-pseudo's "Unknown pseudo-elements",
-// -pseudo-with-argument's seventeen "should not parse" cases and -pseudo-picker's
-// six "invalid pseudo-element" cases all assert.
-//
-// It costs one subtest to say it this bluntly: `::picker(select)` is a real
-// pseudo-element that Chrome resolves, and we answer empty for it too. That is
-// the honest report of an engine that does not implement it, and the moment a
-// pseudo-element grows a cascade this becomes a lookup rather than a `true`.
+// `::before` AND `::after` HAVE A CASCADE - engine::resolve_pseudo runs it on
+// demand, and `resolvable_pseudo` below says which arguments name one. Every
+// OTHER colon-prefixed argument gets the empty declaration: `::marker`,
+// `::picker(select)` and the rest generate no box and have no style here, and
+// CSSOM is explicit that a pseudo-element that does not exist reports an empty
+// declaration - `length === 0`, every property the empty string - which is what
+// getComputedStyle-pseudo's "Unknown pseudo-elements", -pseudo-with-argument's
+// seventeen "should not parse" cases and -pseudo-picker's six "invalid
+// pseudo-element" cases all assert. Ignoring the argument instead reported the
+// ORIGINATING ELEMENT's style as the pseudo-element's.
 [[nodiscard]] bool names_a_pseudo_element(context & c, value given) {
     if (given.is_nullish()) { return false; }
     const std::string text = c.to_string(given);
     return !text.empty() && text.front() == ':';
 }
 
+// THE TWO PSEUDO-ELEMENTS THIS ENGINE RESOLVES, `before` and `after`, from a
+// second argument that parses as a <pseudo-element-selector> naming one: one
+// or two colons, then exactly one identifier - escapes decoded, case folded -
+// and nothing after it. `::before ` and `::before,` are not selectors
+// (getComputedStyle-pseudo); anything else colon-prefixed is empty.
+[[nodiscard]] std::string resolvable_pseudo(std::string_view text) {
+    if (text.size() < 2 || text.front() != ':') { return {}; }
+    text.remove_prefix(text[1] == ':' ? 2 : 1);
+    const style::css::token_stream ts = style::css::tokenize(text);
+    if (ts.tokens.size() != 2 || ts.tokens.front().type != style::css::token_type::ident) {
+        return {};
+    }
+    const std::string name = ascii_lower_copy(ts.text_of(ts.tokens.front()));
+    return name == "before" || name == "after" ? name : std::string{};
+}
+
 } // namespace
 
 value dom_bindings::computed_style_object(context & cx, node_id id) {
+    return computed_style_object(cx, id, atom{});
+}
+
+value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo) {
     auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
 
+    // THE ENTRIES, NOW: the element's, or its pseudo-element's - resolved on
+    // demand through the engine against the element's own resolved style, so a
+    // `::before` reads the sheet as it stands and inherits what the element has.
+    const auto entries_now = [this, id, pseudo]() {
+        if (!pseudo) { return computed_style_entries(id); }
+        std::vector<std::pair<std::string, std::string>> none;
+        if (selector_engine_ == nullptr || styles_ == nullptr) { return none; }
+        style::computed_style_ptr own;
+        if (const auto found = styles_->find(style::engine::key_of(id));
+            found != styles_->end() && found->second) {
+            own = found->second;
+        }
+        const auto txn = doc_->read();
+        const style::computed_style_ptr made =
+            selector_engine_->resolve_pseudo(txn, id, pseudo, own);
+        if (!made) { return none; }
+        return computed_style_entries(id, made);
+    };
     const auto cached = std::make_shared<computed_cache>();
-    cached->entries = computed_style_entries(id);
+    cached->entries = entries_now();
     cached->stamp = doc_->version();
     cached->styles = style_stamp();
     cached->animations = animation_stamp();
@@ -108,7 +139,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // It is a stand-in for the shared flush hook on dom_bindings that
     // getBoundingClientRect, offsetWidth and clientHeight all want too, and it
     // is written to be deleted the moment that exists.
-    const auto refresh = [this, id, cached](context & c) {
+    const auto refresh = [this, cached, entries_now](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == cached->stamp && style_stamp() == cached->styles &&
             animation_stamp() == cached->animations) {
@@ -118,7 +149,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         if (flush.is_kind(script::heap_kind::native)) {
             (void)c.call(flush, std::span<const value>{});
         }
-        cached->entries = computed_style_entries(id);
+        cached->entries = entries_now();
         cached->stamp = doc_->version();
         cached->styles = style_stamp();
         cached->animations = animation_stamp();
@@ -283,7 +314,9 @@ void dom_bindings::install_computed_style(context & cx) {
         // object: every property reads back the empty string, `length` is zero,
         // and every write still throws NoModificationAllowedError.
         if (args.size() > 1 && names_a_pseudo_element(c, args[1])) {
-            return computed_style_object(c, node_id{});
+            const std::string pseudo = resolvable_pseudo(c.to_string(args[1]));
+            if (pseudo.empty()) { return computed_style_object(c, node_id{}); }
+            return computed_style_object(c, id, atoms_->intern(pseudo));
         }
         return computed_style_object(c, id);
     });

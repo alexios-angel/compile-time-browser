@@ -291,7 +291,9 @@ void test_a_cssom_edit_survives_a_dom_change() {
 void test_a_pseudo_element_argument_is_not_the_element() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>#t { color: rgb(255, 0, 0); width: 100px }
-    </style></head><body><div id=t></div><script>
+    #t::before { content: "x"; width: 50%; display: block }
+    #f { display: flex } #n { display: none } #n::after { content: "Foo" }
+    </style></head><body><div id=t></div><div id=f></div><div id=n></div><script>
         const el = document.getElementById('t');
         const own = getComputedStyle(el);
         // No colon: the argument is ignored and the ELEMENT answers.
@@ -302,7 +304,14 @@ void test_a_pseudo_element_argument_is_not_the_element() {
         const broken = getComputedStyle(el, '::before,::after');
         console.log('own=' + own.color + '|' + (own.length > 0));
         console.log('ignored=' + ignored.color + '|' + (ignored.length > 0));
-        console.log('before=' + before.length + '|' + before.color + '|' + before.width);
+        // The ::before: its own width against the element, the colour inherited.
+        console.log('before=' + (before.length > 0) + '|' + before.color + '|' + before.width +
+                    '|' + before.content + '|' + getComputedStyle(el, ':bef\\oRE').width);
+        // No ::after was declared: initial values, blockified in a flex container.
+        const after = getComputedStyle(el, '::after');
+        console.log('after=' + after.width + '|' + after.position + '|' + after.display + '|' +
+                    getComputedStyle(document.getElementById('f'), '::after').display + '|' +
+                    getComputedStyle(document.getElementById('n'), '::after').content);
         console.log('legacy=' + legacy.length + '|' + broken.length);
         // ...and null, undefined and the empty string are not pseudo-elements.
         console.log('absent=' + getComputedStyle(el, null).color + '|' +
@@ -317,9 +326,10 @@ void test_a_pseudo_element_argument_is_not_the_element() {
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "own="), std::string{"own=rgb(255, 0, 0)|true"});
     CHECK_EQ(logged(page, "ignored="), std::string{"ignored=rgb(255, 0, 0)|true"});
+    CHECK_EQ(logged(page, "before="), std::string{"before=true|rgb(255, 0, 0)|50px|\"x\"|50px"});
+    CHECK_EQ(logged(page, "after="), std::string{"after=auto|static|inline|block|\"Foo\""});
     // Empty - and empty means the EMPTY STRING for every property, not the
     // `undefined` a missing accessor would give.
-    CHECK_EQ(logged(page, "before="), std::string{"before=0||"});
     CHECK_EQ(logged(page, "legacy="), std::string{"legacy=0|0"});
     CHECK_EQ(logged(page, "absent="),
              std::string{"absent=rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)"});

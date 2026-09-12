@@ -154,6 +154,9 @@ struct probe {
     rect containing{};          // the padding box of the nearest positioned ancestor
     std::vector<node_id> chain; // self first, then ancestors
     bool is_root = false;       // the document element itself
+    // A PSEUDO-ELEMENT: `chain.front()` is the originating element, whose box
+    // and fragment stand in for the parent's, and `declared` reads this style.
+    style::computed_style_ptr pseudo;
 };
 
 } // namespace
@@ -166,9 +169,15 @@ struct probe {
 // The order is the object's: the leading run is exactly the set CSSOM's indexed
 // properties enumerate, and it is already sorted.
 std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(node_id id) {
+    return computed_style_entries(id, {});
+}
+
+std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(
+    node_id id, const style::computed_style_ptr & pseudo) {
     std::vector<std::pair<std::string, std::string>> answers;
 
     probe at;
+    at.pseudo = pseudo;
     at.box = box_for(boxes_, id);
     at.frag = fragment_for(fragments_, id);
     at.font_size = at.box != nullptr ? at.box->font_size : 16.0f;
@@ -191,6 +200,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         connected = !at.chain.empty() && at.chain.back() == txn.root();
         at.is_root = id == txn.root();
+        // A pseudo-element's parent is its originating element, so the element
+        // takes the parent's place in the chain and the pseudo has no box.
+        if (pseudo) {
+            at.chain.insert(at.chain.begin(), id);
+            at.is_root = false;
+            at.box = nullptr;
+            at.frag = nullptr;
+        }
         // The containing-block width a percentage resolves against: the parent's
         // CONTENT width, or the viewport at the root. That is the parent's
         // fragment less its padding, which is what content_width_of computes
@@ -290,9 +307,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         animated_values(id, at.font_size, [&](std::string_view property) {
             return declared_on(at.chain.front(), property);
         });
-    const auto declared = [declared_on, at,
+    const auto declared = [declared_on, at, atoms,
                            &animated](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
+        if (at.pseudo) { return at.pseudo->get(atoms->intern(property)); }
         for (const auto & [name, text] : animated) {
             if (std::string_view{name} == property) { return text; }
         }
@@ -322,6 +340,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // THE PRINCIPAL BOX, and the two ways there is not one.
     const std::string declared_display = collapse_keyword(declared("display"));
     at.has_box = at.box != nullptr && declared_display != "none" && declared_display != "contents";
+    // A PSEUDO-ELEMENT GENERATES A BOX when its `content` says so (CSS Pseudo 4
+    // §5.1): then a percentage width resolves against the element, as a box
+    // of its own would; without one it answers computed values.
+    if (at.pseudo) {
+        const std::string content = collapse_keyword(declared("content"));
+        at.has_box = !content.empty() && content != "none" && content != "normal" &&
+                     declared_display != "none" && declared_display != "contents";
+    }
     at.inline_non_replaced = at.box != nullptr && at.box->kind == layout::box_kind::inline_;
 
     // A LENGTH AS A COMPUTED VALUE - CSS Values 3 §5.2 and CSSOM's "otherwise,
@@ -484,6 +510,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    min/max is NOT clamped, because clamping is something the used value
         //    goes through and there is no used value here.
         if (property == "width" || property == "height") {
+            if (at.pseudo && at.has_box) {
+                const layout::length len = layout::parse_length(declared(property));
+                if (len.is_auto()) { return "auto"; }
+                return used_px_text(
+                    len.resolve(property == "width" ? at.basis : at.basis_height, at.font_size));
+            }
             if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) {
                 return computed_length(declared(property));
             }
@@ -548,6 +580,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     `display` agrees with Chrome and the missing flex algorithm shows up
         //     where it actually bites - in the geometry.
         if (property == "display" && text.empty()) {
+            // A pseudo-element's initial display is `inline`, blockified as a
+            // flex or grid item is (CSS Display 3 §2.7).
+            if (at.pseudo) { return at.flex_item || at.grid_item ? "block" : "inline"; }
             if (at.box == nullptr) { return "none"; } // display:none generates no box
             switch (at.box->kind) {
             case layout::box_kind::block:

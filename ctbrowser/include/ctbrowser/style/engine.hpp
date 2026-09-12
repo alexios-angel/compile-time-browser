@@ -746,7 +746,9 @@ public:
         // which is why this is spliced into the fold at the importance
         // boundary rather than simply appended at the end - `!important` in a
         // stylesheet has to be able to beat a style attribute.
-        const inline_block & own = inline_style_of(txn, node);
+        // ...AND NOT FOR A PSEUDO-ELEMENT, which has no style attribute.
+        static const inline_block no_inline;
+        const inline_block & own = pseudo_wanted_ ? no_inline : inline_style_of(txn, node);
 
         // TWO PASSES, and the reason is that custom properties are themselves
         // cascaded: substitution cannot run inside the fold that produces the values
@@ -1396,6 +1398,15 @@ public:
 
     [[nodiscard]] style_map resolve_all(const read_txn & txn);
 
+    // A PSEUDO-ELEMENT'S STYLE - `::before` or `::after` of `node` - resolved
+    // on demand: the rules whose subject compound names `pseudo`, matched
+    // against the element, cascaded as the element's own are, inheriting from
+    // `element` (the element's resolved style). No box is made for it; this is
+    // what getComputedStyle(el, "::before") reads. Empty when `node` is not an
+    // element in a tree.
+    [[nodiscard]] computed_style_ptr resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
+                                                    const computed_style_ptr & element);
+
     // --- selector matching, for `querySelector` -------------------------------
     //
     // EVERY ELEMENT MATCHING ONE OF `list`, in document order. The same traversal
@@ -1780,6 +1791,8 @@ private:
     // compound is checked first and fails immediately for most candidates.
     [[nodiscard]] bool matches(const read_txn & txn, const ancestor_filter & ancestors,
                                const compiled_selector & sel, std::size_t depth) const {
+        // The subject's pseudo-element, if any, has to be the one being resolved.
+        if (sel.parts.front().pseudo_element != pseudo_wanted_) { return false; }
         return matches_from(txn, ancestors, sel, depth, path_[depth]);
     }
 
@@ -1892,6 +1905,16 @@ private:
     // a whole-document query, or the cascade - and `:scope` is then `:root`. A
     // root that is not an element (a fragment) is a scope no element can equal.
     node_id scope_{};
+    // THE PSEUDO-ELEMENT BEING RESOLVED, or none: a selector's subject compound
+    // must name exactly this one - `#t::before` matches nothing in the ordinary
+    // cascade and only `#t::before` matches while resolve_pseudo runs.
+    atom pseudo_wanted_{};
+    // THE CURSOR FOR ONE ELEMENT: its chain from the root, the earlier siblings
+    // at every step, and the ancestor filter - what element_matches and
+    // resolve_pseudo both need before they can run the matcher. Answers the
+    // subject's depth, or nullopt for a node that is not an element in a tree.
+    [[nodiscard]] std::optional<std::size_t> cursor_to(const read_txn & txn, node_id node,
+                                                       ancestor_filter & ancestors);
     // THE `:has()` WALKER: a second engine, made on first use, that runs the
     // scoped query a `:has()` argument is. A nested query cannot share this
     // engine's traversal state - `levels_` and `path_` ARE the outer match's

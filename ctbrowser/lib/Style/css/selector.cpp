@@ -903,7 +903,12 @@ private:
                     }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
-                    dead = true;
+                    // `::before` and `::after` HAVE A CASCADE - engine::resolve_pseudo
+                    // runs it for getComputedStyle(el, "::before") - and the matcher
+                    // keeps them from any element (`pseudo_wanted_`). The rest still
+                    // match nothing.
+                    const std::string lower = ascii_lower_copy(name);
+                    if (lower != "before" && lower != "after") { dead = true; }
                     continue;
                 }
                 if (const std::uint32_t bit = state_bit_of(name); bit != 0) {
