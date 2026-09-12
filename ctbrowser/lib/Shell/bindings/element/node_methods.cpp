@@ -544,13 +544,21 @@ void dom_bindings::install_node_methods(context & cx) {
         // COPIED BEFORE REMOVING: children() is a view onto the live child list
         // and each removal republishes it.
         std::vector<node_id> existing;
+        std::vector<node_id> arriving;
         {
             const auto txn = doc_->read();
             for (const node_id child : txn.children(self)) { existing.push_back(child); }
+            if (txn.kind(node).value_or(node_kind::element) == node_kind::document_fragment) {
+                for (const node_id child : txn.children(node)) { arriving.push_back(child); }
+            } else {
+                arriving.push_back(node);
+            }
         }
+        // ONE RECORD, naming every old child and every new one - "replace
+        // all" - which the diff after the fact could not tell from a move.
+        replace_all_ = replace_all_note{self, existing, arriving};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
         (void)insert_node(self, node, node_id{});
-        mutated();
         return value::undefined();
     });
     // --- shadow DOM: the two things an ELEMENT gains --------------------------

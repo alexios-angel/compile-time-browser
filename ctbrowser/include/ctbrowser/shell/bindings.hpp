@@ -1921,6 +1921,17 @@ private:
     dom_bindings & adopt_second_document(context & cx, document & fresh);
     // NamedNodeMap's members, on its prototype - see element/attributes.cpp.
     void install_named_node_map(context & cx);
+    // "REPLACE ALL" (DOM 4.2.3), which the diff cannot see whole: `replaceChildren(x)`
+    // where x was already a child queues ONE record removing every old child
+    // and adding x, and the tree afterwards says only that the others went.
+    // The caller notes it here before the mutated() that follows, and
+    // record_mutations emits exactly this record for the parent instead of a diff.
+    struct replace_all_note {
+        node_id parent;
+        std::vector<node_id> removed;
+        std::vector<node_id> added;
+    };
+    std::optional<replace_all_note> replace_all_;
 };
 
 } // namespace ctbrowser::shell

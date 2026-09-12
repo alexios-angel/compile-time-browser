@@ -373,7 +373,23 @@ void dom_bindings::record_mutations() {
             const node_kind kind = txn.kind(at).value_or(node_kind::element);
 
             // --- childList ------------------------------------------------
-            if (reg.options.child_list) {
+            if (reg.options.child_list && replace_all_ && replace_all_->parent == at) {
+                // "Replace all", as noted by the caller - see replace_all_.
+                if (first_time(reg.observer, pack(at), 1, std::string{})) {
+                    const value record = make_mutation_record(cx, "childList", at);
+                    auto * held = static_cast<script::object_object *>(record.as_heap());
+                    for (const auto & [name, list] :
+                         {std::pair{"removedNodes", &replace_all_->removed},
+                          std::pair{"addedNodes", &replace_all_->added}}) {
+                        const value made = cx.make_array();
+                        auto * items = static_cast<script::array_object *>(made.as_heap());
+                        for (const node_id one : *list) { items->items.push_back(wrap(cx, one)); }
+                        held->set(name, made);
+                    }
+                    queue_mutation_record(reg.observer, record);
+                    anything = true;
+                }
+            } else if (reg.options.child_list) {
                 now_children.clear();
                 for (const node_id child : txn.children(at)) { now_children.push_back(child); }
                 if (now_children != was.children) {
@@ -579,6 +595,7 @@ void dom_bindings::record_mutations() {
         }
     }
 
+    replace_all_.reset();
     take_mutation_snapshot();
     if (anything) {
         queue_mutation_delivery();
