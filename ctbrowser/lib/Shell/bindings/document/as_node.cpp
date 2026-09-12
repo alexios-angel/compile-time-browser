@@ -661,6 +661,38 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
                if (before != fresh) { place(fresh, before); }
                return arg(args, 0);
            });
+    // `moveBefore(node, child)`, DOM 4.2.3 "move" on a Document: an Element
+    // or CharacterData of THIS document only - a fragment, a doctype, a
+    // Document and another document's node are all HierarchyRequestError -
+    // and otherwise the same validity and the same placement as insertBefore,
+    // the node's current place ignored while the rules are checked.
+    method("moveBefore",
+           [this, may_become_a_child, place, reference_child](context & c, std::span<value> args) {
+               if (args.size() < 2) {
+                   c.throw_error("TypeError", "moveBefore needs a node and a reference child");
+                   return value::undefined();
+               }
+               node_id before;
+               if (!reference_child(c, arg(args, 1), before)) { return value::undefined(); }
+               const value given = arg(args, 0);
+               const node_id node = handle_of(given);
+               if (!node && owner_of(given) == nullptr && !is_a_document(given)) {
+                   c.throw_error("TypeError", "moveBefore: the argument is not a Node");
+                   return value::undefined();
+               }
+               const node_kind kind = node ? doc_->read().kind(node).value_or(node_kind::document)
+                                           : node_kind::document;
+               if (kind == node_kind::document || kind == node_kind::document_fragment ||
+                   kind == node_kind::document_type) {
+                   throw_dom_exception(c, "HierarchyRequestError",
+                                       "moveBefore takes an Element or CharacterData of this "
+                                       "document");
+                   return value::undefined();
+               }
+               if (!may_become_a_child(c, given, before, node)) { return value::undefined(); }
+               if (before != node) { place(node, before); }
+               return given;
+           });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
         if (!child) {
