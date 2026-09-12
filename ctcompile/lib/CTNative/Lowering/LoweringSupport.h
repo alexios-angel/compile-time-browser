@@ -111,6 +111,8 @@ std::string cIdentifier(llvm::StringRef symbol);
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
 std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
+// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
+// $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
 bool isUndefinedConstant(mlir::Value value);
 llvm::StringRef constantKeyOf(mlir::Value key);

@@ -8,6 +8,9 @@ struct HostContract;
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// What the rewrite did, for the `report` remark. Pass statistics are compiled
+// out of the LLVM package this builds against, so a counter that is asserted
+// has to be printed.
 struct liftReport {
     unsigned functions = 0;    // ctjs.funcs whose captures became parameters
     unsigned closures = 0;     // ctjs.create_closures that now lower to nothing
