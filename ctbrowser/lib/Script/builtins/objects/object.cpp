@@ -362,14 +362,14 @@ void install_object(context & cx) {
         return c.call(fn, std::span<const value>{}, self);
     });
     method(cx, object_proto, "isPrototypeOf", 1, [](context & c, std::span<value> a) {
+        // 20.1.3.3 step 1: a non-object argument is FALSE before ToObject(this)
+        // gets to refuse a null receiver.
+        const value of = arg_at(a, 0);
+        if (!of.is_object_like()) { return value::boolean(false); }
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.isPrototypeOf")) {
             return value::boolean(false);
         }
-        // 20.1.3.3 step 2: a non-object argument is FALSE, not an error - and
-        // the check is against the argument, so it comes after ToObject(this).
-        const value of = arg_at(a, 0);
-        if (!of.is_object_like()) { return value::boolean(false); }
         value walk = prototype_of(c, of);
         for (int depth = 0; depth < 64 && walk.is_heap(); ++depth) {
             if (self.is_heap() && walk.as_heap() == self.as_heap()) { return value::boolean(true); }

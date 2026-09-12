@@ -149,5 +149,15 @@ int main() {
               "n,false");
     js_expect("Object.fromEntries(5)", "THREW");
 
+    // RegExp.prototype is reachable and links back (22.2.5.1, 22.2.6.2).
+    js_expect("RegExp.prototype.constructor === RegExp", "true");
+    js_expect("/a/ instanceof RegExp", "true");
+    js_expect("Object.getPrototypeOf(/a/) === RegExp.prototype", "true");
+    js_expect("typeof Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').value", "function");
+    js_expect("RegExp.length", "2");
+    // isPrototypeOf checks its argument before its receiver (20.1.3.3 step 1).
+    js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
+    js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
