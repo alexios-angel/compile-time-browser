@@ -64,7 +64,9 @@ namespace {
     if (which == key_filter::symbols) { return out; }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
-        for (std::size_t i = 0; i < arr->length(); ++i) { out.push_back(std::to_string(i)); }
+        for (std::size_t i = 0; i < arr->length(); ++i) {
+            if (!arr->is_hole(static_cast<std::uint32_t>(i))) { out.push_back(std::to_string(i)); }
+        }
         for (const auto & [at, held] : arr->sparse) {
             (void)held;
             out.push_back(std::to_string(at));
@@ -73,7 +75,12 @@ namespace {
         // Then the named own properties - see array_object::named.
         if (arr->named) {
             arr->named->each_own_key([&](const std::string & k) {
-                if (wanted_key(which, k)) { out.push_back(k); }
+                // An accessor ELEMENT's pair also lives here, under its
+                // index; it was reported above.
+                std::uint32_t at = 0;
+                if (wanted_key(which, k) && !object_object::array_index_key(k, at)) {
+                    out.push_back(k);
+                }
             });
         }
         return out;

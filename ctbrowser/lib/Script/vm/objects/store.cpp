@@ -64,18 +64,50 @@ void context::store_index(value target, value key, value v) {
         if (i >= 0) {
             const auto index = static_cast<std::uint64_t>(i);
             if (index < arr->items.size()) {
-                // FROZEN MEANS FROZEN. Silently in sloppy mode - TODO(strict):
-                // this is a TypeError under "use strict", which the engine does
-                // not have (docs/test262.md names the gap).
+                // FROZEN MEANS FROZEN. Silently in sloppy mode - a TypeError
+                // under "use strict", which strict_store_check raises off
+                // store_rejected_.
                 if (!arr->elements_writable) {
                     store_rejected_ = true;
                     return;
                 }
+                // An element with attributes of its own, an accessor element,
+                // or a hole - see array_object::element_attrs.
+                if (!arr->element_attrs.empty()) [[unlikely]] {
+                    const auto at = static_cast<std::uint32_t>(index);
+                    if (const std::uint8_t * e = arr->find_element_attrs(at)) {
+                        if ((*e & array_object::elem_accessor) != 0) {
+                            accessor_entry * entry =
+                                arr->named ? arr->named->find_accessor(std::to_string(at))
+                                           : nullptr;
+                            if (entry != nullptr && entry->setter.is_callable()) {
+                                const value args[1] = {v};
+                                (void)call(entry->setter, args, target);
+                            } else {
+                                store_rejected_ = true;
+                            }
+                            return;
+                        }
+                        if ((*e & array_object::elem_hole) != 0) {
+                            // A hole is not a property: [[Set]] creates one,
+                            // which a non-extensible array refuses.
+                            if (!arr->extensible) {
+                                store_rejected_ = true;
+                                return;
+                            }
+                            arr->set_element_attrs(at, attr_default);
+                        } else if ((*e & attr_writable) == 0) {
+                            store_rejected_ = true;
+                            return;
+                        }
+                    }
+                }
                 arr->items[static_cast<std::size_t>(index)] = v;
                 return;
             }
-            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS.
-            if (!arr->extensible) {
+            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS, and neither does one
+            // whose `length` is not writable (10.4.2.1 step 2.d).
+            if (!arr->extensible || (!arr->length_writable && index >= arr->js_length())) {
                 store_rejected_ = true;
                 return;
             }
@@ -230,6 +262,11 @@ void context::store_property(value target, const std::string & name, value v) {
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
+        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze.
+        if (!arr->length_writable) {
+            store_rejected_ = true;
+            return;
+        }
         // A RangeError, WHICH IT USED TO SWALLOW. 10.4.2.4 step 3 makes any
         // length that is not a uint32 a RangeError, and dropping the write
         // instead was leniency bought at the cost of a test that checks for the

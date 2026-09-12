@@ -53,6 +53,20 @@ namespace {
     return object_object::array_index_key(name, out);
 }
 
+// 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
+// refuses an index at or past it, and the slot is materialised the way
+// store_index would - dense up to array_object::dense_limit, sparse beyond.
+[[nodiscard]] bool array_slot_for_define(array_object & arr, std::uint32_t at, bool exists) {
+    if (exists) { return true; }
+    if (!arr.length_writable && static_cast<std::size_t>(at) >= arr.js_length()) { return false; }
+    if (at < arr.items.size()) { return true; }
+    if (static_cast<std::size_t>(at) + 1 - arr.items.size() > array_object::dense_limit) {
+        return true; // the caller records it sparse
+    }
+    arr.items.resize(static_cast<std::size_t>(at) + 1, value::undefined());
+    return true;
+}
+
 } // namespace
 
 value context::from_property_descriptor(const property_descriptor & from) {
@@ -176,32 +190,48 @@ bool context::own_property(value target, const std::string & name, property_desc
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length") {
             // 10.4.2: { [[Writable]]: true, [[Enumerable]]: false,
-            // [[Configurable]]: false }. Freezing clears the writable bit.
+            // [[Configurable]]: false }. A freeze, or defineProperty with
+            // writable: false, clears the writable bit.
             out = property_descriptor::data(value::number(static_cast<double>(arr->js_length())),
-                                            arr->elements_writable ? attr_writable : attr_none);
+                                            arr->length_writable ? attr_writable : attr_none);
             out.virtual_slot = true;
             return true;
         }
         std::uint32_t at = 0;
         if (index_key(name, at)) {
-            const std::uint8_t a = static_cast<std::uint8_t>(
-                attr_enumerable | (arr->elements_writable ? attr_writable : 0) |
-                (arr->elements_configurable ? attr_configurable : 0));
             if (arr->is_view()) {
                 if (at < arr->length()) {
-                    out = property_descriptor::data(value::number(view_get(*arr, at)), a);
+                    out =
+                        property_descriptor::data(value::number(view_get(*arr, at)), attr_default);
                     out.virtual_slot = true;
                     return true;
                 }
                 return false;
             }
+            // The element's own attributes (array_object::element_attrs),
+            // masked by the integrity bools; a hole is not a property and an
+            // accessor element's pair lives in `named`.
+            const std::uint8_t a = arr->element_attrs_at(at);
+            if ((a & array_object::elem_hole) != 0) { return false; }
+            if ((a & array_object::elem_accessor) != 0 && arr->named) {
+                if (accessor_entry * entry = arr->named->find_accessor(name)) {
+                    out.has_get = out.has_set = true;
+                    out.getter = entry->getter;
+                    out.setter = entry->setter;
+                    out.has_enumerable = out.has_configurable = true;
+                    out.enumerable = (a & attr_enumerable) != 0;
+                    out.configurable = (a & attr_configurable) != 0;
+                    return true;
+                }
+            }
+            const auto bits = static_cast<std::uint8_t>(a & attr_default);
             if (at < arr->items.size()) {
-                out = property_descriptor::data(arr->items[at], a);
+                out = property_descriptor::data(arr->items[at], bits);
                 out.virtual_slot = true;
                 return true;
             }
             if (value * found = arr->find_sparse(at)) {
-                out = property_descriptor::data(*found, a);
+                out = property_descriptor::data(*found, bits);
                 out.virtual_slot = true;
                 return true;
             }
@@ -389,17 +419,36 @@ bool context::delete_own_property(value target, const std::string & name) {
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        if (name == "length") { return false; } // non-configurable, 10.4.2
         std::uint32_t at = 0;
-        if (name != "length" && !index_key(name, at) && arr->named) {
-            return delete_own_property(value::object(arr->named.get()), name);
+        if (!index_key(name, at)) {
+            return arr->named ? delete_own_property(value::object(arr->named.get()), name) : true;
         }
+        if (arr->is_view()) { return at >= arr->length(); }
+        // AN ELEMENT LEAVES A HOLE (10.4.2.1 via 10.1.10): `items` cannot shift
+        // - `delete a[0]` must not change a.length - so the slot stays as a
+        // placeholder and array_object::element_attrs records that it is not
+        // a property any more. A non-configurable element (a sealed array,
+        // or one defineProperty pinned) refuses.
+        if (at < arr->items.size()) {
+            const std::uint8_t a = arr->element_attrs_at(at);
+            if ((a & array_object::elem_hole) != 0) { return true; }
+            if ((a & attr_configurable) == 0) { return false; }
+            if ((a & array_object::elem_accessor) != 0 && arr->named) {
+                (void)arr->named->erase_accessor(name);
+            }
+            arr->items[at] = value::undefined();
+            arr->set_element_attrs(at, array_object::elem_hole);
+            return true;
+        }
+        if (arr->find_sparse(at) != nullptr) {
+            if (!arr->elements_configurable) { return false; }
+            std::erase_if(arr->sparse, [at](const std::pair<std::uint32_t, value> & e) {
+                return e.first == at;
+            });
+        }
+        return true;
     }
-    // AN ARRAY ELEMENT IS NOT DELETED, and never was: `items` is a dense
-    // std::vector with no way to spell a hole, so removing one would shift
-    // every element after it and `delete a[0]` would change a.length. The
-    // answer is true - which is what sloppy `delete` yields anyway, and what
-    // `length` (non-configurable, and correctly rejected above by falling
-    // through to here... ) - see the note in docs/test262.md.
     return true;
 }
 
@@ -506,9 +555,21 @@ bool context::define_own_property(value target, const std::string & name,
         if (target.is_array()) {
             auto * arr = static_cast<array_object *>(target.as_heap());
             std::uint32_t at = 0;
-            if (name != "length" && !index_key(name, at)) {
+            if (name == "length") { return false; }
+            if (!index_key(name, at)) {
                 arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
+                return true;
             }
+            // AN ACCESSOR ELEMENT: the pair goes in `named` under the index's
+            // canonical string, the `items` slot is a placeholder, and
+            // element_attrs says which it is - see array_object.
+            if (!array_slot_for_define(*arr, at, exists)) { return false; }
+            if (at >= arr->items.size()) { return true; } // recorded sparse; attributes dropped
+            arr->items[at] = value::undefined();
+            arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
+            arr->set_element_attrs(
+                at, static_cast<std::uint8_t>(accessor_attrs | array_object::elem_accessor));
+            return true;
         }
         return true;
     }
@@ -533,19 +594,43 @@ bool context::define_own_property(value target, const std::string & name,
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length") {
-            if (!wanted.has_value) { return true; }
-            return arr->set_js_length(to_number(held));
+            // ArraySetLength, 10.4.2.4. The value goes through ToNumber (a
+            // valueOf runs) and must be a uint32 - `{value: undefined}` is NaN
+            // against 0 and a RangeError, not a refusal. The RangeError is
+            // thrown HERE and `true` answered, because the caller's own answer
+            // to `false` is a TypeError and one throw must not become two.
+            if (wanted.has_value) {
+                const double n = to_number_value(held);
+                if (throw_pending()) { return true; }
+                if (!(n >= 0) || n > array_object::max_length || n != std::trunc(n)) {
+                    throw_error("RangeError", "Invalid array length");
+                    return true;
+                }
+                if (!arr->length_writable && n != static_cast<double>(arr->js_length())) {
+                    return false;
+                }
+                if (!arr->set_js_length(n)) { return false; }
+            }
+            if (wanted.has_writable && !wanted.writable) { arr->length_writable = false; }
+            return true;
         }
         std::uint32_t at = 0;
         if (index_key(name, at)) {
-            // THE ATTRIBUTES ARE DROPPED, deliberately: an array's elements
-            // live in a std::vector with no room for three bits each (see
-            // array_object's integrity note). The VALUE is stored, which is
-            // what `Object.defineProperty(a, 0, {value: x})` is nearly always
-            // for; a per-element writable/enumerable/configurable is not
-            // modelled and this returns true rather than pretending otherwise
-            // in either direction.
-            if (wanted.has_value) { store_index(target, value::number(at), held); }
+            if (arr->is_view()) {
+                if (at < arr->length() && wanted.has_value) { view_set(*arr, at, to_number(held)); }
+                return true;
+            }
+            if (!array_slot_for_define(*arr, at, exists)) { return false; }
+            if (at >= arr->items.size()) {
+                // Recorded sparse (array_object::dense_limit); attributes dropped.
+                if (wanted.has_value) { arr->set_sparse(at, held); }
+                return true;
+            }
+            if (exists && current.is_accessor() && arr->named) {
+                (void)arr->named->erase_accessor(name);
+            }
+            arr->items[at] = held;
+            arr->set_element_attrs(at, attrs);
             return true;
         }
         // A NAMED PROPERTY goes into the array's own table (see

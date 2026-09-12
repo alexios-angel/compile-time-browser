@@ -282,7 +282,9 @@ inline void put_element(context & cx, value self, double i, value v) {
 [[nodiscard]] inline bool has_element(context & cx, value self, double i) {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
-        if (arr->sparse.empty()) { return i >= 0 && i < static_cast<double>(arr->length()); }
+        if (arr->sparse.empty() && arr->element_attrs.empty()) {
+            return i >= 0 && i < static_cast<double>(arr->length());
+        }
     }
     return cx.has_property(self, value::number(i));
 }
@@ -314,10 +316,16 @@ inline void put_length(context & cx, value self, double len) {
 // so vector surgery on one would silently do nothing. It goes the generic way,
 // where store_index coerces and refuses to grow it, which is what a typed
 // array is for.
+//
+// NOR IS ONE WITH A HOLE, AN ACCESSOR ELEMENT OR A NON-WRITABLE `length`
+// (array_object::element_attrs, length_writable): those are exactly the cases
+// where vector surgery would skip a getter, fill a hole or write a length the
+// specification refuses, so they take the generic walk too.
 [[nodiscard]] inline array_object * dense_array_this(value self) {
     if (!self.is_array()) { return nullptr; }
     auto * arr = static_cast<array_object *>(self.as_heap());
-    return arr->is_view() || arr->elements != element_kind::none ? nullptr : arr;
+    if (arr->is_view() || arr->elements != element_kind::none) { return nullptr; }
+    return arr->element_attrs.empty() && arr->length_writable ? arr : nullptr;
 }
 
 // A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.

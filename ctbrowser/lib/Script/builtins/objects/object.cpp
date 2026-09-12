@@ -113,12 +113,22 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
         for (std::size_t i = 0; i < arr->length(); ++i) {
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+            }
             visit(std::to_string(i), cx.lookup_index(of, value::number(static_cast<double>(i))));
         }
         // ...and the named own properties after the indices (10.4.2.1).
         if (arr->named) {
             std::vector<std::string> keys;
-            arr->named->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
+            arr->named->each_own_enumerable_key([&](const std::string & k) {
+                // An accessor ELEMENT's pair also lives here, under its index;
+                // it was reported above.
+                if (std::uint32_t at = 0; !object_object::array_index_key(k, at)) {
+                    keys.push_back(k);
+                }
+            });
             for (const std::string & k : keys) { visit(k, cx.lookup_property(of, k)); }
         }
         return;
@@ -158,7 +168,10 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         arr->elements_configurable = false;
-        if (frozen) { arr->elements_writable = false; }
+        if (frozen) {
+            arr->elements_writable = false;
+            arr->length_writable = false;
+        }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
@@ -200,7 +213,8 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     // question about all of them.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        return !arr->elements_configurable && (!frozen || !arr->elements_writable);
+        return !arr->elements_configurable && (!frozen || !arr->elements_writable) &&
+               (!frozen || !arr->length_writable);
     }
     // EVERY own key, symbols included: 7.3.16 walks OwnPropertyKeys, and a
     // symbol-keyed property that is still configurable makes the object neither

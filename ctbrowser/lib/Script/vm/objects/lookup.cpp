@@ -43,6 +43,28 @@ value context::lookup_index(value target, value key) {
                        : value::undefined();
         }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
+            // A HOLE READS THROUGH TO THE PROTOTYPES and an ACCESSOR element
+            // calls its getter - see array_object::element_attrs, which is
+            // empty for every ordinary array and costs this one test.
+            if (!arr->element_attrs.empty()) [[unlikely]] {
+                if (const std::uint8_t * e =
+                        arr->find_element_attrs(static_cast<std::uint32_t>(i))) {
+                    if ((*e & array_object::elem_hole) != 0) {
+                        const std::string name = std::to_string(i);
+                        if (object_object * table = prototype(proto_kind::array)) {
+                            if (value * found = table->find(name)) { return *found; }
+                        }
+                        return from_object_prototype(target, name);
+                    }
+                    if ((*e & array_object::elem_accessor) != 0 && arr->named) {
+                        if (accessor_entry * entry = arr->named->find_accessor(std::to_string(i))) {
+                            return entry->getter.is_callable()
+                                       ? call(entry->getter, std::span<const value>{}, target)
+                                       : value::undefined();
+                        }
+                    }
+                }
+            }
             return arr->items[static_cast<std::size_t>(i)];
         }
         // AND THE SPARSE HALF, second and behind an empty test so that reading

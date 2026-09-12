@@ -56,12 +56,25 @@ value context::own_keys(value source) {
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::size_t n = arr->items.size();
-        for (std::size_t i = 0; i < n; ++i) { keys->items.push_back(string(std::to_string(i))); }
+        for (std::size_t i = 0; i < n; ++i) {
+            // A hole is not a property and a non-enumerable element is not
+            // enumerated - see array_object::element_attrs.
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+            }
+            keys->items.push_back(string(std::to_string(i)));
+        }
         // Then the named own properties, in definition order (10.4.2.1: the
         // integer keys first, ascending, then the strings).
         if (arr->named) {
-            arr->named->each_own_enumerable_key(
-                [&](const std::string & name) { keys->items.push_back(string(name)); });
+            arr->named->each_own_enumerable_key([&](const std::string & name) {
+                // An accessor ELEMENT's pair also lives here, under its
+                // index; it was reported above.
+                if (std::uint32_t at = 0; !object_object::array_index_key(name, at)) {
+                    keys->items.push_back(string(name));
+                }
+            });
         }
     } else if (source.is_kind(heap_kind::function)) {
         // `for (k in fn)`: a class's enumerable statics (a plain function's
@@ -125,7 +138,18 @@ void context::copy_own_properties(value target, value source) {
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::vector<value> items = arr->items;
-        for (std::size_t i = 0; i < items.size(); ++i) { into->set(std::to_string(i), items[i]); }
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+                if ((a & array_object::elem_accessor) != 0) {
+                    into->set(std::to_string(i),
+                              lookup_index(source, value::number(static_cast<double>(i))));
+                    continue;
+                }
+            }
+            into->set(std::to_string(i), items[i]);
+        }
         if (arr->named) { copy_own_properties(target, value::object(arr->named.get())); }
     }
 }

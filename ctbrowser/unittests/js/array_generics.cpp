@@ -24,10 +24,10 @@
 //     materialise in `sparse` and raises `length` over it - so one assignment
 //     can make `length` four billion, and a loop to it is a hang rather than an
 //     answer. array_object's own comment names that deviation.
-//   * an Array has no HOLES. `delete a[0]` removes nothing (see
-//     context::delete_own_property), so nothing here can distinguish a hole
-//     from an undefined in a real array. The hole cases below are all written
-//     over a plain object, where HasProperty means something.
+//   * `delete a[0]` LEAVES A HOLE since 2026-09-12 (array_object::element_attrs
+//     records it beside a placeholder slot); the hole cases below were written
+//     over a plain object before that and stay there, where HasProperty means
+//     the same thing.
 //   * the copying methods build a plain Array whatever they were called on;
 //     there is no ArraySpeciesCreate and no `Symbol.species`.
 
