@@ -133,10 +133,10 @@ context::property_descriptor context::to_property_descriptor(value from) {
 }
 
 void context::delete_named(value target, const std::string & name) {
-    // TODO(strict): a false answer here is a TypeError under "use strict". The
-    // engine has no strict mode, and sloppy `delete` evaluates to false without
-    // throwing - which is what the compiler emits today (a constant `true`; see
-    // the note on delete_own_property).
+    // TODO(strict): a false answer here is a TypeError under "use strict",
+    // and strict `delete` does not throw yet - the answer is discarded and
+    // the compiler emits a constant `true` (see the note on
+    // delete_own_property).
     (void)delete_own_property(target, name);
 }
 
