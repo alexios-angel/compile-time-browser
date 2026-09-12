@@ -96,6 +96,9 @@ inline constexpr std::string_view rule_key = "__ctbrowser_rule";
 inline constexpr std::string_view rules_key = "__ctbrowser_rules";
 inline constexpr std::string_view style_key = "__ctbrowser_style";
 inline constexpr std::string_view media_key = "__ctbrowser_media";
+// A StyleSheetList's count, and - on a shadow root's list - the root it lists.
+inline constexpr std::string_view count_key = "__ctbrowser_count";
+inline constexpr std::string_view tree_key = "__ctbrowser_tree";
 
 // CSSRule's type constants. Only the ones this file can produce are ever set on
 // a rule; all of them are exposed, because a page reads `rule.MEDIA_RULE` to
