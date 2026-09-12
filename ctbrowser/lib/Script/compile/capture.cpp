@@ -150,6 +150,12 @@ bool compiler_impl::is_captured(std::string_view name) const {
 void compiler_impl::collect_declared_names(std::int32_t body) {
     if (body < 0) { return; }
     const vp::node & n = at(body);
+    // A NESTED FUNCTION'S vars ARE ITS OWN. The walk used to descend through
+    // a function declaration statement into its body, so `function f() { var
+    // i }` made `i` a name of the enclosing scope too - harmless while the
+    // list only fed was_predeclared, a phantom global once the script's list
+    // became program::hoisted_vars.
+    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
     if (n.kind == vp::nk::var_decl) {
         for (const std::int32_t d : kids(n)) { fn().declared.push_back(std::string{at(d).text}); }
         return;

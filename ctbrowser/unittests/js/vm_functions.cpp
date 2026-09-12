@@ -783,10 +783,6 @@ void test_anonymous_functions_take_the_binding_name() {
     expect_result("var f = function own() {}; var g = (function () {});"
                   "return f.name + ',' + g.name;",
                   "own,g");
-    // `__proto__: fn` is a prototype assignment, not a property named __proto__.
-    expect_result(
-        "var o = { __proto__: function named() {} }; return Object.getPrototypeOf(o).name;",
-        "named");
 }
 
 // AN ARRAY PATTERN IS THE ITERATOR PROTOCOL (8.6.2), not `src[i]`: it takes

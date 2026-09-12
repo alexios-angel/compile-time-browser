@@ -428,8 +428,41 @@ value context::iterable_values(value v) {
 value context::get_iterator(value v) {
     const value method = lookup_property(v, "@@iterator");
     if (!method.is_callable()) {
-        throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
-        return value::undefined();
+        // A STRING, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has no
+        // @@iterator of its own here but is iterable all the same: its values
+        // come from iterable_values, and the iterator is a native over that
+        // list. A number, a boolean or a plain object is the TypeError.
+        const bool known =
+            v.is_string() || v.is_array() || v.is_kind(heap_kind::proxy) ||
+            (v.is_object() && (static_cast<object_object *>(v.as_heap())->find("__entries") ||
+                               static_cast<object_object *>(v.as_heap())->find("__items") ||
+                               static_cast<object_object *>(v.as_heap())->find("__co")));
+        if (!known) {
+            throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
+            return value::undefined();
+        }
+        const value items = iterable_values(v);
+        if (throw_pending()) { return value::undefined(); }
+        auto * state = static_cast<object_object *>(make_object().as_heap());
+        state->set("items", items);
+        state->set("at", value::number(0));
+        const value iterator = make_object();
+        auto * it = static_cast<object_object *>(iterator.as_heap());
+        it->set("next", value::object(allocate<native_object>("next", [state](context & c,
+                                                                              std::span<value>) {
+                    const value list = *state->find("items");
+                    auto * arr = static_cast<array_object *>(list.as_heap());
+                    const auto at = static_cast<std::size_t>(state->find("at")->as_number());
+                    value out = c.make_object();
+                    auto * record = static_cast<object_object *>(out.as_heap());
+                    const bool done = at >= arr->items.size();
+                    record->set("value", done ? value::undefined() : arr->items[at]);
+                    record->set("done", value::boolean(done));
+                    if (!done) { state->set("at", value::number(static_cast<double>(at + 1))); }
+                    return out;
+                })));
+        it->set("state", value::object(state)); // keeps the list reachable
+        return iterator;
     }
     const value iterator = call(method, {}, v);
     if (throw_pending()) { return value::undefined(); }

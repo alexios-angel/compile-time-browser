@@ -830,9 +830,11 @@ void dom_bindings::install_window(context & cx) {
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
         // `'x' in window` has to agree with `window.x`, or a page's feature
-        // detection and its use of the feature disagree.
-        return value::boolean(target->find(name) != nullptr ||
-                              target->find_accessor(name) != nullptr || c.has_global(name) ||
+        // detection and its use of the feature disagree - and with a bare
+        // `x`: global_or_named asks this before deciding a name is
+        // unresolvable, so the WHOLE chain counts (`toString` is
+        // Object.prototype's, `addEventListener` is on the interface).
+        return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
                               !named_element(name).empty());
     });
     const value window_view = value::object(
