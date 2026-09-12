@@ -155,6 +155,8 @@ void dom_bindings::install_document(context & cx) {
         }
         dom_bindings * owner = owner_of(given);
         if (owner == nullptr) {
+            // An Attr is a Node with no handle - see attribute_object.
+            if (attribute_of_object(c, given).name) { return clone_attr_object(c, given); }
             c.throw_error("TypeError", "importNode: the argument is not a Node");
             return value::undefined();
         }

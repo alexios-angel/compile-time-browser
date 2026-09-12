@@ -668,7 +668,13 @@ void dom_bindings::install_node_methods(context & cx) {
     // to duplicate a template, which is how a page builds a list from one row.
     method(node, "cloneNode", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::null(); }
+        if (!self) {
+            // An Attr is a Node with no handle - see attribute_object.
+            if (attribute_of_object(c, c.current_this()).name) {
+                return clone_attr_object(c, c.current_this());
+            }
+            return value::null();
+        }
         const bool deep = !args.empty() && context::truthy(args[0]);
         const auto txn = doc_->read();
         return wrap(c, clone_node(txn, self, deep));
@@ -682,7 +688,9 @@ void dom_bindings::install_node_methods(context & cx) {
     // element algorithm on THE element this node names": an element is its own,
     // a Text or Comment names its parent element, a DocumentFragment names
     // nothing - and the algorithms themselves are the document's, shared.
-    const auto namespace_element = [this](node_id self) {
+    const auto namespace_element = [this](context & c, node_id self) {
+        // An Attr names its ownerElement, and a detached one names nothing.
+        if (!self) { return handle_of(c.lookup_property(c.current_this(), "ownerElement")); }
         const auto txn = doc_->read();
         switch (txn.kind(self).value_or(node_kind::element)) {
         case node_kind::element: return self;
@@ -712,7 +720,7 @@ void dom_bindings::install_node_methods(context & cx) {
                const value given = arg(args, 0);
                // "If prefix is the empty string, then set it to null."
                const std::string prefix = given.is_nullish() ? std::string{} : c.to_string(given);
-               const std::string found = locate_namespace(namespace_element(receiver(c)),
+               const std::string found = locate_namespace(namespace_element(c, receiver(c)),
                                                           prefix.empty() ? nullptr : &prefix);
                return found.empty() ? value::null() : c.string(found);
            });
@@ -720,14 +728,14 @@ void dom_bindings::install_node_methods(context & cx) {
            [this, namespace_element](context & c, std::span<value> args) {
                const value given = arg(args, 0);
                const std::string want = given.is_nullish() ? std::string{} : c.to_string(given);
-               return value::boolean(locate_namespace(namespace_element(receiver(c)), nullptr) ==
+               return value::boolean(locate_namespace(namespace_element(c, receiver(c)), nullptr) ==
                                      want);
            });
     method(node, "lookupPrefix", 1, [this, namespace_element](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (given.is_nullish()) { return value::null(); }
         const std::string found =
-            locate_namespace_prefix(namespace_element(receiver(c)), c.to_string(given));
+            locate_namespace_prefix(namespace_element(c, receiver(c)), c.to_string(given));
         return found.empty() ? value::null() : c.string(found);
     });
     // `normalize()`, DOM 4.4: every EMPTY Text descendant goes, and every run of

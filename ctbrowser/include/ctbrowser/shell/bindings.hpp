@@ -1886,6 +1886,14 @@ private:
     // direction the specification only asks to be consistent taken from the
     // order of the two bindings. Zero when `given` is not one of those.
     [[nodiscard]] unsigned foreign_document_position(value given);
+    // An Attr's value accessors and ownerElement, (re)bound to `owner` - or to
+    // nowhere. See element/attributes.cpp.
+    void bind_attr_object(context & cx, script::object_object & attr, node_id owner,
+                          const attribute & held);
+    // The four parts of an Attr read off the object; an empty name when it is
+    // not one. And a detached copy of one, for cloneNode and importNode.
+    [[nodiscard]] attribute attribute_of_object(context & cx, value given);
+    [[nodiscard]] value clone_attr_object(context & cx, value given);
 };
 
 } // namespace ctbrowser::shell

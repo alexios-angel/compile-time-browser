@@ -85,9 +85,14 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // the write: "return oldAttr" is how a page takes an attribute off one
         // element and puts it on another.
         const std::optional<attribute> replaced = found_by_pair(ns, local);
-        (void)doc_->set_attribute_ns(id, atoms_->intern(ns), atoms_->intern(qualified),
-                                     text.is_undefined() ? std::string{} : c.to_string(text));
+        const attribute written{atoms_->intern(qualified), atoms_->intern(ns),
+                                text.is_undefined() ? std::string{} : c.to_string(text)};
+        (void)doc_->set_attribute_ns(id, written.ns, written.name, written.value);
         mutated();
+        // THE GIVEN Attr IS NOW THIS ELEMENT'S: its ownerElement and its value
+        // read through, which is what `attr.lookupNamespaceURI("xml")` after
+        // `setAttributeNode(attr)` depends on.
+        bind_attr_object(c, *static_cast<script::object_object *>(given.as_heap()), id, written);
         return replaced ? attribute_object(c, id, *replaced) : value::null();
     };
     map_method("setNamedItem", set_named);

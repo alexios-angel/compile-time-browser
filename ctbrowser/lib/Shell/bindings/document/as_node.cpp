@@ -55,48 +55,6 @@ constexpr unsigned position_contains = 0x08;
 constexpr unsigned position_contained_by = 0x10;
 constexpr unsigned position_implementation_specific = 0x20;
 
-// An Attr, as `createAttribute` and `createAttributeNS` hand one back.
-//
-// NOT A NODE, and for the reason `createProcessingInstruction` above is not
-// one: `node_kind` has no `attribute`, so there is nowhere in the tree to put
-// it and `attr instanceof Attr` is false. What it carries is exactly what
-// `dom/nodes/attributes.js`'s `attr_is` reads off one - nine properties, and
-// the corpus checks every one of them on every case.
-//
-// `value`, `nodeValue` and `textContent` are ONE STRING behind three
-// spellings, because on an Attr that is what they are: a page that writes
-// `attr.value` and reads `attr.nodeValue` must not see the old text. Three
-// data properties would have been three independent strings.
-[[nodiscard]] value make_attr_object(context & cx, const std::string & qualified,
-                                     const std::string & local, const std::string & prefix,
-                                     const std::string & ns) {
-    auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
-    const auto held = std::make_shared<std::string>();
-    for (const char * spelling : {"value", "nodeValue", "textContent"}) {
-        const value getter = value::object(cx.allocate<script::native_object>(
-            spelling, [held](context & c, std::span<value>) { return c.string(*held); }));
-        const value setter = value::object(
-            cx.allocate<script::native_object>(spelling, [held](context & c, std::span<value> a) {
-                *held = arg_string(c, a, 0);
-                return value::undefined();
-            }));
-        attr->define_accessor(spelling, getter, setter);
-    }
-    attr->set("name", cx.string(qualified));
-    attr->set("nodeName", cx.string(qualified));
-    attr->set("localName", cx.string(local));
-    attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
-    attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
-    attr->set("nodeType", value::number(2));
-    // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
-    // asserts it on every case it runs.
-    attr->set("specified", value::boolean(true));
-    // NULL, and it stays null: `setAttributeNode` is the only thing that would
-    // ever set it and there is none.
-    attr->set("ownerElement", value::null());
-    return value::object(attr);
-}
-
 } // namespace
 
 bool dom_bindings::is_the_document(value v) const {
@@ -483,11 +441,10 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             return value::undefined();
         }
         // "If this is an HTML document, then set localName to localName in
-        // ASCII lowercase." Every document in this engine is one - see
-        // `contentType` above - so this is unconditional, and it is why
-        // `createAttribute("TITLE").name` is "title".
-        const std::string local = ascii_lower_copy(given);
-        return make_attr_object(c, local, local, {}, {});
+        // ASCII lowercase" - and an XML one keeps `createAttribute("TITLE")`
+        // as written.
+        const std::string local = doc_->xml() ? given : ascii_lower_copy(given);
+        return attribute_object(c, node_id{}, attribute{atoms_->intern(local), std::string{}});
     });
     // `document.createAttributeNS(namespace, qualifiedName)`. The same shape as
     // `createElementNS` above and deliberately the same order: the NAME is
@@ -522,8 +479,8 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
             return fail("the XMLNS namespace is only for xmlns");
         }
-        return make_attr_object(c, qualified, std::string{split.local}, std::string{split.prefix},
-                                ns);
+        return attribute_object(
+            c, node_id{}, attribute{atoms_->intern(qualified), atoms_->intern(ns), std::string{}});
     });
 
     // --- everything that would change the document's own child list --------

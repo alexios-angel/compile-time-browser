@@ -125,17 +125,54 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     const std::string ns{atoms_->text(held.ns)};
     const std::string local{attribute_local_name(*atoms_, held)};
     const std::string prefix{attribute_prefix(*atoms_, held)};
-    const atom name = held.name;
-    const atom uri = held.ns;
 
     auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
+    attr->set("name", cx.string(qualified));
+    attr->set("nodeName", cx.string(qualified));
+    attr->set("localName", cx.string(local));
+    attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
+    attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
+    attr->set("nodeType", value::number(2));
+    // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
+    // asserts it on every case it runs.
+    attr->set("specified", value::boolean(true));
+    if (const value proto = interface_prototype("Attr"); proto.is_object()) {
+        attr->prototype = proto;
+    }
+    bind_attr_object(cx, *attr, owner, held);
+    return value::object(attr);
+}
+
+// The half of an Attr that depends on WHERE IT IS: the three spellings of its
+// value and its ownerElement. Re-run when that changes - `setAttributeNode`
+// attaches the very object the page holds, `removeAttributeNode` detaches it.
+void dom_bindings::bind_attr_object(context & cx, script::object_object & attr, node_id owner,
+                                    const attribute & held) {
+    const std::string ns{atoms_->text(held.ns)};
+    const std::string local{attribute_local_name(*atoms_, held)};
+    const atom name = held.name;
+    const atom uri = held.ns;
+    // A detached Attr's value is ONE string behind the three spellings, so a
+    // page that writes `attr.value` and reads `attr.nodeValue` sees the write.
+    const auto shared = std::make_shared<std::string>(held.value);
     for (const char * spelling : {"value", "nodeValue", "textContent"}) {
         const std::string property{spelling};
+        (void)attr.erase_accessor(property);
+        (void)attr.erase(property);
         if (!owner) {
-            attr->set(property, cx.string(held.value));
+            attr.define_accessor(
+                property,
+                value::object(cx.allocate<script::native_object>(
+                    property,
+                    [shared](context & c, std::span<value>) { return c.string(*shared); })),
+                value::object(cx.allocate<script::native_object>(
+                    property, [shared](context & c, std::span<value> a) {
+                        *shared = arg_string(c, a, 0);
+                        return value::undefined();
+                    })));
             continue;
         }
-        attr->define_accessor(
+        attr.define_accessor(
             property,
             value::object(cx.allocate<script::native_object>(
                 property,
@@ -151,26 +188,37 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
                     return value::undefined();
                 })));
     }
-    attr->set("name", cx.string(qualified));
-    attr->set("nodeName", cx.string(qualified));
-    attr->set("localName", cx.string(local));
-    attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
-    attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
-    attr->set("nodeType", value::number(2));
-    // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
-    // asserts it on every case it runs.
-    attr->set("specified", value::boolean(true));
+    if (!owner) {
+        attr.set("ownerElement", value::null());
+        return;
+    }
     // THE WRAPPER THAT ALREADY EXISTS, which is how `attributes_are`'s
     // `assert_equals(el.attributes[i].ownerElement, el)` can be an identity
     // comparison at all. `wrap` is the fallback rather than the path: it
     // REFRESHES the whole element, and going through it once per attribute
     // would re-measure the box for an answer already in hand.
     const value already = value_of_wrapper(owner);
-    attr->set("ownerElement", already.is_object() ? already : wrap(cx, owner));
-    if (const value proto = interface_prototype("Attr"); proto.is_object()) {
-        attr->prototype = proto;
+    attr.set("ownerElement", already.is_object() ? already : wrap(cx, owner));
+}
+
+// What an Attr carries, read off the OBJECT - the page may hold one this
+// instance did not make (another document's) and there is no C++ type behind
+// it. Empty name when `given` is not an Attr.
+attribute dom_bindings::attribute_of_object(context & cx, value given) {
+    if (!given.is_object() || context::to_number(cx.lookup_property(given, "nodeType")) != 2) {
+        return attribute{};
     }
-    return value::object(attr);
+    const value ns = cx.lookup_property(given, "namespaceURI");
+    const value text = cx.lookup_property(given, "value");
+    return attribute{atoms_->intern(cx.to_string(cx.lookup_property(given, "name"))),
+                     atoms_->intern(ns.is_nullish() ? std::string{} : cx.to_string(ns)),
+                     text.is_undefined() ? std::string{} : cx.to_string(text)};
+}
+
+// `attr.cloneNode()` and `importNode(attr)`: a detached copy, DOM 4.4's
+// cloning steps for an Attr being its four parts and nothing else.
+value dom_bindings::clone_attr_object(context & cx, value given) {
+    return attribute_object(cx, node_id{}, attribute_of_object(cx, given));
 }
 
 // `element.attributes`, REFILLED IN PLACE rather than rebuilt. The map keeps
@@ -474,13 +522,9 @@ void dom_bindings::install_attribute_methods(context & cx) {
         // detached: this is the one removal that hands back an object the page
         // already holds rather than one made here, so the live accessors on it
         // are still reading through to an element that no longer has the
-        // attribute. Frozen in place, for the reason attribute_object gives.
-        auto * detaching = static_cast<script::object_object *>(given.as_heap());
-        for (const char * spelling : {"value", "nodeValue", "textContent"}) {
-            (void)detaching->erase_accessor(spelling);
-            detaching->set(spelling, c.string(held->value));
-        }
-        detaching->set("ownerElement", value::null());
+        // attribute. Rebound to nowhere, keeping the value it had.
+        bind_attr_object(c, *static_cast<script::object_object *>(given.as_heap()), node_id{},
+                         *held);
         return given;
     });
     // `toggleAttribute(name, force)` - the boolean-attribute spelling, and it
