@@ -108,7 +108,17 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
     // An arrow's `this` is decided HERE, where it is written, not where it is
     // called - which is what makes an arrow inside an arrow inside a method
     // still see the method's object. The caller reads the EFFECTIVE receiver.
-    if (target.is_arrow) { made->captured_this = enclosing_this; }
+    if (target.is_arrow) {
+        made->captured_this = enclosing_this;
+        // ...AND ITS HOME OBJECT, for the same reason: `super.m()` and
+        // `super()` inside an arrow resolve against the method or constructor
+        // the arrow was written in (an arrow has no [[HomeObject]] of its
+        // own, 15.3.4). load_home reads the running closure's `__home`, so
+        // the enclosing one's is copied where there is one.
+        if (enclosing != nullptr) {
+            if (const value * home = enclosing->find("__home")) { made->set("__home", *home); }
+        }
+    }
     return value::object(made);
 }
 
