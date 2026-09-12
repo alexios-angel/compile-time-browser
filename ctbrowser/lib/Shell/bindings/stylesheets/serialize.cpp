@@ -145,7 +145,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
     // The tokenizer DECODES escapes, so `[\30 zonk]` reaches the compiled form
     // as the name `0zonk`; printing that back unescaped produces a selector that
     // is not a selector, because an identifier may not begin with a digit.
-    const auto ident = &dom_bindings::serialize_css_identifier;
+    const auto ident = &style::css::serialize_identifier;
     // THE NAMESPACE PREFIX, CSSOM §6.7 "serialize a simple selector": written
     // when it maps to a namespace that is neither the default nor the null one,
     // `|` alone for the null one. `*|` means any namespace, which is what an

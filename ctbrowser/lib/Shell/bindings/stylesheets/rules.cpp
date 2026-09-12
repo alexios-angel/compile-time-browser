@@ -31,13 +31,6 @@ namespace {
 
 } // namespace
 
-// CSSOM §2.1. Shared with `CSS.escape` in bindings/css.cpp, which is the same
-// algorithm asked for by a page rather than by a serialiser; the algorithm is
-// style/'s, because a declaration block escapes a custom property's name too.
-std::string dom_bindings::serialize_css_identifier(std::string_view text) {
-    return style::css::serialize_identifier(text);
-}
-
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
@@ -65,7 +58,9 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     if (rule.type == namespace_rule) {
         std::string out = "@namespace ";
-        if (!rule.selector.empty()) { out += serialize_css_identifier(rule.selector) + " "; }
+        if (!rule.selector.empty()) {
+            out += style::css::serialize_identifier(rule.selector) + " ";
+        }
         return out + serialize_url(rule.prelude) + ";";
     }
     // `@font-feature-values <family>#`, whose block is feature blocks each a
@@ -79,7 +74,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
                 type = f.type;
                 out += " @" + type + " {";
             }
-            out += " " + serialize_css_identifier(f.name) + ":";
+            out += " " + style::css::serialize_identifier(f.name) + ":";
             for (const double n : f.numbers) {
                 out += " " + std::to_string(static_cast<long long>(n));
             }
@@ -371,7 +366,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 // The prefix DECODED, as the selector parser decodes the one
                 // in `x\*|test` - so the two meet (selectorSerialize.html,
                 // "escaped character (*) in element prefix"). cssText
-                // re-escapes it through serialize_css_identifier.
+                // re-escapes it through style::css::serialize_identifier.
                 std::string prefix;
                 if (!second.empty()) {
                     const style::css::token_stream tokens = style::css::tokenize(first);
