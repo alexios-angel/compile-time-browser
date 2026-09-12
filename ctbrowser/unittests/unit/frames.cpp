@@ -235,11 +235,32 @@ void test_an_inserted_frame_has_its_window_at_once() {
     CHECK_EQ(page.bindings().console_output().back(), std::string{"BODY,true"});
 }
 
+void test_a_frame_document_is_a_full_member_of_the_realm() {
+    // Node-isConnected.html's iframe case: the page's node goes INTO a frame's
+    // document (adopted, connected there), and a frame inside a frame gets a
+    // document of its own - while a document with no browsing context does
+    // not give its <iframe> one.
+    is(one_frame,
+       R"JS((function () {
+        var f = document.getElementById('f');
+        var d = document.createElement('div');
+        f.contentDocument.body.appendChild(d);
+        var inner = f.contentDocument.createElement('iframe');
+        f.contentDocument.body.appendChild(inner);
+        var parsed = new DOMParser().parseFromString('<iframe></iframe>', 'text/html');
+        return [d.isConnected, d.ownerDocument === f.contentDocument,
+                inner.contentDocument !== null && inner.contentDocument.body.nodeName,
+                parsed.querySelector('iframe').contentDocument].join();
+    })())JS",
+       "true,true,BODY,null");
+}
+
 } // namespace
 
 int main() {
     test_the_frames_are_indexed_on_the_window();
     test_an_inserted_frame_has_its_window_at_once();
+    test_a_frame_document_is_a_full_member_of_the_realm();
     test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();

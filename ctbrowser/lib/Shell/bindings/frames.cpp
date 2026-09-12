@@ -134,8 +134,21 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
 // it went away. Guarded by `frames_dirty_`, which `mutated()` sets - without
 // that this walks the whole tree on every frame of an idle page, which is
 // exactly what "a frame runs only what changed" forbids.
+//
+// A FRAME DOCUMENT RECONCILES ITS OWN FRAMES TOO: a nested `<iframe>` gets its
+// document the same way, on the accessor - `install_frame_accessors` asks the
+// element's owner - since only the primary is asked on the tick. A document
+// WITHOUT a browsing context - createHTMLDocument's, DOMParser's - has no
+// nested navigables and its `<iframe>`s stay empty (`contentDocument` null),
+// and "has a window" is exactly that fact: install_document leaves
+// `defaultView` null for one and load_frame sets it for a frame's.
 void dom_bindings::reconcile_frames() {
-    if (cx_ == nullptr || secondary_ || !frames_dirty_) { return; }
+    if (cx_ == nullptr || !frames_dirty_) { return; }
+    if (secondary_) {
+        script::object_object * doc = document_object();
+        const value * window = doc == nullptr ? nullptr : doc->find("defaultView");
+        if (window == nullptr || window->is_nullish()) { return; }
+    }
     frames_dirty_ = false;
     // A frame element with no `src` has an about:blank document in a browser.
     // It gets one here too - `load_frame` with an empty src builds an empty
@@ -231,18 +244,15 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
         type = "text/html";
     }
 
-    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    auto & made = *secondary_documents_.emplace_back(
-        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
-                                       std::function<void(node_id)>{}));
-    made.secondary_ = true;
-    made.cx_ = &cx;
-    // BEFORE the adoption, for the reason `make_html_document` gives: the
-    // primary builds its interface table on the first `wrap()`, and a page
-    // whose first frame loads before anything has been wrapped would adopt an
-    // empty one and never be able to build another.
-    ensure_dom_interfaces(cx);
-    made.adopt_interfaces_of(*this);
+    // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
+    // with `primary_` set. Built by hand here before, without `primary_`, so
+    // `owner_of` run from inside a frame document could see nothing but the
+    // frame's own wrappers: `frame.contentDocument.body.appendChild(pageNode)`
+    // was "the argument is not a Node" (Node-isConnected.html's iframe case,
+    // the node-realm-* files), and a frame's own `<iframe>` never loaded.
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    document & fresh = *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    dom_bindings & made = adopt_second_document(cx, fresh);
     made.content_type_ = type;
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
@@ -367,7 +377,9 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // global an exception must have come from.
     if (auto * doc = made.document_object()) { doc->set("defaultView", frame_view); }
 
-    frame_loads_.push_back(pending_frame{id, ok});
+    // ON THE PRIMARY'S QUEUE, which is the one the tick drains, naming the
+    // owner whose element it is; settle_frame hands it back.
+    top.frame_loads_.push_back(pending_frame{id, ok, false, &top == this ? nullptr : this});
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does
@@ -377,6 +389,10 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
 // `<script>` announce through here too (announce_load): `timeStamp` is what a
 // page compares a paint entry against.
 void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
+    if (waiting.owner != nullptr && waiting.owner != this) {
+        waiting.owner->settle_frame(cx, pending_frame{waiting.id, waiting.ok, waiting.resource});
+        return;
+    }
     const std::string_view type = waiting.ok ? "load" : "error";
     const value event = make_event_object(cx, type, false, false);
     auto * object = static_cast<script::object_object *>(event.as_heap());

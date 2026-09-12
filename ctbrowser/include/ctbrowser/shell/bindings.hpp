@@ -1271,6 +1271,9 @@ private:
         // A sheet or script announcing its `load`, as opposed to an <iframe>:
         // not a callback the page scheduled, so the drain does not count it.
         bool resource = false;
+        // The bindings whose element `id` names when it is not the queue's
+        // own: a frame document's nested frame lands on the primary's queue.
+        dom_bindings * owner = nullptr;
     };
     std::vector<pending_frame> frame_loads_;
     // Which frames are loaded, and from what. The `src` is kept as WRITTEN
