@@ -81,7 +81,7 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style(--x: 0): a;)"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; style(--x: 3): v3; else: v4)"), std::string{"v3"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; else: v2; style(--x: 3): v3)"), std::string{"v2"});
-    CHECK_EQ(s.sub("if(style(--x: 3): a; else: b)if(style(--x): c)"), std::string{"ac"});
+    CHECK_EQ(s.sub("if(style(--x: 3): a; else: b)if(style(--x): c)"), std::string{"a/**/c"});
     // Malformed: no branch colon, a `!` anywhere, nothing at all.
     CHECK_EQ(s.sub("if(style(--x: 3) a; else: b)"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("if(style(--x: 3): a; else: b!)"), std::string{"<invalid>"});

@@ -475,6 +475,22 @@ public:
                 const attribute_lookup & attributes, const condition_environment * conditions)
         : lookup_(&lookup), atoms_(&atoms), attributes_(&attributes), conditions_(conditions) {}
 
+    // TWO TOKEN STREAMS JOINED STAY TWO TOKENS. `if(style(--x): a)if(style(--x):
+    // b)` substitutes to `a` beside `b`, which read back as one token `ab`;
+    // CSS Syntax 3 §9 puts an empty comment between two tokens that would
+    // otherwise merge, and so does every engine's serialisation of a custom
+    // property (if-conditionals).
+    static void join(std::string & left, std::string_view right) {
+        const auto name_char = [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   c == '-' || c == '_' || c == '.' || c == '%';
+        };
+        if (!left.empty() && !right.empty() && name_char(left.back()) && name_char(right.front())) {
+            left += "/**/";
+        }
+        left += right;
+    }
+
     // THE PROPERTY THIS VALUE BELONGS TO, when it is a custom one, so that a
     // style query reading it back is a cycle: `--x: if(style(--x): a; else: b)`.
     void resolving(atom property) {
@@ -522,13 +538,13 @@ public:
         } else if (!variable(s, found, depth, expansion)) {
             return false;
         }
-        result += expansion;
+        join(result, expansion);
         // And everything after the call, which may contain more calls - so the
         // remainder is substituted rather than copied.
         const std::string tail = text_between(s, found.close + 1, s.tokens.size());
         std::string expanded_tail;
         if (!run(tail, expanded_tail, depth + 1)) { return false; }
-        result += expanded_tail;
+        join(result, expanded_tail);
         if (result.size() > max_bytes) { return false; }
         out = std::move(result);
         return true;
