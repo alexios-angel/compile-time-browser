@@ -325,7 +325,13 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
         }
-        if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
+        if ((m.d & 2) != 0 && m.a >= 0) { // `static [key] = init`
+            const std::uint32_t inner = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(m.a, key);
+            proto().emit(instruction{op::set_index, dst, key, slot});
+            release_to(inner);
+        } else if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
             emit_define_own(dst, m.text, slot, true); // as above, enumerable: a field
         } else {
             proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
