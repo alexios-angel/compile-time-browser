@@ -282,10 +282,12 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // THE GLOBALS, WHICH ARE INFALLIBLE AND SO HAVE NO EDGE AT ALL.
-    // Both rows are (0, 0, 0): reading an undeclared global does NOT throw
-    // a ReferenceError here - the row says the absence is load-bearing -
-    // and neither reads nor writes can collect. So each is one call.
+    // THE GLOBALS. A READ HAS AN EDGE since 2026-09-12: a name that is
+    // neither a binding nor a property of the global object is an
+    // unresolvable reference and ct_aot_global_get throws ReferenceError
+    // (may_throw 1, status and out-slot like every other throwing row). A
+    // write is still (0, 0, 0) - defining a global cannot fail - so it stays
+    // one call.
     //
     // THE NAME IS BYTES AND A LENGTH, not a NUL-terminated string, which is
     // why the length is emitted rather than left to strlen: a global whose
@@ -293,16 +295,14 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // at it.
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
         const llvm::StringRef name = global.getName();
-        mapping.map(
-            global.getResult(),
-            ec::CallOpaqueOp::create(
-                build, where, mlir::TypeRange{value}, callee("ct_aot_global_get"),
-                mlir::ValueRange{scope.frame,
+        mapping.map(global.getResult(),
+                    status_call(scope, build, where, callee("ct_aot_global_get"),
+                                {scope.frame,
                                  literal(build, where, pointer_to(build.getContext(), "const char"),
                                          c_string_literal(name)),
                                  literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(name.size()))})
-                .getResult(0));
+                                         std::to_string(name.size()))},
+                                value));
         return true;
     }
     if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {

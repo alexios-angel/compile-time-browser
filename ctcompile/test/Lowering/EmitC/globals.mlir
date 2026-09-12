@@ -5,12 +5,12 @@
 // emitting a call to ct_aot_global_get COMPILED PERFECTLY and failed at link.
 // It now has a body, so the lowering is enabled and this asserts what it emits.
 //
-// Both rows are infallible - (0, 0, 0) - so each is a single call with no
-// status, no edge and no safepoint. Reading an undeclared global does NOT throw
-// a ReferenceError in this runtime; it reads `undefined`, and the row says that
-// absence is load-bearing rather than an oversight. The implementation goes
-// through context::global, which is the same two lines VM_CASE(get_global)
-// runs, so the two tiers cannot drift.
+// The write is infallible - (0, 0, 0) - so it is a single call with no
+// status, no edge and no safepoint. The READ has an edge since 2026-09-12:
+// an unresolvable name throws ReferenceError (6.2.5.5 GetValue), so the row
+// is may_throw and the call is a status test with an out-slot. Both go
+// through context::global_or_named, which is what VM_CASE(get_global) runs,
+// so the two tiers cannot drift.
 
 // RUN: ctjs-opt %s --ctjs-lower-to-emitc --emitc-eliminate-block-arguments \
 // RUN:   | mlir-translate --mlir-to-cpp --declare-variables-at-top \
@@ -36,7 +36,7 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // AN ORDINARY NAME KEEPS THE PLAIN FORM, with its length beside it. The length
 // is emitted rather than left to strlen because the name is BYTES: a global
 // whose name contains a zero byte is legal and strlen would stop at it.
-// CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "Math", 4);
+// CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "Math", 4, {{v[0-9]+}});
 
 // AND THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE. `od`, byte 0x01, `Fd` -
 // five characters. Written "od\x01Fd" the C++ compiler reads the escape as
