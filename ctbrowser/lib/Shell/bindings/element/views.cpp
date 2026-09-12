@@ -940,14 +940,27 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         return value::object(
             cx.allocate<script::proxy_object>(value::object(list), value::object(handler)));
     };
-    // READONLY, and this one had a price. `classList` is `[SameObject] readonly
-    // attribute DOMTokenList` and it was a writable data property, so
-    // `Element-classlist.html` - 1,420 subtests - assigned a STRING to it in
-    // its first case and every case after it called `add`, `contains` and
-    // `item` on that string. A write to a readonly property is silently
-    // discarded in sloppy mode, which is what the corpus expects to happen.
-    obj.define("classList", make_token_list("class", {}),
-               script::attr_enumerable | script::attr_configurable);
+    // `[SameObject, PutForwards=value] readonly attribute DOMTokenList
+    // classList`: ONE list, and a write to the property forwards to its
+    // `value` - `el.classList = "a b"` sets the class attribute, which
+    // `Element-classlist.html` assigns in its first case (a readonly data
+    // property threw there from strict code) and then calls `add`, `contains`
+    // and `item` on the list it still expects to find.
+    {
+        const value list = make_token_list("class", {});
+        auto * reader = cx.allocate<script::native_object>(
+            "classList", [list](context &, std::span<value>) { return list; });
+        // A capture is not a GC edge - see the note on `attributes` above.
+        reader->retained.push_back(list);
+        auto * writer = cx.allocate<script::native_object>(
+            "classList", [list](context & c, std::span<value> a) {
+                c.store_property(list, "value", a.empty() ? c.string("") : a[0]);
+                return value::undefined();
+            });
+        writer->retained.push_back(list);
+        obj.define_accessor("classList", value::object(reader), value::object(writer),
+                            script::attr_enumerable | script::attr_configurable);
+    }
 
     // --- element.blocking, HTML 2.5.7 "blocking attributes"
     //
