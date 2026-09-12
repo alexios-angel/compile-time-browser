@@ -153,6 +153,16 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
+    // THE REST OF THE font-* LONGHANDS, so `getComputedStyle` publishes them
+    // and a page's `'font-width' in style` is true. Nothing here reads any of
+    // them; `using-font-relative-units-in-font-properties` computes an `em` in
+    // each and asks the property to exist first.
+    {"font-feature-settings", k::freeform, "", "normal", true, false},
+    {"font-palette", k::freeform, "", "normal", true, false},
+    {"font-size-adjust", k::freeform, "", "none", true, false},
+    {"font-variant-alternates", k::freeform, "", "normal", true, false},
+    {"font-variation-settings", k::freeform, "", "normal", true, false},
+    {"font-width", k::freeform, "", "100%", true, false},
     {"line-height", k::number_length_percentage, "normal", "normal", true, true},
     // CSS Text 4 gave both of these a percentage: `normal | <length-percentage>`.
     // `calc-letter-spacing` asks for `letter-spacing: calc(100%)` to compute to

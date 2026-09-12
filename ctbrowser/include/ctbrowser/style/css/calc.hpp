@@ -31,6 +31,14 @@ struct length_context {
     // circular.
     float font_size = 16.0f;
     float root_font_size = 16.0f;
+    // THE LINE HEIGHT `lh` MEASURES, and the root's for `rlh` (CSS Values 4
+    // §6.1.1). The same asymmetry as `em`: in `line-height` itself `lh` is the
+    // parent's, everywhere else the element's own, and the caller passes the
+    // right one. `normal` is 1.25 times the font size here, which is the factor
+    // layout uses for it - not the font's metrics, which are injected and
+    // pinned by the goldens.
+    float line_height = 20.0f;
+    float root_line_height = 20.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
