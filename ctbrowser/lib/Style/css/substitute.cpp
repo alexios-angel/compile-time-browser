@@ -173,13 +173,15 @@ struct syntax_alternative {
     char multiplier = 0; // 0, '+' (space list) or '#' (comma list)
 };
 
-// The type names `type()` may ask for. `<url>` and `<image>` are NOT here on
-// purpose: an attribute may not produce a URL (§attr's security note), so
-// asking for one is a syntax error rather than a type this cannot match.
+// The type names `type()` may ask for. `<url>` is NOT here on purpose: an
+// attribute may not produce a URL (§attr's security note), so asking for one
+// is a syntax error rather than a type this cannot match. `<image>` is - a
+// gradient is an image with no URL in it - and a `url()` in one is refused
+// for the same reason.
 constexpr std::string_view syntax_types[] = {
-    "length",       "number",         "percentage", "length-percentage", "color",
-    "integer",      "angle",          "time",       "resolution",        "transform-function",
-    "custom-ident", "transform-list", "string"};
+    "length", "number", "percentage", "length-percentage",  "color",        "integer",
+    "angle",  "time",   "resolution", "transform-function", "custom-ident", "transform-list",
+    "string", "image"};
 
 // `*`, or alternatives of `<type>` and keywords separated by `|`. Nothing may
 // sit between the brackets and the name - `< string>` and `<string >` are both
@@ -387,6 +389,26 @@ struct item {
                                 "color", "color-mix", "light-dark"})) {
                 return text;
             }
+        }
+        return std::nullopt;
+    }
+    if (type == "image") {
+        if (t.type != token_type::function) { return std::nullopt; }
+        std::string_view name = s.text_of(t);
+        name.remove_suffix(1);
+        if (in_names(name, {"linear-gradient", "radial-gradient", "conic-gradient",
+                            "repeating-linear-gradient", "repeating-radial-gradient",
+                            "repeating-conic-gradient", "image-set", "image", "cross-fade",
+                            "element", "paint"})) {
+            // ...with no url() anywhere inside it.
+            for (std::size_t i = it.first; i <= it.last; ++i) {
+                const css_token & inner = s.tokens[i];
+                if (inner.type == token_type::url || (inner.type == token_type::function &&
+                                                      ascii_iequals(s.text_of(inner), "url("))) {
+                    return std::nullopt;
+                }
+            }
+            return text;
         }
         return std::nullopt;
     }
