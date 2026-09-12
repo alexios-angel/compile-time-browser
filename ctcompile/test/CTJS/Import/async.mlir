@@ -1,8 +1,7 @@
 // WHERE ASYNC SPLITS IN TWO, asserted from both sides in one file.
 //
-// An async function's bytecode differs from an ordinary function's in exactly
-// one opcode when it contains no `await`: op::wrap_promise, on every return
-// path, which turns the returned value into a promise. That is not a
+// An async function wraps normal returns and catches throws in a rejection
+// fence even when it contains no `await`. Neither operation is a
 // suspension - the frame is never lifted and nothing is saved - so it lowers
 // like any other runtime call, and an async function with no `await` is fully
 // AOT-eligible.
@@ -28,6 +27,7 @@
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=LOWERED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=REFUSED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt --ctjs-lower-to-emitc | FileCheck %s --check-prefix=EMITTED
 
 // THE COMPILABLE HALF.
 async function settles(a) { return a + 1; }
@@ -35,6 +35,11 @@ async function settles(a) { return a + 1; }
 // AND THE HALF THAT IS A DESIGN DECISION. It produces NO ctjs.func at all -
 // "never emit partially correct AOT code".
 async function waits(p) { return await p; }
+
+// Every operator table must reach the shared per-instruction caught edge.
+// Otherwise the promise wrapper inherits an unmapped earlier result as its
+// handler snapshot, and the boxed emitter correctly refuses the function.
+async function operators(a) { return -(a + 1) < 3; }
 
 // LOWERED: ctjs.func @settles$
 // LOWERED: ctjs.wrap_promise
@@ -45,3 +50,6 @@ async function waits(p) { return await p; }
 // REFUSED: ctjs.skipped
 // REFUSED-SAME: opcode = "await_value"
 // REFUSED-SAME: reason = "a suspension point
+
+// EMITTED: emitc.func @settles_
+// EMITTED: emitc.func @operators_
