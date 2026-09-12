@@ -63,8 +63,8 @@ namespace {
     case nk::import_meta: return {-1, -1, -1, -1};
     case nk::import_spec:
     case nk::export_decl:
-    case nk::export_spec:
-    case nk::dynamic_import: return {n.a, -1, -1, -1};
+    case nk::export_spec: return {n.a, -1, -1, -1};
+    case nk::dynamic_import: return {n.a, n.b, -1, -1}; // b: the options argument
     default: return {n.a, n.b, n.c, n.d};
     }
 }

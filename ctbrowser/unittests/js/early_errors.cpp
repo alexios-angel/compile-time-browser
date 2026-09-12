@@ -324,6 +324,18 @@ int main() {
     accepted("async function f() { var g = () => 1; return g(); }");
 
     // ================================================================
+    // 10. import() IS A CALL EXPRESSION - 13.3.10
+    // ================================================================
+    // Grammar, so the parser's refusal: one or two arguments, never a
+    // `new`, and a bare `import` is not an expression.
+    refused("new import('x');");
+    refused("new import('x').prop;");
+    refused("import('x', {}, '');");
+    refused("typeof import;");
+    accepted("var p = () => import('x', {});");
+    accepted("var p = () => import('x',);");
+
+    // ================================================================
     // 9. TWO `__proto__` IN ONE OBJECT LITERAL - B.3.1
     // ================================================================
     refused("var o = { __proto__: null, __proto__: null };");

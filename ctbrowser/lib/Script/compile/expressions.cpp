@@ -162,6 +162,12 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t spec = alloc_reg();
         compile_expr(n.a, spec);
+        // The options argument (13.3.10.1 step 4) is evaluated for its
+        // effects and its throw; import attributes themselves are not read.
+        if (n.b >= 0) {
+            const std::uint16_t options = alloc_reg();
+            compile_expr(n.b, options);
+        }
         proto().emit(instruction{op::dyn_import, dst, spec});
         release_to(mark);
         break;

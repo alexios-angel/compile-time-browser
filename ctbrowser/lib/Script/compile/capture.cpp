@@ -49,8 +49,9 @@ std::array<std::int32_t, 4> compiler_impl::child_slots(const vp::node & n) {
     case vp::nk::import_meta: return {-1, -1, -1, -1};
     case vp::nk::import_spec:
     case vp::nk::export_decl:
-    case vp::nk::export_spec:
-    case vp::nk::dynamic_import: return {n.a, -1, -1, -1};
+    case vp::nk::export_spec: return {n.a, -1, -1, -1};
+    case vp::nk::dynamic_import:
+        return {n.a, n.b, -1, -1}; // b: the options argument
     // `++x` / `x++`: a is the operand and b IS THE PREFIX FLAG (1 or 0). The
     // default arm followed b as a node index; a program whose update node
     // is node 1 - `++x;` as the first statement, which is what
