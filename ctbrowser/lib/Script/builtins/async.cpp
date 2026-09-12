@@ -561,11 +561,13 @@ void install_promise(context & cx) {
         const value fn = cx.global(name);
         if (!fn.is_kind(heap_kind::native)) { return; }
         auto * made = static_cast<native_object *>(fn.as_heap());
+        made->is_constructor = false; // a global function, clause 19
         made->define("length", value::number(arity), attr_configurable);
         made->define("name", cx.string(name), attr_configurable);
     };
     slots("isNaN", 1);
     slots("isFinite", 1);
+    slots("eval", 1);
     // `String` is a NAMESPACE as well as a coercion, the same way Number is.
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.

@@ -40,6 +40,16 @@ void install_array(context & cx) {
     const auto static_method = [&](const char * name, double arity, native_fn fn) {
         method(cx, array_ctor, name, arity, std::move(fn));
     };
+    // 23.1.2.5 get Array[@@species]: `this`, so a subclass's methods build
+    // instances of the subclass through ArraySpeciesCreate.
+    {
+        auto * species =
+            detail::method_native(cx, "get [Symbol.species]",
+                                  [](context & c, std::span<value>) { return c.current_this(); });
+        detail::install_arity(cx, species, 0);
+        array_ctor->define_accessor("@@species", value::object(species), value::undefined(),
+                                    attr_configurable);
+    }
     static_method("isArray", 1, [](context & c, std::span<value> a) {
         bool answer = false;
         (void)detail::is_array_value(c, arg_at(a, 0), answer);
@@ -381,14 +391,17 @@ void install_array(context & cx) {
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
         if (!detail::generic_walk_ok(c, len)) { return out; }
+        out = detail::array_species_create(c, self, 0); // step 5
+        if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out); // as `map` - see the note there
-        auto * result = static_cast<array_object *>(out.as_heap());
+        double n = 0;
         for (double k = 0; k < len; k += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
             const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
             value mapped = c.call(callback, args, this_arg);
             if (!mapped.is_array()) {
-                result->items.push_back(mapped);
+                if (!detail::put_element(c, out, n, mapped)) { return out; }
+                n += 1.0;
                 continue;
             }
             // THE MAPPED ARRAY IS A C++ LOCAL and, once the callback's frame
@@ -398,7 +411,11 @@ void install_array(context & cx) {
             const double inner = detail::array_like_length(c, mapped);
             if (!detail::generic_walk_ok(c, inner)) { return out; }
             for (double j = 0; j < inner; j += 1.0) {
-                result->items.push_back(detail::element_at(c, mapped, j));
+                if (!detail::has_element(c, mapped, j)) { continue; }
+                if (!detail::put_element(c, out, n, detail::element_at(c, mapped, j))) {
+                    return out;
+                }
+                n += 1.0;
             }
         }
         return out;
@@ -607,12 +624,24 @@ void install_array(context & cx) {
         double k = raw_from < 0 ? std::max(len + raw_from, 0.0) : std::min(raw_from, len);
         const double raw_to = has_index(a, 1) ? integer_arg(c, a, 1) : len;
         const double to = raw_to < 0 ? std::max(len + raw_to, 0.0) : std::min(raw_to, len);
+        // ArraySpeciesCreate(O, count), step 9.
+        const double count = std::max(to - k, 0.0);
+        out = detail::array_species_create(c, self, count);
+        if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
         // The count is the SPAN, not the number of elements found: a hole in
         // the middle leaves an undefined behind rather than shortening the
         // result, which is what `A.length = n` at the end of 23.1.3.28 says.
-        for (; k < to; k += 1.0) { result->items.push_back(detail::element_at(c, self, k)); }
+        if (array_object * result = detail::dense_array_this(out)) {
+            result->items.clear();
+            for (; k < to; k += 1.0) { result->items.push_back(detail::element_at(c, self, k)); }
+            return out;
+        }
+        for (double n = 0; k < to; k += 1.0, n += 1.0) {
+            if (!detail::has_element(c, self, k)) { continue; }
+            if (!detail::put_element(c, out, n, detail::element_at(c, self, k))) { return out; }
+        }
+        (void)detail::put_length(c, out, count);
         return out;
     });
     // 23.1.3.29, THE WHOLE OF IT, and the ORDER is the point: the deleted range
@@ -652,8 +681,24 @@ void install_array(context & cx) {
             c.throw_error("TypeError", "Invalid array length");
             return removed;
         }
+        // ArraySpeciesCreate(O, actualDeleteCount), step 10.
+        removed = detail::array_species_create(c, self, skipped);
+        if (removed.is_undefined()) { return removed; }
         const context::rooted keep(c, removed);
-        auto * out = static_cast<array_object *>(removed.as_heap());
+        array_object * out = detail::dense_array_this(removed);
+        if (out == nullptr) {
+            // A species object takes the deleted range through
+            // CreateDataPropertyOrThrow and `length` (steps 11-12); the
+            // receiver is then spliced generically below.
+            for (double k = 0; k < skipped; k += 1.0) {
+                if (!detail::has_element(c, self, start + k)) { continue; }
+                if (!detail::put_element(c, removed, k, detail::element_at(c, self, start + k))) {
+                    return removed;
+                }
+            }
+            if (!detail::put_length(c, removed, skipped)) { return removed; }
+            dense = nullptr;
+        }
         if (dense != nullptr) {
             const auto from = static_cast<std::size_t>(start);
             const auto count = static_cast<std::size_t>(skipped);
@@ -674,7 +719,7 @@ void install_array(context & cx) {
         if (!detail::generic_walk_ok(c, skipped) || !detail::generic_walk_ok(c, len - start)) {
             return removed;
         }
-        for (double k = 0; k < skipped; k += 1.0) {
+        for (double k = 0; out != nullptr && k < skipped; k += 1.0) {
             // A HOLE STAYS A HOLE IN LENGTH ONLY. CreateDataProperty is skipped
             // for an absent index and `A.length` is set to the count anyway
             // (step 14), and an array here cannot hold a hole - so the span is
@@ -817,18 +862,19 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
-    // 23.1.3.1, THE WHOLE OF IT but ArraySpeciesCreate: the receiver and each
-    // argument is spread when IsConcatSpreadable says so - its own
+    // 23.1.3.1, THE WHOLE OF IT: ArraySpeciesCreate(O, 0), then the receiver
+    // and each argument is spread when IsConcatSpreadable says so - its own
     // @@isConcatSpreadable if that is not undefined, else IsArray (through a
     // Proxy, refusing a revoked one) - every element through HasProperty and
-    // [[Get]], a hole staying a hole, and `length` set last. The result is
-    // always an ordinary Array; there is no Symbol.species here.
+    // [[Get]], a hole staying a hole, and `length` set last.
     method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "concat")) { return out; }
+        out = detail::array_species_create(c, self, 0);
+        if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
+        array_object * result = detail::dense_array_this(out);
         double n = 0;
         // One element, or one spread. False means a throw is already in flight
         // and the caller must stop.
@@ -862,7 +908,7 @@ void install_array(context & cx) {
                 return true;
             }
             if (array_object * dense = detail::dense_array_this(item);
-                dense != nullptr && detail::dense_array_this(out) != nullptr &&
+                dense != nullptr && result != nullptr &&
                 n == static_cast<double>(result->items.size())) {
                 result->items.insert(result->items.end(), dense->items.begin(), dense->items.end());
                 n += static_cast<double>(dense->items.size());
@@ -879,6 +925,7 @@ void install_array(context & cx) {
                 const bool present = detail::has_element(c, item, k);
                 if (c.throw_pending()) { return false; }
                 if (!present) {
+                    if (result == nullptr) { continue; } // a species object: no property
                     // A HOLE STAYS A HOLE: the slot exists in `items` as a
                     // placeholder and element_attrs says it is not a property.
                     const auto at = static_cast<std::size_t>(n);

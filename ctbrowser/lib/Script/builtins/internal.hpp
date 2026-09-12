@@ -479,6 +479,38 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     return nullptr;
 }
 
+// ArraySpeciesCreate, 10.4.2.3: the object an Array.prototype method fills. A
+// fresh Array of `len` unless the receiver IS an array whose `constructor` -
+// or that constructor's @@species - is some other constructor, which is then
+// constructed with `len`. Undefined means a throw is in flight. (The
+// cross-realm Array test of step 4 has nowhere to apply: one context, one
+// realm.)
+[[nodiscard]] inline value array_species_create(context & cx, value original, double len) {
+    bool is_array = false;
+    if (!is_array_value(cx, original, is_array)) { return value::undefined(); }
+    value ctor = value::undefined();
+    if (is_array) {
+        ctor = cx.lookup_property(original, "constructor");
+        if (cx.throw_pending()) { return value::undefined(); }
+        if (ctor.is_object_like()) {
+            ctor = cx.lookup_property(ctor, "@@species");
+            if (cx.throw_pending()) { return value::undefined(); }
+            if (ctor.is_null()) { ctor = value::undefined(); }
+        }
+    }
+    if (ctor.is_undefined() || (ctor.is_heap() && ctor.as_heap() == cx.global("Array").as_heap())) {
+        const value out = cx.make_array();
+        return new_array_of_length(cx, out, len) == nullptr ? value::undefined() : out;
+    }
+    if (!is_constructor(ctor)) {
+        cx.throw_error("TypeError", "Array species constructor is not a constructor");
+        return value::undefined();
+    }
+    const value args[1] = {value::number(len)};
+    const value out = cx.construct(ctor, args);
+    return cx.throw_pending() || !out.is_object_like() ? value::undefined() : out;
+}
+
 [[nodiscard]] inline object_object * new_table(context & cx) {
     return static_cast<object_object *>(cx.make_object().as_heap());
 }

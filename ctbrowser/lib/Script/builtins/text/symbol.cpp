@@ -81,6 +81,7 @@ void install_symbol(context & cx) {
     well_known("search", "@@search");
     well_known("split", "@@split");
     well_known("isConcatSpreadable", "@@isConcatSpreadable"); // read by Array.prototype.concat
+    well_known("species", "@@species"); // read by ArraySpeciesCreate (builtins/internal.hpp)
     // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to

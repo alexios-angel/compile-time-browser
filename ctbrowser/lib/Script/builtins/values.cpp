@@ -772,6 +772,7 @@ void install_globals(context & cx) {
         const value fn = cx.global(name);
         if (!fn.is_kind(heap_kind::native)) { return; }
         auto * made = static_cast<native_object *>(fn.as_heap());
+        made->is_constructor = false; // a global function, clause 19
         made->define("length", value::number(arity), attr_configurable);
         made->define("name", cx.string(name), attr_configurable);
         if (const value number = cx.global("Number"); number.is_kind(heap_kind::native)) {

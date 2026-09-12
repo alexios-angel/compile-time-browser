@@ -640,5 +640,40 @@ int main() {
     js_expect("Object.prototype.toString.call('a'[Symbol.iterator]())", "[object String Iterator]");
     js_expect("String.prototype[Symbol.iterator].call(null)", "THREW");
 
+    // --- ArraySpeciesCreate, 10.4.2.3 ------------------------------------------
+    // The receiver's `constructor[Symbol.species]` builds the result of map,
+    // filter, slice, splice, concat and flatMap; Array's own says `this`.
+    js_expect("Array[Symbol.species] === Array", "true");
+    js_expect("(function(){ var calls = 0; var a = [1, 2, 3];"
+              "a.constructor = {}; a.constructor[Symbol.species] = function (n) {"
+              "  calls++; this.n = n; };"
+              "var r = a.map(function (x) { return x * 2; });"
+              "return [calls, r.n, r[0], r[1], r[2], r.length].join(); })()",
+              "1,3,2,4,6,");
+    js_expect("(function(){ var a = [1, 2, 3, 4]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.slice(1, 3); return [r.length, r[0], r[1]].join(); })()",
+              "2,2,3");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.filter(function (x) { return x > 1; }); return [r[0], r[1], r.length]"
+              ".join(); })()",
+              "2,3,");
+    js_expect("(function(){ var a = [1, 2, 3]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.splice(1, 2); return [r.length, r[0], r[1], a.join()].join(); })()",
+              "2,2,3,1");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = function () {};"
+              "var r = a.concat([2, 3]); return [r.length, r[0], r[2]].join(); })()",
+              "3,1,3");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = null; return Array.isArray(a.map(x => x)); })()",
+              "true");
+    js_expect("(function(){ var a = [1]; a.constructor = {};"
+              "a.constructor[Symbol.species] = parseInt; return a.map(x => x); })()",
+              "THREW");
+    js_expect("(function(){ var a = [1]; a.constructor = 1; return a.map(x => x); })()", "THREW");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -135,6 +135,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
+        // ArraySpeciesCreate(O, len) FIRST (step 5), and for an Array it is
+        // ArrayCreate(len), which refuses a `length` of 2^32. Sizing it up
+        // front is also the only way a hole in the source can stay a hole in
+        // the result rather than shifting everything after it.
+        out = detail::array_species_create(c, self, len);
+        if (out.is_undefined()) { return out; }
         // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
         // in none of the collector's roots. It is allocated BEFORE the first
         // call, so a callback that collects - `$262.gc()`, or gc stress, which
@@ -145,10 +151,6 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // was only reachable through the array that had already been freed.
         // context::rooted is the primitive for exactly this.
         const context::rooted keep(c, out);
-        // ArrayCreate(len) FIRST, and it is what refuses a `length` of 2^32.
-        // Sizing it up front is also the only way a hole in the source can
-        // stay a hole in the result rather than shifting everything after it.
-        if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
         for (double k = 0; k < len; k += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
@@ -158,18 +160,29 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return out;
     });
-    method(cx, array_proto, "filter", 1, [each](context & c, std::span<value> a) {
+    // 23.1.3.8, written out rather than through `each` because
+    // ArraySpeciesCreate(O, 0) sits between the callback check and the loop.
+    method(cx, array_proto, "filter", 1, [](context & c, std::span<value> a) {
+        const value self = detail::array_this(c);
         value out = c.make_array();
-        // Unrooted exactly as `map`'s was. It survived only because the values
-        // it collects are also in the rooted source array - the ARRAY itself
-        // was still freed under the push, which asan reports and which is not
-        // something to leave standing on the strength of a coincidence.
-        const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
-        (void)each(c, a, "filter", [&](double, value item, value verdict) {
-            if (context::truthy(verdict)) { result->items.push_back(item); }
-            return true;
-        });
+        if (!detail::coercible_this(c, self, "filter")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return out; }
+        const value callback = arg_at(a, 0);
+        if (!detail::callable_arg(c, callback, "callback")) { return out; }
+        const value this_arg = arg_at(a, 1);
+        out = detail::array_species_create(c, self, 0);
+        if (out.is_undefined()) { return out; }
+        const context::rooted keep(c, out); // as `map` - see the note there
+        double to = 0;
+        for (double k = 0; k < len; k += 1.0) {
+            if (!detail::has_element(c, self, k)) { continue; }
+            const value item = detail::element_at(c, self, k);
+            const value call_args[3] = {item, value::number(k), self};
+            if (!context::truthy(c.call(callback, call_args, this_arg))) { continue; }
+            if (!detail::put_element(c, out, to, item)) { return out; }
+            to += 1.0;
+        }
         return out;
     });
     // `find` and `findIndex` DO NOT SKIP A HOLE - 23.1.3.9 reads every index
