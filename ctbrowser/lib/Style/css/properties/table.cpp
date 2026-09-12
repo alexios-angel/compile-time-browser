@@ -190,6 +190,16 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
+    // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
+    // with them, but each is a real property whose value a page sets and reads
+    // back through getComputedStyle, with a math function inside it folded
+    // (using-font-relative-units-in-font-properties).
+    {"font-width", k::freeform, "", "normal", true, false},
+    {"font-feature-settings", k::freeform, "", "normal", true, false},
+    {"font-variation-settings", k::freeform, "", "normal", true, false},
+    {"font-variant-alternates", k::freeform, "", "normal", true, false},
+    {"font-size-adjust", k::freeform, "", "none", true, false},
+    {"font-palette", k::freeform, "", "normal", true, false},
     // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
     // font-variant-alternates, font-variation-settings and font-width, which
     // using-font-relative-units-in-font-properties asks to exist. Adding the
