@@ -910,6 +910,15 @@ void test_url_request_modifiers() {
     CHECK(supports_declaration("background-image", u + " cross-origin(anonymous))"));
 }
 
+// calc-rounds-to-integer: `steps()` takes an <integer>, which `1e1` is not.
+void test_steps_takes_an_integer() {
+    ok("animation-timing-function", "steps(10)", "steps(10)");
+    ok("transition-timing-function", "steps(calc(10.1))", "steps(calc(10.1))");
+    bad("animation-timing-function", "steps(1e1)");
+    bad("animation-timing-function", "steps(10.1)");
+    bad("transition-timing-function", "steps(1.1e1, start)");
+}
+
 void test_interpolate_size_is_a_property() {
     ok("interpolate-size", "numeric-only", "numeric-only");
     ok("interpolate-size", "allow-keywords", "allow-keywords");
@@ -991,6 +1000,7 @@ int main() {
     test_calc_size();
     test_random_spells_its_key();
     test_url_request_modifiers();
+    test_steps_takes_an_integer();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     REPORT("css_values");

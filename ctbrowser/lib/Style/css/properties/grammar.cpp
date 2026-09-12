@@ -370,6 +370,19 @@ namespace detail {
     for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
         if (ts.tokens[i].type != token_type::function) { continue; }
         const std::string_view fn = function_name(ts, ts.tokens[i]);
+        // `steps( <integer>, <step-position>? )`, CSS Easing 1 §3.2: a
+        // <number-token> that is not an integer - `1e1`, `10.1` - is a
+        // syntax error where a math function still rounds
+        // (calc-rounds-to-integer).
+        if (ascii_iequals(fn, "steps")) {
+            std::size_t j = i + 1;
+            while (j < ts.tokens.size() && ts.tokens[j].type == token_type::whitespace) { ++j; }
+            if (j < ts.tokens.size() && ts.tokens[j].type == token_type::number &&
+                (ts.tokens[j].flags & flag_integer) == 0) {
+                return false;
+            }
+            continue;
+        }
         if (ascii_iequals(fn, "random-item")) {
             if (!random_item_arguments_ok(ts, i)) { return false; }
             continue;
