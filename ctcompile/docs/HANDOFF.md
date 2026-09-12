@@ -6,6 +6,65 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nullable child contents and dynamic mixed Add, 2026-09-12
+
+Continued clean **14dabe42** and the **09:21:23 UTC** journal. The prior guard
+recovery was fully committed/gated; `codex-wip-20260907` was already an ancestor.
+Resumed the promised unchanged **99954bab** nullable-child boundary. Agents split
+independent ownership checks, source/lifetime tests and the next escape increment;
+root completed the gates and corrections after two agents hit rate limits.
+
+**23a27ec1** proves dynamic mixed BigInt Add retention using the existing original
+primitive provenance checks. Its result never gains BigInt authority; separate String
+proof, every structural continuation, handler/effect exclusions and budgets remain.
+The existing matrix passes **57 rows / 43 live states / 3,567 budget cutoffs**.
+The old escape fixture remains an exact **24,720-byte prefix**. Three appended
+witnesses distinguish Number9, saved-child retention and independent TypeErrors;
+measured Error PCs **24/29/11** and all literal claims pass. The oracle measures
+**797 sites / 33 unclaimed / zero violations / precision 11/148**.
+
+**8f776874** closes a homogeneous scalar category across every child write,
+independently of required-key `childEntries`. Empty publication, delete and clear
+preserve only this category; every read may still be Undefined. Ownership separately
+rechecks the full write/publication census. Strict equality against Null/Undefined
+filters the existing scalar alternatives without skipping structural effects.
+Twenty-one source/prepared rows and **24,145 incomplete budgets**, forged reports,
+wrong keys, sibling orders, cyclic/opaque writes and Null distinction checks pass.
+
+The first build caught a new test initializer-list type mismatch; its explicit
+`mlir::Value` conversion fixes it. The corrected **250-step rebuild** and **19/20**
+focused tests pass. The last test had fourteen obsolete ownership-refusal assertions;
+corrected assertions check missing membership/scalar-read authority instead. The
+subsequent **two-step rebuild and ownership CTest pass in 229.58s**, completing all
+20 focused checks. Stable clang-format22 passes **800 files**; bundled23 reports the
+same **nine baseline files / 28 diagnostics**. No browser/runtime/carrier/emitter
+source changed.
+
+**Checkpoint: native source execution and the standard full gate are pending.**
+The source workflow is still uncommitted. All 31 historical source bodies and exact
+Data **8359592c** remain unchanged. Node checks pass **80 observations / 66 mutations**.
+The source probe proves ownership for unchanged **99954bab**, but it remains **0/4
+native**: native inference joins its return to Opt Num, and direct global output
+requires a definite scalar type. Eight historical nested cases now have ownership
+while preserving this native refusal. Separate straight-line numeric-observer
+controls keep the method bodies and exercise existing nullable carriers; their C++
+gate is queued, so no native promotion is claimed yet. Full Bootstrap's last full-gate
+measurement remains **19/574**, Data **0/7 CommonJS, 0/7 browser, 0/8 AMD**.
+
+Next: carry the original nullable result through an independently proved native
+result/output boundary, then exact Data's mixed/field-bearing payloads, object
+returns/identity and recorder callback. Component/DOM ownership follows through
+ctbrowser public APIs. The next escape increment is canonical literal String array
+indices: runtime **aca7091c** already fixed them, but `ownArrayIndex` still rejects
+"0" with a stale disagreement comment. Details: `/tmp/ctcompile-nullable-next.md`
+and `/tmp/ctcompile-nullable-escape-next.md`.
+
+Evidence so far: `/tmp/ctcompile-nullable-{corrected-focused.log,
+corrected-focused-detail.log,owner-fix-focused.log,owner-fix-focused-detail.log,
+probe.log,final-node.log}`. Pending workflow: `/tmp/ctcompile-nullable-native-focused.log`,
+then `/tmp/ctcompile-nullable-full.log`. Parser remains **8eb3375**; Claude's pending
+**08:00:13 / 08:28:55 UTC** runtime/ABI journals still apply. Nothing was pushed.
+
 ## Recovered inverted Map guards and mixed static BigInt retention, 2026-09-12
 
 Resumed **32957956** after the **08:21:14 UTC failed loop**. Its only dirty compiler file
