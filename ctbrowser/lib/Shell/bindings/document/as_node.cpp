@@ -221,8 +221,17 @@ void dom_bindings::normalize_subtree(node_id root) {
         if (child.kind == node_kind::element) { descend.push_back(child.id); }
     }
     flush();
-    for (const auto & [id, text] : rewritten) { (void)doc_->set_text(id, text); }
-    for (const node_id id : doomed) { (void)doc_->remove_child(id); }
+    // ONE `mutated()` PER STEP, because an observer counts them: DOM 4.4
+    // "normalize" replaces the run's data and then removes each absorbed node
+    // in turn, and MutationObserver-childList.html expects a record apiece.
+    for (const auto & [id, text] : rewritten) {
+        (void)doc_->set_text(id, text);
+        mutated();
+    }
+    for (const node_id id : doomed) {
+        (void)doc_->remove_child(id);
+        mutated();
+    }
     for (const node_id id : descend) { normalize_subtree(id); }
 }
 

@@ -657,10 +657,31 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::undefined();
         }
         if (!pre_insert_valid(c, parent, fresh, node_arg, child_arg)) { return value::undefined(); }
-        if (fresh == stale) { return child_arg; }
-        (void)insert_node(parent, fresh, stale);
+        // DOM 4.2.3 "replace", in the order its records come out: a node that
+        // is ALREADY a child of the parent is removed first, with a record of
+        // its own (step 8) - `replaceChild(x, x)` included, which goes out and
+        // comes back in the same place - and then the child is removed and
+        // the node inserted where it was, ONE record naming both (step 13).
+        const auto next_sibling = [this](node_id of) {
+            const auto txn = doc_->read();
+            const std::span<const node_id> kids = txn.children(txn.parent(of));
+            const auto here = std::ranges::find(kids, of);
+            return here == kids.end() || here + 1 == kids.end() ? node_id{} : *(here + 1);
+        };
+        if (fresh == stale) {
+            const node_id next = next_sibling(stale);
+            (void)doc_->remove_child(stale);
+            mutated();
+            (void)insert_node(parent, stale, next);
+            return child_arg;
+        }
+        if (doc_->read().parent(fresh) == parent) {
+            (void)doc_->remove_child(fresh);
+            mutated();
+        }
+        const node_id next = next_sibling(stale);
         (void)doc_->remove_child(stale);
-        mutated();
+        (void)insert_node(parent, fresh, next);
         return child_arg;
     });
     // `getElementById` ON A FRAGMENT - DOM 4.2.6 NonElementParentNode, on
