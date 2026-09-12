@@ -146,6 +146,28 @@ void test_reads_and_all() {
     CHECK(longhands_of("grid").empty());
     CHECK_EQ(longhands_of("border").size(), std::size_t{17});
 
+    // setproperty-null-undefined, cssstyledeclaration-csstext: a colour is
+    // refused by syntax, and a valid one keeps the author's spelling.
+    block.clear();
+    CHECK(set_declaration(block, "color", "white", false));
+    CHECK(!set_declaration(block, "color", "undefined", false));
+    CHECK(!set_declaration(block, "color", "unknown color", false));
+    CHECK(!set_declaration(block, "color", "12px", false));
+    CHECK_EQ(declaration_value(block, "color"), std::string{"white"});
+    CHECK(set_declaration(block, "color", "RebeccaPurple", false));
+    CHECK_EQ(declaration_value(block, "color"), std::string{"rebeccapurple"});
+    CHECK(set_declaration(block, "color", "#ABC", false));
+    CHECK_EQ(declaration_value(block, "color"), std::string{"#ABC"});
+    CHECK(!set_declaration(block, "color", "#ABCDE", false));
+    CHECK(set_declaration(block, "background-color", "rgba(0, 0, 0, .5)", false));
+    CHECK_EQ(declaration_value(block, "background-color"), std::string{"rgba(0, 0, 0, 0.5)"});
+    CHECK(set_declaration(block, "border-top-color", "Highlight", false));
+    CHECK(set_declaration(block, "outline-color", "var(--c)", false));
+    CHECK(set_declaration(block, "border", "1px solid red", false));
+    CHECK_EQ(declaration_value(block, "border"), std::string{"1px solid red"});
+    CHECK(set_declaration(block, "outline", "2px dotted", false));
+    CHECK_EQ(declaration_value(block, "outline"), std::string{"dotted 2px"});
+
     // variable-names.html: a custom property's name is decoded by the
     // tokenizer and written back escaped, so cssText survives a re-parse.
     block.clear();

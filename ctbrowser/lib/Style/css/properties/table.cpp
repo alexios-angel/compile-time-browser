@@ -124,10 +124,10 @@ constexpr property_syntax table[] = {
      "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
     {"border-left-style", k::keyword_only,
      "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"border-top-color", k::freeform, "", "currentcolor", false, false},
-    {"border-right-color", k::freeform, "", "currentcolor", false, false},
-    {"border-bottom-color", k::freeform, "", "currentcolor", false, false},
-    {"border-left-color", k::freeform, "", "currentcolor", false, false},
+    {"border-top-color", k::color, "", "currentcolor", false, false},
+    {"border-right-color", k::color, "", "currentcolor", false, false},
+    {"border-bottom-color", k::color, "", "currentcolor", false, false},
+    {"border-left-color", k::color, "", "currentcolor", false, false},
     // `border` RESETS border-image (CSS Backgrounds 3 §5.3), so the CSSOM
     // cannot fold twelve side longhands back into `border` without knowing
     // these five are at their initial values. Nothing paints them.
@@ -155,13 +155,13 @@ constexpr property_syntax table[] = {
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
     {"outline-style", k::keyword_only,
      "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"outline-color", k::freeform, "", "currentcolor", false, false},
+    {"outline-color", k::color, "", "currentcolor", false, false},
     {"outline-offset", k::length, "", "0px", false, false},
 
     // --- colour and background ------------------------------------------
-    {"color", k::freeform, "", "rgb(0, 0, 0)", true, false},
+    {"color", k::color, "", "rgb(0, 0, 0)", true, false},
     {"background", k::freeform, "", "none", false, false, true},
-    {"background-color", k::freeform, "", "rgba(0, 0, 0, 0)", false, false},
+    {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
     {"background-position", k::freeform, "", "0% 0%", false, false},
     {"background-repeat", k::freeform, "", "repeat", false, false},
@@ -212,7 +212,7 @@ constexpr property_syntax table[] = {
      "none capitalize uppercase lowercase full-width full-size-kana", "none", true, false},
     {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
-    {"text-decoration-color", k::freeform, "", "currentcolor", false, false},
+    {"text-decoration-color", k::color, "", "currentcolor", false, false},
     {"text-decoration-style", k::keyword_only, "solid double dotted dashed wavy", "solid", false,
      false},
     {"text-overflow", k::freeform, "", "clip", false, false},

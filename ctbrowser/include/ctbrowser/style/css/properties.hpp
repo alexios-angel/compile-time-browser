@@ -57,6 +57,11 @@ enum class value_kind : std::uint8_t {
     // because a position is a horizontal half and a vertical half in that order
     // however they were spelled.
     position,
+    // `<color>`, by SYNTAX: a named or system colour keyword, a hex colour, or
+    // a colour function whose arguments are kept as written. It exists to
+    // refuse `color: undefined` and `color: unknown color`, which CSSOM says
+    // leave the declaration alone; what a colour means is paint's.
+    color,
 };
 
 // One longhand. `keywords` is a space-separated set, matched ASCII

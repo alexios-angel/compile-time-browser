@@ -217,6 +217,12 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // perfectly good position whose components this reader does not evaluate,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
+    if (p->kind == k::color) {
+        std::string serialized;
+        if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
+        return {};
+    }
+
     if (p->kind == k::position) {
         std::string serialized;
         if (match_position(ts, found, serialized)) { return yes(std::move(serialized)); }
