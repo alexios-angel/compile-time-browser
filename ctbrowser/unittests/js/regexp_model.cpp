@@ -97,7 +97,7 @@ void test_exec() {
     // a class and the dot consume a whole UTF-8 code point, and a match never
     // starts inside one
     expect_result("return /[^\u{1F49A}]/u.exec('\u{1F49A}') + '|' + 'é'.match(/./)[0] + '|' + "
-                  "/(.+).*\\1/u.test('\ud800\udc00\ud800');",
+                  "/(.+).*\\1/u.test('\\ud800\\udc00\\ud800');",
                   "null|é|false");
     // named backreference, and Annex B's octal for a number past the groups
     expect_result("return /(?<q>['\"]).*\\k<q>/.exec('say \"hi\" now')[0];", "\"hi\"");
