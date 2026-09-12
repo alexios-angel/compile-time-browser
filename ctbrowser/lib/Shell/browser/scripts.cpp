@@ -347,12 +347,14 @@ void browser::run_scripts() {
         classic_programs_.push_back(std::move(compiled));
         bindings_->set_current_script(classic_elements[index]);
         const script::run_result result = script_->run(running);
-        bindings_->set_current_script(node_id{});
         // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
         // belongs to a document that is being replaced, so it does not run -
         // and the replacement happens in load_html, after this returns, rather
         // than under our feet.
-        if (pending_load_) { return; }
+        if (pending_load_) {
+            bindings_->set_current_script(node_id{});
+            return;
+        }
         // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
         // runs. That is what the specification says: a script that throws or
         // does not parse is that script's problem.
@@ -381,8 +383,13 @@ void browser::run_scripts() {
             // page is a HANDOFF, and the page cannot be handed anything while
             // the VM is still refusing to run its code.
             (void)script_->take_error();
+            // STILL THE CURRENT SCRIPT while its error is reported: a
+            // window.onerror reading document.currentScript sees the script
+            // that failed - to parse, too - which Document.currentScript.html
+            // asserts by id.
             (void)bindings_->dispatch_error(result.error);
         }
+        bindings_->set_current_script(node_id{});
     }
 
     // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own

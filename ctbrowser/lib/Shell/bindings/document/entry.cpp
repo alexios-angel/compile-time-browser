@@ -362,21 +362,23 @@ void dom_bindings::run_inserted_scripts() {
             if (bytes.empty()) { continue; }
             source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
         }
-        script::program compiled = script::compiler::compile(source);
-        if (!compiled.ok) {
-            (void)dispatch_error(compiled.error);
-            continue;
-        }
-        const script::program & kept = cx.own_program(std::move(compiled));
-        auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
-        entry->owner = &kept;
-        // `document.currentScript` is this element while it runs, and what it
-        // was - the outer script, when there is one - afterwards.
+        // `document.currentScript` is this element while it runs - and while
+        // its parse error is reported - and what it was, the outer script when
+        // there is one, afterwards.
         value outer = value::null();
         if (auto * doc = document_object()) {
             if (const value * had = doc->find("currentScript"); had != nullptr) { outer = *had; }
         }
         set_current_script(id);
+        script::program compiled = script::compiler::compile(source);
+        if (!compiled.ok) {
+            (void)dispatch_error(compiled.error);
+            if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+            continue;
+        }
+        const script::program & kept = cx.own_program(std::move(compiled));
+        auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
+        entry->owner = &kept;
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
