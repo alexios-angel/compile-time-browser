@@ -361,7 +361,10 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
             if (!cx.lookup_property(value::object(&map), qualified).is_undefined()) { continue; }
             const value * indexed = map.find(std::to_string(i));
             if (indexed == nullptr) { continue; }
-            map.set(qualified, *indexed);
+            // NOT ENUMERABLE - WebIDL's named properties never are - and
+            // configurable, as `Object.keys(el.attributes)` being the indices
+            // alone requires.
+            map.define(qualified, *indexed, script::attr_configurable);
         }
     }
     if (!map.prototype.is_object()) {
@@ -386,15 +389,26 @@ void dom_bindings::install_named_node_map(context & cx) {
     struct owner {
         dom_bindings * self = nullptr;
         node_id id;
+        script::object_object * map = nullptr; // the target behind the proxy
     };
     const auto owner_of_map = [this](context & c) {
         owner found;
-        const value wrapper =
-            c.lookup_property(c.current_this(), std::string{named_node_map_owner_key});
+        value self = c.current_this();
+        if (self.is_kind(script::heap_kind::proxy)) {
+            self = static_cast<script::proxy_object *>(self.as_heap())->target;
+        }
+        if (!self.is_object()) { return found; }
+        found.map = static_cast<script::object_object *>(self.as_heap());
+        const value wrapper = c.lookup_property(self, std::string{named_node_map_owner_key});
         found.self = owner_of(wrapper);
         if (found.self == nullptr) { return found; }
         found.id = found.self->handle_of(wrapper);
         return found;
+    };
+    // A write through the map refreshes the map's own properties at once:
+    // `map.setNamedItem(a); map.a` reads the map the page already holds.
+    const auto refreshed = [](context & c, const owner & at) {
+        if (at.map != nullptr) { at.self->refresh_attribute_map(c, *at.map, at.id); }
     };
     const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
         auto * made = cx.allocate<script::native_object>(name, std::move(fn));
@@ -458,7 +472,8 @@ void dom_bindings::install_named_node_map(context & cx) {
     // OBJECT: an Attr that is some OTHER element's is an InUseAttributeError,
     // one that is already this element's is handed straight back, and the one
     // it replaces is detached and returned.
-    const auto set_named = [owner_of_map, found_by_pair](context & c, std::span<value> a) {
+    const auto set_named = [owner_of_map, found_by_pair, refreshed](context & c,
+                                                                    std::span<value> a) {
         const owner at = owner_of_map(c);
         const value given = arg(a, 0);
         if (!at.id) { return value::null(); }
@@ -495,6 +510,7 @@ void dom_bindings::install_named_node_map(context & cx) {
         auto * attached = static_cast<script::object_object *>(given.as_heap());
         self.bind_attr_object(c, *attached, at.id, written);
         self.attr_objects_[pack(at.id)].emplace_back(ns + '\0' + std::string{local}, attached);
+        refreshed(c, at);
         return old;
     };
     method("setNamedItem", 1, set_named);
@@ -511,7 +527,7 @@ void dom_bindings::install_named_node_map(context & cx) {
         return gone;
     };
     method("removeNamedItem", 1,
-           [this, owner_of_map, found_by_name, detach](context & c, std::span<value> a) {
+           [this, owner_of_map, found_by_name, detach, refreshed](context & c, std::span<value> a) {
                const owner at = owner_of_map(c);
                const std::string qualified = arg_string(c, a, 0);
                const std::optional<attribute> held =
@@ -525,10 +541,11 @@ void dom_bindings::install_named_node_map(context & cx) {
                const value gone = detach(c, *at.self, at.id, *held);
                (void)at.self->doc_->remove_attribute(at.id, held->name);
                at.self->mutated();
+               refreshed(c, at);
                return gone;
            });
     method("removeNamedItemNS", 2,
-           [this, owner_of_map, found_by_pair, detach](context & c, std::span<value> a) {
+           [this, owner_of_map, found_by_pair, detach, refreshed](context & c, std::span<value> a) {
                const owner at = owner_of_map(c);
                const std::string ns = namespace_argument(c, a, 0);
                const std::string local = arg_string(c, a, 1);
@@ -543,6 +560,7 @@ void dom_bindings::install_named_node_map(context & cx) {
                const value gone = detach(c, *at.self, at.id, *held);
                (void)at.self->doc_->remove_attribute_ns(at.id, ns, local);
                at.self->mutated();
+               refreshed(c, at);
                return gone;
            });
 }
