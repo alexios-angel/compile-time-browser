@@ -405,6 +405,10 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // nor is a random() drawn before computed-value time (random-serialize).
     ok("margin-left", "calc(1px * sqrt(sibling-index()))", "calc(1px * sqrt(sibling-index()))");
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
+    // A relative colour's channel keywords are values inside its math, and
+    // nowhere else (CSS Color 5 §relative-colors, random-serialize).
+    ok("color", "rgb(from red calc(r + 30) g b)", "rgb(from red calc(r + 30) g b)");
+    bad("color", "rgb(calc(r + 1) 0 0)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
     // (CSS Values 5 §calc-size, calc-size-parsing).

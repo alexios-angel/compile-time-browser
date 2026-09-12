@@ -97,6 +97,46 @@ namespace {
 constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
                                                 "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
 
+// Is position `at` inside a colour function whose first argument is `from` -
+// CSS Color 5's relative colour syntax, where `r`, `g`, `b`, `alpha` and the
+// rest are channel values a calc() may use?
+[[nodiscard]] bool inside_relative_color(std::string_view value, std::size_t at) {
+    constexpr std::string_view colours[] = {"rgb(", "rgba(", "hsl(",   "hsla(",  "hwb(",
+                                            "lab(", "lch(",  "oklab(", "oklch(", "color("};
+    std::vector<bool> relative; // one entry per open bracket: is it a relative colour?
+    std::size_t i = 0;
+    while (i < at) {
+        if (const std::size_t quoted = end_of_string_at(value, i); quoted != i) {
+            i = quoted;
+            continue;
+        }
+        if (value[i] == ')') {
+            if (!relative.empty()) { relative.pop_back(); }
+            ++i;
+            continue;
+        }
+        if (value[i] == '(') {
+            relative.push_back(false);
+            ++i;
+            continue;
+        }
+        const std::string_view name = name_at(value, i, colours);
+        if (name.empty()) {
+            ++i;
+            continue;
+        }
+        std::size_t after = i + name.size();
+        while (after < value.size() &&
+               html_whitespace.find(value[after]) != std::string_view::npos) {
+            ++after;
+        }
+        relative.push_back(ascii_iequals(value.substr(after, 4), "from") &&
+                           (after + 4 >= value.size() || !is_name_char(value[after + 4])));
+        i += name.size();
+    }
+    return std::ranges::any_of(relative, [](bool r) { return r; });
+}
+
 [[nodiscard]] bool angle_arguments_ok(std::string_view value) {
     const length_context ctx;
     std::size_t at = 0;
@@ -292,7 +332,12 @@ bool math_syntax_ok(std::string_view value) {
             continue;
         }
         const function_span span = span_of(value, at, name);
-        if (evaluate_math(body_of(value, at, name, span), ctx).outcome == math_outcome::invalid) {
+        // INSIDE A RELATIVE COLOUR the channel keywords are values - `rgb(from
+        // blue r g calc(b + 150))` - and this evaluator has no channels, so a
+        // math function there is left to the colour grammar rather than
+        // condemned for an ident it cannot read (random-serialize).
+        if (!inside_relative_color(value, at) &&
+            evaluate_math(body_of(value, at, name, span), ctx).outcome == math_outcome::invalid) {
             return false;
         }
         // Past the whole function, so a nested one is not checked twice - the
