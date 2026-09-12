@@ -12,6 +12,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <memory>
 #include <numbers>
 #include <optional>

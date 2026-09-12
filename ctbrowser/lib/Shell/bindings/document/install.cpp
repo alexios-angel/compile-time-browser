@@ -667,6 +667,27 @@ void dom_bindings::install_document(context & cx) {
         doc->set("fonts", value::object(fonts));
     }
 
+    // `document.lastModified`, HTML 3.1.3: with no Last-Modified header to
+    // read, the current time in the user's local timezone, "MM/DD/YYYY
+    // hh:mm:ss" - document-lastModified-01.html matches the shape.
+    doc->define_accessor("lastModified",
+                         value::object(cx.allocate<script::native_object>(
+                             "lastModified",
+                             [](context & c, std::span<value>) {
+                                 const std::time_t now = std::time(nullptr);
+                                 std::tm local{};
+#ifdef _WIN32
+                                 localtime_s(&local, &now);
+#else
+                                 localtime_r(&now, &local);
+#endif
+                                 char text[32];
+                                 const std::size_t n =
+                                     std::strftime(text, sizeof text, "%m/%d/%Y %H:%M:%S", &local);
+                                 return c.string(std::string{text, n});
+                             })),
+                         value::undefined());
+
     // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
     //
     // An accessor rather than a string, because the API is not a string: READING
@@ -681,43 +702,54 @@ void dom_bindings::install_document(context & cx) {
     // same reasoning localStorage is written down with, and the same answer: a
     // test that leaves state behind fails the next run for reasons that have
     // nothing to do with the code.
-    doc->define_accessor(
-        "cookie",
-        value::object(cx.allocate<script::native_object>("cookie",
-                                                         [this](context & c, std::span<value>) {
-                                                             std::string out;
-                                                             for (const auto & [name, item] :
-                                                                  cookies_) {
-                                                                 if (!out.empty()) { out += "; "; }
-                                                                 out += name + "=" + item;
-                                                             }
-                                                             return c.string(out);
-                                                         })),
-        value::object(cx.allocate<script::native_object>("cookie", [this](context & c,
-                                                                          std::span<value> a) {
-            const std::string written = arg_string(c, a, 0);
-            // Everything after the first `;` is attributes - path, expires,
-            // SameSite - and none of them mean anything without an origin
-            // or a clock to expire against.
-            const std::string pair = written.substr(0, written.find(';'));
-            const std::size_t equals = pair.find('=');
-            if (equals == std::string::npos) { return value::undefined(); }
-            const auto trim = [](std::string_view piece) {
-                const std::size_t first = piece.find_first_not_of(" \t");
-                if (first == std::string_view::npos) { return std::string{}; }
-                return std::string{piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
-            };
-            const std::string name = trim(pair.substr(0, equals));
-            const std::string item = trim(pair.substr(equals + 1));
-            for (auto & [key, held] : cookies_) {
-                if (key == name) {
-                    held = item;
-                    return value::undefined();
-                }
-            }
-            cookies_.emplace_back(name, item);
-            return value::undefined();
-        })));
+    // COOKIE-AVERSE (HTML 7.7.2): a document with no browsing context - one a
+    // page made - or whose URL is not a network scheme reads "" and ignores
+    // writes; a file: page is one, and document-cookie.html asserts it. A
+    // page loaded from a string has no URL at all and keeps the jar: that is
+    // what an embedder's page expects of it.
+    const auto cookie_averse = [this] {
+        return secondary_ || (!location_href_.empty() && !(location_href_.starts_with("http://") ||
+                                                           location_href_.starts_with("https://")));
+    };
+    doc->define_accessor("cookie",
+                         value::object(cx.allocate<script::native_object>(
+                             "cookie",
+                             [this, cookie_averse](context & c, std::span<value>) {
+                                 if (cookie_averse()) { return c.string(""); }
+                                 std::string out;
+                                 for (const auto & [name, item] : cookies_) {
+                                     if (!out.empty()) { out += "; "; }
+                                     out += name + "=" + item;
+                                 }
+                                 return c.string(out);
+                             })),
+                         value::object(cx.allocate<script::native_object>(
+                             "cookie", [this, cookie_averse](context & c, std::span<value> a) {
+                                 if (cookie_averse()) { return value::undefined(); }
+                                 const std::string written = arg_string(c, a, 0);
+                                 // Everything after the first `;` is attributes - path, expires,
+                                 // SameSite - and none of them mean anything without an origin
+                                 // or a clock to expire against.
+                                 const std::string pair = written.substr(0, written.find(';'));
+                                 const std::size_t equals = pair.find('=');
+                                 if (equals == std::string::npos) { return value::undefined(); }
+                                 const auto trim = [](std::string_view piece) {
+                                     const std::size_t first = piece.find_first_not_of(" \t");
+                                     if (first == std::string_view::npos) { return std::string{}; }
+                                     return std::string{piece.substr(
+                                         first, piece.find_last_not_of(" \t") - first + 1)};
+                                 };
+                                 const std::string name = trim(pair.substr(0, equals));
+                                 const std::string item = trim(pair.substr(equals + 1));
+                                 for (auto & [key, held] : cookies_) {
+                                     if (key == name) {
+                                         held = item;
+                                         return value::undefined();
+                                     }
+                                 }
+                                 cookies_.emplace_back(name, item);
+                                 return value::undefined();
+                             })));
 
     // `document.implementation`, WHICH DID NOT EXIST.
     //
