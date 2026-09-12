@@ -1027,21 +1027,28 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::undefined();
         }
         if (!self || self == other) { return value::number(0); }
-        if (root_of_tree(txn, self, false) != root_of_tree(txn, other, false)) {
-            return value::number(disconnected | implementation_specific |
-                                 (pack(other) < pack(self) ? preceding : following));
-        }
-        if (txn.is_ancestor_of(other, self)) { return value::number(contains | preceding); }
-        if (txn.is_ancestor_of(self, other)) { return value::number(contained_by | following); }
-        // Neither contains the other: walk both up to the root and compare the
-        // two children of the deepest shared ancestor by their order in it.
+        // THE TREE AS THE DOM SEES IT: the walk goes through `dom_parent`, so
+        // the document element and a doctype beside it share the Document
+        // node as their root rather than being two trees.
         const auto chain = [&txn](node_id from) {
             std::vector<node_id> up;
-            for (node_id at = from; at; at = txn.parent(at)) { up.push_back(at); }
+            for (node_id at = from; at; at = dom_parent(txn, at)) { up.push_back(at); }
             return up;
         };
         const std::vector<node_id> mine = chain(self);
         const std::vector<node_id> theirs = chain(other);
+        if (mine.back() != theirs.back()) {
+            return value::number(disconnected | implementation_specific |
+                                 (pack(other) < pack(self) ? preceding : following));
+        }
+        if (std::ranges::find(mine, other) != mine.end()) {
+            return value::number(contains | preceding);
+        }
+        if (std::ranges::find(theirs, self) != theirs.end()) {
+            return value::number(contained_by | following);
+        }
+        // Neither contains the other: compare the two children of the deepest
+        // shared ancestor by their order in it.
         std::size_t i = mine.size();
         std::size_t j = theirs.size();
         while (i > 1 && j > 1 && mine[i - 2] == theirs[j - 2]) {
