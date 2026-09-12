@@ -282,6 +282,97 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
       %written = ctjs.call %setter(%state, %entryKey, %value)
 )MLIR");
     refuse(priorSeed, "a constructor site's seeded contents do not identify an earlier child");
+    const std::string seed = "    %seeded = ctjs.call %childSetter(%value, %seedKey, %payload)\n";
+    auto cross = replaced(source, "    %value = ctjs.create_object", R"MLIR(
+    %constructor = ctjs.load_global "Map"
+    %value = ctjs.construct %constructor(%constructor)
+    %seedKey = ctjs.constant #ctjs.string<"value">
+    %childSetter = ctjs.get_property %value[%setKey]
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+)MLIR" + seed);
+    cross = replaced(cross,
+                     "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                     "    %size = ctjs.get_property %state[%key]\n"
+                     "    ctjs.return %size",
+                     R"MLIR(
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %entryKey)
+    %condition = ctjs.truthy %found
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %readKey = ctjs.constant #ctjs.string<"get">
+      %reader = ctjs.get_property %state[%readKey]
+      %saved = ctjs.call %reader(%state, %entryKey)
+      %innerKey = ctjs.constant #ctjs.string<"value">
+      %childReader = ctjs.get_property %saved[%readKey]
+      %loaded = ctjs.call %childReader(%saved, %innerKey)
+      scf.yield %loaded : !ctjs.value
+    } else {
+      %zero = ctjs.constant #ctjs.number<0>
+      scf.yield %zero : !ctjs.value
+    }
+    ctjs.return %answer
+)MLIR");
+    cross = replaced(cross, "    ctjs.store_global \"trace\", %answer",
+                     "    ctjs.store_global \"trace\", %answer\n"
+                     "    %observed = ctjs.load_global \"trace\"");
+    auto crossModule = mlir::parseSourceString<mlir::ModuleOp>(cross, &context);
+    check(static_cast<bool>(crossModule), "source/prepared cross-invocation child owner parses");
+    if (crossModule) {
+        auto contract = requested(*crossModule);
+        OwnedGlobalRoots query(*crossModule, contract);
+        check(query.proved() && query.roots().size() == 1 && query.scalarReads().size() == 1 &&
+                  query.scalarReads().front().alternatives.tag() ==
+                      mlir::TypeID::get<ctjs::NumberAttr>(),
+              "a separate getter rederives Number from every child's preserved literal entry");
+        if (!query.proved() || query.roots().empty()) {
+            std::fprintf(stderr, "cross child owner %s: %s\n", lifted ? "prepared" : "source",
+                         query.reason().str().c_str());
+        } else {
+            const auto & capture = *query.roots().front().methodTable->capturedMap;
+            check(capture.childEntries.size() == 1 && capture.returnedChildMaps.size() == 1 &&
+                      capture.childEntries.front().alternatives.tag() ==
+                          mlir::TypeID::get<ctjs::NumberAttr>() &&
+                      hostContractFingerprint(*crossModule) == contract.moduleSha256,
+                  "the owner preserves source publication and keeps entry evidence separate "
+                  "from returned identity");
+            for (const unsigned budget : {0u, query.steps() / 2, query.steps() - 1}) {
+                OwnedGlobalRoots limited(*crossModule, contract, budget);
+                check(!limited.proved() && limited.exhausted() && empty(*crossModule, limited) &&
+                          limited.steps() <= budget,
+                      "incomplete cross-invocation proof withholds every owning edge");
+            }
+            check(OwnedGlobalRoots(*crossModule, contract, query.steps()).proved(),
+                  "the exact cross-invocation budget proves the complete family");
+            mlir::Builder attributes(&context);
+            crossModule->walk([&](mlir::Operation * operation) {
+                operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+                operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
+                operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
+            });
+            check(OwnedGlobalRoots(*crossModule, requested(*crossModule)).proved(),
+                  "forged reports never replace independent child-entry ownership proof");
+        }
+    }
+    refuse(replaced(cross, seed, ""),
+           "a separate getter cannot infer membership from an unseeded publication");
+    auto lateSeed = replaced(cross, seed, "");
+    lateSeed = replaced(lateSeed, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
+                        "    %written = ctjs.call %setter(%state, %entryKey, %value)\n" + seed);
+    refuse(lateSeed, "entry initialization must precede publication into the owning outer Map");
+    for (const std::string action : {"delete", "clear"}) {
+        const auto erasure = "    %eraseKey = ctjs.constant #ctjs.string<\"" + action +
+                             "\">\n    %eraser = ctjs.get_property %value[%eraseKey]\n"
+                             "    %erased = ctjs.call %eraser(%value" +
+                             (action == "delete" ? ", %seedKey)\n" : ")\n");
+        refuse(replaced(cross, seed, seed + erasure),
+               "a destructive child mutation revokes the complete-family entry invariant");
+    }
+    refuse(replaced(cross, seed,
+                    seed + "    %mixed = ctjs.constant #ctjs.boolean<true>\n"
+                           "    %changed = ctjs.call %childSetter(%value, %seedKey, %mixed)\n"),
+           "mixed child payload categories revoke the getter's Number authority");
     const auto poison = [&](const std::string & payload) {
         return replaced(conditional, "    %size = ctjs.get_property %state[%key]",
                         R"MLIR(

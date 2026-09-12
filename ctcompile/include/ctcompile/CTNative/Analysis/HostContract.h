@@ -72,6 +72,14 @@ struct HostMethodArgument {
     ctjs::CreateObjectOp object{};
 };
 
+struct HostChildMapEntry {
+    mlir::Value key;
+    PrimitiveAlternatives alternatives;
+    bool operator==(const HostChildMapEntry & other) const {
+        return key == other.key && alternatives == other.alternatives;
+    }
+};
+
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
@@ -102,6 +110,9 @@ struct HostCapturedMap {
     // This promises neither a returned child's identity nor its contents.
     bool childMapContents = false;
     std::vector<mlir::Value> returnedChildMaps{};
+    // Initialized before every publication and preserved by every child write.
+    // This says nothing about identity, other keys, cardinality or startup values.
+    std::vector<HostChildMapEntry> childEntries{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

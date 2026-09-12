@@ -100,6 +100,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
+                         edge.capturedMap->childEntries != capture->childEntries ||
                          edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
                          edge.capturedMap->leafWrites != capture->leafWrites ||
@@ -158,9 +159,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
 
     llvm::DenseSet<mlir::Operation *> childMaps;
     if (capture && (!capture->childMaps.empty() || !capture->returnedChildMaps.empty() ||
-                    capture->childMapContents)) {
+                    !capture->childEntries.empty() || capture->childMapContents)) {
         mlir::DominanceInfo dominance(module);
         llvm::DenseSet<mlir::Value> outers, children, constructedChildren, returnedChildren;
+        llvm::DenseMap<mlir::Value, ctjs::ConstructOp> childOrigins;
         for (ctjs::LoadUpvalueOp load : capture->upvalues) {
             if (!spend()) { return; }
             outers.insert(load.getResult());
@@ -199,6 +201,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             }
             children.insert(made.getResult());
             constructedChildren.insert(made.getResult());
+            childOrigins[made.getResult()] = made;
         }
         for (ctjs::ConstructOp made : capture->childMaps) {
             for (mlir::OpOperand & use : made.getCallee().getUses()) {
@@ -252,6 +255,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 (outers.contains(call.getReceiver()) ? outers : children).insert(call.getResult());
                 if (constructedChildren.contains(call.getReceiver())) {
                     constructedChildren.insert(call.getResult());
+                    childOrigins[call.getResult()] = childOrigins.lookup(call.getReceiver());
                 }
             } else if (action == "get" && returnedChildren.contains(call.getResult())) {
                 if (!outers.contains(call.getReceiver())) {
@@ -259,6 +263,67 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     return;
                 }
                 children.insert(call.getResult());
+            }
+        }
+        if (!capture->childEntries.empty()) {
+            if (!spend()) { return; }
+            const auto & entry = capture->childEntries.front();
+            auto literal = entry.key.getDefiningOp<ctjs::ConstantOp>();
+            if (!capture->childMapContents || capture->childEntries.size() != 1 || !literal ||
+                !llvm::isa<ctjs::StringAttr>(literal.getValue()) || !entry.alternatives.tag()) {
+                reject("owned child invariant lacks its exact scalar key and category");
+                return;
+            }
+            const auto scalar = [&](mlir::Value value) -> PrimitiveAlternatives {
+                if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+                    return PrimitiveAlternatives::literal(constant.getValue()).categories();
+                }
+                auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+                if (!argument) { return {}; }
+                for (const auto & method : capture->parameters) {
+                    if (!spend()) { return {}; }
+                    auto function = method.function;
+                    auto & block = function.getBody().front();
+                    const auto first = block.getNumArguments() - method.alternatives.size();
+                    if (argument.getOwner() == &block && argument.getArgNumber() >= first) {
+                        return method.alternatives[argument.getArgNumber() - first].categories();
+                    }
+                }
+                return {};
+            };
+            // Recheck the complete mutation census and initialization order.
+            // Returned owners establish no seed or allocation identity here.
+            llvm::DenseMap<mlir::Value, ctjs::CallOp> seeds;
+            for (ctjs::CallOp call : capture->calls) {
+                if (!spend()) { return; }
+                const auto action =
+                    keyOf(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+                if (children.contains(call.getReceiver())) {
+                    if (action == "delete" || action == "clear") {
+                        reject("owned child mutation can remove its required entry");
+                        return;
+                    }
+                    if (action != "set") { continue; }
+                    auto key = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+                    if (!key || key.getValue() != literal.getValue() ||
+                        !(scalar(call.getArgs()[1]) == entry.alternatives.categories())) {
+                        reject("owned child mutation does not preserve its required entry");
+                        return;
+                    }
+                    if (auto origin = childOrigins.lookup(call.getReceiver());
+                        origin && origin->getBlock() == call->getBlock()) {
+                        seeds[origin.getResult()] = call;
+                    }
+                } else if (action == "set") {
+                    auto origin = childOrigins.lookup(call.getArgs()[1]);
+                    auto seed = origin ? seeds.lookup(origin.getResult()) : ctjs::CallOp{};
+                    if (!origin || !seed || origin->getBlock() != call->getBlock() ||
+                        seed->getBlock() != call->getBlock() || !origin->isBeforeInBlock(seed) ||
+                        !seed->isBeforeInBlock(call)) {
+                        reject("owned child publication precedes its definite initialization");
+                        return;
+                    }
+                }
             }
         }
         for (ctjs::GetPropertyOp read : capture->reads) {

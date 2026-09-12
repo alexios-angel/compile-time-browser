@@ -281,6 +281,121 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         std::printf("exact-size owner %s %s: %u rows and all %u incomplete budgets checked\n",
                     prepared ? "prepared" : "source", label, rows, completion);
     }
+
+    // Imported early returns retain their original entry-frame exits in both
+    // scalar SCF arms. This witness needs no cross-invocation child invariant.
+    const auto enterFrame = [](std::string text, llvm::StringRef function, llvm::StringRef name) {
+        const auto start = text.find('\n', text.find("ctjs.func private @" + function.str()));
+        check(start != std::string::npos, "frame fixture retains its source method");
+        if (start != std::string::npos) {
+            text.insert(start + 1, "    %" + name.str() + " = ctjs.frame_enter 8\n");
+        }
+        return text;
+    };
+    const auto framed = enterFrame(fixture, "put$4", "frame");
+    const std::string exit = "    ctjs.frame_exit %frame\n";
+    const std::string returned = "    ctjs.return %answer";
+    const auto straight =
+        replaced(framed, returned, "    ctjs.root %answer in %frame\n" + exit + returned);
+    const std::string leftExit = "      ctjs.frame_exit %frame {left_exit}\n";
+    const std::string rightExit = "      ctjs.frame_exit %frame {right_exit}\n";
+    const std::string selectedReturn =
+        "    %finishFlag = ctjs.truthy %choice\n"
+        "    %selected = scf.if %finishFlag -> (!ctjs.value) {\n"
+        "      ctjs.root %answer in %frame\n" +
+        leftExit + "      scf.yield %answer : !ctjs.value\n    } else {\n" + rightExit +
+        "      scf.yield %one : !ctjs.value\n    }\n"
+        "    ctjs.return %selected";
+    const auto twoReturns = replaced(framed, returned, selectedReturn);
+    variant(straight, true, "one original frame is rooted and exited before the scalar return");
+    variant(twoReturns, true, "both scalar return arms exit the same original entry frame");
+    variant(replaced(twoReturns, "      scf.yield %answer : !ctjs.value",
+                     "      scf.yield %one : !ctjs.value"),
+            true, "frame validation does not depend on either arm's scalar result identity");
+    variant(framed, false, "a live entry frame must exit before its return");
+    variant(replaced(twoReturns, leftExit, ""), false,
+            "a missing then-arm exit cannot borrow the else-arm exit");
+    variant(replaced(twoReturns, rightExit, ""), false,
+            "a missing else-arm exit cannot borrow the then-arm exit");
+    variant(replaced(twoReturns, leftExit, leftExit + leftExit), false,
+            "a return arm cannot exit the original frame twice");
+    variant(replaced(straight, exit, exit + exit), false,
+            "a top-level return cannot exit the original frame twice");
+    variant(replaced(twoReturns, "    ctjs.return %selected", exit + "    ctjs.return %selected"),
+            false, "a scalar join of exited arms cannot exit the frame again");
+    variant(replaced(twoReturns, rightExit, rightExit + "      ctjs.root %one in %frame\n"), false,
+            "a root cannot use a frame after its return-arm exit");
+    variant(replaced(straight, exit, exit + "    %late = ctjs.call %clearer(%state)\n"), false,
+            "effects cannot follow an original frame exit");
+    variant(replaced(straight, "    %frame = ctjs.frame_enter 8\n",
+                     "    %frame = ctjs.frame_enter 8\n"
+                     "    %second = ctjs.frame_enter 8\n"),
+            false, "a second entry frame cannot hide behind a valid original exit");
+    variant(replaced(twoReturns, rightExit, "      %nested = ctjs.frame_enter 8\n" + rightExit),
+            false, "a conditional frame entry cannot replace the original entry frame");
+    variant(replaced(straight, "ctjs.frame_enter 8", "ctjs.frame_enter -1"), false,
+            "a negative frame register count cannot acquire an ownership proof");
+    check(rows == 44, "all exact-size and original-frame lifecycle controls ran");
+
+    auto foreign = enterFrame(straight, "get$3", "otherFrame");
+    foreign = replaced(foreign, "    ctjs.return %size",
+                       "    ctjs.frame_exit %otherFrame\n    ctjs.return %size");
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(foreign, &context);
+    check(static_cast<bool>(module), "foreign-frame live-edit control parses");
+    if (!module) { return; }
+    const auto contract = requested(*module);
+    check(OwnedGlobalRoots(*module, contract).proved(),
+          "each source method independently owns and exits its original frame");
+    auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+    auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+    ctjs::FrameEnterOp original, other;
+    ctjs::FrameExitOp leaving;
+    ctjs::RootOp rooted;
+    setter.walk([&](ctjs::FrameEnterOp op) { original = op; });
+    getter.walk([&](ctjs::FrameEnterOp op) { other = op; });
+    setter.walk([&](ctjs::FrameExitOp op) { leaving = op; });
+    setter.walk([&](ctjs::RootOp op) { rooted = op; });
+    check(original && other && leaving && rooted,
+          "foreign-frame control keeps both entries and the original root and exit");
+    if (!original || !other || !leaving || !rooted) { return; }
+    mlir::Builder attributes(&context);
+    leaving->setAttr("ctnative.host_frame_proved", attributes.getUnitAttr());
+    for (mlir::Operation * changed : {leaving.getOperation(), rooted.getOperation()}) {
+        changed->setOperand(0, other.getContext());
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
+              "a foreign frame operand invalidates the original source fingerprint");
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+              "fresh fingerprints and forged frame reports cannot authorize a foreign frame");
+        changed->setOperand(0, original.getContext());
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the original frame operand restores its independent proof");
+    }
+    const auto count = original->getAttr("reg_count");
+    original->removeAttr("reg_count");
+    OwnedGlobalRoots malformed(*module, requested(*module));
+    check(!malformed.proved() && !malformed.exhausted() && empty(*module, malformed),
+          "a malformed live frame entry cannot inherit its earlier frame proof");
+    original->setAttr("reg_count", count);
+    check(OwnedGlobalRoots(*module, contract).proved(),
+          "restoring the entry register count restores the source proof");
+    const auto type = original->getResult(0).getType();
+    original->getResult(0).setType(ctjs::ValueType::get(&context));
+    OwnedGlobalRoots wrongType(*module, requested(*module));
+    check(!wrongType.proved() && !wrongType.exhausted() && empty(*module, wrongType),
+          "a live frame result with the wrong type cannot acquire frame authority");
+    original->getResult(0).setType(type);
+    check(OwnedGlobalRoots(*module, contract).proved(),
+          "restoring the original context type restores the source proof");
+    const auto rootedValue = rooted->getOperand(1);
+    rooted->setOperand(1, original.getContext());
+    OwnedGlobalRoots rootedFrame(*module, requested(*module));
+    check(!rootedFrame.proved() && !rootedFrame.exhausted() && empty(*module, rootedFrame),
+          "a frame token cannot masquerade as a rooted JavaScript value");
+    rooted->setOperand(1, rootedValue);
+    check(OwnedGlobalRoots(*module, contract).proved(),
+          "restoring the rooted value restores the frame proof");
 }
 
 } // namespace ctcompile::test::owned_global_shared_map
