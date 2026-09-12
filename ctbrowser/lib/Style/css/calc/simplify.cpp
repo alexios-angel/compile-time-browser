@@ -193,6 +193,102 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
     });
 }
 
+// A calc-mix() THAT COULD NOT FOLD is still normalised (CSS Values 5
+// §calc-mix): each weight clamped to [0%, 100%], the omitted ones sharing what
+// is left below 100% equally, a total over 100% scaled down to it, and an item
+// weighing nothing dropped - so `calc-mix(10px 75%, 3em 75%)` is
+// `calc-mix(10px 50%, 3em 50%)` before there is a font size. A weight written
+// as a function has no number yet, and then nothing is normalised: the items
+// are written as they came, values simplified (calc-mix-serialize).
+[[nodiscard]] std::string simplified_calc_mix(std::string_view inner) {
+    struct item {
+        std::string_view value;
+        std::optional<double> weight;
+        std::string_view weight_text; // as written, for when nothing is normalised
+    };
+    std::vector<item> items;
+    bool literal = false;
+    for (std::string_view arg : top_level_arguments(inner)) {
+        arg = trim(arg, html_whitespace);
+        item one{arg, std::nullopt, {}};
+        const token_stream ts = tokenize(arg);
+        std::size_t last = ts.tokens.size();
+        for (std::size_t i = ts.tokens.size(); i-- > 0;) {
+            const token_type type = ts.tokens[i].type;
+            if (type == token_type::eof || type == token_type::whitespace) { continue; }
+            last = i;
+            break;
+        }
+        if (last < ts.tokens.size()) {
+            const css_token & t = ts.tokens[last];
+            if (t.type == token_type::percentage && last > 0) {
+                one.weight = std::min(std::max(t.number, 0.0), 100.0);
+                one.weight_text = arg.substr(t.text);
+                one.value = trim(arg.substr(0, t.text), html_whitespace);
+            } else if (t.type == token_type::close_paren) {
+                // The function this `)` closes, and whether it is a weight.
+                int depth = 0;
+                for (std::size_t i = last + 1; i-- > 0;) {
+                    const token_type type = ts.tokens[i].type;
+                    if (type == token_type::close_paren) { ++depth; }
+                    if (type == token_type::open_paren) { --depth; }
+                    if (type == token_type::function && --depth == 0) {
+                        if (i > 0 && !math_name_at(arg, ts.tokens[i].text).empty()) {
+                            literal = true;
+                            one.weight_text = arg.substr(ts.tokens[i].text);
+                            one.value = trim(arg.substr(0, ts.tokens[i].text), html_whitespace);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        items.push_back(one);
+    }
+    std::string out{"calc-mix("};
+    bool first = true;
+    const auto emit = [&](std::string_view value, std::string_view weight) {
+        if (!first) { out += ", "; }
+        first = false;
+        out += simplify_math(value);
+        if (!weight.empty()) { out.append(" ").append(weight); }
+    };
+    if (literal) {
+        for (const item & one : items) { emit(one.value, one.weight_text); }
+        return out + ')';
+    }
+    double given = 0.0;
+    double missing = 0.0;
+    for (const item & one : items) {
+        if (one.weight) {
+            given += *one.weight;
+        } else {
+            missing += 1.0;
+        }
+    }
+    const double share = missing == 0.0 ? 0.0 : std::max(0.0, 100.0 - given) / missing;
+    const double scale = std::max(100.0, given) / 100.0;
+    for (const item & one : items) {
+        const double weight = one.weight.value_or(share) / scale;
+        if (weight == 0.0) { continue; }
+        emit(one.value, serialize_calc(calc_result{0.0, weight, true}));
+    }
+    // Every weight zero: nought, of the first value's kind - which for a value
+    // that has no symbolic form is a percentage when one is written in it.
+    if (first && !items.empty()) {
+        if (const auto [outcome, sum] = evaluate_symbolic(items.front().value);
+            outcome == math_outcome::resolved && sum.symbols.empty()) {
+            calc_result zero;
+            zero.type = sum.type();
+            zero.is_number = sum.is_number();
+            zero.has_percent = sum.has_percent && sum.value == 0.0;
+            return specified_math(zero);
+        }
+        return has_percentage(items.front().value) ? "calc(0%)" : "calc(0px)";
+    }
+    return out + ')';
+}
+
 } // namespace
 
 std::string simplify_math(std::string_view value) {
@@ -258,6 +354,23 @@ std::string simplify_math(std::string_view value) {
                 out.append(simplify_math(trimmed));
                 continue;
             }
+        }
+        // A calc-mix() FOLDS ONLY SYMBOLICALLY - the evaluator says when a
+        // specified one may - and is normalised otherwise.
+        if (ascii_iequals(name, "calc-mix(")) {
+            const auto [outcome, sum] = evaluate_symbolic(body);
+            if (outcome == math_outcome::resolved && sum.symbols.empty()) {
+                calc_result value;
+                value.type = sum.type();
+                value.is_number = sum.is_number();
+                value.px = sum.value;
+                value.percent = sum.percent;
+                value.has_percent = sum.has_percent;
+                out.append(specified_math(value));
+            } else {
+                out.append(simplified_calc_mix(inner));
+            }
+            continue;
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {

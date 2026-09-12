@@ -639,6 +639,7 @@ private:
         if (named("sign(")) { return sign_or_abs(true); }
         if (named("progress(")) { return progress_of(); }
         if (named("random(")) { return random_of(); }
+        if (named("calc-mix(")) { return calc_mix(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -988,6 +989,86 @@ private:
             args.size() == 3 ? std::optional<double>{scalar_of(args[2])} : std::nullopt;
         return with_scalar(args.front(),
                            random_one(base, scalar_of(args[0]), scalar_of(args[1]), step));
+    }
+
+    // calc-mix( [ <calc-sum> <percentage>? ]# ), CSS Values 5 §calc-mix: a
+    // weighted sum, its weights normalised the way color-mix() normalises
+    // them. Each weight is clamped to [0%, 100%]; the omitted ones share what
+    // is left below 100% equally; a total over 100% is scaled down to it and a
+    // total under is not scaled up. Weights all zero is the zero of the first
+    // value's kind (calc-mix-serialize, calc-mix-computed).
+    //
+    // A SPECIFIED VALUE FOLDS ONLY WHEN EVERYTHING IN IT HAS A MAGNITUDE. With
+    // a `3em`, a `sibling-index()` or a weight that is itself unresolved, §10.12
+    // keeps the function - normalised, which simplify.cpp writes - because
+    // `calc-mix(10px 50%, 3em 50%)` is not `calc(5px + 1.5em)` to the page.
+    [[nodiscard]] std::optional<term> calc_mix() {
+        ++at_; // the function token, `(` included
+        std::vector<term> values;
+        std::vector<std::optional<double>> weights;
+        for (;;) {
+            const std::optional<term> one = sum();
+            if (!one) { return std::nullopt; }
+            if (basis_ == basis::symbolic && !one->symbols.empty()) { return unresolvable(); }
+            values.push_back(*one);
+            skip_whitespace();
+            std::optional<double> weight;
+            if (peek().type == token_type::percentage) {
+                weight = peek().number;
+                ++at_;
+            } else if (peek().type == token_type::function) {
+                // A weight written as a function keeps the specified value as
+                // written, resolvable or not (calc-mix-serialize).
+                if (basis_ == basis::symbolic) { return unresolvable(); }
+                const std::optional<term> given = math_function();
+                if (!given) { return std::nullopt; }
+                // A weight is a bare percentage; one with a magnitude of its
+                // own or a symbol in it is a type error or waits for the
+                // cascade.
+                if (!given->has_percent || given->value != 0.0 || !given->symbols.empty()) {
+                    return given->symbols.empty() ? fail() : unresolvable();
+                }
+                weight = given->percent;
+            }
+            if (weight) { weight = std::min(std::max(*weight, 0.0), 100.0); }
+            weights.push_back(weight);
+            skip_whitespace();
+            if (peek().type == token_type::comma) {
+                ++at_;
+                continue;
+            }
+            break;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        for (const term & one : values) {
+            if (one.dims != values.front().dims) { return fail(); }
+        }
+        double given = 0.0;
+        double missing = 0.0;
+        for (const std::optional<double> & w : weights) {
+            if (w) {
+                given += *w;
+            } else {
+                missing += 1.0;
+            }
+        }
+        const double share = missing == 0.0 ? 0.0 : std::max(0.0, 100.0 - given) / missing;
+        const double total = std::max(100.0, given);
+        std::optional<term> out;
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            const double w = weights[i].value_or(share) / total;
+            if (w == 0.0) { continue; }
+            const term part = scaled(values[i], w);
+            out = out ? add(*out, part, false) : std::optional<term>{part};
+            if (!out) { return fail(); }
+        }
+        if (out) { return out; }
+        // Every weight zero: nought, of the first value's kind.
+        term zero;
+        zero.dims = values.front().dims;
+        zero.has_percent = values.front().has_percent && values.front().symbols.empty();
+        return zero;
     }
 
     [[nodiscard]] std::optional<term> hypot_of() {
