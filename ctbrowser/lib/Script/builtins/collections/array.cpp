@@ -607,6 +607,13 @@ void install_array(context & cx) {
         double k = raw_from < 0 ? std::max(len + raw_from, 0.0) : std::min(raw_from, len);
         const double raw_to = has_index(a, 1) ? integer_arg(c, a, 1) : len;
         const double to = raw_to < 0 ? std::max(len + raw_to, 0.0) : std::min(raw_to, len);
+        // 10.4.2.2 ArrayCreate step 1: a count past 2^32 - 1 is a RangeError,
+        // not four billion pushes until the address-space cap kills the
+        // process (an array-like whose `length` getter answers 2^32).
+        if (to - k > 4294967295.0) {
+            c.throw_error("RangeError", "Invalid array length");
+            return value::undefined();
+        }
         const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
         // The count is the SPAN, not the number of elements found: a hole in

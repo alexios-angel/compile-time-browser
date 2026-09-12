@@ -152,6 +152,8 @@ int main() {
     js_expect("[1, 2].join(null)", "1null2");
     js_expect("[1, 2, 3].fill(0, 1, undefined).join(',')", "1,0,0");
     js_expect("[1, 2, 3].slice(1, undefined).join(',')", "2,3");
+    // ArrayCreate refuses a count past 2^32 - 1 (10.4.2.2) before any push.
+    js_expect("Array.prototype.slice.call({get length() { return 4294967296; }})", "THREW");
     js_expect("[1, 2, 3].fill(0).join(',')", "0,0,0");
     js_expect("[1, 2, 3].fill(0, -2).join(',')", "1,0,0");
 
