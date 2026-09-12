@@ -102,6 +102,12 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
         }
     }
     if (!fragment) { moving.push_back(child); }
+    {
+        const auto txn = doc_->read();
+        for (const node_id one : moving) {
+            if (txn.parent(one) || one == txn.root()) { moved_by_mutation_.push_back(one); }
+        }
+    }
     for (const node_id one : moving) {
         if (before) {
             (void)doc_->insert_before(parent, one, before);

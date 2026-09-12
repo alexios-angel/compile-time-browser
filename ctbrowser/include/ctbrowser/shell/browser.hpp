@@ -1440,6 +1440,7 @@ private:
     [[nodiscard]] bool via_label(node_id from);
 
     bool focus(node_id id);
+    [[nodiscard]] bool focus_was_moved() const;
 
     // Every control the user can Tab to, in DOCUMENT ORDER.
     //

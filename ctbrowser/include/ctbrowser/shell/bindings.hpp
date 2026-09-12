@@ -1992,6 +1992,15 @@ private:
     // per name (HTML 3.1.5), so `document.a === document.a` even as the
     // members change. Marked as roots.
     flat_map<std::string, value> named_collections_;
+    // THE NODES A MUTATION MOVED: connected before the insertion that is
+    // being announced, so their subtrees were REMOVED for a moment - which is
+    // when HTML's focus fixup rule runs, and `is_connected` afterwards cannot
+    // see. moveBefore does not go through this, and keeps focus. Cleared
+    // after the hook.
+    std::vector<node_id> moved_by_mutation_;
+
+public:
+    [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

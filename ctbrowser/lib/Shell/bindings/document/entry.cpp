@@ -285,6 +285,7 @@ void dom_bindings::mutated() {
     // and it must not run inside a native that is halfway through a tree edit.
     frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
+    moved_by_mutation_.clear();
     // THE TWO THAT RUN SCRIPT, last: an inserted <script>'s post-connection
     // steps, then the custom element reactions - a connectedCallback may mutate
     // again and arrive back here - and everything above it is bookkeeping.

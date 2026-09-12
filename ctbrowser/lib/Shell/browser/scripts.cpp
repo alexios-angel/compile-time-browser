@@ -56,7 +56,19 @@ void browser::run_scripts() {
     // write. `styles` is the honest level: the only callers are script mutating
     // the document, and every one of them can change which rules match.
     bindings_ = std::make_unique<dom_bindings>(
-        *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::styles); },
+        *doc_, atoms_, canvases_, forms_,
+        [this] {
+            mark(dirty::styles);
+            // HTML's focus fixup rule: a focused element that left the
+            // document is focused no more, and the next `focus()` on it is a
+            // real one - moveBefore/fire-focusin-focusout.html re-focuses a
+            // button its cleanup re-appended. Silently, as the rule says.
+            if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved())) {
+                (void)set_state(focused_, state_focus, false);
+                focused_ = node_id{};
+                bindings_->observe_focus(focused_);
+            }
+        },
         [this](node_id id) { (void)focus(id); });
     // The back end a caller chose before the page loaded - see
     // browser::prefer_angle_webgl. Applied here because this is the first
