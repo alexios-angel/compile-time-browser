@@ -6,6 +6,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Caller payload progress; final gate pending, 2026-09-12
+
+Continued clean **ee4b2a57**, the **14:25:57 UTC** journal and
+`/tmp/ctcompile-output-next.md`; the old WIP branch was already an ancestor.
+Three agents split the caller ownership, native lifetime and independent escape work.
+
+**5ea064b0** proves scalar-field caller leaves, stable aliases and mixed object/scalar
+actuals without granting primitive authority. The corrected **321-step rebuild** and
+ownership CTest pass (**236.28s**), including 13 source / 13 prepared caller rows.
+**63206007** executes four new caller programs **6/6 native** in both modes. The
+60-source cohort passes **28 native / 32 refusals**, **139 typed observations /
+149 mutations** in **57.37s**, both layouts, GCC/Clang, no-Script and lifetime sanitizers.
+All 46 historical source bodies remain unchanged.
+
+**a78ab38d** proves original decimal BigInt array indices: **54 rows / six live states /
+914 retention cutoffs**. All 11 escape CTests pass; the source oracle measures
+**828 sites / 33 unclaimed / zero violations / precision 16/157**. The old 28,451-byte
+fixture remains an exact prefix. Stable22 passes 800 files; bundled23 has the same
+nine baseline files / 28 diagnostics. Browser/parser inputs are unchanged.
+
+**Full gate pending.** The 55-source historical caller cohort has three measured
+4/4 native field promotions and six owner-only promotions. Its first execution gate
+stopped at a test spelling mismatch: generated field writes use the existing setter
+helper, not the inline assignment the assertion expected. The one-line test correction
+is frozen; all 55 source bodies are unchanged. The serialized workflow
+`/tmp/ctcompile-caller-final-gate.sh` reruns that cohort, commits its three test paths
+only on success, then runs the standard full CTest gate. Logs:
+`/tmp/ctcompile-caller-object-keys-final.log` and `/tmp/ctcompile-caller-full.log`.
+Finish this gate and replace this checkpoint before choosing another implementation.
+
+Exact Data **8359592c** remains **0/7 native**, both modes. Preserve its 2,522 bytes.
+Next: independently prove mixed scalar/object child-Map contents, owning object returns
+and identity, then the original recorder callback. See
+`/tmp/ctcompile-caller-next-session.md`; independent escape candidate is dense-array
+`.length` in `/tmp/ctcompile-bigint-indices-next.md` (VM verdicts unmeasured).
+Claude's pending ToNumeric/reentry ABI work was accepted at **15:10:59 UTC**; reread
+AGENT-SYNC and re-gate the oracle after integration. Nothing was pushed.
+
 ## Native nullable output and canonical String indices, 2026-09-12
 
 Continued clean **3e60248f** and the **11:04:32 UTC** journal. The preceding
