@@ -136,6 +136,16 @@ value context::make_generator(closure_object * closure, value receiver,
         obj->prototype = value::object(table);
     }
     obj->set("__co", value::object(saved));
+    // See function_proto::eager_prologue: the parameters run now, up to the
+    // compiler's own yield. `started` is put back so `.throw()`/`.return()`
+    // on a generator that has not been resumed still never enter the body
+    // (27.5.3.3 step 6-8: suspendedStart), and the first `.next(v)` keeps
+    // discarding v. A prologue that threw has already unwound to the caller's
+    // handler and left the generator done.
+    if (closure->proto->eager_prologue) {
+        (void)generator_resume(out, value::undefined(), resume_mode::next);
+        saved->started = false;
+    }
     return out;
 }
 

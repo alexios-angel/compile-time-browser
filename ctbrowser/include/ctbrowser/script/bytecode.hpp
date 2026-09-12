@@ -361,8 +361,14 @@ struct function_proto {
     bool is_arrow = false;
     // `function*`. Calling one does NOT run the body: it builds a generator
     // object over a suspended frame and hands that back, so the first
-    // instruction runs on the first `.next()`.
+    // instruction runs on the first `.next()` - unless eager_prologue.
     bool is_generator = false;
+    // A generator whose parameters have defaults or patterns: the compiler
+    // ends that prologue with a yield_value of its own, and make_generator
+    // runs the frame up to it, because FunctionDeclarationInstantiation is
+    // part of [[Call]] (10.2.1 step 8) - `g(null)` with a pattern parameter
+    // is a TypeError at the call, not at the first `.next()`.
+    bool eager_prologue = false;
     // `async`. The VM needs it only together with is_generator - an async
     // generator's call builds a different object - and the image carries it
     // only in that case; a plain async function's promise wrapping and its

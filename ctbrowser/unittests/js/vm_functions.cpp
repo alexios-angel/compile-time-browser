@@ -211,6 +211,27 @@ void test_destructuring_parameters() {
                   "5");
     // a whole-parameter default alongside a pattern
     expect_result("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
+    // A GENERATOR EVALUATES ITS PARAMETERS WHEN CALLED (10.2.1 step 8), not
+    // on the first `.next()`: the default runs at g(), a throw is g()'s, and
+    // the body itself has not started - `.return()` before a `.next()` still
+    // finishes it without running anything.
+    expect_result("var ran = 0; function* g(a = (ran++, 1)) { yield a; }"
+                  "var it = g(); var before = ran; var v = it.next().value;"
+                  "return before + ',' + ran + ',' + v;",
+                  "1,1,1");
+    expect_result("function* g({x}) { yield x; }"
+                  "try { g(null); return 'no throw'; } catch (e) { return e.constructor.name; }",
+                  "TypeError");
+    expect_result("var body = 0; function* g(a = 1) { body++; yield a; }"
+                  "var it = g(); var r = it.return(7); return body + ',' + r.value + ',' + r.done;",
+                  "0,7,true");
+    expect_result("function* g(a = 1) { var got = yield a; return got; }"
+                  "var it = g(); it.next('ignored'); return it.next('sent').value;",
+                  "sent");
+    expect_result(
+        "async function* ag({x}) { yield x; }"
+        "try { ag(undefined); return 'no throw'; } catch (e) { return e.constructor.name; }",
+        "TypeError");
 }
 
 void test_destructuring_assignment() {

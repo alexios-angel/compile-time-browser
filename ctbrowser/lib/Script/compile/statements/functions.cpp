@@ -214,6 +214,27 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     proto().is_generator = fn().is_generator;
     proto().is_async = fn().is_async;
 
+    // A GENERATOR'S PARAMETERS ARE EVALUATED BY THE CALL, not by the first
+    // `.next()`: FunctionDeclarationInstantiation is step 8 of [[Call]]
+    // (10.2.1), before the generator object exists, so a default that throws
+    // throws at `g()` and `g(null)` with a pattern parameter is a TypeError
+    // there (27.5.3.1 / 27.6.3.1 both say `? FunctionDeclarationInstantiation`).
+    // The body proper starts at this suspension: make_generator runs the
+    // frame up to it, and the first resume lands past it with its argument
+    // in the scratch register - discarded, as 27.5.3.3 step 5 discards it.
+    // Only when the prologue can be observed - a default or a pattern - so a
+    // plain `function* g(a, b)` still costs nothing extra to call.
+    if (fn().is_generator) {
+        bool observable = false;
+        for (const std::int32_t p : params) { observable |= at(p).a >= 0 || at(p).b >= 0; }
+        if (observable) {
+            const std::uint16_t scratch = alloc_reg();
+            proto().emit(instruction{op::load_undef, scratch});
+            proto().emit(instruction{op::yield_value, scratch, scratch});
+            proto().eager_prologue = true;
+        }
+    }
+
     // THE ASYNC FENCE. An async function never throws at its caller: a throw
     // its body does not catch REJECTS the promise it returned (27.7.5.2,
     // AsyncBlockStart step 3.f). Before this, `async function f() { throw e }`

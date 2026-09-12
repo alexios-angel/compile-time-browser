@@ -286,14 +286,16 @@ load_result load_image(std::span<const std::byte> bytes,
         fn.param_count = in.u16();
         fn.frame_size = in.u16();
         const std::uint8_t arrow = in.u8();
-        const std::uint8_t generator = in.u8();
-        if (arrow > 1 || generator > 2) {
+        const std::uint8_t flags = in.u8();
+        const std::uint8_t generator = flags & 3u;
+        if (arrow > 1 || generator > 2 || (flags & ~7u) != 0 || (flags == 4u)) {
             in.fail(where() + "a function flag out of range");
             break;
         }
         fn.is_arrow = arrow != 0;
         fn.is_generator = generator != 0;
         fn.is_async = generator == 2; // see write.cpp: only an async GENERATOR is recorded
+        fn.eager_prologue = (flags & 4u) != 0;
         fn.source_begin = in.u32();
         fn.source_end = in.u32();
 
