@@ -6,6 +6,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Retained child entries, 2026-09-12 (gate pending)
+
+Continued clean **d5b9d767** and the **07:03:38 UTC** journal: the previous
+conditional/UShr recovery was fully gated; the interrupted boundary was the
+unchanged cross-invocation source **369d7cea/bdf9931e**. Three agents split
+body/frame validation, independent presence, and ownership/execution controls;
+root owns all devbox gates and commits. Two agents hit rate limits after their
+patches were complete; root integrated and reviewed them.
+
+**836ed8ed** proves one constant String entry and scalar category before every
+fresh child's publication, independently of family invocation results. Every
+child mutation must preserve it. The owner separately checks all seeds/writes;
+returned identity, cardinality and other keys stay independent. Original frame
+exits in scalar return branches now receive full lifecycle/token/use validation.
+Source/prepared checks retain unsafe mutations, forged reports and budget limits.
+
+The corrected **321-step rebuild** passes. **Eight focused CTests pass**, including
+ownership **198.18s** and seeded Host **40.31s**. Stable clang-format22 passes
+**800 files**; bundled23 retains the same **nine baseline files/28 diagnostics**.
+The new type test's membership results matched, but twenty preservation assertions
+incorrectly included deliberately added Map reports. Its **test-only correction**
+excludes those reports from cloned-source comparisons; production fingerprinting
+and proof rules are unchanged. Independent NativeMap presence and the preserved
+execution workflow are still uncommitted and await their corrected gate.
+
+**Resume first if interrupted:** finish `/tmp/ctcompile-inner-test-fix-gate.sh`
+(log `/tmp/ctcompile-inner-test-fix-focused.log`), then its chained standard gate
+(`/tmp/ctcompile-inner-full.log`). Keep all **20 historical JS bodies** unchanged.
+The expanded cohort has **28 sources**, with **50 local Node observations /
+27 distinguishing mutations**; **6 native / 22 refusals are expectations only**
+until measured. Do not claim a cross-invocation or Bootstrap admission increase.
+Frozen inputs: `/tmp/ctcompile-inner-frozen.json`; next audit:
+`/tmp/ctcompile-inner-next.md`. Full Bootstrap/Data remain unfinished.
+
 ## Conditional child Maps and recovered UShr, 2026-09-12
 
 Resumed the four dirty escape files left by the **05:36:18 UTC failed loop**
