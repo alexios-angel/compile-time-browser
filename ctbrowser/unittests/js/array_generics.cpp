@@ -536,6 +536,30 @@ int main() {
         "a");
 
     // ================================================================
+    // 11b. A PRIMITIVE RECEIVER IS BOXED (ToObject, step 1 of every method):
+    //      a Boolean wrapper takes a `length` and answers 0, a String
+    //      wrapper's indices refuse (10.4.3), and reads see the characters
+    // ================================================================
+    js_expect("Array.prototype.push.call(true)", "0");
+    js_expect("Array.prototype.push.call(false, 1)", "1");
+    js_expect("Array.prototype.pop.call(true)", "undefined");
+    js_expect("Array.prototype.shift.call(1)", "undefined");
+    js_expect("Array.prototype.unshift.call(true)", "0");
+    js_expect("Array.prototype.splice.call(true).length", "0");
+    js_expect("Array.prototype.join.call('abc', '-')", "a-b-c");
+    js_expect("Array.prototype.indexOf.call('abc', 'b')", "1");
+    js_expect("Array.prototype.map.call('ab', function (c) { return c + c; }).join()", "aa,bb");
+    js_expect("(function(){try{Array.prototype.push.call('abc', 1);return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    // `a.length = new Number(6)` runs the valueOf (10.4.2.4 ToNumber).
+    js_expect("(function(){var a=[1,2,3];a.length=new Number(6);return a.length;})()", "6");
+    js_expect("(function(){var a=[1,2,3];a.length={valueOf:function(){return 1;}};"
+              "return a.length;})()",
+              "1");
+    js_expect("(function(){var a=[];try{a.length=1.5;}catch(e){return e.name;}})()", "RangeError");
+
+    // ================================================================
     // 12. Array.from AND Array.of, 23.1.2.1 / 23.1.2.3 (since 2026-09-12)
     // ================================================================
     // The iterator protocol, with the mapper's index and thisArg.
@@ -562,6 +586,9 @@ int main() {
               "return r.n+','+r[0];})()",
               "1,x");
     js_expect("Array.from.call(Object, [1]).constructor === Object", "true");
+    // IsConstructor as near as a native can be told: a method has no `prototype`.
+    js_expect("Array.of.call(Math.cos, 1) instanceof Array", "true");
+    js_expect("Array.of.call(undefined, 1) instanceof Array", "true");
     js_expect("(function(){function C(){Object.defineProperty(this,'0',{value:1,"
               "writable:false,configurable:true});}return Array.of.call(C,2)[0];})()",
               "2");

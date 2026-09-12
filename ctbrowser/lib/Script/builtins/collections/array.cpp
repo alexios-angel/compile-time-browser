@@ -64,7 +64,14 @@ void install_array(context & cx) {
     // nothing callable, takes the straight line into a fresh Array.
     const auto through_constructor = [array_ctor](context & c, value ctor, double len,
                                                   bool pass_len) -> value {
+        // IsConstructor (7.2.4), as near as a native can be told: a built-in
+        // METHOD has no `prototype` property and a constructor does, so
+        // `Array.of.call(Math.cos)` builds a plain Array (step 5).
         if (!ctor.is_callable() || ctor.as_heap() == array_ctor) { return value::undefined(); }
+        if (ctor.is_kind(heap_kind::native) &&
+            static_cast<native_object *>(ctor.as_heap())->find("prototype") == nullptr) {
+            return value::undefined();
+        }
         const value args[1] = {value::number(len)};
         return c.construct(ctor,
                            pass_len ? std::span<const value>{args} : std::span<const value>{});
@@ -284,7 +291,7 @@ void install_array(context & cx) {
     // the ones it leans on hardest - 43 and 31 uses - because a typed-array
     // shim reaches for both.
     method(cx, array_proto, "at", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "at")) { return value::undefined(); }
         const double len = detail::array_like_length(c, self);
         // integer_arg, not num_at: ToIntegerOrInfinity runs a `valueOf`, so
@@ -295,7 +302,7 @@ void install_array(context & cx) {
         return detail::element_at(c, self, i);
     });
     method(cx, array_proto, "fill", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "fill")) { return self; }
         const double len = detail::array_like_length(c, self);
         const value filler = arg_at(a, 0);
@@ -319,7 +326,7 @@ void install_array(context & cx) {
     // nothing - and then coerced with the STATIC to_number, which answers NaN
     // for an object and compares false against every bound.
     method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flat")) { return out; }
         const double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
@@ -372,7 +379,7 @@ void install_array(context & cx) {
     // passed as the callback's `this` instead - and a mapper that is absent or
     // not callable is a TypeError rather than an empty result.
     method(cx, array_proto, "flatMap", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flatMap")) { return out; }
         const value callback = arg_at(a, 0);
@@ -403,7 +410,7 @@ void install_array(context & cx) {
         return out;
     });
     method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findLast")) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
@@ -416,7 +423,7 @@ void install_array(context & cx) {
         return value::undefined();
     });
     method(cx, array_proto, "findLastIndex", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findLastIndex")) { return value::number(-1); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
@@ -446,7 +453,7 @@ void install_array(context & cx) {
     // arguments on `{length: Infinity}` writes back 2^53-1 and succeeds while
     // `push(null)` on the same object throws.
     method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "push")) { return value::number(0); }
         if (array_object * dense = detail::dense_array_this(self)) {
             // FROZEN MEANS FROZEN, and it is a THROW here rather than a silent
@@ -476,7 +483,7 @@ void install_array(context & cx) {
     // 23.1.3.22. An EMPTY receiver still writes `length` back - that is step
     // 3a, and it is what turns `{length: NaN}` into `{length: 0}`.
     method(cx, array_proto, "pop", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "pop")) { return value::undefined(); }
         if (array_object * dense = detail::dense_array_this(self)) {
             if (dense->items.empty()) {
@@ -512,7 +519,7 @@ void install_array(context & cx) {
     // it lands on rather than filling it with undefined, and the vacated slot
     // at the top is deleted before `length` is written.
     method(cx, array_proto, "shift", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "shift")) { return value::undefined(); }
         if (array_object * dense = detail::dense_array_this(self)) {
             if (dense->items.empty()) {
@@ -554,7 +561,7 @@ void install_array(context & cx) {
     // 23.1.3.32. The tail moves UP, walked from the top down so that an
     // overlapping move never overwrites a source before it is read.
     method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "unshift")) { return value::number(0); }
         if (array_object * dense = detail::dense_array_this(self)) {
             if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
@@ -594,7 +601,7 @@ void install_array(context & cx) {
         return value::number(len + count);
     });
     method(cx, array_proto, "slice", 2, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "slice")) { return out; }
         const double len = detail::array_like_length(c, self);
@@ -621,7 +628,7 @@ void install_array(context & cx) {
     // The old spelling tested `a.size() > 1` for both and so read the
     // no-argument call as "delete everything from index 0".
     method(cx, array_proto, "splice", 2, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value removed = c.make_array();
         if (!detail::coercible_this(c, self, "splice")) { return removed; }
         array_object * dense = detail::dense_array_this(self);
@@ -716,7 +723,7 @@ void install_array(context & cx) {
     // 5)` searched from 0, so a scan-from-here loop - the standard way to find
     // every occurrence - found the first one forever.
     method(cx, array_proto, "indexOf", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "indexOf")) { return value::number(-1); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) { return value::number(-1); }
@@ -734,7 +741,7 @@ void install_array(context & cx) {
         return value::number(-1);
     });
     method(cx, array_proto, "lastIndexOf", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "lastIndexOf")) { return value::number(-1); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) { return value::number(-1); }
@@ -754,7 +761,7 @@ void install_array(context & cx) {
         return value::number(-1);
     });
     method(cx, array_proto, "includes", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "includes")) { return value::boolean(false); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) { return value::boolean(false); }
@@ -778,7 +785,7 @@ void install_array(context & cx) {
         return value::boolean(false);
     });
     method(cx, array_proto, "join", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "join")) { return c.string(std::string{}); }
         const double len = detail::array_like_length(c, self);
         // AN ABSENT SEPARATOR AND AN EXPLICIT `undefined` BOTH MEAN ",". The
@@ -798,7 +805,7 @@ void install_array(context & cx) {
     // the only difference from `join(",")` and is what makes a Date or a Number
     // in an array format itself.
     method(cx, array_proto, "toLocaleString", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "toLocaleString")) { return c.string(std::string{}); }
         const double len = detail::array_like_length(c, self);
         std::string out;
@@ -825,7 +832,7 @@ void install_array(context & cx) {
     // a page that sets it would get an answer wrong in a NEW way rather than in
     // the documented one.
     method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "concat")) { return out; }
         const context::rooted keep(c, out);
@@ -859,7 +866,7 @@ void install_array(context & cx) {
     // it with undefined, which is the only thing that distinguishes reverse
     // from "read it all and write it back".
     method(cx, array_proto, "reverse", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "reverse")) { return self; }
         if (array_object * dense = detail::dense_array_this(self)) {
             std::ranges::reverse(dense->items);

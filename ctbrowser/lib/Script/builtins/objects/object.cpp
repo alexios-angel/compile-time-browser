@@ -875,6 +875,13 @@ void install_object(context & cx) {
             c.throw_error("TypeError", "Object.groupBy: callback is not a function");
             return value::undefined();
         }
+        // GetIterator (step 4 of GroupBy): an object without a callable
+        // @@iterator is a TypeError, not an empty result.
+        if (a[0].is_object_like() && !a[0].is_array() &&
+            !c.lookup_property(a[0], "@@iterator").is_callable()) {
+            if (!c.throw_pending()) { c.throw_error("TypeError", "Object.groupBy: not iterable"); }
+            return value::undefined();
+        }
         const value items = c.iterable_values(a[0]);
         if (c.throw_pending() || !items.is_array()) { return value::undefined(); }
         const context::rooted keep_items{c, items};

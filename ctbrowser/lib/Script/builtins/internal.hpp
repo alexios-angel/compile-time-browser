@@ -383,7 +383,8 @@ namespace detail {
 // object with an ordinary, writable `length`, which is why
 // `Array.prototype.push.call(true)` is specified to answer 0 rather than throw.
 [[nodiscard]] inline bool mutable_receiver(context & cx, value self, const char * method) {
-    if (!self.is_string()) { return true; }
+    const value * slot = primitive_slot(self);
+    if (!self.is_string() && (slot == nullptr || !slot->is_string())) { return true; }
     cx.throw_error("TypeError",
                    std::string{"Array.prototype."} + method + " cannot modify a String");
     return false;
@@ -414,6 +415,16 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     if (len <= max_generic_walk) { return true; }
     cx.throw_error("RangeError", "the array-like's length is too large to walk");
     return false;
+}
+
+// ToObject(this value), 23.1.3's first step in every method: a primitive is
+// BOXED (detail::box_primitive) so that `Array.prototype.push.call(true)` sets
+// `length` on a Boolean wrapper and answers 0 rather than refusing a write to
+// a primitive, and a String receiver's non-writable indices refuse through
+// the wrapper as 10.4.3 says. null and undefined pass through to
+// coercible_this, which is step 1's TypeError.
+[[nodiscard]] inline value array_this(context & cx) {
+    return box_primitive(cx, cx.current_this());
 }
 
 // RequireObjectCoercible on `this`, which every Array.prototype method begins

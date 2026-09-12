@@ -273,9 +273,10 @@ void context::store_property(value target, const std::string & name, value v) {
         // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
         // that asked for 34 GB. set_js_length records what it will not
         // materialise; see array_object::dense_limit.
-        if (!arr->set_js_length(to_number(v))) {
-            throw_error("RangeError", "Invalid array length");
-        }
+        // ToNumber runs a valueOf: `a.length = new Number(6)` is 6 (10.4.2.4).
+        const double n = to_number_value(v);
+        if (throw_pending()) { return; }
+        if (!arr->set_js_length(n)) { throw_error("RangeError", "Invalid array length"); }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
