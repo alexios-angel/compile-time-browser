@@ -562,4 +562,102 @@ stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {
     return p.take_declaration_list();
 }
 
+std::vector<import_statement> leading_imports(std::string_view css) {
+    const token_stream s = tokenize(css);
+    const std::vector<css_token> & t = s.tokens;
+    std::vector<import_statement> out;
+    // A token is a SOURCE SLICE only below source_length; one rebuilt from an
+    // escape has no byte position, and a statement whose delimiters have none
+    // cannot be spliced out. It also cannot be spelled `@import` without one.
+    const auto in_source = [&](const css_token & tok) { return tok.text < s.source_length; };
+    // The index just past a function's or block's matching closer.
+    const auto skip_group = [&](std::size_t from) {
+        std::size_t depth = 0;
+        for (std::size_t j = from; j < t.size(); ++j) {
+            const token_type type = t[j].type;
+            if (type == token_type::function || type == token_type::open_paren ||
+                type == token_type::open_square || type == token_type::open_curly) {
+                ++depth;
+            } else if (type == token_type::close_paren || type == token_type::close_square ||
+                       type == token_type::close_curly) {
+                if (--depth == 0) { return j + 1; }
+            }
+        }
+        return t.size();
+    };
+    std::size_t i = 0;
+    while (i < t.size() && t[i].type != token_type::eof) {
+        const token_type type = t[i].type;
+        if (type == token_type::whitespace || type == token_type::cdo || type == token_type::cdc) {
+            ++i;
+            continue;
+        }
+        if (type != token_type::at_keyword || !in_source(t[i])) { break; }
+        const std::string_view name = s.value_of(t[i]);
+        // The statement runs to the first top-level `;`. A top-level `{` makes
+        // it a block at-rule - `@layer x { }` - and the leading run is over.
+        std::size_t j = i + 1;
+        bool block = false;
+        while (j < t.size() && t[j].type != token_type::eof && t[j].type != token_type::semicolon) {
+            if (t[j].type == token_type::open_curly) {
+                block = true;
+                break;
+            }
+            const token_type inner = t[j].type;
+            if (inner == token_type::function || inner == token_type::open_paren ||
+                inner == token_type::open_square) {
+                j = skip_group(j);
+            } else {
+                ++j;
+            }
+        }
+        if (block) { break; }
+        const bool ended = j < t.size() && t[j].type == token_type::semicolon;
+        if (ascii_iequals(name, "import")) {
+            import_statement made;
+            made.begin = t[i].text;
+            made.end = ended && in_source(t[j]) ? t[j].text + 1 : css.size();
+            std::size_t k = i + 1;
+            while (k < j && t[k].type == token_type::whitespace) { ++k; }
+            bool have_href = false;
+            if (k < j && (t[k].type == token_type::string || t[k].type == token_type::url)) {
+                made.href = std::string{s.value_of(t[k])};
+                have_href = true;
+                ++k;
+            } else if (k < j && t[k].type == token_type::function &&
+                       ascii_iequals(s.text_of(t[k]), "url(")) {
+                for (std::size_t m = k + 1; m < j && t[m].type != token_type::close_paren; ++m) {
+                    if (t[m].type == token_type::string) {
+                        made.href = std::string{s.value_of(t[m])};
+                        have_href = true;
+                    }
+                }
+                k = skip_group(k);
+            }
+            // `layer`, `layer(...)` and `supports(...)` are not media queries;
+            // whatever follows them is.
+            for (;;) {
+                while (k < j && t[k].type == token_type::whitespace) { ++k; }
+                if (k >= j) { break; }
+                if (t[k].type == token_type::ident && ascii_iequals(s.text_of(t[k]), "layer")) {
+                    ++k;
+                } else if (t[k].type == token_type::function &&
+                           (ascii_iequals(s.text_of(t[k]), "layer(") ||
+                            ascii_iequals(s.text_of(t[k]), "supports("))) {
+                    k = skip_group(k);
+                } else {
+                    break;
+                }
+            }
+            for (std::size_t m = k; m < j; ++m) { made.media += s.text_of(t[m]); }
+            made.media = std::string{trim(made.media, html_whitespace)};
+            if (have_href) { out.push_back(std::move(made)); }
+        } else if (!ascii_iequals(name, "charset") && !ascii_iequals(name, "layer")) {
+            break;
+        }
+        i = ended ? j + 1 : j;
+    }
+    return out;
+}
+
 } // namespace ctbrowser::style::css

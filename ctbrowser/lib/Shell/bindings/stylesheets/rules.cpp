@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/shell/net/url.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -99,7 +101,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     if (rule.type == namespace_rule) {
         std::string out = "@namespace ";
-        if (!rule.selector.empty()) { out += rule.selector + " "; }
+        if (!rule.selector.empty()) { out += serialize_css_identifier(rule.selector) + " "; }
         return out + serialize_url(rule.prelude) + ";";
     }
     // AN AT-RULE WHOSE BLOCK IS DECLARATIONS - `@font-face`, `@page`,
@@ -181,8 +183,59 @@ void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
         // §5.4's recovery and is the difference between a stylesheet with a
         // mistake in it and a broken one.
         if (at == no_index) { continue; }
+        // "replace() and replaceSync() ... remove any @import rules": a
+        // constructed sheet fetches nothing, and the rule is not there to
+        // report either (CSSStyleSheet-constructable-disallow-import).
+        if (css_sheets_[sheet]->constructed && css_rule_store_[at]->type == import_rule) {
+            css_rule_store_[at]->sheet = no_index;
+            continue;
+        }
         css_sheets_[sheet]->rules.push_back(at);
     }
+}
+
+// The `@namespace` rules a sheet holds, in the form the selector parser takes
+// - so `ns|div` with an undeclared `ns` is the SyntaxError CSSOM 6.3.3 asks
+// for rather than a prefix taken on trust (at-namespace.html).
+std::vector<style::css::namespace_declaration> dom_bindings::sheet_namespaces(
+    std::size_t sheet) const {
+    std::vector<style::css::namespace_declaration> out;
+    if (sheet >= css_sheets_.size()) { return out; }
+    for (const std::size_t rule : css_sheets_[sheet]->rules) {
+        if (rule >= css_rule_store_.size() || css_rule_store_[rule]->type != namespace_rule) {
+            continue;
+        }
+        out.push_back({css_rule_store_[rule]->selector, css_rule_store_[rule]->prelude});
+    }
+    return out;
+}
+
+std::size_t dom_bindings::load_imported_sheet(std::size_t rule, std::string_view href) {
+    if (rule >= css_rule_store_.size()) { return no_index; }
+    const std::size_t parent = css_rule_store_[rule]->sheet;
+    if (parent >= css_sheets_.size()) { return no_index; }
+    css_sheets_.push_back(std::make_unique<css_sheet_record>());
+    const std::size_t at = css_sheets_.size() - 1;
+    css_sheet_record & made = *css_sheets_[at];
+    made.owner_rule = rule;
+    made.href = resolve_sheet_href(css_sheets_[parent]->href, href);
+    made.origin_clean = !parse_absolute(made.href).valid ||
+                        location_parts(made.href).origin == location_parts(location_href_).origin;
+    // A CYCLE - `a.css` importing `b.css` importing `a.css` - is an empty sheet
+    // at the point it closes, which is what every engine does; so is a chain
+    // deeper than anyone writes by hand.
+    std::size_t depth = 0;
+    for (std::size_t up = parent; up < css_sheets_.size() && depth < 16; ++depth) {
+        if (css_sheets_[up]->href == made.href) { return at; }
+        const std::size_t via = css_sheets_[up]->owner_rule;
+        if (via >= css_rule_store_.size()) { break; }
+        up = css_rule_store_[via]->sheet;
+    }
+    if (depth >= 16 || assets_ == nullptr) { return at; }
+    const std::vector<std::byte> bytes = assets_->load(made.href);
+    made.source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    parse_sheet_rules(at, css_sheets_[at]->source);
+    return at;
 }
 
 std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view text,
@@ -313,6 +366,12 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.media_queries = parse_media_query_list(written.substr(after));
                 made.prelude = extra;
                 made.verbatim.clear();
+                // THE IMPORTED SHEET, fetched now. Not for a constructed sheet:
+                // CSSOM's replace() and replaceSync() parse an `@import` and
+                // then drop it, and insertRule refuses one outright.
+                if (sheet < css_sheets_.size() && !css_sheets_[sheet]->constructed) {
+                    made.imported_sheet = load_imported_sheet(at, href);
+                }
             }
         } else if (made.type == namespace_rule) {
             // `[<prefix>]? <url>`, and the prefix is optional - a default
@@ -323,7 +382,19 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             const std::string_view second = next_component(written, after);
             const std::string uri = url_value(second.empty() ? first : second);
             if (!uri.empty()) {
-                made.selector = second.empty() ? std::string{} : std::string{first};
+                // The prefix DECODED, as the selector parser decodes the one
+                // in `x\*|test` - so the two meet (selectorSerialize.html,
+                // "escaped character (*) in element prefix"). cssText
+                // re-escapes it through serialize_css_identifier.
+                std::string prefix;
+                if (!second.empty()) {
+                    const style::css::token_stream tokens = style::css::tokenize(first);
+                    prefix = !tokens.tokens.empty() &&
+                                     tokens.tokens.front().type == style::css::token_type::ident
+                                 ? std::string{tokens.value_of(tokens.tokens.front())}
+                                 : std::string{first};
+                }
+                made.selector = std::move(prefix);
                 made.prelude = uri;
                 made.verbatim.clear();
             }
@@ -383,7 +454,9 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     }
     bool bad = false;
     const std::string_view prelude = trim(trimmed.substr(0, open), html_whitespace);
-    const style::css::stylesheet selectors = style::css::parse_selector_text(prelude, *atoms_, bad);
+    const std::vector<style::css::namespace_declaration> namespaces = sheet_namespaces(sheet);
+    const style::css::stylesheet selectors =
+        style::css::parse_selector_text(prelude, *atoms_, bad, &namespaces);
     if (bad || selectors.selectors.empty()) {
         css_rule_store_.pop_back();
         error = "SyntaxError";
@@ -394,7 +467,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // the author's bytes when it is not - see `representable`. Whitespace is
     // collapsed either way, so `span  div  ` is `span div` in both.
     made.selector = representable(selectors.selectors)
-                        ? serialize_selector_list(selectors.selectors, *atoms_)
+                        ? serialize_selector_list(selectors.selectors, *atoms_, namespaces)
                         : collapse_whitespace(prelude);
     collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;

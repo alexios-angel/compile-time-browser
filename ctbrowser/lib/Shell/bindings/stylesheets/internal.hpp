@@ -63,6 +63,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/properties.hpp>
+#include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/css/value.hpp>
 #include <ctbrowser/style/selector.hpp>
 
@@ -96,6 +97,8 @@ inline constexpr std::string_view rule_key = "__ctbrowser_rule";
 inline constexpr std::string_view rules_key = "__ctbrowser_rules";
 inline constexpr std::string_view style_key = "__ctbrowser_style";
 inline constexpr std::string_view media_key = "__ctbrowser_media";
+// On a shadow root's StyleSheetList, the root it lists.
+inline constexpr std::string_view tree_key = "__ctbrowser_tree";
 
 // CSSRule's type constants. Only the ones this file can produce are ever set on
 // a rule; all of them are exposed, because a page reads `rule.MEDIA_RULE` to
@@ -116,6 +119,9 @@ inline constexpr std::uint32_t supports_rule = 12;
 [[nodiscard]] std::string quoted_string(std::string_view text);
 [[nodiscard]] std::string serialize_selector_list(std::span<const style::compiled_selector> list,
                                                   const atom_table & atoms);
+[[nodiscard]] std::string serialize_selector_list(
+    std::span<const style::compiled_selector> list, const atom_table & atoms,
+    std::span<const style::css::namespace_declaration> namespaces);
 [[nodiscard]] bool representable(std::span<const style::compiled_selector> list);
 [[nodiscard]] std::string collapse_whitespace(std::string_view text);
 [[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text);

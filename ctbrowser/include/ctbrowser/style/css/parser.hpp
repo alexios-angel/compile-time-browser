@@ -1,6 +1,9 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/style/css/value.hpp>
@@ -46,5 +49,25 @@ namespace ctbrowser::style::css {
 [[nodiscard]] stylesheet parse_selector_text(
     std::string_view text, atom_table & atoms, bool & invalid,
     const std::vector<namespace_declaration> * namespaces = nullptr);
+
+// THE `@import` STATEMENTS A SHEET BEGINS WITH - CSS Cascade 5 §5.
+//
+// The sheet parser consumes an `@import` and drops it, because a parser has no
+// way to fetch what it names. Whoever CAN fetch - the browser collecting the
+// author's sheets, the CSSOM building a CSSImportRule - asks here for the
+// statements and their byte spans, loads each one, and splices the loaded text
+// where the statement stood. Only the LEADING run counts: an `@import` after any
+// other rule is invalid and ignored, which is what stopping at the first rule
+// that is not `@charset`, `@layer x;` or another `@import` implements.
+//
+// `media` is the query list as written, trimmed and with `layer` / `layer(...)`
+// / `supports(...)` removed; empty means unconditional.
+struct import_statement {
+    std::string href;
+    std::string media;
+    std::size_t begin = 0; // the byte span of the whole statement in the input,
+    std::size_t end = 0;   // `@import` through its `;` inclusive
+};
+[[nodiscard]] std::vector<import_statement> leading_imports(std::string_view css);
 
 } // namespace ctbrowser::style::css
