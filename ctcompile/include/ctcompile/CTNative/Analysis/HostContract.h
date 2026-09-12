@@ -75,7 +75,8 @@ struct HostMethodArgument {
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
-// checked empty caller leaves, and standard size/set/get/has/delete/clear effects.
+// checked empty caller leaves, fresh child Maps, and standard
+// size/set/get/has/delete/clear effects. Child Maps cannot retain Maps.
 // Caller leaves permit only key/payload uses; method-local leaves cannot be keys.
 // No object escapes through a method result, field or unchecked use. Effects remain
 // runtime; no startup value or result type is promised. Optional cell operations describe
@@ -96,6 +97,7 @@ struct HostCapturedMap {
     std::vector<ctjs::SetPropertyOp> leafWrites;
     std::vector<ctjs::GetPropertyOp> leafReads;
     ctjs::LoadUpvalueOp argument;
+    std::vector<ctjs::ConstructOp> childMaps{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

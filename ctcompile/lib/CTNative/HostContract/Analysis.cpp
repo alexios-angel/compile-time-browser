@@ -260,6 +260,10 @@ std::string analyzer::environmentProblem() {
             for (ctjs::GetPropertyOp read : capture.leafReads) {
                 if (step()) { capturedOperations.insert(read); }
             }
+            for (ctjs::ConstructOp child : capture.childMaps) {
+                if (step()) { capturedOperations.insert(child); }
+                if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }
+            }
         });
     }
     module.walk([&](mlir::Operation * operation) {

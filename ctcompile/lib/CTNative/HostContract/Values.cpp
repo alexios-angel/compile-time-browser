@@ -541,7 +541,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         auto member = result.parameters[index].function;
         const auto census = member.getBody().walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<ctjs::CreateObjectOp>(operation)) { primitiveContents = false; }
+            if (llvm::isa<ctjs::CreateObjectOp, ctjs::ConstructOp>(operation)) {
+                primitiveContents = false;
+            }
             auto store = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto read = store ? store.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                               : ctjs::GetPropertyOp{};

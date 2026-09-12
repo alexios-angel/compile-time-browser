@@ -15,13 +15,17 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
-    // primitives and fresh leaf objects. No object can own another object or
-    // the Map, escape to a caller, or execute an accessor. The native identity,
-    // field and Map analyses must still independently prove their carriers.
+    // primitives, fresh leaf objects and fresh child Maps. Child Maps cannot
+    // retain Maps; no object can escape to a caller or execute an accessor.
+    // The native identity, field and Map analyses still independently prove
+    // their carriers.
     auto & body = function.getBody().front();
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
-    llvm::DenseSet<mlir::Value> maps, primitives, flags;
+    llvm::DenseSet<mlir::Value> primitives, flags;
+    llvm::DenseMap<mlir::Value, mlir::Value> maps;
+    const auto capturedOrigin = body.getArgument(prepared ? 3 : 2);
+    llvm::DenseSet<mlir::Operation *> constructors, allocations, mapStores;
     // A saved read names its allocation, not the current Map entry. These SSA
     // origins never change when that entry is overwritten or deleted.
     llvm::DenseMap<mlir::Value, mlir::Value> objects;
@@ -33,8 +37,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         PrimitiveAlternatives payload;
     };
     llvm::SmallVector<field_fact> fields;
-    // All checked capture loads/fluent returns denote this one runtime Map.
-    // Each invocation starts with unknown contents. A set preserves presence
+    // Capture loads and each receiver's fluent returns preserve its origin.
+    // Captured contents start unknown each invocation. A set preserves presence
     // even when its key may alias an earlier entry. In that case the payload
     // retains the union of both independently proved primitive alternatives.
     // Presence alone never supplies payload evidence. A possibly aliasing delete
@@ -51,20 +55,20 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         bool present = true;
         mlir::Value object;
         bool absent = false;
+        mlir::Value map{};
     };
-    llvm::SmallVector<entry_fact> entries;
-    // Before clear, arbitrary keys may belong to a previous invocation. After
-    // clear, only subsequent sets can introduce keys. Keep that complete
-    // possibility set separately from the intersected per-key facts: a write
-    // on either branch must prevent claiming absence after their join.
-    bool completeKeys = false;
-    llvm::SmallVector<mlir::Value> possibleKeys;
-    // Equal arm cardinalities survive even when their keys differ. This is
-    // mutable Map state, never evidence that any particular key is present.
-    // Only a proved membership/absence fact can carry it through mutation;
-    // saved size SSA values remain independent.
-    std::optional<unsigned> currentSize;
-    llvm::DenseSet<mlir::Operation *> observations;
+    struct map_state {
+        llvm::SmallVector<entry_fact> entries;
+        bool completeKeys = false;
+        llvm::SmallVector<mlir::Value> possibleKeys;
+        std::optional<unsigned> currentSize;
+        llvm::DenseSet<mlir::Operation *> observations;
+    };
+    llvm::DenseMap<mlir::Value, map_state> mapStates;
+    mapStates.try_emplace(capturedOrigin);
+    // Mutable state belongs to a runtime origin, never a shared C++ schema.
+    // Captured contents start unknown on every invocation; a fresh child starts
+    // empty. Saved aliases continue to denote that child after outer mutation.
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
     llvm::DenseMap<mlir::Value, unsigned> exactSizes;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
@@ -80,12 +84,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         unsigned lower = 0;
         std::optional<unsigned> exact;
     };
-    const auto sizeFacts = [&]() -> std::optional<size_fact> {
+    const auto sizeFacts = [&](const map_state & state) -> std::optional<size_fact> {
         if (!step()) { return std::nullopt; }
-        if (currentSize) { return size_fact{*currentSize, currentSize}; }
+        if (state.currentSize) { return size_fact{*state.currentSize, state.currentSize}; }
         llvm::SmallVector<mlir::Value> distinct;
         for (const auto & entry :
-             llvm::ArrayRef<entry_fact>(entries).take_front(kMaxPrimitiveMapSizeCandidates)) {
+             llvm::ArrayRef<entry_fact>(state.entries).take_front(kMaxPrimitiveMapSizeCandidates)) {
             if (!step()) { return std::nullopt; }
             if (!entry.present) { continue; }
             bool disjoint = true;
@@ -104,9 +108,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         // Deduplicate only proved equal keys in the complete upper bound.
         // Unknown equality may overcount, never undercount. Neither an empty
         // intersection nor a census discarded at its limit proves a size.
-        if (completeKeys && possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+        if (state.completeKeys && state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
             llvm::SmallVector<mlir::Value> possible;
-            for (mlir::Value key : possibleKeys) {
+            for (mlir::Value key : state.possibleKeys) {
                 if (!step()) { return std::nullopt; }
                 bool same = false;
                 for (mlir::Value previous : possible) {
@@ -148,17 +152,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         }
         return true;
     };
-    const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {},
-                            mlir::Value object = {}) {
-        auto nextSize = currentSize;
-        currentSize.reset();
+    const auto mutate = [&](map_state & state, mlir::Value key, bool erase,
+                            PrimitiveAlternatives payload = {}, mlir::Value object = {},
+                            mlir::Value child = {}) {
+        auto nextSize = state.currentSize;
+        state.currentSize.reset();
         // Read membership before changing the entries. A possible overwrite
         // versus insertion (or successful versus unsuccessful deletion) has
         // no exact size effect. Do not bypass the candidate limit by keeping
         // an independent size after the complete census exceeds its budget.
-        if (nextSize && completeKeys && possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+        if (nextSize && state.completeKeys &&
+            state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
             bool present = false;
-            for (const auto & entry : entries) {
+            for (const auto & entry : state.entries) {
                 if (!step()) { return false; }
                 if (entry.present &&
                     comparePrimitiveMapKeys(entry.key, key, keyEvidence(entry.key),
@@ -167,7 +173,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     break;
                 }
             }
-            const auto missing = absent(key, entries, completeKeys, possibleKeys);
+            const auto missing = absent(key, state.entries, state.completeKeys, state.possibleKeys);
             if (!missing) { return false; }
             if (present) {
                 if (erase) {
@@ -192,7 +198,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             nextSize.reset();
         }
         bool hasExactAbsence = false;
-        for (auto it = entries.begin(); it != entries.end();) {
+        for (auto it = state.entries.begin(); it != state.entries.end();) {
             if (!step()) { return false; }
             const auto relation =
                 comparePrimitiveMapKeys(it->key, key, keyEvidence(it->key), keyEvidence(key));
@@ -206,26 +212,27 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 ++it;
             } else if (relation == PrimitiveMapKeyRelation::Same) {
-                it = entries.erase(it);
+                it = state.entries.erase(it);
             } else {
                 // The old payload survives if these runtime keys differ; the
                 // new one wins if they compare equal. Unknown joined with any
                 // finite set remains unknown, including after further writes.
                 it->payload = it->payload.joined(payload);
                 if (it->object != object) { it->object = {}; }
+                if (it->map != child) { it->map = {}; }
                 it->absent = false;
                 ++it;
             }
         }
         if (erase) {
-            for (auto * observed : llvm::make_early_inc_range(observations)) {
+            for (auto * observed : llvm::make_early_inc_range(state.observations)) {
                 if (!step()) { return false; }
                 auto call = llvm::cast<ctjs::CallOp>(observed);
                 auto observedKey = call.getArgs()[0];
                 if (comparePrimitiveMapKeys(observedKey, key, keyEvidence(observedKey),
                                             keyEvidence(key)) !=
                     PrimitiveMapKeyRelation::Distinct) {
-                    observations.erase(observed);
+                    state.observations.erase(observed);
                 }
             }
         }
@@ -237,31 +244,33 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             // An oversized census cannot recover an exact size by pruning
             // after its limit was exceeded. Retain that conservative upper
             // bound for absence queries until a real clear starts a new one.
-            if (possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+            if (state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
                 size_t retained = 0;
-                for (mlir::Value possible : possibleKeys) {
+                for (mlir::Value possible : state.possibleKeys) {
                     if (!step()) { return false; }
                     if (comparePrimitiveMapKeys(possible, key, keyEvidence(possible),
                                                 keyEvidence(key)) !=
                         PrimitiveMapKeyRelation::Same) {
-                        possibleKeys[retained++] = possible;
+                        state.possibleKeys[retained++] = possible;
                     }
                 }
-                possibleKeys.resize(retained);
+                state.possibleKeys.resize(retained);
             }
             // The invocation's initial contents are unknown, but this exact
             // key is now absent even if no earlier local set mentioned it.
             // Keep earlier payload evidence whenever present: a branch join
             // may still reach that payload from its nondeleting arm.
-            if (!hasExactAbsence) { entries.push_back({key, {}, false, {}, true}); }
+            if (!hasExactAbsence) { state.entries.push_back({key, {}, false, {}, true}); }
         } else {
-            entries.push_back({key, payload, true, object});
-            if (completeKeys) {
+            state.entries.push_back({key, payload, true, object, false, child});
+            if (state.completeKeys) {
                 if (!step()) { return false; }
-                possibleKeys.push_back(key);
+                state.possibleKeys.push_back(key);
             }
         }
-        if (possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) { currentSize = nextSize; }
+        if (state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
+            state.currentSize = nextSize;
+        }
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
@@ -273,11 +282,13 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             found->second = found->second.filtered(branch);
         }
         auto call = condition.getDefiningOp<ctjs::CallOp>();
-        if (!branch || !call || !observations.contains(call)) { return true; }
+        if (!branch || !call || !maps.contains(call.getReceiver())) { return true; }
+        auto & state = mapStates[maps.lookup(call.getReceiver())];
+        if (!state.observations.contains(call)) { return true; }
         // Only a live, checked has on this captured Map supplies membership.
         // It never creates a payload tag or selects away the other arm.
         auto key = call.getArgs()[0];
-        for (auto & entry : entries) {
+        for (auto & entry : state.entries) {
             if (!step()) { return false; }
             if (comparePrimitiveMapKeys(entry.key, key) == PrimitiveMapKeyRelation::Same) {
                 entry.present = true;
@@ -285,11 +296,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 return true;
             }
         }
-        entries.push_back({key, {}, true, {}});
+        state.entries.push_back({key, {}, true, {}});
         return true;
     };
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
-    if (prepared) { maps.insert(body.getArgument(3)); }
+    if (prepared) { maps.try_emplace(body.getArgument(3), capturedOrigin); }
     const unsigned offset = prepared ? 4u : 3u;
     if (parameters.function != function ||
         parameters.alternatives.size() != body.getNumArguments() - offset) {
@@ -302,6 +313,25 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         alternatives.try_emplace(parameter,
                                  parameters.alternatives[parameter.getArgNumber() - offset]);
     }
+    const auto chargeStates = [&](const auto & states) {
+        for (const auto & item : states) {
+            if (!step()) { return false; }
+            const auto & state = item.second;
+            for (const auto & entry : state.entries) {
+                (void)entry;
+                if (!step()) { return false; }
+            }
+            for (auto * observed : state.observations) {
+                (void)observed;
+                if (!step()) { return false; }
+            }
+            for (mlir::Value key : state.possibleKeys) {
+                (void)key;
+                if (!step()) { return false; }
+            }
+        }
+        return true;
+    };
     ctjs::ReturnOp returned;
     // SSA scalar facts and the complete use census are immutable across paths.
     // Mutable contents are copied for each arm and intersected only after both
@@ -323,6 +353,22 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 // exact i1 constants can serve as conditions in this body proof.
                 if (!llvm::isa<mlir::IntegerAttr>(constant.getValue())) { return false; }
                 if (constant.getType().isInteger(1)) { flags.insert(constant.getResult()); }
+            } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                if (load.getName() != "Map" || !globals["Map"].empty()) { return false; }
+                constructors.insert(load);
+            } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
+                auto constructor = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!constructor || !constructors.contains(constructor) ||
+                    made.getNewTarget() != made.getCallee() || !made.getArgs().empty() ||
+                    !dominance.dominates(made.getCallee(), made)) {
+                    return false;
+                }
+                maps.try_emplace(made.getResult(), made.getResult());
+                auto & state = mapStates[made.getResult()];
+                state.completeKeys = true;
+                state.currentSize = 0;
+                allocations.insert(made);
+                result.childMaps.push_back(made);
             } else if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
                 objects.try_emplace(made.getResult(), made.getResult());
                 result.leafObjects.push_back(made);
@@ -397,14 +443,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                      (!elseYield || elseYield.getNumOperands() != branch.getNumResults()))) {
                     return false;
                 }
-                for (const auto & entry : entries) {
-                    (void)entry;
-                    if (!step()) { return false; }
-                }
-                for (auto * observed : observations) {
-                    (void)observed;
-                    if (!step()) { return false; }
-                }
+                if (!chargeStates(mapStates)) { return false; }
                 for (const auto & value : alternatives) {
                     (void)value;
                     if (!step()) { return false; }
@@ -413,35 +452,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)field;
                     if (!step()) { return false; }
                 }
-                for (mlir::Value key : possibleKeys) {
-                    (void)key;
-                    if (!step()) { return false; }
-                }
-                const auto incoming = entries;
-                const bool incomingCompleteKeys = completeKeys;
-                const auto incomingKeys = possibleKeys;
-                const auto incomingSize = currentSize;
+                const auto incoming = mapStates;
                 const auto incomingFields = fields;
-                const auto incomingObservations = observations;
                 const auto incomingAlternatives = alternatives;
                 if (!learn(branch.getCondition(), true)) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
-                const auto thenSize = sizeFacts();
-                if (!thenSize) { return false; }
-                auto thenEntries = std::move(entries);
-                const bool thenCompleteKeys = completeKeys;
-                auto thenKeys = std::move(possibleKeys);
+                auto thenStates = std::move(mapStates);
                 auto thenFields = std::move(fields);
-                auto thenObservations = std::move(observations);
                 auto thenAlternatives = std::move(alternatives);
-                for (const auto & entry : incoming) {
-                    (void)entry;
-                    if (!step()) { return false; }
-                }
-                for (auto * observed : incomingObservations) {
-                    (void)observed;
-                    if (!step()) { return false; }
-                }
+                if (!chargeStates(incoming)) { return false; }
                 for (const auto & value : incomingAlternatives) {
                     (void)value;
                     if (!step()) { return false; }
@@ -450,83 +469,99 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)field;
                     if (!step()) { return false; }
                 }
-                for (mlir::Value key : incomingKeys) {
-                    (void)key;
-                    if (!step()) { return false; }
+                // Resolve then-arm cardinality while its scalar facts are live.
+                alternatives = thenAlternatives;
+                for (auto & item : thenStates) {
+                    const auto fact = sizeFacts(item.second);
+                    if (!fact) { return false; }
+                    item.second.currentSize = fact->exact;
                 }
-                entries = incoming;
-                completeKeys = incomingCompleteKeys;
-                possibleKeys = incomingKeys;
-                currentSize = incomingSize;
+                mapStates = incoming;
                 fields = incomingFields;
-                observations = incomingObservations;
                 alternatives = incomingAlternatives;
                 if (!learn(branch.getCondition(), false)) { return false; }
                 if (hasElse && !self(self, branch.getElseRegion().front(), depth + 1)) {
                     return false;
                 }
-                const auto elseSize = sizeFacts();
-                if (!elseSize) { return false; }
-                currentSize = thenSize->exact == elseSize->exact ? thenSize->exact : std::nullopt;
-                llvm::SmallVector<entry_fact> joined;
-                for (auto left : thenEntries) {
+                for (const auto & item : thenStates) {
                     if (!step()) { return false; }
-                    bool matched = false;
-                    for (const auto & right : entries) {
-                        if (!step()) { return false; }
-                        if (comparePrimitiveMapKeys(left.key, right.key) !=
-                            PrimitiveMapKeyRelation::Same) {
-                            continue;
-                        }
-                        left.payload = left.payload.joined(right.payload);
-                        left.present &= right.present;
-                        left.absent &= right.absent;
-                        if (left.object != right.object) { left.object = {}; }
-                        joined.push_back(left);
-                        matched = true;
-                        break;
-                    }
-                    if (!matched) {
-                        const auto missing =
-                            absent(left.key, entries, completeKeys, possibleKeys, false);
-                        if (!missing) { return false; }
-                        if (*missing) {
-                            left.present = false;
-                            joined.push_back(left);
-                        }
-                    }
+                    mapStates.try_emplace(item.first);
                 }
-                // A key first mentioned on the other arm may still be absent
-                // on both paths when this arm cleared the entire Map.
-                for (auto right : entries) {
+                for (auto & item : mapStates) {
                     if (!step()) { return false; }
-                    bool matched = false;
-                    for (const auto & left : thenEntries) {
+                    auto & state = item.second;
+                    const auto & then = thenStates[item.first];
+                    const auto elseSize = sizeFacts(state);
+                    if (!elseSize) { return false; }
+                    state.currentSize =
+                        then.currentSize == elseSize->exact ? then.currentSize : std::nullopt;
+                    llvm::SmallVector<entry_fact> joined;
+                    for (auto left : then.entries) {
                         if (!step()) { return false; }
-                        if (comparePrimitiveMapKeys(left.key, right.key) ==
-                            PrimitiveMapKeyRelation::Same) {
+                        bool matched = false;
+                        for (const auto & right : state.entries) {
+                            if (!step()) { return false; }
+                            if (comparePrimitiveMapKeys(left.key, right.key) !=
+                                PrimitiveMapKeyRelation::Same) {
+                                continue;
+                            }
+                            left.payload = left.payload.joined(right.payload);
+                            left.present &= right.present;
+                            left.absent &= right.absent;
+                            if (left.object != right.object) { left.object = {}; }
+                            if (left.map != right.map) { left.map = {}; }
+                            joined.push_back(left);
                             matched = true;
                             break;
                         }
+                        if (!matched) {
+                            const auto missing = absent(left.key, state.entries, state.completeKeys,
+                                                        state.possibleKeys, false);
+                            if (!missing) { return false; }
+                            if (*missing) {
+                                left.present = false;
+                                joined.push_back(left);
+                            }
+                        }
                     }
-                    if (matched) { continue; }
-                    const auto missing =
-                        absent(right.key, thenEntries, thenCompleteKeys, thenKeys, false);
-                    if (!missing) { return false; }
-                    if (*missing) {
-                        right.present = false;
-                        joined.push_back(right);
-                    }
-                }
-                entries = std::move(joined);
-                completeKeys &= thenCompleteKeys;
-                if (completeKeys) {
-                    for (mlir::Value key : thenKeys) {
+                    // A key first mentioned on the other arm may still be absent
+                    // on both paths when this arm cleared the entire Map.
+                    for (auto right : state.entries) {
                         if (!step()) { return false; }
-                        possibleKeys.push_back(key);
+                        bool matched = false;
+                        for (const auto & left : then.entries) {
+                            if (!step()) { return false; }
+                            if (comparePrimitiveMapKeys(left.key, right.key) ==
+                                PrimitiveMapKeyRelation::Same) {
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (matched) { continue; }
+                        const auto missing = absent(right.key, then.entries, then.completeKeys,
+                                                    then.possibleKeys, false);
+                        if (!missing) { return false; }
+                        if (*missing) {
+                            right.present = false;
+                            joined.push_back(right);
+                        }
                     }
-                } else {
-                    possibleKeys.clear();
+                    state.entries = std::move(joined);
+                    state.completeKeys &= then.completeKeys;
+                    if (state.completeKeys) {
+                        for (mlir::Value key : then.possibleKeys) {
+                            if (!step()) { return false; }
+                            state.possibleKeys.push_back(key);
+                        }
+                    } else {
+                        state.possibleKeys.clear();
+                    }
+                    for (auto * observed : llvm::make_early_inc_range(state.observations)) {
+                        if (!step()) { return false; }
+                        if (!then.observations.contains(observed)) {
+                            state.observations.erase(observed);
+                        }
+                    }
                 }
                 llvm::SmallVector<field_fact> joinedFields;
                 for (auto left : thenFields) {
@@ -540,10 +575,6 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     }
                 }
                 fields = std::move(joinedFields);
-                for (auto * observed : llvm::make_early_inc_range(observations)) {
-                    if (!step()) { return false; }
-                    if (!thenObservations.contains(observed)) { observations.erase(observed); }
-                }
                 for (unsigned index = 0; index < branch.getNumResults(); ++index) {
                     if (!step()) { return false; }
                     const auto left = thenYield.getOperand(index),
@@ -575,7 +606,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 result.upvalues.push_back(load);
                 upvalues.insert(load);
-                maps.insert(load.getResult());
+                maps.try_emplace(load.getResult(), capturedOrigin);
             } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                 const auto key = keyOf(read.getKey());
                 if (auto origin = objects.lookup(read.getObject())) {
@@ -612,7 +643,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
                     // Capture this position's cardinality, including an equal
                     // structural join, independently of all later mutations.
-                    const auto fact = sizeFacts();
+                    const auto fact = sizeFacts(mapStates[maps.lookup(read.getObject())]);
                     if (!fact) { return false; }
                     sizeBounds[read.getResult()] = fact->lower;
                     if (fact->exact) { exactSizes[read.getResult()] = *fact->exact; }
@@ -625,11 +656,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 const auto key = keyOf(read.getKey());
                 const unsigned arity = key == "set" ? 2u : (key == "clear" ? 0u : 1u);
                 if (key == "size" || invoke.getArgs().size() != arity) { return false; }
+                const auto origin = maps.lookup(invoke.getReceiver());
+                if (!origin) { return false; }
+                auto & state = mapStates[origin];
                 for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
                     if (!step()) { return false; }
                     if (primitives.contains(argument)) { continue; }
                     if (llvm::is_contained(parameters.objectKeys, argument) &&
                         (index == 0 || (key == "set" && index == 1))) {
+                        continue;
+                    }
+                    // ponytail: one nested level; deeper retention needs a checked
+                    // acyclic ownership graph before child Maps can retain Maps.
+                    if (key == "set" && index == 1 && origin == capturedOrigin &&
+                        maps.contains(argument) && maps.lookup(argument) != capturedOrigin) {
+                        mapStores.insert(invoke);
                         continue;
                     }
                     if (key != "set" || index != 1 || !objects.contains(argument)) { return false; }
@@ -638,32 +679,33 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 result.calls.push_back(invoke);
                 calls.insert(invoke);
                 if (key == "set") {
-                    maps.insert(invoke.getResult());
-                    if (!mutate(invoke.getArgs()[0], false,
+                    maps.try_emplace(invoke.getResult(), origin);
+                    if (!mutate(state, invoke.getArgs()[0], false,
                                 alternatives.lookup(invoke.getArgs()[1]),
-                                objects.lookup(invoke.getArgs()[1]))) {
+                                objects.lookup(invoke.getArgs()[1]),
+                                maps.lookup(invoke.getArgs()[1]))) {
                         return false;
                     }
                 } else if (key == "clear") {
                     // Saved SSA reads retain their old payload or object; only
                     // the mutable Map state and live has observations change.
-                    for (auto & entry : entries) {
+                    for (auto & entry : state.entries) {
                         if (!step()) { return false; }
                         entry.present = false;
                         entry.absent = true;
                     }
-                    for (auto * observed : observations) {
+                    for (auto * observed : state.observations) {
                         (void)observed;
                         if (!step()) { return false; }
                     }
-                    for (mlir::Value written : possibleKeys) {
+                    for (mlir::Value written : state.possibleKeys) {
                         (void)written;
                         if (!step()) { return false; }
                     }
-                    observations.clear();
-                    possibleKeys.clear();
-                    completeKeys = true;
-                    currentSize = 0;
+                    state.observations.clear();
+                    state.possibleKeys.clear();
+                    state.completeKeys = true;
+                    state.currentSize = 0;
                     primitives.insert(invoke.getResult());
                     alternatives.try_emplace(
                         invoke.getResult(),
@@ -674,12 +716,16 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         alternatives.try_emplace(
                             invoke.getResult(),
                             PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
-                        if (key == "delete" && !mutate(invoke.getArgs()[0], true)) { return false; }
-                        if (key == "has") { observations.insert(invoke); }
+                        if (key == "delete" && !mutate(state, invoke.getArgs()[0], true)) {
+                            return false;
+                        }
+                        if (key == "has") { state.observations.insert(invoke); }
                     } else if (key == "get") {
-                        if (primitiveContents) { primitives.insert(invoke.getResult()); }
-                        const auto missing =
-                            absent(invoke.getArgs()[0], entries, completeKeys, possibleKeys);
+                        if (primitiveContents && origin == capturedOrigin) {
+                            primitives.insert(invoke.getResult());
+                        }
+                        const auto missing = absent(invoke.getArgs()[0], state.entries,
+                                                    state.completeKeys, state.possibleKeys);
                         if (!missing) { return false; }
                         if (*missing) {
                             primitives.insert(invoke.getResult());
@@ -688,7 +734,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                                          mlir::TypeID::get<ctjs::UndefinedAttr>()));
                             continue;
                         }
-                        for (const auto & entry : entries) {
+                        for (const auto & entry : state.entries) {
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0],
                                                         keyEvidence(entry.key),
@@ -697,6 +743,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 if (entry.present && entry.payload.known) {
                                     primitives.insert(invoke.getResult());
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
+                                } else if (entry.present && entry.map) {
+                                    maps.try_emplace(invoke.getResult(), entry.map);
                                 } else if (entry.present && entry.object) {
                                     objects.try_emplace(invoke.getResult(), entry.object);
                                 }
@@ -755,16 +803,32 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             return false;
         }
     }
-    for (mlir::Value alias : maps) {
+    for (const auto & [alias, origin] : maps) {
         for (mlir::OpOperand & use : alias.getUses()) {
             if (!step()) { return false; }
             if (!dominance.dominates(alias, use.getOwner())) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
-                (calls.contains(use.getOwner()) && use.getOperandNumber() == 1)) {
+                (calls.contains(use.getOwner()) && use.getOperandNumber() == 1) ||
+                (origin != capturedOrigin && mapStores.contains(use.getOwner()) &&
+                 use.getOperandNumber() == 3)) {
                 continue;
             }
             return false;
+        }
+    }
+    for (mlir::Operation * operation : constructors) {
+        auto constructor = llvm::cast<ctjs::LoadGlobalOp>(operation);
+        for (mlir::OpOperand & use : constructor.getResult().getUses()) {
+            if (!step() || !dominance.dominates(constructor.getResult(), use.getOwner())) {
+                return false;
+            }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+            if (!made || !allocations.contains(made) ||
+                (use.getOperandNumber() != 0 && use.getOperandNumber() != 1)) {
+                return false;
+            }
         }
     }
     // Scalar read-time facts, including an absent get's Undefined result,
@@ -777,8 +841,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             }
         }
     }
-    // A method-local object is a leaf owner, with the captured Map as its only
-    // possible longer-lived owner. Check every use, including uses outside the
+    // A method-local object is a leaf owner, retained only by checked Maps.
+    // Check every use, including uses outside the
     // walked body. Neither native markers nor provider allocation tokens can
     // authorize a field, alias, escape or future invocation here.
     for (const auto & [object, origin] : objects) {
