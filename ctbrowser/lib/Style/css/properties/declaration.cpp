@@ -218,6 +218,10 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
     if (p->kind == k::color) {
+        // `invert` is CSS 2.1's outline colour and nothing else's.
+        if (ascii_iequals(property, "outline-color") && ascii_iequals(text, "invert")) {
+            return yes("invert");
+        }
         std::string serialized;
         if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
         return {};

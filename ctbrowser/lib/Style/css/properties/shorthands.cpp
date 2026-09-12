@@ -583,6 +583,15 @@ bool add_parsed(declaration_block & block, std::string_view name, std::string va
         if (block[at].important && !important) { return false; }
         block.erase(block.begin() + static_cast<std::ptrdiff_t>(at));
     }
+    // ...and an important WHOLE shorthand already speaks for this longhand:
+    // `background: red !important; background-color: green` keeps the red.
+    if (!important) {
+        for (const expansion & e : expansions()) {
+            if (!in_list(e.longhands, name)) { continue; }
+            const std::size_t whole = index_of(block, e.syntax->name);
+            if (whole < block.size() && block[whole].important) { return false; }
+        }
+    }
     block.push_back(declaration{std::string{name}, std::move(value), important});
     return true;
 }

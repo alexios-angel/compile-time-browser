@@ -141,6 +141,12 @@ void test_reads_and_all() {
     CHECK_EQ(round_trip("font: italic bold 700 12px / 1.5 'Times New Roman', serif"),
              std::string{"font: italic 700 12px / 1.5 Times New Roman, serif;"});
     CHECK_EQ(round_trip("font: menu"), std::string{"font: menu;"});
+    // shorthand-serialization: an important whole shorthand keeps a later
+    // longhand out, and `outline-color: invert` is a colour.
+    CHECK_EQ(round_trip("background-color: blue; background: red !important; background-color: "
+                        "green;"),
+             std::string{"background: red !important;"});
+    CHECK_EQ(round_trip("outline-color: invert"), std::string{"outline-color: invert;"});
     CHECK_EQ(round_trip("font: Arial"), std::string{});
 
     // A value this table cannot split stays whole, and a whole shorthand
