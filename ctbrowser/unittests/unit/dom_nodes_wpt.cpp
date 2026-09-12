@@ -140,6 +140,25 @@ void test_a_collection_owns_its_indices_and_names() {
                (kids instanceof NodeList) + ',' + (document.querySelectorAll('p') instanceof NodeList);
     })())JS",
        "true,2,true,true");
+    // NodeList-live-mutations: the own keys after a mutation nothing read
+    // through, and NodeList-Iterable: a for-of sees what its body appends.
+    is(R"JS((function () {
+        var d = document.createElement('div');
+        var kids = d.childNodes;
+        var before = Object.getOwnPropertyNames(kids).length;
+        d.appendChild(document.createElement('b')).id = 'b1';
+        d.appendChild(document.createElement('b')).id = 'b2';
+        var after = Object.getOwnPropertyNames(kids).join();
+        var seen = [];
+        for (var el of kids) {
+            seen.push(el.id);
+            if (seen.length < 3) { d.appendChild(document.createElement('b')).id = 'after' + el.id; }
+        }
+        var keys = [...kids.keys()], entries = [...kids.entries()];
+        return [before, after, seen.join(' '), keys.join(' '), entries[1][1].id,
+                !(kids.values() instanceof Array), kids.values().next().value === kids[0]].join('|');
+    })())JS",
+       "0|0,1|b1 b2 afterb1 afterb2|0 1 2 3|b2|true|true");
 }
 
 void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {
