@@ -158,9 +158,18 @@ value context::lookup_property(value target, const std::string & name) {
                 }
                 return value::undefined(); // set-only: reading gives undefined
             }
-            obj = obj->prototype.is_object()
-                      ? static_cast<object_object *>(obj->prototype.as_heap())
-                      : nullptr;
+            if (obj->prototype.is_object()) {
+                obj = static_cast<object_object *>(obj->prototype.as_heap());
+                continue;
+            }
+            // A PROTOTYPE THAT IS NOT A PLAIN OBJECT - an Array
+            // (`foo.prototype = [1]`), a function, a proxy - carries on the
+            // walk in its own arm below. Its getters see it as the receiver
+            // rather than `target`, which nothing in the corpus observes.
+            if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
+                return lookup_property(obj->prototype, name);
+            }
+            obj = nullptr;
         }
         return from_object_prototype(target, name);
     }

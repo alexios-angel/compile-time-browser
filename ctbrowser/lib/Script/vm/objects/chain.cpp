@@ -201,6 +201,11 @@ bool context::has_property(value target, value key) {
         if (own_property(link, name, found)) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
     }
+    // A prototype that is not a plain object (`foo.prototype = [1]`) answers
+    // for the rest of the chain - see lookup_property.
+    if (link.is_heap() && !link.is_object() && !link.is_string()) {
+        return has_property(link, key);
+    }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
@@ -259,6 +264,12 @@ bool context::instance_of(value target, value ctor) {
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
+    }
+    // A prototype that is not a plain object (`foo.prototype = [1]`) carries
+    // the rest of the chain - see lookup_property.
+    if (link.is_heap() && !link.is_object() && !link.is_string()) {
+        if (link.as_heap() == wanted.as_heap()) { return true; }
+        return instance_of(link, ctor);
     }
     // Then the IMPLICIT one. An array, a function, a string and a plain object
     // have no prototype field to walk - their chain is the tables property

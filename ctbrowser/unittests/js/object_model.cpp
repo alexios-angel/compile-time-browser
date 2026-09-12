@@ -49,6 +49,18 @@ int main() {
     js_expect("Reflect.setPrototypeOf(Object.prototype,{})", "false");
     js_expect("(function(){Object.prototype.__proto__={};})()", "THREW");
     js_expect("Reflect.setPrototypeOf(Object.prototype,null)", "true");
+    // A PROTOTYPE THAT IS NOT A PLAIN OBJECT carries the chain: an Array as
+    // `foo.prototype` (the ES5 subclassing idiom test262 is full of) hands its
+    // methods, its elements, `in`, instanceof and getPrototypeOf to the instance.
+    js_expect("(function(){function foo(){} foo.prototype=[1,2];var f=new foo();"
+              "return f.length+','+f[1]+','+typeof f.forEach+','+(1 in f)+','"
+              "+(f instanceof Array)+','+(Object.getPrototypeOf(f)===foo.prototype);})()",
+              "2,2,function,true,true,true");
+    js_expect("(function(){function foo(){} foo.prototype=[1];var f=new foo();"
+              "return f.reduce(function(a,b){return a+b;});})()",
+              "1");
+    js_expect("(function(){var o=Object.create(function g(){});return typeof o.call;})()",
+              "function");
     // An OWN `__proto__` shadows the accessor, as any own property shadows an
     // inherited one.
     js_expect("(function(){var o={};Object.defineProperty(o,'__proto__',{value:7});"

@@ -168,7 +168,7 @@ namespace {
     };
     if (of.is_object()) {
         auto * obj = static_cast<object_object *>(of.as_heap());
-        if (obj->prototype.is_object()) { return obj->prototype; }
+        if (obj->prototype.is_object_like()) { return obj->prototype; }
         // Object.prototype's own [[Prototype]] is null, and it is the only
         // table for which that is true.
         if (obj == cx.prototype(context::proto_kind::object)) { return value::null(); }
