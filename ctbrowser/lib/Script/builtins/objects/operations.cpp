@@ -177,6 +177,7 @@ namespace {
         bool named = false;
         for (const auto & [key, held] : fn->props) {
             (void)held;
+            if (!wanted_key(which, key)) { continue; } // a bound function's private target slot
             out.push_back(key);
             named = named || key == "name";
         }

@@ -62,6 +62,7 @@ void install_proxy(context & cx) {
         if (!proxy.is_kind(heap_kind::proxy)) { return value::undefined(); }
         const context::rooted keep{c, proxy};
         native_object * revoke = detail::cx_native(c, "", native_fn{});
+        revoke->is_constructor = false;
         revoke->fn = [revoke](context &, std::span<value>) {
             // `revoke` is alive for the duration of its own call; the pointer
             // is to the object being called.

@@ -858,6 +858,29 @@ void test_restricted_properties() {
                   "true,true,false");
 }
 
+// OrdinaryCallBindThis through call/apply/bind: a sloppy function's `this`
+// is the global object for null/undefined and a wrapper for a primitive; a
+// strict one takes the value as given. And `new bound()` constructs the
+// target with the bound arguments in front (10.4.1.2).
+void test_call_bind_this() {
+    expect_result("function f() { return this === globalThis; } return f.call() + ',' + "
+                  "f.apply(null) + ',' + f.bind(undefined)();",
+                  "true,true,true");
+    expect_result("function f() { return typeof this; } return f.call(1) + ',' + f.call('s');",
+                  "object,object");
+    expect_result("'use strict'; function f() { return this; } return f.call(1) + ',' + "
+                  "f.call(undefined);",
+                  "1,undefined");
+    expect_result("function P(a, b) { this.sum = a + b; } const B = P.bind({}, 1);"
+                  "const p = new B(2); return p.sum + ',' + (p instanceof P);",
+                  "3,true");
+    expect_result("const B = Math.abs.bind(null); try { new B(); } catch (e) { return "
+                  "e.constructor.name; }",
+                  "TypeError");
+    expect_result("return Object.getOwnPropertyNames((function () {}).bind()).join();",
+                  "length,name");
+}
+
 int main() {
     test_default_parameters();
     test_rest_parameters();
@@ -887,5 +910,6 @@ int main() {
     test_anonymous_functions_take_the_binding_name();
     test_array_patterns_iterate();
     test_restricted_properties();
+    test_call_bind_this();
     REPORT("vm_functions");
 }
