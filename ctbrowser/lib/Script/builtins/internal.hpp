@@ -548,11 +548,6 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     return static_cast<object_object *>(cx.make_object().as_heap());
 }
 
-// A native allocated from inside another native - `bind` returns one.
-[[nodiscard]] inline native_object * cx_native(context & cx, std::string name, native_fn fn) {
-    return cx.allocate<native_object>(std::move(name), std::move(fn));
-}
-
 // `attr_builtin` - { writable: true, enumerable: FALSE, configurable: true } -
 // because clause 17 says so of every method in clauses 19 through 28, and
 // because an enumerable one is visible to `for (k in Math)`, to

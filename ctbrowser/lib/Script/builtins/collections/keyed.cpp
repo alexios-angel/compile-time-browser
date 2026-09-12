@@ -80,13 +80,6 @@ constexpr bool weak(kind k) {
     return nullptr;
 }
 
-// SameValueZero, which is what Map and Set key on: like ===, except NaN
-// matches NaN. A page that uses NaN as a key is doing something odd, but
-// getting it wrong here would be a silent miss.
-[[nodiscard]] bool same_value_zero(value a, value b) {
-    return a.same_value_zero(b);
-}
-
 // 24.1.3.9 step 6 / 24.2.3.1 step 5: -0 is stored as +0, so `has(-0)` and
 // `has(0)` are one question and a key read back is never negative zero.
 [[nodiscard]] value normalise_key(value k) {
@@ -104,13 +97,13 @@ constexpr bool weak(kind k) {
 [[nodiscard]] value * find_pair(array_object & entries, value key) {
     for (value & entry : entries.items) {
         auto * pair = static_cast<array_object *>(entry.as_heap());
-        if (!pair->items.empty() && same_value_zero(pair->items[0], key)) { return &entry; }
+        if (!pair->items.empty() && pair->items[0].same_value_zero(key)) { return &entry; }
     }
     return nullptr;
 }
 [[nodiscard]] std::ptrdiff_t find_member(array_object & entries, value v) {
     for (std::size_t i = 0; i < entries.items.size(); ++i) {
-        if (same_value_zero(entries.items[i], v)) { return static_cast<std::ptrdiff_t>(i); }
+        if (entries.items[i].same_value_zero(v)) { return static_cast<std::ptrdiff_t>(i); }
     }
     return -1;
 }
@@ -372,7 +365,7 @@ void install_collections(context & cx) {
             if (entries == nullptr) { return value::undefined(); }
             for (std::size_t i = 0; i < entries->items.size(); ++i) {
                 auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
-                if (!pair->items.empty() && same_value_zero(pair->items[0], arg_at(a, 0))) {
+                if (!pair->items.empty() && pair->items[0].same_value_zero(arg_at(a, 0))) {
                     entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
                     return value::boolean(true);
                 }

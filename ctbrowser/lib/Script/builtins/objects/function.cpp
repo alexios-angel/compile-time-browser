@@ -99,8 +99,8 @@ void install_function(context & cx) {
                // just a receiver change.
                const auto bound =
                    std::make_shared<std::vector<value>>(a.begin() + (a.empty() ? 0 : 1), a.end());
-               auto * fn = detail::cx_native(
-                   c, "bound", [self, receiver, bound](context & inner, std::span<value> later) {
+               auto * fn = c.allocate<native_object>(
+                   "bound", [self, receiver, bound](context & inner, std::span<value> later) {
                        std::vector<value> args = *bound;
                        args.insert(args.end(), later.begin(), later.end());
                        return inner.call(self, args, receiver);
@@ -215,7 +215,7 @@ void install_function(context & cx) {
     // `instanceof` answers here. This is the standard function, not the hook;
     // the hook is a change to the opcode and is named rather than implied.
     auto * has_instance =
-        detail::cx_native(cx, "[Symbol.hasInstance]", [](context & c, std::span<value> a) {
+        cx.allocate<native_object>("[Symbol.hasInstance]", [](context & c, std::span<value> a) {
             return value::boolean(c.instance_of(arg_at(a, 0), c.current_this()));
         });
     detail::install_arity(cx, has_instance, 1);
