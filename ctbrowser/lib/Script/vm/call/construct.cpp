@@ -95,6 +95,15 @@ value context::make_instance(value callee) {
         if (value * proto = static_cast<object_object *>(callee.as_heap())->find("prototype")) {
             instance->prototype = *proto;
         }
+    } else if (callee.is_kind(heap_kind::native)) {
+        // A BUILT-IN CONSTRUCTOR'S `prototype` TOO (OrdinaryCreateFromConstructor,
+        // 10.1.13). Only a plain object's was read, so every native constructor
+        // received an instance with no prototype and had to pick one itself -
+        // and WeakMap's fallback picked Map's table, which made
+        // `new WeakMap()` a Map to every method that checks its receiver.
+        if (value * proto = static_cast<native_object *>(callee.as_heap())->find("prototype")) {
+            instance->prototype = *proto;
+        }
     } else if (callee.is_kind(heap_kind::function)) {
         instance->prototype = ensure_prototype(callee);
     }
