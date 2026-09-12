@@ -242,9 +242,9 @@ void test_a_swap_and_a_normalize_are_the_records_the_dom_queues() {
              "});"
              "m.observe(host, {childList: true}); m.observe(n, {childList: true});"
              "host.insertBefore(document.getElementById('b'), document.getElementById('a'));"
-             "n.normalize();"
+             "n.normalize(); host.appendChild(document.getElementById('a'));"
              "</script></body></html>"),
-        "rm:b/a/c add:b/-/a rm:y/xyz/z rm:z/xyz/-");
+        "rm:b/a/c add:b/-/a rm:y/xyz/z rm:z/xyz/- rm:a/b/c add:a/c/-");
 }
 
 // takeRecords empties the queue, so the callback the delivery microtask would
