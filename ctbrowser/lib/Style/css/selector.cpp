@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -44,6 +45,7 @@ namespace {
     if (ascii_iequals(name, "checked")) { return structural_checked; }
     if (ascii_iequals(name, "link") || ascii_iequals(name, "any-link")) { return structural_link; }
     if (ascii_iequals(name, "visited")) { return structural_visited; }
+    if (ascii_iequals(name, "scope")) { return structural_scope; }
     return 0;
 }
 
@@ -188,109 +190,91 @@ namespace {
     return in_names(name, names);
 }
 
-// `An+B`, from the component values inside an `:nth-child()`. The grammar is
-// genuinely awkward because the tokenizer has already decided where the numbers
-// are: `2n+1` is a DIMENSION `2n` then a NUMBER `+1`, while `2n + 1` is a dimension,
-// whitespace, a delim and a number - and `n+1` starts with an IDENT. So this reads
-// the pieces rather than pattern-matching a spelling.
+// `An+B`, from the component values inside an `:nth-child()` - Syntax 3 §6.
 //
-// Returns false for anything it cannot read, which makes the whole selector
-// unmatchable rather than guessing at a step of 1.
+// The tokenizer has already decided where the numbers are, and not helpfully:
+// `4n-1` is ONE dimension token whose unit is `n-1`, `-n+3` an ident and a signed
+// number, `2n + 1` a dimension, two runs of whitespace, a delim and a number. So
+// the token texts are joined back into the author's spelling - a single space
+// standing for each run of whitespace - and that string is read against the
+// grammar directly. The grammar allows whitespace in exactly one place, either
+// side of the sign that separates `An` from `B`, so a space anywhere else is the
+// syntax error it should be.
+//
+// Returns false for anything it cannot read, which the caller reports as a
+// syntax error: `:nth-child(fred)` is not a selector in any browser.
 [[nodiscard]] bool parse_nth(const stylesheet & sheet, std::span<const component_value> inner,
                              std::int32_t & a, std::int32_t & b) {
-    const auto tok = [&](const component_value & v) -> const css_token & {
-        return sheet.tokens[v.token];
-    };
-    const auto is_ws = [&](const component_value & v) {
-        return v.kind == cv_kind::token && tok(v).type == token_type::whitespace;
-    };
-    // Flatten to the non-whitespace tokens, since whitespace is only a separator
-    // here and never significant.
-    boost::container::small_vector<const css_token *, 6> parts;
+    std::string spelled;
     for (const component_value & v : inner) {
-        if (v.kind != cv_kind::token || is_ws(v)) {
-            if (v.kind != cv_kind::token) { return false; } // a nested block or function
+        if (v.kind != cv_kind::token) { return false; } // a nested block or function
+        const css_token & t = sheet.tokens[v.token];
+        if (t.type == token_type::whitespace) {
+            if (!spelled.empty() && spelled.back() != ' ') { spelled += ' '; }
             continue;
         }
-        parts.push_back(&tok(v));
+        if (t.type == token_type::comma || t.type == token_type::string) { return false; }
+        spelled += ascii_lower_copy(sheet.text_of(t));
     }
-    if (parts.empty()) { return false; }
+    while (!spelled.empty() && spelled.back() == ' ') { spelled.pop_back(); }
+    if (spelled.empty()) { return false; }
+    if (spelled == "odd") {
+        a = 2;
+        b = 1;
+        return true;
+    }
+    if (spelled == "even") {
+        a = 2;
+        b = 0;
+        return true;
+    }
 
-    // `odd` and `even` are the two keyword forms.
-    if (parts.size() == 1 && parts[0]->type == token_type::ident) {
-        const std::string_view word = sheet.text_of(*parts[0]);
-        if (ascii_iequals(word, "odd")) {
-            a = 2;
-            b = 1;
-            return true;
+    std::string_view rest = spelled;
+    // An optional sign, then optional digits, from the front of `rest`. The two
+    // are reported apart because `n` and `-n` have a coefficient with no digits.
+    const auto read_sign = [&] {
+        if (rest.empty() || (rest.front() != '+' && rest.front() != '-')) { return 0; }
+        const int sign = rest.front() == '-' ? -1 : 1;
+        rest.remove_prefix(1);
+        return sign;
+    };
+    const auto read_digits = [&](std::int32_t & out) {
+        std::size_t digits = 0;
+        std::int64_t value = 0;
+        while (digits < rest.size() && rest[digits] >= '0' && rest[digits] <= '9') {
+            value = value * 10 + (rest[digits] - '0');
+            if (value > INT32_MAX) { return false; }
+            ++digits;
         }
-        if (ascii_iequals(word, "even")) {
-            a = 2;
-            b = 0;
-            return true;
-        }
-        // A bare `n`, or `-n`: a step of 1 or -1 with no offset.
-        if (ascii_iequals(word, "n")) {
-            a = 1;
-            b = 0;
-            return true;
-        }
-        if (ascii_iequals(word, "-n")) {
-            a = -1;
-            b = 0;
-            return true;
-        }
-        return false;
+        rest.remove_prefix(digits);
+        out = static_cast<std::int32_t>(value);
+        return digits != 0;
+    };
+    const int sign = read_sign();
+    std::int32_t magnitude = 1;
+    const bool digits = read_digits(magnitude);
+    if (rest.empty()) {
+        // Just `B`: `:nth-child(3)`.
+        if (!digits) { return false; }
+        a = 0;
+        b = sign < 0 ? -magnitude : magnitude;
+        return true;
     }
-    std::size_t at = 0;
-    a = 0;
-    b = 0;
-    bool saw_n = false;
-    // The `An` part. A DIMENSION whose unit is `n` (`2n`), or an ident `n`/`-n`.
-    if (parts[at]->type == token_type::dimension) {
-        const std::string_view unit =
-            sheet.pool.empty() ? std::string_view{}
-                               : std::string_view{sheet.pool}.substr(
-                                     parts[at]->text + parts[at]->length - parts[at]->unit_length,
-                                     parts[at]->unit_length);
-        if (!ascii_iequals(unit, "n")) { return false; }
-        a = static_cast<std::int32_t>(parts[at]->number);
-        saw_n = true;
-        ++at;
-    } else if (parts[at]->type == token_type::ident) {
-        const std::string_view word = sheet.text_of(*parts[at]);
-        if (ascii_iequals(word, "n")) {
-            a = 1;
-        } else if (ascii_iequals(word, "-n")) {
-            a = -1;
-        } else {
-            return false;
-        }
-        saw_n = true;
-        ++at;
-    } else if (parts[at]->type == token_type::number) {
-        // Just `B`, as in `:nth-child(3)`.
-        b = static_cast<std::int32_t>(parts[at]->number);
-        return at + 1 == parts.size();
-    } else {
-        return false;
+    if (rest.front() != 'n') { return false; }
+    rest.remove_prefix(1);
+    a = sign < 0 ? -magnitude : magnitude;
+    if (rest.empty()) {
+        b = 0;
+        return true;
     }
-    if (at == parts.size()) { return saw_n; }
-    // The `+B` or `-B` part. Either one signed NUMBER token (`2n+1` tokenizes that
-    // way), or a `+`/`-` delim followed by an unsigned number (`2n + 1` does).
-    if (parts[at]->type == token_type::number) {
-        b = static_cast<std::int32_t>(parts[at]->number);
-        return at + 1 == parts.size();
-    }
-    if (parts[at]->type == token_type::delim && at + 1 < parts.size() &&
-        parts[at + 1]->type == token_type::number) {
-        const std::string_view sign = sheet.text_of(*parts[at]);
-        if (sign != "+" && sign != "-") { return false; }
-        const auto magnitude = static_cast<std::int32_t>(parts[at + 1]->number);
-        b = sign == "-" ? -magnitude : magnitude;
-        return at + 2 == parts.size();
-    }
-    return false;
+    // `+B` or `-B`, the sign mandatory and whitespace allowed either side of it.
+    if (rest.front() == ' ') { rest.remove_prefix(1); }
+    const int b_sign = read_sign();
+    if (b_sign == 0) { return false; }
+    if (!rest.empty() && rest.front() == ' ') { rest.remove_prefix(1); }
+    if (!read_digits(magnitude) || !rest.empty()) { return false; }
+    b = b_sign < 0 ? -magnitude : magnitude;
+    return true;
 }
 
 // `[name op "value" i]`, from the component values INSIDE the square block. The
@@ -304,12 +288,40 @@ namespace {
     const auto is_ws = [&](const component_value & v) {
         return v.kind == cv_kind::token && tok(v).type == token_type::whitespace;
     };
-    // Trim, then read: name, then optionally an operator and a value, then
-    // optionally a flag.
+    // Trim, then read: an optional namespace prefix, the name, then optionally an
+    // operator and a value, then optionally a flag.
     while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
     while (!inner.empty() && is_ws(inner.back())) { inner = inner.subspan(0, inner.size() - 1); }
-    if (inner.empty() || inner.front().kind != cv_kind::token) { return false; }
-    if (tok(inner.front()).type != token_type::ident) { return false; }
+    const auto is_delim = [&](std::size_t at, std::string_view what) {
+        return at < inner.size() && inner[at].kind == cv_kind::token &&
+               tok(inner[at]).type == token_type::delim && sheet.text_of(tok(inner[at])) == what;
+    };
+    const auto is_ident = [&](std::size_t at) {
+        return at < inner.size() && inner[at].kind == cv_kind::token &&
+               tok(inner[at]).type == token_type::ident;
+    };
+    // `*|name`, `|name` and `prefix|name`. The last is told from `[lang|=en]` by
+    // what FOLLOWS the bar: a local name, not an `=`. Selectors 4 §3.2: a prefix
+    // no `@namespace` declared is a syntax error - and `querySelector` declares
+    // none, so `[ns|a]` throws there exactly as `ns|div` does.
+    if (is_delim(0, "*") && is_delim(1, "|")) {
+        out.ns = ns_prefix::any;
+        inner = inner.subspan(2);
+    } else if (is_delim(0, "|")) {
+        out.ns = ns_prefix::none;
+        inner = inner.subspan(1);
+    } else if (is_ident(0) && is_delim(1, "|") && is_ident(2)) {
+        const std::string_view prefix = sheet.text_of(tok(inner[0]));
+        const namespace_declaration * bound = nullptr;
+        for (const namespace_declaration & each : sheet.namespaces) {
+            if (!each.prefix.empty() && each.prefix == prefix) { bound = &each; }
+        }
+        if (bound == nullptr) { return false; }
+        out.ns = ns_prefix::named;
+        out.ns_uri = atoms.intern(bound->uri);
+        inner = inner.subspan(2);
+    }
+    if (!is_ident(0)) { return false; }
     // Attribute names are ASCII case-insensitive in HTML, and the DOM interns them
     // lowercased - so folding here is what makes `[HREF]` match `href`.
     out.name = atoms.intern_lower(sheet.text_of(tok(inner.front())));
@@ -539,11 +551,14 @@ private:
         const bool is_not = ascii_iequals(name, "not");
         const bool is_is = ascii_iequals(name, "is");
         const bool is_where = ascii_iequals(name, "where");
-        // `:has()`, `:host()`, `:state()` are real CSS this engine cannot answer, and
-        // come back unmatchable; a name CSS has never defined is a syntax error, and
-        // the colon branch of `emit` refused it before the function was reached.
-        if (!is_not && !is_is && !is_where) { return false; }
-        ref.kind = is_not ? pseudo_kind::not_ : is_is ? pseudo_kind::is_ : pseudo_kind::where_;
+        // `:has()` takes RELATIVE selectors, and may not nest - Selectors 4 §4.5.
+        const bool is_has = ascii_iequals(name, "has") && !relative_;
+        // `:host()`, `:state()` are real CSS this engine cannot answer, and come
+        // back unmatchable; a name CSS has never defined is a syntax error, and the
+        // colon branch of `emit` refused it before the function was reached.
+        if (!is_not && !is_is && !is_where && !is_has) { return false; }
+        ref.kind = is_not ? pseudo_kind::not_ : is_where ? pseudo_kind::where_ : pseudo_kind::is_;
+        ref.relative = is_has;
 
         // Parse the argument into a SCRATCH sheet's selector list, then move the
         // results onto the pseudo. A scratch sheet rather than the real one because
@@ -552,12 +567,18 @@ private:
         const std::size_t before = sheet_->selectors.size();
         // The nested list's own syntax errors are this selector's: `:not(>)` is not a
         // selector, and the flag has to come back out of the recursion to say so.
-        const std::uint32_t count = parse_selector_list(*sheet_, inner, *atoms_, &invalid);
+        selector_parser nested{*sheet_, *atoms_};
+        nested.relative_ = is_has;
+        const std::uint32_t count = nested.run(inner);
+        invalid = invalid || nested.invalid();
         for (std::size_t i = 0; i < count; ++i) {
             ref.args.push_back(std::move(sheet_->selectors[before + i]));
         }
         sheet_->selectors.resize(before);
         if (ref.args.empty()) { return false; }
+        // The CSSOM has no field for `:has()`, so `selectorText` gives back the
+        // author's bytes for a compound holding one - see pseudo_ref::relative.
+        if (is_has) { into.part.dropped = true; }
         // An argument this engine cannot represent makes the WHOLE thing
         // unmatchable, and the direction matters: for `:is()` a dead branch could be
         // dropped, but for `:not()` a dead branch would wrongly become "matches
@@ -616,6 +637,16 @@ private:
             want_new_compound = false;
             dangling_combinator = false;
         };
+        // A RELATIVE selector - the argument of `:has()` - is anchored on `:scope`:
+        // `> .a` is `:scope > .a` and a bare `.a` is `:scope .a`. The anchor is
+        // written in as a compound of its own, so the rest of the grammar and the
+        // matcher need know nothing about relative selectors at all. It contributes
+        // no specificity, which is what Selectors 4 §16 says of it.
+        if (relative_) {
+            start_compound();
+            compounds.back().part.structural |= structural_scope;
+            want_new_compound = true;
+        }
         // `|` IMMEDIATELY after run[at], which makes run[at] a namespace prefix.
         // Whitespace is a token, so `a | b` does not qualify - and cannot, since
         // a namespace separator is written with nothing on either side of it.
@@ -632,7 +663,12 @@ private:
                 b.classes != 0) {
                 return false;
             }
-            if (kind == ns_prefix::named && sheet_->prefixes_checked) {
+            // ...EVERY time, whoever asked. `prefixes_checked` was meant to let a
+            // caller with no `@namespace` rules to offer take a prefix on trust, but
+            // the only such callers are `querySelector` and `matches`, and Selectors
+            // API §2 gives them no namespace resolver at all: `ns|div` there is a
+            // SyntaxError in every browser.
+            if (kind == ns_prefix::named) {
                 bool declared = false;
                 for (const namespace_declaration & each : sheet_->namespaces) {
                     declared = declared || (!each.prefix.empty() && each.prefix == prefix);
@@ -671,22 +707,14 @@ private:
                 if (want_new_compound || compounds.empty()) { start_compound(); }
                 attribute_match match;
                 if (!parse_attribute(*sheet_, sheet_->children_of(v), *atoms_, match)) {
-                    // A NAMESPACE PREFIX makes it unsupported rather than invalid.
-                    // `[xlink|href]` is a perfectly good attribute selector that this
-                    // engine cannot answer, and `querySelector` must return null for
-                    // it rather than throw - `[a=]` is the malformed case and still
-                    // reports one.
-                    bool namespaced = false;
-                    for (const component_value & inner : sheet_->children_of(v)) {
-                        namespaced = namespaced ||
-                                     (inner.kind == cv_kind::token &&
-                                      token(inner).type == token_type::delim && text(inner) == "|");
-                    }
-                    dead = lossy = true;
-                    invalid_ = invalid_ || !namespaced;
+                    dead = invalid_ = true;
                     continue;
                 }
                 building & b = compounds.back();
+                // A NAMESPACED attribute is matched and not serialised: the CSSOM
+                // has no field for the prefix, so `selectorText` falls back to the
+                // author's bytes for the compound that holds one.
+                if (match.ns != ns_prefix::unset) { b.part.dropped = true; }
                 b.part.attributes.push_back(std::move(match));
                 ++b.classes; // an attribute selector is class-level for specificity
                 continue;
@@ -790,8 +818,9 @@ private:
                 // irrelevant, so the pending relation is simply overwritten - which
                 // is what makes `a > b`, `a>b` and `a >b` one selector.
                 if (d == ">" || d == "+" || d == "~") {
-                    if (compounds.empty()) {
-                        dead = invalid_ = true; // a combinator with nothing on its left
+                    // ...with nothing on its left, or `div ++ p`: two in a row.
+                    if (compounds.empty() || dangling_combinator) {
+                        dead = invalid_ = true;
                         continue;
                     }
                     pending = d == ">"   ? combinator::child
@@ -899,8 +928,9 @@ private:
 
         // AN EMPTY ALTERNATIVE IS A SYNTAX ERROR, and it is how `querySelector("")`,
         // `a,,b` and a trailing comma all arrive here: `run` holds nothing but
-        // whitespace, so no compound was ever started.
-        if (compounds.empty() || dangling_combinator) {
+        // whitespace, so no compound was ever started - or, for a relative one,
+        // nothing but the synthetic `:scope` anchor.
+        if (compounds.size() <= (relative_ ? 1u : 0u) || dangling_combinator) {
             invalid_ = true;
             push_dead();
             return;
@@ -931,6 +961,7 @@ private:
     stylesheet * sheet_;
     atom_table * atoms_;
     bool invalid_ = false;
+    bool relative_ = false; // parsing the argument of `:has()`
 };
 
 } // namespace

@@ -160,6 +160,81 @@ void test_the_rest_of_the_grammar() {
     is("ids('ul li:nth-of-type(3)')", "li3");
 }
 
+// --- every spelling of An+B ------------------------------------------------
+//
+// The tokenizer has no An+B token: `4n-1` is one dimension whose unit is `n-1`,
+// `-n+3` an ident and a signed number, `2n + 1` five tokens. The reader joins
+// the spelling back together, and each of these is a shape that broke one way
+// of reading the tokens.
+void test_an_plus_b_spellings() {
+    is("ids('li:nth-child(4n-1)')", "li3");
+    is("ids('li:nth-child(4n - 1)')", "li3");
+    is("ids('li:nth-child(2n+1)')", "li1,li3");
+    is("ids('li:nth-child(2n + 1)')", "li1,li3");
+    is("ids('li:nth-child(2n +1)')", "li1,li3");
+    is("ids('li:nth-child(2N+1)')", "li1,li3");
+    is("ids('li:nth-child(-n+2)')", "li1,li2");
+    is("ids('li:nth-child(-n + 2)')", "li1,li2");
+    is("ids('li:nth-child(n)')", "li1,li2,li3");
+    is("ids('li:nth-child(+n)')", "li1,li2,li3");
+    is("ids('li:nth-child(n+2)')", "li2,li3");
+    is("ids('li:nth-child(0n+2)')", "li2");
+    is("ids('li:nth-child(-2n+3)')", "li1,li3");
+    is("ids('li:nth-child( even )')", "li2");
+    is("ids('li:nth-child(EVEN)')", "li2");
+    is("ids('li:nth-last-child(-n+1)')", "li3");
+    is("ids('li:nth-child(+3)')", "li3");
+    is("ids('li:nth-child(-1)')", "");
+    // Whitespace is allowed only around the sign between `An` and `B`.
+    is("one('li:nth-child(2 n)')", "threw:SyntaxError");
+    is("one('li:nth-child(- n)')", "threw:SyntaxError");
+    is("one('li:nth-child(2n+)')", "threw:SyntaxError");
+    is("one('li:nth-child(n+1+1)')", "threw:SyntaxError");
+    is("one('li:nth-child()')", "threw:SyntaxError");
+    is("one('li:nth-child(2n+1, 3)')", "threw:SyntaxError");
+    is("one('li:nth-child(1.5)')", "threw:SyntaxError");
+}
+
+// --- `:scope` and `:has()` -----------------------------------------------------
+
+void test_scope_and_has() {
+    // `:scope` is the element a scoped query runs from, and `:root` when there is
+    // no such element - a whole-document query, or a stylesheet.
+    is("ids(':scope')", "");
+    is("document.querySelector(':scope').tagName", "HTML");
+    is("[].map.call(document.getElementById('outer').querySelectorAll(':scope > p'), "
+       "function (e) { return e.id; }).join(',')",
+       "p1,p2");
+    is("document.getElementById('outer').querySelectorAll(':scope > li').length", "0");
+    is("document.getElementById('outer').querySelectorAll(':scope').length", "0");
+    is("document.getElementById('p1').matches(':scope')", "true");
+    is("document.getElementById('p1').matches('div > :scope')", "true");
+    is("document.getElementById('p1').matches('ul > :scope')", "false");
+    is("document.getElementById('p1').closest(':scope').id", "p1");
+    // `:has()` takes a relative selector list: a child, a descendant, a sibling.
+    is("ids('div:has(> .lead)')", "outer");
+    is("ids('div:has(.lead)')", "outer");
+    is("ids('body > :has(.chosen)')", "list");
+    is("ids('li:has(+ .chosen)')", "li1");
+    is("ids('li:has(~ li)')", "li1,li2");
+    is("ids('p:has(+ span)')", "p2");
+    is("ids(':has(> #p1, > #li3)')", "outer,list");
+    is("ids('div:has(> span):has(> p)')", "outer");
+    is("ids('div:has(> ul)')", "");
+    is("ids('li:not(:has(~ li))')", "li3");
+    is("document.getElementById('list').closest(':has(> :scope)').id", "list");
+    is("document.getElementById('li2').closest(':has(> :scope)').id", "list");
+    is("one(':has()')", "threw:SyntaxError");
+    is("one(':has(> )')", "threw:SyntaxError");
+    is("one('div:has(:has(p))')", "threw:SyntaxError");
+    // `:has()` in a stylesheet restyles like any other selector.
+    is_in("<html><head><style>div:has(> .x) { color: rgb(1, 2, 3); }</style></head>"
+          "<body><div id=a><span class=x></span></div><div id=b></div></body></html>",
+          "getComputedStyle(document.getElementById('a')).color + '/' + "
+          "getComputedStyle(document.getElementById('b')).color",
+          "rgb(1, 2, 3)/rgb(0, 0, 0)");
+}
+
 // --- the subtree forms: an element's own query, matches, closest ------------
 
 void test_scoped_queries_and_matches() {
@@ -197,10 +272,23 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     // VALID CSS THIS ENGINE CANNOT MATCH. Every one of these must answer null
     // rather than throw: a page feature-detecting `:has()` gets "no match", which
     // is a missing answer, where a throw would be a wrong one.
-    is("one('li:has(a)')", "null");
     is("one('p::before')", "null");
-    is("one('svg|rect')", "null");
     is("one('p:focus-visible')", "null");
+    // A NAMESPACE PREFIX IS A SYNTAX ERROR HERE. Selectors API §2 gives
+    // `querySelector` no namespace resolver, so `svg|rect` is undeclared in every
+    // browser, and so is `[xlink|href]`. `*|` and `|` need no declaration.
+    is("one('svg|rect')", "threw:SyntaxError");
+    is("one('[xlink|href]')", "threw:SyntaxError");
+    is("one(':not(ns|div)')", "threw:SyntaxError");
+    is("ids('*|p')", "p1,p2,p3");
+    is("ids('[*|data-kind=a]')", "p1");
+    is("ids('[|data-kind=a]')", "p1");
+    is("one('|p')", "null"); // every element the HTML parser makes has a namespace
+    // Two combinators in a row are not one combinator.
+    is("one('div ++ p')", "threw:SyntaxError");
+    is("one('div ~~ p')", "threw:SyntaxError");
+    is("one('div > > p')", "threw:SyntaxError");
+    is("one('div >p')", "p1");
     // A `:lang()` this engine parses but whose argument is malformed is
     // unmatchable rather than a syntax error, on the same reading
     // `:nth-child(of S)` is refused under.
@@ -310,6 +398,8 @@ int main() {
     test_the_compound_selectors_still_work();
     test_the_four_combinators();
     test_the_rest_of_the_grammar();
+    test_an_plus_b_spellings();
+    test_scope_and_has();
     test_scoped_queries_and_matches();
     test_a_detached_element_matches_against_itself();
     test_syntax_errors_and_the_selectors_that_are_merely_unsupported();
