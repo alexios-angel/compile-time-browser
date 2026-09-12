@@ -520,8 +520,7 @@ public:
     //      the cell on the floor and the closure would see the wrong variable.
     //   3. a temporary allocated for a default expression must be released, or
     //      every default permanently widens the frame.
-    void compile_parameter_prologue(std::span<const std::int32_t> params,
-                                    const std::function<bool(std::uint16_t)> & is_boxed);
+    void compile_parameter_prologue(std::span<const std::int32_t> params);
     // THE PARAMETERS STILL UNINITIALISED WHILE A DEFAULT RUNS (10.2.11 step
     // 21-28: each parameter's binding is initialised in order, and a default
     // reading a later one - or its own - is the ReferenceError of an

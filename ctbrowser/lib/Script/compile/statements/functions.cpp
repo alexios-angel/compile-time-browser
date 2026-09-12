@@ -183,14 +183,6 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     fn().captures = range_of(idx);
     const std::span<const std::int32_t> params = kids(n);
     for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
-    // WHICH LOCALS THE BOXING LOOP BELOW OWNS: the parameters, and only
-    // them. The prologue declares more - every name inside a destructuring
-    // pattern - and boxes those itself as it binds them. Boxing them a
-    // second time here wrapped a cell in a cell, so reading the variable
-    // gave the inner CELL rather than the value: a captured `{ space }`
-    // parameter came out as an object with no properties, which is exactly
-    // what colorjs then failed to use as a colour space.
-    const std::size_t declared_parameters = fn().locals.size();
     // `arguments` IS MATERIALISED ONCE, BEFORE THE PROLOGUE, AND IS A REAL
     // LOCAL.
     //
@@ -245,16 +237,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;
     }
-    compile_parameter_prologue(params, [&](std::uint16_t reg) {
-        for (std::size_t i = 0; i < declared_parameters && i < fn().locals.size(); ++i) {
-            const local & l = fn().locals[i];
-            if (l.reg != reg) { continue; }
-            // `arguments` was built above and boxes itself; a pattern name is
-            // declared and boxed by the prologue. Neither is a parameter.
-            return l.boxed && !(wants_arguments && l.reg == arguments_slot);
-        }
-        return false;
-    });
+    compile_parameter_prologue(params);
     if (wants_arguments && arguments_boxed) {
         proto().emit(instruction{op::new_cell, arguments_slot});
     }
