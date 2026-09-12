@@ -1905,6 +1905,8 @@ public:
     // A FocusEvent at `target` naming `related` (the element focus came from
     // or went to): `focus`/`blur` do not bubble, `focusin`/`focusout` do.
     bool dispatch_focus(std::string_view type, node_id target, node_id related);
+    // `hashchange` at the window, a HashChangeEvent with both addresses.
+    bool dispatch_hash_change(const std::string & old_url, const std::string & new_url);
     // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
     // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
     // LEFT IT, which before the first frame is no layout at all. The browser

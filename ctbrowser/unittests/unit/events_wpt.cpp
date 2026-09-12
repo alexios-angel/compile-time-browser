@@ -191,6 +191,22 @@ void test_focus_moves_with_blur_and_related_targets() {
              "body:focusin:3 body:focusout:3 focus:true:false focusin:true:true body:focusin:3");
 }
 
+void test_a_fragment_link_fires_hashchange_with_both_addresses() {
+    // HTML "scroll to the fragment" -> `hashchange` at the window, a
+    // HashChangeEvent whose oldURL/newURL are the document's addresses.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///srv/p.html");
+    page.load_html(R"(<!DOCTYPE html><html><body><a id=l href="#x">x</a><div id=x></div><script>
+    window.addEventListener('hashchange', function (e) {
+      console.log([e.constructor.name, e.oldURL, e.newURL, location.href, location.hash].join(' '));
+    });
+    document.getElementById('l').click();
+    </script></body></html>)");
+    (void)page.tick(16.0);
+    CHECK_EQ(page.bindings().console_output().back(),
+             "HashChangeEvent file:///srv/p.html file:///srv/p.html#x file:///srv/p.html#x #x");
+}
+
 // --- a detached tree ---------------------------------------------------------
 
 void test_a_detached_tree_reaches_neither_document_nor_window() {
@@ -294,6 +310,7 @@ void test_an_image_input_submits_its_form() {
 } // namespace
 
 int main() {
+    test_a_fragment_link_fires_hashchange_with_both_addresses();
     test_related_target_is_retargeted_and_cleared();
     test_focus_moves_with_blur_and_related_targets();
     test_a_composed_event_crosses_the_shadow_boundary();

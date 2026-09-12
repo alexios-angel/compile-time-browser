@@ -113,6 +113,25 @@ bool dom_bindings::dispatch_focus(std::string_view type, node_id target, node_id
     return dispatch_event(type, target, event);
 }
 
+// `hashchange` at the window: a HashChangeEvent carrying both addresses,
+// bubbling as HTML fires it, not cancelable.
+bool dom_bindings::dispatch_hash_change(const std::string & old_url, const std::string & new_url) {
+    if (cx_ == nullptr) { return false; }
+    value event = make_event(*cx_, "hashchange", node_id{});
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("cancelable", value::boolean(false));
+    object->set("oldURL", cx_->string(old_url));
+    object->set("newURL", cx_->string(new_url));
+    if (const value ctor = cx_->has_global("HashChangeEvent") ? cx_->global("HashChangeEvent")
+                                                              : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
+    return dispatch_event("hashchange", node_id{}, event);
+}
+
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
     value event = make_event(*cx_, type, target);
