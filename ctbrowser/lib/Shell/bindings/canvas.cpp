@@ -228,9 +228,11 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                                              number(a, 8));
                    return;
                }
+               // The five-argument form is the whole source into a rectangle.
                const float w = a.size() >= 4 ? number(a, 3) : natural_w;
                const float h = a.size() >= 5 ? number(a, 4) : natural_h;
-               canvas->draw_image(*source, number(a, 1), number(a, 2), w, h);
+               canvas->draw_image_region(*source, 0, 0, natural_w, natural_h, number(a, 1),
+                                         number(a, 2), w, h);
            }));
     // `fill(path)` and `stroke(path)` REPLAY a Path2D rather than using the
     // context's own current path. p5.js draws every shape that way: it builds

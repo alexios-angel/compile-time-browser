@@ -241,8 +241,9 @@ public:
     // the bitmap font it always was.
     void fill_text(std::string_view text, float x, float y);
 
-    // The nine-argument drawImage: a rectangle out of the source, into a
-    // rectangle on the canvas. Sprite sheets are the reason this form exists.
+    // drawImage, in its nine-argument shape: a rectangle out of the source,
+    // into a rectangle on the canvas. Sprite sheets are the reason this form
+    // exists; the shorter forms are the same call with the whole source.
     void draw_image_region(const bitmap & source, float sx, float sy, float sw, float sh, float dx,
                            float dy, float dw, float dh) {
         if (!pixels_ || source.empty() || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) { return; }
@@ -264,8 +265,6 @@ public:
         }
         touch();
     }
-
-    void draw_image(const bitmap & source, float x, float y, float w, float h);
 
 private:
     struct subpath {

@@ -403,26 +403,6 @@ void canvas_context::fill_text(std::string_view text, float x, float y) {
     touch();
 }
 
-void canvas_context::draw_image(const bitmap & source, float x, float y, float w, float h) {
-    if (!pixels_ || source.empty() || w <= 0 || h <= 0) { return; }
-    const pass composited{*this};
-    const point at = transform_.apply(x, y);
-    const int left = static_cast<int>(at.x);
-    const int top = static_cast<int>(at.y);
-    for (int dy = 0; dy < static_cast<int>(h); ++dy) {
-        const int sy =
-            static_cast<int>(static_cast<float>(dy) / h * static_cast<float>(source.height));
-        for (int dx = 0; dx < static_cast<int>(w); ++dx) {
-            const int sx =
-                static_cast<int>(static_cast<float>(dx) / w * static_cast<float>(source.width));
-            const std::uint32_t texel = source.at(sx, sy);
-            if ((texel >> 24) == 0) { continue; }
-            blend(left + dx, top + dy, color{texel});
-        }
-    }
-    touch();
-}
-
 void canvas_context::line_to_device(point p) {
     if (subpaths_.empty()) { return move_to_device(p); }
     subpaths_.back().points.push_back(p);
