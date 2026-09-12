@@ -76,7 +76,8 @@ void install_uri(context & cx) {
     static constexpr std::string_view reserved = ";/?:@&=+$,#";
     const auto encoder = [](std::string_view keep_extra) {
         return [keep_extra](context & c, std::span<value> a) {
-            const std::string in = str_at(c, a, 0);
+            const std::string in =
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
             if (c.throw_pending()) { return value::undefined(); }
             std::string out;
             out.reserve(in.size());
@@ -96,7 +97,8 @@ void install_uri(context & cx) {
     };
     const auto decoder = [](std::string_view keep_encoded) {
         return [keep_encoded](context & c, std::span<value> a) {
-            const std::string in = str_at(c, a, 0);
+            const std::string in =
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
             if (c.throw_pending()) { return value::undefined(); }
             std::string out;
             out.reserve(in.size());

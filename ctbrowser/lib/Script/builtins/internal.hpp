@@ -1421,45 +1421,84 @@ struct json_reader {
     }
 };
 
-// InternalizeJSONProperty, 25.5.1.1 - the reviver walk.
+// WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10
+// (getOwnPropertyNames) and 20.1.2.11 (getOwnPropertySymbols) are the same walk
+// filtered two different ways, and 7.3.7/7.3.24 want it unfiltered - a symbol
+// key is copied by Object.assign and read by Object.defineProperties, which is
+// the one place OwnPropertyKeys and EnumerableOwnProperties differ.
+enum class key_filter : std::uint8_t {
+    strings,
+    symbols,
+    all
+};
+// EVERY OWN KEY OF ANY VALUE, including the synthesised ones - and a proxy's
+// ownKeys trap. Defined in objects/operations.cpp.
+[[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
+                                                          key_filter which = key_filter::strings);
+
+// InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
+// object operations so a reviver that grafts a Proxy in sees its traps run.
 //
 // POST-ORDER: a child is revived and written back before its parent is offered
 // to the reviver, so a reviver rebuilding a Date out of a string sees a
 // finished object. A reviver returning `undefined` DELETES the property, which
-// is how one filters, and is why this cannot be a plain map.
-inline value internalize_json(context & cx, value holder, const std::string & key, value held,
-                              value reviver, std::uint32_t depth) {
+// is how one filters, and is why this cannot be a plain map. Undefined with a
+// throw pending is an abrupt completion.
+inline value internalize_json(context & cx, value holder, const std::string & key, value reviver,
+                              std::uint32_t depth) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
-    if (held.is_array()) {
-        auto * arr = static_cast<array_object *>(held.as_heap());
-        for (std::size_t i = 0; i < arr->items.size(); ++i) {
-            const value revived =
-                internalize_json(cx, held, std::to_string(i), arr->items[i], reviver, depth + 1);
-            // A DELETED ELEMENT IS A HOLE, NOT A SHORTER ARRAY: 25.5.1.1 does
-            // [[Delete]] and leaves `length` where it was. An array here has no
-            // holes to write (see context::delete_own_property), so a deleted
-            // element reads back as `undefined`, which is what it would be.
-            if (i < arr->items.size()) { arr->items[i] = revived; }
-        }
-    } else if (held.is_object()) {
-        // The key list is taken BEFORE the walk (step 3.d.i takes OwnPropertyKeys
-        // once): a property the reviver adds must not be visited, and one it
-        // deletes ahead of the cursor must not be either.
-        auto * obj = static_cast<object_object *>(held.as_heap());
-        std::vector<std::string> keys;
-        obj->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
-        for (const std::string & each : keys) {
-            value * slot = obj->find(each);
-            if (slot == nullptr) { continue; } // an earlier round deleted it
-            const value revived = internalize_json(cx, held, each, *slot, reviver, depth + 1);
+    const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
+    if (cx.throw_pending()) { return value::undefined(); }
+    if (held.is_object_like()) {
+        const context::rooted keep{cx, held};
+        // Step 2.b: a deleted child is [[Delete]]d (a refusal is a TypeError);
+        // a revived one is CreateDataProperty'd, its refusal ignored.
+        const auto revive_child = [&](const std::string & k) {
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1);
+            if (cx.throw_pending()) { return false; }
             if (revived.is_undefined()) {
-                (void)obj->erase(each);
+                if (!cx.delete_own_property(held, k)) {
+                    if (!cx.throw_pending()) {
+                        cx.throw_error("TypeError", "Cannot delete property " + k);
+                    }
+                    return false;
+                }
             } else {
-                obj->set(each, revived);
+                const context::rooted keep_revived{cx, revived};
+                context::property_descriptor wanted;
+                wanted.has_value = wanted.has_writable = wanted.has_enumerable =
+                    wanted.has_configurable = true;
+                wanted.held = revived;
+                wanted.writable = wanted.enumerable = wanted.configurable = true;
+                (void)cx.define_own_property(held, k, wanted);
+            }
+            return !cx.throw_pending();
+        };
+        bool is_array = false;
+        if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
+        if (is_array) {
+            const double len = array_like_length(cx, held);
+            if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            for (double i = 0; i < len; i += 1.0) {
+                if (!revive_child(number_to_string(i))) { return value::undefined(); }
+            }
+        } else {
+            // EnumerableOwnProperties: the key list is taken BEFORE the walk
+            // (step 2.c.i takes OwnPropertyKeys once) - a property the reviver
+            // adds is not visited - and each is re-checked for being there and
+            // enumerable as its turn comes.
+            const std::vector<std::string> keys = own_property_names(cx, held, key_filter::strings);
+            if (cx.throw_pending()) { return value::undefined(); }
+            for (const std::string & each : keys) {
+                context::property_descriptor found;
+                const bool present = cx.own_property(held, each, found);
+                if (cx.throw_pending()) { return value::undefined(); }
+                if (!present || !found.enumerable) { continue; }
+                if (!revive_child(each)) { return value::undefined(); }
             }
         }
     }

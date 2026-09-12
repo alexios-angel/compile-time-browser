@@ -53,8 +53,9 @@ void install_json(context & cx) {
         // same reason stringify's does - the root has to be a (holder, key)
         // pair so the reviver can replace it.
         const value wrapper = c.make_object();
+        const context::rooted keep_wrapper{c, wrapper};
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", out, reviver, 0);
+        return detail::internalize_json(c, wrapper, "", reviver, 0);
     });
     cx.define_global("JSON", value::object(json));
 }

@@ -233,6 +233,22 @@ int main() {
     js_expect("JSON.parse('[7]', function (k, v) { return typeof k; })", "string");
     // A reviver that is not callable is ignored rather than being an error.
     js_expect("JSON.parse('{\"a\":1}', 5).a", "1");
+    // ...and the walk is the ordinary object operations, so a Proxy a reviver
+    // grafts in sees its traps: ownKeys, get, defineProperty, deleteProperty.
+    js_expect("(function(){ var seen = []; JSON.parse('[0,0]', function (k, v) {"
+              "  if (k === '0') { this[1] = new Proxy({a: 1}, {ownKeys: function (t) {"
+              "    seen.push('keys'); return Reflect.ownKeys(t); }}); }"
+              "  return v; }); return seen.join(); })()",
+              "keys");
+    js_expect("JSON.parse('[0,0]', function (k, v) { if (k === '0') { this[1] = new Proxy({}, "
+              "{ownKeys: function () { throw new RangeError('x'); }}); } return v; })",
+              "THREW");
+    js_expect("JSON.parse('{\"a\":{\"b\":1}}', function (k, v) { if (k === 'b') { return "
+              "undefined; } return v; }).a.hasOwnProperty('b')",
+              "false");
+    js_expect("JSON.parse('[1,2,3]', function (k, v) { return k === '1' ? undefined : v; })"
+              ".length",
+              "3");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
