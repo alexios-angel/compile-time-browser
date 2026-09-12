@@ -1046,6 +1046,17 @@ public:
                     return;
                 }
                 value = *done;
+                // ...AND SO IS A RESULT THE PROPERTY'S GRAMMAR REFUSES. A value
+                // is validated when it is parsed, and a substituted one was not
+                // parsed until now: `width: attr(data-n type(<number>))` is the
+                // number `10`, which `width` cannot take, and CSS Variables 1 §3
+                // makes that invalid at computed-value time - `unset`, not
+                // ten pixels (attr-all-types). Asked of the property table,
+                // which refuses nothing for a property it does not model.
+                if (!css::may_have_math(value) && !css::check_declaration(property, value).valid) {
+                    unset();
+                    return;
+                }
             }
             // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
             // argument as the shorthands: `-1 * var(x)` has no arithmetic to do

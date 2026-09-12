@@ -163,6 +163,18 @@ void test_var_substitution() {
         CHECK(f.value_of(f.find_id("a"), "color").empty());
     }
     {
+        // A SUBSTITUTED VALUE THE PROPERTY'S GRAMMAR REFUSES is invalid at
+        // computed-value time too - `width: 10` is not ten pixels - while one
+        // the grammar takes, or does not model, is kept (attr-all-types).
+        fixture f;
+        f.load("<p id=a></p>", ":root { --n: 10; --l: 10px; --c: 33, 37, 41 } "
+                               "p { width: 5px; width: var(--n); height: var(--l); "
+                               "color: rgba(var(--c), .5) }");
+        CHECK(f.value_of(f.find_id("a"), "width").empty());
+        expect_value(f, f.find_id("a"), "height", "10px", "a length from a var()");
+        expect_value(f, f.find_id("a"), "color", "rgba(33, 37, 41, .5)", "a colour from a var()");
+    }
+    {
         // `!important` ON A CUSTOM PROPERTY is the DECLARATION's importance, not part
         // of its value - so it is peeled where every other declaration's is, and a
         // var() cannot smuggle it into the property that reads it. Worth a test
