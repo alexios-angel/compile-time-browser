@@ -324,6 +324,10 @@ void tree_builder::ensure_head() {
 
 void tree_builder::ensure_body() {
     if (in_body_) { return; }
+    // INSIDE A <template> NOTHING IMPLIES A BODY - "in template" insertion
+    // mode: a <div> in a template in the head goes into the template's
+    // contents, and leaving the head for it would put it in a body instead.
+    if (std::ranges::any_of(open_, [](const entry & e) { return e.tag == "template"; })) { return; }
     // Leaving <head> is what "after head" means; anything that is not
     // head-only content does it.
     while (open_.size() > 1 && open_.back().tag != "html") { open_.pop_back(); }
