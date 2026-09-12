@@ -35,7 +35,7 @@ void compiler_impl::compile_program() {
     // at the top of every script was a global read no native pipeline could
     // type - and context::run binds them before the first instruction.
     if (!module_scope_) {
-        out_.hoisted_vars = fn().declared;
+        collect_hoisted_vars(ast_.root, out_.hoisted_vars);
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());

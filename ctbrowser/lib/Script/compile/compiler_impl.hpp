@@ -892,6 +892,8 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // program::hoisted_vars - see the definition.
+    void collect_hoisted_vars(std::int32_t body, std::vector<std::string> & out) const;
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
     // The start of a catch clause in a generator - see the definition.
