@@ -18,9 +18,7 @@ loop induction variables and anonymous temporaries, including when declarations
 are hoisted to the top of a function. Prototypes and definitions use the same
 allocation. Type deduction and its diagnostic pins retain those names.
 The [const policy](native-const-bindings.md) independently qualifies immutable
-bindings while leaving branch storage writable. A separate forward
-[constant-expression analysis](native-constexpr-bindings.md) promotes eligible
-scalar initializers to `constexpr` without changing their names.
+bindings while leaving branch storage writable.
 
 The importer reads the bytecode compiler's optional local-name table using its
 half-open register scope ranges. It stores spelling in `FusedLoc` dictionary

@@ -11,9 +11,9 @@ js_num const score_2 = score_3;
 return score_2;
 ```
 
-The independent [constant-expression analysis](native-constexpr-bindings.md)
-promotes the immutable literal seed to `constexpr`. The returned snapshot stays
-`const` because its initializer depends on runtime branch storage.
+Both the literal seed and the returned snapshot are `const`: immutability is
+the policy. A separate `constexpr` spelling for compile-time-evaluable
+initializers was retired because the host compiler folds both identically.
 
 A backward data-flow analysis starts with potentially immutable bindings, marks
 writes, address escapes and unknown uses, and propagates those requirements

@@ -40,7 +40,6 @@
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
 #include "Const/Bindings.h"
-#include "Constexpr/Bindings.h"
 #include "Callables/Body.h"
 #include "Names/SourceNames.h"
 #include "ReadableFloat.h"
@@ -200,8 +199,7 @@ struct CppEmitter {
 
   /// Emits a declaration of a variable with the given type and name.
   LogicalResult emitVariableDeclaration(Location loc, Type type,
-                                        StringRef name, bool constant = false,
-                                        bool constantExpression = false);
+                                        StringRef name, bool constant = false);
 
   /// Emits the variable declaration and assignment prefix for 'op'.
   /// - emits separate variable followed by std::tie for multi-valued operation;
@@ -249,15 +247,10 @@ struct CppEmitter {
   void finishFunction() {
     sourceNames.finish();
     constBindings.finish();
-    constexprBindings.finish();
   }
   bool isConstBinding(Value value) {
     return (!isa<OpResult>(value) || !shouldDeclareVariablesAtTop()) &&
            constBindings.qualifies(value);
-  }
-  bool isConstexprBinding(Value value) {
-    return isa<OpResult>(value) && !shouldDeclareVariablesAtTop() &&
-           constexprBindings.qualifies(value);
   }
 
   /// Return the existing or a new name for a loop induction variable of an
@@ -374,7 +367,6 @@ private:
 
   ctcompile::cpp::SourceNames sourceNames;
   ctcompile::cpp::ConstBindings constBindings;
-  ctcompile::cpp::ConstexprBindings constexprBindings;
 
   /// Only emit file ops whos id matches this value.
   std::string fileId;
@@ -1587,7 +1579,6 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
 void CppEmitter::prepareFunction(Operation *function,
                                 ArrayRef<std::string> parameters) {
   constBindings.prepare(function);
-  constexprBindings.prepare(function, constBindings);
   sourceNames.prepare(function, [&](Value value) {
     auto result = dyn_cast<OpResult>(value);
     if (!result)
@@ -1900,8 +1891,7 @@ LogicalResult CppEmitter::emitVariableDeclaration(OpResult result,
   if (failed(emitVariableDeclaration(result.getOwner()->getLoc(),
                                      result.getType(),
                                      getOrCreateName(result),
-                                     isConstBinding(result),
-                                     isConstexprBinding(result))))
+                                     isConstBinding(result))))
     return failure();
   if (trailingSemicolon)
     os << ";\n";
@@ -1972,8 +1962,7 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
         return success();
       if (hasValueInScope(result))
         return op.emitError("result variable for the operation already declared");
-      os << (isConstexprBinding(result) ? "constexpr auto " :
-             isConstBinding(result) ? "auto const " : "auto ")
+      os << (isConstBinding(result) ? "auto const " : "auto ")
          << getOrCreateName(result) << " = ";
     } else {
       if (failed(emitVariableDeclaration(result, /*trailingSemicolon=*/false)))
@@ -2127,8 +2116,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
 }
 
 LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
-                                                  StringRef name, bool constant,
-                                                  bool constantExpression) {
+                                                  StringRef name, bool constant) {
   if (auto arrType = dyn_cast<emitc::ArrayType>(type)) {
     if (failed(emitType(loc, arrType.getElementType())))
       return failure();
@@ -2138,11 +2126,9 @@ LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
     }
     return success();
   }
-  if (constantExpression)
-    os << "constexpr ";
   if (failed(emitType(loc, type)))
     return failure();
-  if (constant && !constantExpression)
+  if (constant)
     os << " const";
   os << " " << name;
   return success();

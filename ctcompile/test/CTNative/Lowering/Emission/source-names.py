@@ -57,18 +57,14 @@ def main():
         assert re.search(r"js_num observePrice_\d+\([^\n]* const catalog\)", cpp), cpp
         sharing = cpp.split("// ctcompile: function observeSharing,", 1)[1]
         sharing = sharing.split("// ctcompile: function", 1)[0]
-        assert "constexpr js_num score_1 = -1.0;" in sharing, sharing
+        assert "js_num const score_1 = -1.0;" in sharing, sharing
         assert "return score_2;" in sharing, sharing
         assert re.search(r"js_num const score_2 = score_\d+;", sharing), sharing
         assert "js_num score_3;" in sharing, sharing
-        assert re.search(
-            r"(?:constexpr )?(?:js_num|auto)(?: const)? score_\d+ = score_\d+ [*+]", sharing
-        ), sharing
+        assert re.search(r"(?:js_num|auto)(?: const)? score_\d+ = score_\d+ [*+]", sharing), sharing
         assert re.search(r"score_\d+ = score_1;", sharing), sharing
-        # The pin pass preserves identifiers, const and constexpr decisions.
-        outputs.append(
-            re.findall(r"\b(constexpr )?(?:js_num|auto)( const)? (score_\d+)\b", sharing)
-        )
+        # The pin pass preserves identifiers and const decisions.
+        outputs.append(re.findall(r"\b(?:js_num|auto)( const)? (score_\d+)\b", sharing))
         collision = re.search(r"js_num (numericAlias_\d+)\(js_num const ([A-Za-z_0-9]+)\)", cpp)
         assert collision, cpp
         assert collision.group(2) != "js_num", collision.group(0)
