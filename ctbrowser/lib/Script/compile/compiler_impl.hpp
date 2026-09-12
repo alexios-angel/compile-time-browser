@@ -469,8 +469,6 @@ public:
     [[nodiscard]] static std::uint32_t read_hex(std::string_view s, std::size_t & at,
                                                 std::size_t count);
 
-    [[nodiscard]] static std::string encode_code_point(std::uint32_t code);
-
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
     // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
