@@ -339,6 +339,14 @@ public:
             return "none";
         }
         std::string display = declared(node, "display");
+        // THE UA SHEET SAYS `tr, td { display: block }` because that is how
+        // this engine lays a table out; the collection wants the CSS table
+        // display the tag has, so the sheet's answer yields to it unless the
+        // element's own style said block.
+        if (html && display == "block" && default_display(tag).starts_with("table") &&
+            inline_declaration(own_style(node), "display").empty()) {
+            display.clear();
+        }
         if (display.empty()) {
             display = html ? std::string{default_display(tag)} : std::string{"inline"};
         }
