@@ -443,14 +443,32 @@ value context::iterable_values(value v) {
 }
 
 value context::get_iterator(value v) {
+    // null AND undefined FIRST: lookup_property throws its own TypeError for
+    // them, and the "not iterable" throw below would then be a SECOND throw
+    // after the first had already landed on the handler - which unwinds past
+    // it and reports the pattern's TypeError as uncaught. One throw, the
+    // right one (7.4.3 GetIterator -> GetMethod -> GetV -> ToObject).
+    if (v.is_nullish()) {
+        throw_error("TypeError",
+                    std::string{v.is_null() ? "null" : "undefined"} + " is not iterable");
+        return value::undefined();
+    }
+    const std::size_t unwound = unwinds_;
     const value method = lookup_property(v, "@@iterator");
+    if (unwinds_ != unwound || throw_pending()) { return value::undefined(); } // a getter threw
     if (!method.is_callable()) {
-        // A STRING, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has no
-        // @@iterator of its own here but is iterable all the same: its values
-        // come from iterable_values, and the iterator is a native over that
-        // list. A number, a boolean or a plain object is the TypeError.
+        // A TYPED ARRAY, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has
+        // no @@iterator of its own here but is iterable all the same: its
+        // values come from iterable_values, and the iterator is a native over
+        // that list. An ordinary array and a string are NOT in this set any
+        // more: both prototypes carry a real @@iterator, so reaching here
+        // means a page deleted or replaced it, and `[x] = []` is then the
+        // TypeError every engine throws (7.4.3). A number, a boolean or a
+        // plain object is the TypeError too.
+        const bool typed = v.is_array() &&
+                           static_cast<array_object *>(v.as_heap())->elements != element_kind::none;
         const bool known =
-            v.is_string() || v.is_array() || v.is_kind(heap_kind::proxy) ||
+            typed || v.is_kind(heap_kind::proxy) ||
             (v.is_object() && (static_cast<object_object *>(v.as_heap())->find("__entries") ||
                                static_cast<object_object *>(v.as_heap())->find("__items") ||
                                static_cast<object_object *>(v.as_heap())->find("__co")));
