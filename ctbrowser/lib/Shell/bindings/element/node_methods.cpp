@@ -626,7 +626,9 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
         switch (txn.kind(self).value_or(node_kind::element)) {
         case node_kind::element: return self;
         case node_kind::text:
-        case node_kind::comment: {
+        case node_kind::comment:
+        case node_kind::cdata_section:
+        case node_kind::processing_instruction: {
             const node_id parent = txn.parent(self);
             return parent && txn.kind(parent).value_or(node_kind::text) == node_kind::element
                        ? parent
@@ -639,7 +641,8 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
                 }
             }
             return node_id{};
-        case node_kind::document_fragment: return node_id{};
+        case node_kind::document_fragment:
+        case node_kind::document_type: return node_id{};
         }
         return node_id{};
     };

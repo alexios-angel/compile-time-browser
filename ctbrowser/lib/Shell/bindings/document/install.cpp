@@ -212,28 +212,21 @@ void dom_bindings::install_document(context & cx) {
     });
     method("createDocumentFragment",
            [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
-    // `createCDATASection` HAS TWO BRANCHES AND BOTH ARE REFUSALS, for two
-    // different reasons, and saying which is which is the point.
-    //
-    // In an HTML document the DOM requires a NotSupportedError: a CDATA section
-    // is XML syntax and an HTML document cannot hold one. That is a specified
-    // answer, not a gap.
-    //
-    // In an XML document it is a gap, and it is named: `node_kind` has no
-    // `cdata_section`, so there is nothing to return. The parser turns a CDATA
-    // section in the source into a TEXT node - which is what makes a `<script>`
-    // written the XML way run - and a text node is not what this method must
-    // hand back, because `nodeType` would be 3 where 4 belongs. Throwing
-    // NotSupportedError there is wrong about the DOM; returning a Text would be
-    // wrong about the caller. The first is the smaller lie and it is the one
-    // `Document-createCDATASection-xhtml.xhtml` will keep failing on until
-    // there is a node kind for it.
-    method("createCDATASection", [this](context & c, std::span<value>) {
-        throw_dom_exception(c, "NotSupportedError",
-                            doc_->xml()
-                                ? "createCDATASection: this engine has no CDATASection node kind"
-                                : "createCDATASection: this is an HTML document");
-        return value::undefined();
+    // `createCDATASection(data)`, DOM 4.5: an XML document's only, and the
+    // data may not contain `]]>` because that is what ends one.
+    method("createCDATASection", [this](context & c, std::span<value> args) {
+        if (!doc_->xml()) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "createCDATASection: this is an HTML document");
+            return value::undefined();
+        }
+        const std::string data = arg_string(c, args, 0);
+        if (data.find("]]>") != std::string::npos) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "createCDATASection: the data contains ']]>'");
+            return value::undefined();
+        }
+        return wrap(c, doc_->create_cdata_section(data));
     });
     // `createProcessingInstruction(target, data)`.
     //
@@ -241,14 +234,8 @@ void dom_bindings::install_document(context & cx) {
     // file is - see is_xml_name for why the two rules genuinely differ and how
     // the suite proves it. `data` may not contain "?>", because that is what
     // ends a processing instruction and a PI that cannot be serialised is not
-    // one.
-    //
-    // WHAT COMES BACK IS NOT A NODE, and it is worth being plain about that:
-    // there is no `processing_instruction` in `node_kind`, so this is an object
-    // carrying what a page reads off a PI and nothing more. `pi instanceof
-    // ProcessingInstruction` is false and the suite says so. What the method
-    // buys as it stands is the eight assertions about WHEN it throws, which are
-    // eight of the eleven in the file and none of which needed a node.
+    // one. The target is interned AS WRITTEN: a PI is XML syntax and XML is
+    // case-sensitive.
     method("createProcessingInstruction", [this](context & c, std::span<value> args) {
         const std::string target = arg_string(c, args, 0);
         const std::string data = arg_string(c, args, 1);
@@ -258,14 +245,7 @@ void dom_bindings::install_document(context & cx) {
                                     "' is not a processing instruction target");
             return value::undefined();
         }
-        auto * made = static_cast<script::object_object *>(c.make_object().as_heap());
-        made->set("target", c.string(target));
-        made->set("data", c.string(data));
-        made->set("nodeType", value::number(7));
-        made->set("nodeName", c.string(target));
-        made->set("nodeValue", c.string(data));
-        made->set("ownerDocument", document_);
-        return value::object(made);
+        return wrap(c, doc_->create_processing_instruction(atoms_->intern(target), data));
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
@@ -579,7 +559,23 @@ void dom_bindings::install_document(context & cx) {
     doc->set("nodeName", cx.string("#document"));
     doc->set("nodeValue", value::null());
     doc->set("ownerDocument", value::null());
-    doc->set("doctype", value::null());
+    // `doctype` IS THE DocumentType CHILD, re-read on every access: the parser
+    // put one there for `<!DOCTYPE html>`, `createDocument` for its third
+    // argument, and a page may remove or replace it.
+    doc->define_accessor("doctype",
+                         value::object(cx.allocate<script::native_object>(
+                             "doctype",
+                             [this](context & c, std::span<value>) {
+                                 const auto txn = doc_->read();
+                                 for (const node_id child : txn.children(txn.document_node())) {
+                                     if (txn.kind(child).value_or(node_kind::comment) ==
+                                         node_kind::document_type) {
+                                         return wrap(c, child);
+                                     }
+                                 }
+                                 return value::null();
+                             })),
+                         value::undefined());
     // VISIBLE AND NOT HIDDEN, for the same reason `hasFocus` answers true:
     // there is one window, the page in it is the thing being looked at, and a
     // page that reads "hidden" pauses its own animation.
@@ -737,15 +733,16 @@ void dom_bindings::install_document(context & cx) {
         // about this engine, would be the wrong answer to the question actually
         // being asked.
         method("hasFeature", [](context &, std::span<value>) { return value::boolean(true); });
-        // A DocumentType is three strings and no behaviour. It is not a node
-        // here - there is no Document node for one to hang off - so it is a
-        // plain object carrying exactly what a page reads off one.
+        // `createDocumentType(name, publicId, systemId)`: a real DocumentType
+        // node, detached, in THIS document - the one whose implementation made
+        // it. `createDocument` copies it into the document it builds.
         //
         // ITS NAME IS BARELY CHECKED, and that is not laziness: a doctype name
         // is written between `<!DOCTYPE` and `>`, so "1foo", "{" and even ""
         // are all legal and only a name carrying a `>` or a space is not. The
         // suite's own table is 81 names of which exactly two throw. See
-        // is_valid_doctype_name.
+        // is_valid_doctype_name. Interned AS WRITTEN - `nodeName` reports
+        // "HTML" for createDocumentType("HTML"), and only the parser folds.
         method("createDocumentType", [this](context & c, std::span<value> args) {
             const std::string name = arg_string(c, args, 0);
             if (!is_valid_doctype_name(name)) {
@@ -754,18 +751,8 @@ void dom_bindings::install_document(context & cx) {
                                         "' cannot be written as a doctype name");
                 return value::undefined();
             }
-            auto * doctype = static_cast<script::object_object *>(c.make_object().as_heap());
-            doctype->set("name", c.string(name));
-            doctype->set("publicId", c.string(arg_string(c, args, 1)));
-            doctype->set("systemId", c.string(arg_string(c, args, 2)));
-            doctype->set("nodeType", value::number(10));
-            doctype->set("nodeName", c.string(name));
-            // A DocumentType has no data, and it belongs to the document whose
-            // implementation made it - the two things the suite reads off one
-            // beside the three strings.
-            doctype->set("nodeValue", value::null());
-            doctype->set("ownerDocument", document_);
-            return value::object(doctype);
+            return wrap(c, doc_->create_document_type(atoms_->intern(name), arg_string(c, args, 1),
+                                                      arg_string(c, args, 2)));
         });
         // `createHTMLDocument` and `createDocument`, each returning a REAL
         // second Document - see "A SECOND DOCUMENT" below for what that is and,
@@ -787,19 +774,55 @@ void dom_bindings::install_document(context & cx) {
                                     const std::string title = c.to_string(args[0]);
                                     return make_html_document(c, &title);
                                 })));
-        implementation->set("createDocument",
-                            value::object(cx.allocate<script::native_object>(
-                                "createDocument", [this](context & c, std::span<value> args) {
-                                    const value given = arg(args, 0);
-                                    const std::string ns = given.is_null() || given.is_undefined()
-                                                               ? std::string{}
-                                                               : c.to_string(given);
-                                    const value name = arg(args, 1);
-                                    const std::string qualified =
-                                        name.is_null() || name.is_undefined() ? std::string{}
-                                                                              : c.to_string(name);
-                                    return make_xml_document(c, ns, qualified);
-                                })));
+        implementation->set(
+            "createDocument",
+            value::object(cx.allocate<script::native_object>(
+                "createDocument", [this](context & c, std::span<value> args) {
+                    const value given = arg(args, 0);
+                    const std::string ns = given.is_null() || given.is_undefined()
+                                               ? std::string{}
+                                               : c.to_string(given);
+                    const value name = arg(args, 1);
+                    const std::string qualified =
+                        name.is_null() || name.is_undefined() ? std::string{} : c.to_string(name);
+                    // THE DOCTYPE, DOM 4.5.1 step 5. A DocumentType
+                    // node or nothing - WebIDL refuses anything else
+                    // with a TypeError before the document is made.
+                    const value given_doctype = arg(args, 2);
+                    node_id doctype;
+                    if (!given_doctype.is_nullish()) {
+                        doctype = handle_of(given_doctype);
+                        if (!doctype || doc_->read().kind(doctype).value_or(node_kind::comment) !=
+                                            node_kind::document_type) {
+                            c.throw_error("TypeError", "createDocument: the third argument "
+                                                       "is not a DocumentType");
+                            return value::undefined();
+                        }
+                    }
+                    const value made = make_xml_document(c, ns, qualified);
+                    if (!doctype || secondary_documents_.empty()) { return made; }
+                    // COPIED, NOT ADOPTED: the node stays in this
+                    // document's slab and the new document gets one
+                    // with the same three strings. Adoption across
+                    // documents is the rung second_document.cpp
+                    // names, so `made.doctype === doctype` is false
+                    // until it lands.
+                    document & fresh = *secondary_documents_.back()->doc_;
+                    const auto txn = doc_->read();
+                    const node_id copied = fresh.create_document_type(
+                        txn.name(doctype), txn.public_id(doctype), txn.system_id(doctype));
+                    const node_id ahead_of =
+                        fresh.read().kind(fresh.root()).value_or(node_kind::document) ==
+                                node_kind::element
+                            ? fresh.root()
+                            : node_id{};
+                    if (ahead_of) {
+                        (void)fresh.insert_before(fresh.document_node(), copied, ahead_of);
+                    } else {
+                        (void)fresh.append_child(fresh.document_node(), copied);
+                    }
+                    return made;
+                })));
         doc->set("implementation", value::object(implementation));
     }
     // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.

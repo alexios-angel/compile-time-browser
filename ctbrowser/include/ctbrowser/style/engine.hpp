@@ -1308,7 +1308,7 @@ private:
     // Returns whether one was found, so the walk can stop at it.
     [[nodiscard]] static bool first_strong(const read_txn & txn, node_id node, bool & rtl) {
         const node_kind kind = txn.kind(node).value_or(node_kind::comment);
-        if (kind == node_kind::text) { return first_strong_in(txn.text(node), rtl); }
+        if (is_text_kind(kind)) { return first_strong_in(txn.text(node), rtl); }
         if (kind != node_kind::element) { return false; }
         for (const node_id child : txn.children(node)) {
             if (first_strong(txn, child, rtl)) { return true; }

@@ -33,7 +33,15 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     switch (from.kind(source).value_or(node_kind::element)) {
     case node_kind::text: made = doc_->create_text(from.text(source)); break;
     case node_kind::comment: made = doc_->create_comment(from.text(source)); break;
+    case node_kind::cdata_section: made = doc_->create_cdata_section(from.text(source)); break;
     case node_kind::document_fragment: made = doc_->create_fragment(); break;
+    case node_kind::document_type:
+        made = doc_->create_document_type(from.name(source), from.public_id(source),
+                                          from.system_id(source));
+        break;
+    case node_kind::processing_instruction:
+        made = doc_->create_processing_instruction(from.name(source), from.text(source));
+        break;
     // A document has no clone that means anything here - there is one document -
     // so it is treated as the element it actually is: this tree builder makes
     // `<html>` the root and nothing sits above it.
@@ -186,6 +194,27 @@ std::string dom_bindings::inner_html(node_id target) const {
             out += txn.text(node);
             out += "-->";
             return;
+        // HTML 13.3, the fragment serialisation algorithm's three remaining
+        // rows: a PI is its target, a space and its data; a doctype is
+        // `<!DOCTYPE name>` and nothing else - the identifiers are not written;
+        // a CDATA section is its data between the brackets, unescaped.
+        case node_kind::processing_instruction:
+            out += "<?";
+            out += atoms_->text(txn.name(node));
+            out += " ";
+            out += txn.text(node);
+            out += ">";
+            return;
+        case node_kind::document_type:
+            out += "<!DOCTYPE ";
+            out += atoms_->text(txn.name(node));
+            out += ">";
+            return;
+        case node_kind::cdata_section:
+            out += "<![CDATA[";
+            out += txn.text(node);
+            out += "]]>";
+            return;
         case node_kind::document:
         case node_kind::document_fragment:
             for (const node_id child : txn.children(node)) { self(self, child, false); }
@@ -221,14 +250,14 @@ std::string dom_bindings::inner_html(node_id target) const {
 std::string dom_bindings::text_content(node_id target) const {
     const auto txn = doc_->read();
     const node_kind kind = txn.kind(target).value_or(node_kind::element);
-    if (kind == node_kind::text || kind == node_kind::comment) {
+    if (kind == node_kind::text || kind == node_kind::comment || kind == node_kind::cdata_section ||
+        kind == node_kind::processing_instruction) {
         return std::string{txn.text(target)};
     }
     std::string out;
     const auto walk = [&](auto && self, node_id node) -> void {
-        if (txn.kind(node).value_or(node_kind::element) == node_kind::text) {
-            out += txn.text(node);
-        }
+        // Text and its subclass: a PI's data is not "descendant text content".
+        if (is_text_kind(txn.kind(node).value_or(node_kind::element))) { out += txn.text(node); }
         for (const node_id child : txn.children(node)) { self(self, child); }
     };
     for (const node_id child : txn.children(target)) { walk(walk, child); }

@@ -11,62 +11,39 @@ using namespace detail;
 // THE DOCUMENT AS A NODE
 // ============================================================================
 //
-// THE STRUCTURAL FACT EVERYTHING BELOW IS BUILT AROUND: there is no Document
-// node in this tree. `tree_builder` makes `<html>` and calls `set_root` with
-// it, so `txn.root()` IS the document element, `node_kind::document` is a kind
-// nothing in the engine ever produces, and `document` is a plain script object
-// carrying no handle at all - `handle_of(document)` is the same empty handle it
-// answers for a number. That is why none of this could be shared with the
-// element bindings: those all start from `receiver(cx)`, and the document has
-// nothing for `receiver` to find.
+// THE STRUCTURAL FACT EVERYTHING BELOW IS BUILT AROUND: `txn.root()` IS THE
+// DOCUMENT ELEMENT, not a Document node. `tree_builder` makes `<html>` and
+// calls `set_root` with it, every walk in the style, layout and paint engines
+// starts there, and `document` is a plain script object carrying no handle at
+// all - `handle_of(document)` is the same empty handle it answers for a number.
+// That is why none of this could be shared with the element bindings: those
+// all start from `receiver(cx)`, and the document has nothing for `receiver`
+// to find.
 //
-// THE MODEL, decided once and applied to every member here:
-//
-//     the Document is a node whose child list is exactly [documentElement],
-//     whose parent is null, which is connected, which contains everything
-//     `<html>` contains and `<html>` itself, and which precedes every node in
-//     the tree in document order.
-//
-// `documentElement` is `find_by_tag("html")` rather than `txn.root()`, because
-// the `documentElement` property installed above is, and
-// `document.firstChild === document.documentElement` has to hold.
+// THE CHILD LIST IS REAL, THOUGH. `document::document_node()` is a Document
+// node whose children are what `document.childNodes` is - the doctype, the
+// document element, and any comment or processing instruction beside them, in
+// document order. The document element sits in that list WITH NO PARENT
+// POINTER, so that the engine's parent walks still end on it (see
+// document_node for the reasoning); the others carry the Document node as
+// their parent. So every "is this a child of the document" below is asked of
+// the LIST through `is_document_child`, and every insertion of an element goes
+// through `set_document_element` rather than `append_child`.
 //
 // WHAT THE MODEL CANNOT DO, said here rather than guessed at each call site:
 //
-//   * THERE IS NO DOCTYPE NODE. `node_kind` has no `document_type`, so
-//     `document.doctype` is null (see the block above where it is set) and
-//     `document.firstChild` on a page that begins `<!DOCTYPE html>` reports
-//     `<html>` where a browser reports the DocumentType. That is a WRONG
-//     answer, not a missing one, and it is the one place in this block where
-//     the honest alternative - refusing to answer firstChild at all - would be
-//     worse for every page that has no doctype.
-//   * NOTHING CAN BE INSERTED. A Comment is the one child the DOM permits a
-//     Document that already has an element child, and there is no node above
-//     `<html>` for a sibling of it to hang from. Every insertion therefore
-//     throws: HierarchyRequestError where the specification requires one (an
-//     element, when there is already `<html>`; a Text child, ever), and
-//     NotSupportedError where the DOM would have allowed it and this engine
-//     cannot. No specification puts a NotSupportedError at that step, which is
-//     the point - the name says "this implementation" instead of making a false
-//     claim about the hierarchy.
 //   * `documentElement` CANNOT BE DETACHED. `document::remove_child` refuses
 //     the root - `dom_error::is_root` - because a tree whose root is gone has
-//     nothing left to be. So `removeChild(documentElement)`, `replaceChild` and
-//     `replaceChildren()` are NotSupportedError for the same reason.
-//   * THERE IS NO SECOND DOCUMENT, so `cloneNode` has nothing to answer with.
-//     What that would cost is written out beside `createDocument` above.
+//     nothing left to be. So `removeChild(documentElement)` and
+//     `replaceChildren()` are NotSupportedError; `replaceChild(el,
+//     documentElement)` works because the new element takes the slot.
+//   * `cloneNode` needs a second Document and answers NotSupportedError.
+//   * A node from ANOTHER document is refused by `handle_of` before it gets
+//     here - adoption does not cross documents yet, see second_document.cpp.
 //
-// The corpus reading behind this, because it is not what the file names
-// suggest: `Node-contains.html`, `Node-compareDocumentPosition.html`,
-// `Node-properties.html` and `Node-textContent.html` all die in `setup()` on
-// `document.implementation.createHTMLDocument` / `createDocument`, and
-// `append-on-Document.html`, `prepend-on-Document.html` and
-// `DocumentType-remove.html` run entirely against a document `createDocument`
-// made. None of the seven can pass until there are two Documents. What IS
-// reachable from here is `Document-createAttribute.html`'s HTML half and
-// `Node-lookupNamespaceURI.html`'s twelve document subtests - plus every page
-// that reads one of these twenty-two members without a guard and gets a
-// TypeError on the first line.
+// `Node-lookupNamespaceURI.html`'s twelve document subtests and
+// `Document-createAttribute.html`'s HTML half are answered from here, plus
+// every page that reads one of these members without a guard.
 
 namespace {
 
@@ -367,26 +344,41 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // so the two answers are the same one.
     method("getRootNode", [this](context &, std::span<value>) { return document_; });
 
-    read_only("childNodes", [this, element_child](context & c, std::span<value>) {
+    // THE CHILD LIST - see the block comment at the top of this file.
+    const auto children_now = [this] {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(txn.document_node());
+        return std::vector<node_id>{kids.begin(), kids.end()};
+    };
+    read_only("childNodes", [this, children_now](context & c, std::span<value>) {
         value list = c.make_array();
         auto * items = static_cast<script::array_object *>(list.as_heap());
-        if (const node_id html = element_child()) { items->items.push_back(wrap(c, html)); }
+        for (const node_id child : children_now()) { items->items.push_back(wrap(c, child)); }
         return list;
     });
-    // THE DOCTYPE IS MISSING FROM BOTH OF THESE, and that is the one wrong
-    // answer in this block rather than a missing one: a page beginning
-    // `<!DOCTYPE html>` has a DocumentType as its first child in every browser,
-    // `node_kind` has no `document_type` for one to be, and `document.doctype`
-    // is null for the same reason. See the note beside it above.
-    read_only("firstChild", [this, element_child](context & c, std::span<value>) {
-        return wrap(c, element_child());
+    read_only("firstChild", [this, children_now](context & c, std::span<value>) {
+        const std::vector<node_id> kids = children_now();
+        return kids.empty() ? value::null() : wrap(c, kids.front());
     });
-    read_only("lastChild", [this, element_child](context & c, std::span<value>) {
-        return wrap(c, element_child());
+    read_only("lastChild", [this, children_now](context & c, std::span<value>) {
+        const std::vector<node_id> kids = children_now();
+        return kids.empty() ? value::null() : wrap(c, kids.back());
     });
-    method("hasChildNodes", [element_child](context &, std::span<value>) {
-        return value::boolean(static_cast<bool>(element_child()));
+    method("hasChildNodes", [children_now](context &, std::span<value>) {
+        return value::boolean(!children_now().empty());
     });
+    // IS THIS NODE IN THE DOCUMENT? Up to the top of its tree, then the
+    // question is whether that top is a child of the Document - the document
+    // element, or a doctype/comment/PI whose parent IS the Document node.
+    const auto in_document = [this](node_id other) {
+        const auto txn = doc_->read();
+        node_id top = other;
+        while (const node_id up = txn.parent(top)) {
+            if (up == txn.document_node()) { return true; }
+            top = up;
+        }
+        return is_document_child(txn, top);
+    };
 
     // --- the two questions about the tree that a page actually asks --------
 
@@ -395,15 +387,11 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // FALSE and not a throw: the argument is a nullable Node, which is why
     // `Node-contains.html` opens with `assert_false(reference.contains(null))`
     // for all twenty-three of its nodes.
-    method("contains", [this](context &, std::span<value> args) {
+    method("contains", [this, in_document](context &, std::span<value> args) {
         const value given = arg(args, 0);
         if (is_the_document(given)) { return value::boolean(true); }
         const node_id other = handle_of(given);
-        if (!other) { return value::boolean(false); }
-        const auto txn = doc_->read();
-        // `is_ancestor_of` is self-first, so this is true for <html> as well as
-        // for everything under it - which is exactly what the Document contains.
-        return value::boolean(txn.is_ancestor_of(txn.root(), other));
+        return value::boolean(other && in_document(other));
     });
 
     // `compareDocumentPosition(other)`, as the real bitmask.
@@ -414,7 +402,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // triple for a node that has been created or removed. CONTAINS and a bare
     // PRECEDING are unreachable BY CONSTRUCTION rather than unimplemented -
     // nothing is an ancestor of the document and nothing precedes it.
-    method("compareDocumentPosition", [this](context & c, std::span<value> args) {
+    method("compareDocumentPosition", [this, in_document](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (is_the_document(given)) { return value::number(0); }
         const node_id other = handle_of(given);
@@ -425,8 +413,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             c.throw_error("TypeError", "compareDocumentPosition: the argument is not a Node");
             return value::undefined();
         }
-        const auto txn = doc_->read();
-        if (txn.is_ancestor_of(txn.root(), other)) {
+        if (in_document(other)) {
             return value::number(static_cast<double>(position_contained_by | position_following));
         }
         // DISCONNECTED, where the specification asks only that the direction be
@@ -533,21 +520,22 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
 
     // --- everything that would change the document's own child list --------
 
-    // WHAT MAY BECOME A CHILD OF THIS DOCUMENT. Answers false HAVING ALREADY
-    // THROWN, the same shape `pre_insert_valid` uses and for the same reason -
-    // a caller is one `if` rather than an error channel.
+    // DOM 4.2.3 "ensure pre-insertion validity", steps 4 to 6, FOR A DOCUMENT
+    // PARENT - the half of that algorithm the element bindings' pre_insert_valid
+    // never reaches, because it has no Document node to be the parent. Answers
+    // false HAVING ALREADY THROWN, the same shape pre_insert_valid uses.
     //
-    // EVERY PATH THROUGH IT THROWS TODAY, and that is a statement about this
-    // engine rather than a stub. DOM 4.2.3 step 5 gives a Document its own
-    // constraint - at most one element child, never a Text child, at most one
-    // doctype - and this document always already has `<html>`, so the two cases
-    // a page actually writes are refused by the SPECIFICATION. The third, a
-    // Comment, the specification allows and this engine cannot hold. Keeping
-    // the boolean rather than collapsing it to a throw is what makes the true
-    // path appear the day there is a Document node.
-    const auto may_become_a_child = [this, element_child](context & c, value given) {
+    // `before` is the reference child, `ignore` a child that is about to be
+    // replaced and so does not count: "other than child" in every clause of the
+    // replace variant, DOM 4.2.4.
+    const auto may_become_a_child = [this](context & c, value given, node_id before,
+                                           node_id ignore) {
         const node_id id = handle_of(given);
         if (!id) {
+            if (is_a_document(given)) {
+                throw_dom_exception(c, "HierarchyRequestError", "a Document cannot be inserted");
+                return false;
+            }
             // `node_from` turns anything that is not a wrapper into a Text
             // node, and a Document may never have a Text child. Refused BEFORE
             // the node is created rather than after, so a rejected
@@ -555,122 +543,197 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
             throw_dom_exception(c, "HierarchyRequestError", "a Document cannot have a Text child");
             return false;
         }
-        node_kind kind = node_kind::element;
-        bool fragment_has_a_real_child = false;
-        {
-            const auto txn = doc_->read();
-            kind = txn.kind(id).value_or(node_kind::element);
-            if (kind == node_kind::document_fragment) {
-                for (const node_id child : txn.children(id)) {
-                    const node_kind held = txn.kind(child).value_or(node_kind::element);
-                    if (held == node_kind::element || held == node_kind::text) {
-                        fragment_has_a_real_child = true;
-                    }
-                }
+        const auto txn = doc_->read();
+        const node_kind kind = txn.kind(id).value_or(node_kind::element);
+        // What the document holds now, `ignore` excepted, and where `before`
+        // sits among it: an element AHEAD of the reference, a doctype AT OR
+        // AFTER it.
+        bool has_element = false;
+        bool has_doctype = false;
+        bool element_precedes_before = false;
+        bool doctype_at_or_after_before = false;
+        bool passed_before = false;
+        for (const node_id child : txn.children(txn.document_node())) {
+            if (child == ignore) { continue; }
+            if (child == before) { passed_before = true; }
+            const node_kind held = txn.kind(child).value_or(node_kind::comment);
+            if (held == node_kind::element) {
+                has_element = true;
+                if (before && !passed_before) { element_precedes_before = true; }
+            }
+            if (held == node_kind::document_type) {
+                has_doctype = true;
+                if (before && passed_before) { doctype_at_or_after_before = true; }
             }
         }
+        const auto refuse = [&](const char * why) {
+            throw_dom_exception(c, "HierarchyRequestError", why);
+            return false;
+        };
         switch (kind) {
         case node_kind::text:
-            throw_dom_exception(c, "HierarchyRequestError", "a Document cannot have a Text child");
-            return false;
-        case node_kind::document:
-            throw_dom_exception(c, "HierarchyRequestError", "a Document cannot be inserted");
-            return false;
-        case node_kind::element:
-            if (element_child()) {
-                throw_dom_exception(c, "HierarchyRequestError",
-                                    "a Document may have at most one element child and this one "
-                                    "already has <html>");
-                return false;
+        case node_kind::cdata_section: return refuse("a Document cannot have a Text child");
+        case node_kind::document: return refuse("a Document cannot be inserted");
+        case node_kind::document_fragment: {
+            std::size_t elements = 0;
+            for (const node_id child : txn.children(id)) {
+                const node_kind held = txn.kind(child).value_or(node_kind::comment);
+                if (is_text_kind(held)) { return refuse("a Document cannot have a Text child"); }
+                if (held == node_kind::element) { ++elements; }
             }
-            // THE ONE INSERTION THAT WORKS: an element into a document with
-            // no root becomes the root - `new Document()` followed by
-            // `appendChild(createElement("html"))`, which is how
-            // `Document-doctype.html` and dom/common.js build one.
+            if (elements > 1) { return refuse("a Document may have at most one element child"); }
+            if (elements == 1 && (has_element || doctype_at_or_after_before)) {
+                return refuse("a Document may have at most one element child, after its doctype");
+            }
             return true;
-        case node_kind::document_fragment:
-            if (fragment_has_a_real_child && element_child()) {
-                throw_dom_exception(c, "HierarchyRequestError",
-                                    "the fragment has an element or Text child, which a Document "
-                                    "that already has <html> cannot take");
-                return false;
-            }
-            break;
-        case node_kind::comment: break;
         }
-        // A Comment, or an element for a document that somehow has none. Both
-        // are legal DOM and neither is possible: there is no node above <html>
-        // for a child of the Document to hang from. NotSupportedError rather
-        // than HierarchyRequestError because no specification puts one here, so
-        // the name cannot be mistaken for a claim about the hierarchy.
-        throw_dom_exception(c, "NotSupportedError",
-                            "this engine's document has no node above <html>, so nothing can be "
-                            "made a child of it");
-        return false;
-    };
-
-    // Every path through `may_become_a_child` that answers true is the
-    // element-into-an-empty-document one, so this is what an accepted
-    // insertion does: the element becomes the root.
-    const auto place = [this, may_become_a_child](context & c, value given) {
-        if (!may_become_a_child(c, given)) { return false; }
-        const node_id fresh = handle_of(given);
-        if (doc_->read().parent(fresh)) { (void)doc_->remove_child(fresh); }
-        doc_->build().set_root(fresh);
-        mutated();
+        case node_kind::element:
+            if (has_element || doctype_at_or_after_before) {
+                return refuse("a Document may have at most one element child, after its doctype");
+            }
+            return true;
+        case node_kind::document_type:
+            if (has_doctype || (before ? element_precedes_before : has_element)) {
+                return refuse("a Document may have one doctype, ahead of its element");
+            }
+            return true;
+        case node_kind::comment:
+        case node_kind::processing_instruction: return true;
+        }
         return true;
     };
 
-    method("appendChild", [place](context & c, std::span<value> args) {
-        if (!place(c, arg(args, 0))) { return value::undefined(); }
-        return arg(args, 0);
-    });
-    method("insertBefore", [this, place, element_child](context & c, std::span<value> args) {
-        // "If child is non-null and its parent is not parent, throw a
-        // NotFoundError" - DOM 4.2.3 step 3, and it comes BEFORE the check on
-        // what is being inserted. The Document's only child is documentElement,
-        // so anything else as the reference is a NotFoundError.
-        const value ref = arg(args, 1);
-        if (!ref.is_nullish()) {
-            const node_id before = handle_of(ref);
-            if (!before || before != element_child()) {
-                throw_dom_exception(
-                    c, "NotFoundError",
-                    "insertBefore: the reference node is not a child of the document");
-                return value::undefined();
+    // PUT IT IN, having passed the check above. An element becomes the
+    // document element - `set_document_element` gives it the slot without a
+    // parent pointer, see the top of this file; a fragment's children move one
+    // by one; everything else is an ordinary child of the Document node.
+    const auto place = [this](node_id fresh, node_id before) {
+        std::vector<node_id> moving;
+        {
+            const auto txn = doc_->read();
+            if (txn.kind(fresh).value_or(node_kind::element) == node_kind::document_fragment) {
+                const std::span<const node_id> kids = txn.children(fresh);
+                moving.assign(kids.begin(), kids.end());
+            } else {
+                moving.push_back(fresh);
             }
         }
-        if (!place(c, arg(args, 0))) { return value::undefined(); }
+        for (const node_id one : moving) {
+            if (doc_->read().kind(one).value_or(node_kind::comment) == node_kind::element) {
+                doc_->set_document_element(one, before);
+            } else if (before) {
+                (void)doc_->insert_before(doc_->document_node(), one, before);
+            } else {
+                (void)doc_->append_child(doc_->document_node(), one);
+            }
+        }
+        mutated();
+    };
+    // "If child is non-null and its parent is not parent, throw a
+    // NotFoundError" - DOM 4.2.3 step 3, and it comes BEFORE the check on what
+    // is being inserted. Fills in the reference child; false having thrown.
+    const auto reference_child = [this](context & c, value ref, node_id & out) {
+        out = node_id{};
+        if (ref.is_nullish()) { return true; }
+        out = handle_of(ref);
+        if (!out) {
+            c.throw_error("TypeError", "the reference node is not a Node");
+            return false;
+        }
+        if (!is_document_child(doc_->read(), out)) {
+            throw_dom_exception(c, "NotFoundError",
+                                "the reference node is not a child of the document");
+            return false;
+        }
+        return true;
+    };
+
+    method("appendChild", [this, may_become_a_child, place](context & c, std::span<value> args) {
+        if (!may_become_a_child(c, arg(args, 0), node_id{}, node_id{})) {
+            return value::undefined();
+        }
+        place(handle_of(arg(args, 0)), node_id{});
         return arg(args, 0);
     });
+    method("insertBefore",
+           [this, may_become_a_child, place, reference_child](context & c, std::span<value> args) {
+               if (args.size() < 2) {
+                   c.throw_error("TypeError", "insertBefore needs a node and a reference child");
+                   return value::undefined();
+               }
+               node_id before;
+               if (!reference_child(c, arg(args, 1), before)) { return value::undefined(); }
+               if (!may_become_a_child(c, arg(args, 0), before, node_id{})) {
+                   return value::undefined();
+               }
+               // "If child is node, set child to node's next sibling" - inserting a
+               // child before itself leaves it where it is.
+               const node_id fresh = handle_of(arg(args, 0));
+               if (before != fresh) { place(fresh, before); }
+               return arg(args, 0);
+           });
     method("removeChild", [this, element_child](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
         if (!child) {
             c.throw_error("TypeError", "removeChild: the argument is not a Node");
             return value::undefined();
         }
-        if (child != element_child()) {
+        if (!is_document_child(doc_->read(), child)) {
             throw_dom_exception(c, "NotFoundError",
                                 "removeChild: the node is not a child of the document");
             return value::undefined();
         }
-        throw_dom_exception(c, "NotSupportedError",
-                            "this engine cannot detach <html>: it is the root of the tree and "
-                            "there is no Document node above it for an emptied document to be");
-        return value::undefined();
+        if (child == element_child()) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "this engine cannot detach the document element: it is the root "
+                                "of the tree and an emptied document has nothing to lay out");
+            return value::undefined();
+        }
+        (void)doc_->remove_child(child);
+        mutated();
+        return arg(args, 0);
     });
-    method("replaceChild", [this, element_child](context & c, std::span<value> args) {
+    method("replaceChild", [this, may_become_a_child, place, element_child](context & c,
+                                                                            std::span<value> args) {
+        if (args.size() < 2) {
+            c.throw_error("TypeError", "replaceChild needs a node and the child it replaces");
+            return value::undefined();
+        }
         const node_id stale = handle_of(arg(args, 1));
-        if (!stale || stale != element_child()) {
+        if (!stale || !is_document_child(doc_->read(), stale)) {
             throw_dom_exception(
                 c, "NotFoundError",
                 "replaceChild: the node being replaced is not a child of the document");
             return value::undefined();
         }
-        throw_dom_exception(c, "NotSupportedError",
-                            "replacing <html> would detach the root of the tree, which this "
-                            "engine's document cannot do - see removeChild");
-        return value::undefined();
+        if (!may_become_a_child(c, arg(args, 0), stale, stale)) { return value::undefined(); }
+        const node_id fresh = handle_of(arg(args, 0));
+        if (fresh == stale) { return arg(args, 1); }
+        if (stale == element_child()) {
+            // Only another element may take the root's slot - anything else
+            // would leave the document with no element to lay out.
+            if (doc_->read().kind(fresh).value_or(node_kind::comment) != node_kind::element) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    "replacing the document element with a non-element would "
+                                    "detach the root of the tree, which this engine cannot do");
+                return value::undefined();
+            }
+            doc_->set_document_element(fresh, node_id{});
+            mutated();
+            return arg(args, 1);
+        }
+        // The next sibling of `stale` is where the new node lands once the
+        // old one is gone.
+        node_id after;
+        {
+            const auto txn = doc_->read();
+            const std::span<const node_id> kids = txn.children(txn.document_node());
+            const auto at = std::ranges::find(kids, stale);
+            if (at != kids.end() && at + 1 != kids.end()) { after = *(at + 1); }
+        }
+        (void)doc_->remove_child(stale);
+        place(fresh, after);
+        return arg(args, 1);
     });
 
     // THE ParentNode MIXIN. `append`, `prepend` and `replaceChildren` take any
@@ -681,36 +744,58 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING IS INSERTED, which is what
     // `append-on-Document.html` measures rather than assumes: after a refused
     // `parent.append(x, y)` it asserts the childNodes are still empty.
-    // ponytail: on a document with NO root, `append(x, y)` places x and then
-    // refuses y - the specification refuses both first; a fragment of the two
-    // would do it in one step when a test asks.
-    const auto check_every_argument = [place](context & c, std::span<value> args) {
+    // ponytail: the arguments are checked one at a time rather than as the
+    // fragment the specification would build first; the answers are the same.
+    const auto insert_all = [this, may_become_a_child, place](context & c, std::span<value> args,
+                                                              node_id before) {
+        std::size_t elements = 0;
         for (const value & one : args) {
-            if (!place(c, one)) { return false; }
+            if (!may_become_a_child(c, one, before, node_id{})) { return false; }
+            if (doc_->read().kind(handle_of(one)).value_or(node_kind::comment) ==
+                node_kind::element) {
+                ++elements;
+            }
         }
+        if (elements > 1) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "a Document may have at most one element child");
+            return false;
+        }
+        for (const value & one : args) { place(handle_of(one), before); }
         return true;
     };
-    // With no arguments both are a documented no-op, and that is the ONE
-    // insertion case on this document that succeeds.
-    method("append", [check_every_argument](context & c, std::span<value> args) {
-        (void)check_every_argument(c, args);
+    method("append", [insert_all](context & c, std::span<value> args) {
+        (void)insert_all(c, args, node_id{});
         return value::undefined();
     });
-    method("prepend", [check_every_argument](context & c, std::span<value> args) {
-        (void)check_every_argument(c, args);
+    method("prepend", [this, insert_all](context & c, std::span<value> args) {
+        node_id first;
+        {
+            const auto txn = doc_->read();
+            const std::span<const node_id> kids = txn.children(txn.document_node());
+            if (!kids.empty()) { first = kids.front(); }
+        }
+        (void)insert_all(c, args, first);
         return value::undefined();
     });
     method("replaceChildren",
-           [this, check_every_argument, element_child](context & c, std::span<value> args) {
-               // `replaceChildren` has to REMOVE what is there first, which on
-               // this document means detaching <html>.
+           [this, insert_all, element_child](context & c, std::span<value> args) {
+               // `replaceChildren` has to REMOVE what is there first, which on a
+               // document with an element means detaching it.
                if (element_child()) {
                    throw_dom_exception(c, "NotSupportedError",
-                                       "replaceChildren would detach <html>, which this engine's "
-                                       "document cannot do - see removeChild");
+                                       "replaceChildren would detach the document element, which "
+                                       "this engine's document cannot do - see removeChild");
                    return value::undefined();
                }
-               (void)check_every_argument(c, args);
+               std::vector<node_id> existing;
+               {
+                   const auto txn = doc_->read();
+                   const std::span<const node_id> kids = txn.children(txn.document_node());
+                   existing.assign(kids.begin(), kids.end());
+               }
+               for (const node_id one : existing) { (void)doc_->remove_child(one); }
+               (void)insert_all(c, args, node_id{});
                return value::undefined();
            });
 
@@ -718,8 +803,8 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
 
     // `normalize()` on a Document is over its whole subtree, which here is
     // documentElement and everything under it.
-    method("normalize", [this, element_child](context &, std::span<value>) {
-        normalize_subtree(element_child());
+    method("normalize", [this](context &, std::span<value>) {
+        normalize_subtree(doc_->document_node());
         mutated();
         return value::undefined();
     });

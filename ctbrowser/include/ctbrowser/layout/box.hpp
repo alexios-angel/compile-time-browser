@@ -378,7 +378,7 @@ private:
                                     !txn.has_attribute(parent, atoms_->intern("open"));
         for (const node_id child : txn.children(parent)) {
             const node_kind kind = txn.kind(child).value_or(node_kind::comment);
-            if (kind == node_kind::text) {
+            if (is_text_kind(kind)) { // Text and its CDATA subclass; nothing else draws
                 const std::string_view text = txn.text(child);
                 // A WHITESPACE-ONLY text node is not always nothing. Between two
                 // inline-level boxes it collapses to one SPACE and is rendered -

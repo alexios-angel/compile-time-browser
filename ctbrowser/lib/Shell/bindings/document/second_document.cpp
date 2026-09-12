@@ -91,10 +91,9 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 // `createDocument(null, "")` really does produce a Document with no children,
 // which `Document-contentType` and `append-on-Document.html` both use.
 //
-// THE DOCTYPE ARGUMENT IS ACCEPTED AND DROPPED. This tree has no DocumentType
-// node - `document.doctype` is null and `compatMode` is read off a flag - so
-// storing one would mean inventing a node kind for it. What that costs is one
-// subtest per file rather than the file.
+// THE DOCTYPE ARGUMENT is handled by the caller in install.cpp: a COPY of the
+// DocumentType goes in ahead of the element, because adoption across documents
+// is the rung named above and a node cannot be in two slabs at once.
 //
 // ALSO `new Document()`, DOM 4.5: a document with no browsing context, no
 // children, content type application/xml and URL about:blank - which is

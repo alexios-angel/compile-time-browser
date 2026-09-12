@@ -614,6 +614,9 @@ value dom_bindings::prototype_for_node(const read_txn & txn, node_id id) const {
     case node_kind::text: return interface_prototype("Text");
     case node_kind::comment: return interface_prototype("Comment");
     case node_kind::document: return interface_prototype("Document");
+    case node_kind::document_type: return interface_prototype("DocumentType");
+    case node_kind::processing_instruction: return interface_prototype("ProcessingInstruction");
+    case node_kind::cdata_section: return interface_prototype("CDATASection");
     case node_kind::document_fragment:
         // THE SAME NODE KIND, TWO INTERFACES. A shadow root is a fragment that
         // `attachShadow` recorded a host and a mode for; anything else a page
