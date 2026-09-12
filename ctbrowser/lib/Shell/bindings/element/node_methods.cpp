@@ -1140,6 +1140,30 @@ void dom_bindings::install_node_methods(context & cx) {
                 ->define(name, value::number(bits), script::attr_enumerable);
         }
     }
+    // THE [Unscopable] MEMBERS, DOM 4.2.6 and 4.2.8: ParentNode's prepend,
+    // append and replaceChildren, ChildNode's before, after, replaceWith and
+    // remove - each interface's prototype carries a null-prototype
+    // @@unscopables object naming the ones it has (WebIDL 3.7.9). What it is
+    // for is the event handler attribute: `onclick="remove()"` runs with the
+    // element in its scope chain (compile_handler_attribute), and `remove`
+    // there must be the page's global and not the element's method - which is
+    // remove-unscopable.html.
+    const auto unscopable = [&](std::initializer_list<const char *> on,
+                                std::initializer_list<const char *> names) {
+        for (const char * which : on) {
+            auto * proto = prototype_object(interface_prototype(which));
+            if (proto == nullptr) { continue; }
+            const value made = cx.make_object();
+            auto * blocked = static_cast<script::object_object *>(made.as_heap());
+            blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+            for (const char * name : names) { blocked->set(name, value::boolean(true)); }
+            proto->define("@@unscopables", made, script::attr_configurable);
+        }
+    };
+    unscopable(element, {"before", "after", "replaceWith", "remove", "prepend", "append",
+                         "replaceChildren"});
+    unscopable({"Document", "DocumentFragment"}, {"prepend", "append", "replaceChildren"});
+    unscopable({"CharacterData", "DocumentType"}, {"before", "after", "replaceWith", "remove"});
 }
 
 } // namespace ctbrowser::shell

@@ -1221,10 +1221,41 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         const value * made = object->find(compiled_slot(name));
         return made == nullptr ? value::undefined() : *made;
     }
-    script::program compiled =
-        script::compiler::compile("return (function (event) {\n" + source + "\n});");
-    const value made =
-        compiled.ok ? cx.run_nested(cx.own_program(std::move(compiled))) : value::undefined();
+    // THE SCOPE CHAIN, HTML 8.1.8.1 "getting the current value of the event
+    // handler" step 10: the realm's global, then the element's node document,
+    // then its form owner when it has one, then the element itself - each an
+    // object environment, which is what `with` makes. That is why
+    // `onclick="remove()"` reaches `window.remove` and not the element's
+    // method (Element.prototype[@@unscopables] vetoes it, install_node_methods)
+    // while `onclick="title"` reads the document's. The two outer objects are
+    // PARAMETERS rather than free names so a frame document's element gets its
+    // own document, not the page's global one.
+    //
+    // ponytail: every free identifier in the body now costs a `has` trap on
+    // the document proxy, which walks the tree for named items; an id/name
+    // index on the document is the upgrade if a handler-heavy page shows it.
+    value form = value::null();
+    {
+        const auto txn = doc_->read();
+        const std::string_view local = txn.local_name(id);
+        if (txn.element_ns(id) == node_ns::html &&
+            (local == "button" || local == "fieldset" || local == "input" || local == "object" ||
+             local == "output" || local == "select" || local == "textarea")) {
+            form = cx.lookup_property(self, "form");
+        }
+    }
+    const bool with_form = form.is_object_like();
+    script::program compiled = script::compiler::compile(
+        std::string{"return (function (document, form) { return function (event) {\n"
+                    "with (document) { "} +
+        (with_form ? "with (form) { " : "") + "with (this) {\n" + source + "\n}" +
+        (with_form ? " }" : "") + " } }; });");
+    value made = value::undefined();
+    if (compiled.ok) {
+        const value outer = cx.run_nested(cx.own_program(std::move(compiled)));
+        const value scope[] = {document_, form};
+        if (outer.is_callable()) { made = cx.call(outer, scope); }
+    }
     object->define(source_slot(name), cx.string(source), script::attr_none);
     object->define(compiled_slot(name), made, script::attr_none);
     return made;
