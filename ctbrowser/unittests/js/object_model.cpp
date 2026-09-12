@@ -32,6 +32,35 @@ int main() {
     js_expect("({__proto__:5}).hasOwnProperty('__proto__')", "false");
     js_expect("(function(){var o={};o.__proto__=5;return o.__proto__===Object.prototype;})()",
               "true");
+    // 10.1.2.1's three refusals, which the setter (B.2.2.1.2 step 5) and
+    // Object.setPrototypeOf turn into a TypeError and Reflect answers false to:
+    // a cycle, a non-extensible target, and Object.prototype's own immutable
+    // [[Prototype]] (10.4.7). Setting the prototype an object already has is
+    // never a refusal.
+    js_expect("(function(){var a={};var b=Object.create(a);a.__proto__=b;})()", "THREW");
+    js_expect("(function(){var a={};var b=Object.create(a);Object.setPrototypeOf(a,b);})()",
+              "THREW");
+    js_expect("(function(){var a={};var b=Object.create(a);return Reflect.setPrototypeOf(a,b);})()",
+              "false");
+    js_expect("(function(){var o=Object.preventExtensions({});o.__proto__={};})()", "THREW");
+    js_expect("(function(){var o=Object.preventExtensions({});"
+              "return Reflect.setPrototypeOf(o,Object.prototype);})()",
+              "true");
+    js_expect("Reflect.setPrototypeOf(Object.prototype,{})", "false");
+    js_expect("(function(){Object.prototype.__proto__={};})()", "THREW");
+    js_expect("Reflect.setPrototypeOf(Object.prototype,null)", "true");
+    // A PROTOTYPE THAT IS NOT A PLAIN OBJECT carries the chain: an Array as
+    // `foo.prototype` (the ES5 subclassing idiom test262 is full of) hands its
+    // methods, its elements, `in`, instanceof and getPrototypeOf to the instance.
+    js_expect("(function(){function foo(){} foo.prototype=[1,2];var f=new foo();"
+              "return f.length+','+f[1]+','+typeof f.forEach+','+(1 in f)+','"
+              "+(f instanceof Array)+','+(Object.getPrototypeOf(f)===foo.prototype);})()",
+              "2,2,function,true,true,true");
+    js_expect("(function(){function foo(){} foo.prototype=[1];var f=new foo();"
+              "return f.reduce(function(a,b){return a+b;});})()",
+              "1");
+    js_expect("(function(){var o=Object.create(function g(){});return typeof o.call;})()",
+              "function");
     // An OWN `__proto__` shadows the accessor, as any own property shadows an
     // inherited one.
     js_expect("(function(){var o={};Object.defineProperty(o,'__proto__',{value:7});"
@@ -90,6 +119,45 @@ int main() {
     js_expect("(function(){var t={};Object.defineProperty(new Proxy(t,{}),'z',{value:9});"
               "return t.z;})()",
               "9");
+
+    // ================================================================
+    // 9. Object.groupBy (20.1.2.9): first-seen key order, ToPropertyKey of
+    //    the callback's answer, every value visited with its index
+    // ================================================================
+    js_expect("JSON.stringify(Object.groupBy([1,2,3,4],function(n){return n%2?'odd':'even';}))",
+              "{\"odd\":[1,3],\"even\":[2,4]}");
+    js_expect("Object.keys(Object.groupBy('ab',function(){return null;})).join()", "null");
+    js_expect("(function(){var seen=[];Object.groupBy([5,6],function(v,i){seen.push(v+':'+i);"
+              "return 0;});return seen.join();})()",
+              "5:0,6:1");
+    js_expect("Object.groupBy([1], 1)", "THREW");
+    js_expect("Object.groupBy(null, function(){})", "THREW");
+    js_expect("Object.groupBy.length", "2");
+    js_expect("Object.groupBy({[Symbol.iterator]: undefined}, function(){})", "THREW");
+
+    // Object.fromEntries (20.1.2.7) runs the iterator protocol: a Map, an
+    // entry that is not an object closes the iterator with a TypeError, a
+    // throwing `next` does not close it.
+    js_expect("Object.fromEntries(new Map([['k', 3]])).k", "3");
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){return {done:false,value:null};},return(){closed=true;return {};}};}};"
+              "try{Object.fromEntries(it);}catch(e){return e.name+','+closed;}})()",
+              "TypeError,true");
+    js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
+              "next(){throw new Error('n');},return(){closed=true;return {};}};}};"
+              "try{Object.fromEntries(it);}catch(e){return e.message+','+closed;}})()",
+              "n,false");
+    js_expect("Object.fromEntries(5)", "THREW");
+
+    // RegExp.prototype is reachable and links back (22.2.5.1, 22.2.6.2).
+    js_expect("RegExp.prototype.constructor === RegExp", "true");
+    js_expect("/a/ instanceof RegExp", "true");
+    js_expect("Object.getPrototypeOf(/a/) === RegExp.prototype", "true");
+    js_expect("typeof Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').value", "function");
+    js_expect("RegExp.length", "2");
+    // isPrototypeOf checks its argument before its receiver (20.1.3.3 step 1).
+    js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
+    js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

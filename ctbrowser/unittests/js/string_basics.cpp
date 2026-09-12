@@ -400,5 +400,20 @@ int main() {
     js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRA\u00dfE"); // V8: STRASSE
     js_expect("\"\\u0130\".toLowerCase()", "\u0130");           // V8: i followed by U+0307
 
+    // --- the well-known-symbol protocol: match/replace/search/split/matchAll
+    // ask their argument first (22.1.3.13 step 2 and its siblings) --------
+    js_expect("'abc'.match({[Symbol.match](s){return 'got:'+s;}})", "got:abc");
+    js_expect("'abc'.replace({[Symbol.replace](s, r){return s+'/'+r;}}, 'x')", "abc/x");
+    js_expect("'abc'.search({[Symbol.search](){return 7;}})", "7");
+    js_expect("'abc'.split({[Symbol.split](s, l){return [s, l];}}, 2).join()", "abc,2");
+    js_expect("'abc'.matchAll({[Symbol.matchAll](s){return s.length;}})", "3");
+    js_expect("'abc'.match({get [Symbol.match]() { throw new Error('poison'); }})", "THREW");
+    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW"); // GetMethod: not callable
+    // GetMethod: null is absent, so RegExpCreate(ToString(obj)) runs - a class
+    // of the characters in "[object Object]" matches the b.
+    js_expect("'abc'.match({[Symbol.match]: null})[0]", "b");
+    js_expect("'abc'.match(/b/)[0]", "b"); // a real RegExp is unchanged
+    js_expect("'a-b'.split('-').length", "2");
+
     REPORT("string_basics");
 }

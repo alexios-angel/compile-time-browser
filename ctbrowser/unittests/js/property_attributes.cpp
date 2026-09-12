@@ -266,19 +266,108 @@ int main() {
     js_expect("Object.keys({z:1,y:1,x:1}).join(',')", "z,y,x");
 
     // ================================================================
-    // 10. WHAT THIS DELIBERATELY DOES NOT DO, asserted so it stays honest
+    // 10. AN ARRAY'S ELEMENTS HAVE ATTRIBUTES OF THEIR OWN (since 2026-09-12)
     // ================================================================
     //
-    // An array's elements share two bools rather than three bits each, so a
-    // per-element attribute is DROPPED and the value is still stored. Asserting
-    // it here is what stops the gap being rediscovered as a bug.
+    // array_object::element_attrs: three bits, a hole, or an accessor per
+    // element that asks for one, beside a `items` vector that stays dense.
+    // Until then the two integrity bools were all an element had, so
+    // `defineProperty(a, '0', {writable: false})` was dropped.
     js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{value:5,writable:false});"
               "a[0]=9;return a[0];})()",
-              "9");
+              "5");
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{value:5,writable:false});"
+              "var d=Object.getOwnPropertyDescriptor(a,'0');"
+              "return d.writable+','+d.enumerable+','+d.configurable;})()",
+              "false,true,true");
+    // A NEW element defined with only a value is { false, false, false }
+    // (10.1.6.3 step 2.c), and redefining it with a different value refuses.
+    js_expect("(function(){var a=[];Object.defineProperty(a,'0',{value:-0});"
+              "var d=Object.getOwnPropertyDescriptor(a,'0');"
+              "return a.length+','+d.writable+','+d.enumerable+','+d.configurable;})()",
+              "1,false,false,false");
+    js_expect("(function(){var a=[];Object.defineProperty(a,'0',{value:-0});"
+              "Object.defineProperty(a,'0',{value:+0});})()",
+              "THREW");
+    js_expect("(function(){var a=[];Object.defineProperty(a,'0',{value:1,enumerable:false});"
+              "a[1]=2;return Object.keys(a).join()+'|'+JSON.stringify(a);})()",
+              "1|[1,2]");
+    // An accessor element: the getter answers, the setter is called, the
+    // descriptor says so, and the key is reported once.
+    js_expect("(function(){var a=[];var got=0;"
+              "Object.defineProperty(a,'0',{get:function(){return 7;},"
+              "set:function(v){got=v;},enumerable:true,configurable:true});"
+              "a[0]=3;var d=Object.getOwnPropertyDescriptor(a,'0');"
+              "return a[0]+','+got+','+(typeof d.get)+','+Object.keys(a).join('+')+','"
+              "+Object.getOwnPropertyNames(a).join('+');})()",
+              "7,3,function,0,0+length");
+    // `delete a[i]` LEAVES A HOLE: the length is unchanged, the index is not
+    // an own property, HasProperty is false, and forEach skips it.
+    js_expect("(function(){var a=[1,2,3];delete a[1];return a.length+','+(1 in a)+','"
+              "+a.hasOwnProperty(1)+','+Object.keys(a).join('+')+','+a[1];})()",
+              "3,false,false,0+2,undefined");
+    js_expect("(function(){var a=[1,2,3];delete a[1];var n=0;a.forEach(function(){n++;});"
+              "return n;})()",
+              "2");
+    js_expect("(function(){var a=[1,2];delete a[0];a[0]=5;return (0 in a)+','+a[0];})()", "true,5");
+    // (`delete` evaluates to a constant true here - the compiler's, docs/test262.md -
+    // so a refusal is observed through the element staying.)
+    js_expect("(function(){var a=[1];Object.seal(a);delete a[0];return a.hasOwnProperty(0);})()",
+              "true");
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{configurable:false});"
+              "delete a[0];return a.hasOwnProperty(0);})()",
+              "true");
+    js_expect("(function(){var a=[1];delete a.length;return a.hasOwnProperty('length');})()",
+              "true");
+    // `length` has a writable bit OF ITS OWN: pinning it stops push and a
+    // write, and leaves the elements alone.
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"
+              "a[0]=2;a.length=5;return a[0]+','+a.length+','"
+              "+Object.getOwnPropertyDescriptor(a,'length').writable;})()",
+              "2,1,false");
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"
+              "a.push(2);})()",
+              "THREW");
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"
+              "Object.defineProperty(a,'2',{value:1});})()",
+              "THREW");
+    js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"
+              "Object.defineProperty(a,'length',{value:1});return a.length;})()",
+              "1");
+    // ArraySetLength: ToNumber then a uint32 check, and the mismatch is a
+    // RangeError (`{value: undefined}` is NaN against 0).
+    js_expect("(function(){var a=[];try{Object.defineProperty(a,'length',{value:undefined});}"
+              "catch(e){return e.constructor.name+','+a.length;}})()",
+              "RangeError,0");
+    js_expect("(function(){var a=[1,2,3];Object.defineProperty(a,'length',"
+              "{value:{valueOf:function(){return 1;}}});return a.length;})()",
+              "1");
+    js_expect("(function(){var a=[1];Object.freeze(a);a.push(2);})()", "THREW");
+    // ArraySetLength (10.4.2.4 steps 12-19): a non-configurable element stops
+    // the shrink one above itself, and the write is refused there.
+    js_expect(
+        "(function(){var a=[0,1,2,3];Object.defineProperty(a,'1',{value:1,configurable:false});"
+        "a.length=0;return a.length;})()",
+        "2");
+    js_expect("(function(){var a=[0,1];Object.defineProperty(a,'1',{value:1,configurable:false});"
+              "try{Object.defineProperty(a,'length',{value:1});}catch(e){return "
+              "e.name+','+a.length;}})()",
+              "TypeError,2");
+    js_expect("(function(){var a=[0,1,2];Object.seal(a);a.length=1;return a.length;})()", "3");
+    js_expect("(function(){var a=[];Object.freeze(a);a.pop();})()", "THREW");
+    js_expect("(function(){var a=[1];Object.freeze(a);return Object.isFrozen(a);})()", "true");
     // A native's `length` USED TO BE absent - a native_fn takes a span and
     // records no arity - and it is now installed at each call site from the
     // specification's clause for that method. `Object.keys.length` is 1.
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').writable", "false");
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').configurable", "true");
 
@@ -367,6 +456,14 @@ int main() {
     js_expect("Array.prototype.reduce.length", "1");
     js_expect("Object.defineProperty.length", "3");
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     js_expect("Math.max.length", "2");
     js_expect("Math.floor.length", "1");
     js_expect("Math.random.length", "0");
@@ -787,6 +884,14 @@ int main() {
     js_expect("typeof Object.keys.bind", "function");
     js_expect("Object.keys.name", "keys");
     js_expect("Object.keys.length", "1");
+    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
+    // they used to grow a fresh own entry; defineProperty still redefines.
+    js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
+              "1f");
+    js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
+              "return f.length;})()",
+              "9");
+    js_expect("(function(){Object.keys.name='k';return Object.keys.name;})()", "keys");
     // ...and Object.prototype behind it, which is Function.prototype's own
     // [[Prototype]]. `assert_own_property` in WPT's harness is exactly this
     // call on an arbitrary object.

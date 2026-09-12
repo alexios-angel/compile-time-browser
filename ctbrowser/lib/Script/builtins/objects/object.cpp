@@ -16,6 +16,7 @@ using detail::descriptor_object;
 using detail::key_filter;
 using detail::own_property_names;
 using detail::prototype_of;
+using detail::set_prototype_of;
 using detail::valid_descriptor;
 
 namespace {
@@ -40,19 +41,6 @@ namespace {
         walk = prototype_of(cx, walk);
     }
     return false;
-}
-
-// [[SetPrototypeOf]] over the three tables that carry a link - shared by
-// Object.setPrototypeOf and the `__proto__` setter. A primitive receiver is a
-// no-op that succeeds.
-void set_prototype_of(value of, value proto) {
-    if (of.is_object()) {
-        static_cast<object_object *>(of.as_heap())->prototype = proto;
-    } else if (of.is_kind(heap_kind::function)) {
-        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
-    } else if (of.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(of.as_heap())->proto_link = proto;
-    }
 }
 
 // 7.3.7 ObjectDefineProperties, shared by `Object.defineProperties` and the
@@ -113,12 +101,22 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
         for (std::size_t i = 0; i < arr->length(); ++i) {
+            if (!arr->element_attrs.empty()) {
+                const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
+                if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
+            }
             visit(std::to_string(i), cx.lookup_index(of, value::number(static_cast<double>(i))));
         }
         // ...and the named own properties after the indices (10.4.2.1).
         if (arr->named) {
             std::vector<std::string> keys;
-            arr->named->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
+            arr->named->each_own_enumerable_key([&](const std::string & k) {
+                // An accessor ELEMENT's pair also lives here, under its index;
+                // it was reported above.
+                if (std::uint32_t at = 0; !object_object::array_index_key(k, at)) {
+                    keys.push_back(k);
+                }
+            });
             for (const std::string & k : keys) { visit(k, cx.lookup_property(of, k)); }
         }
         return;
@@ -134,6 +132,30 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         // accessor is the one case that has to be a call.
         visit(key, found.is_accessor() ? cx.lookup_property(of, key) : found.held);
     }
+}
+
+// [[PreventExtensions]] with the proxy's trap consulted (10.5.4): a trap that
+// answers false makes Object.freeze, seal and preventExtensions throw
+// (20.1.2.6 step 2), where context::prevent_extensions goes straight to the
+// target. FALSE means the TypeError is in flight.
+[[nodiscard]] bool prevent_extensions_or_throw(context & cx, value target, const char * called) {
+    if (target.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        const value trap = cx.proxy_trap(target, "preventExtensions");
+        if (trap.is_callable()) {
+            const value args[1] = {p->target};
+            const bool ok = context::truthy(cx.call(trap, args, p->handler));
+            if (cx.throw_pending()) { return false; }
+            if (!ok) {
+                cx.throw_error("TypeError", std::string{called} +
+                                                ": 'preventExtensions' on proxy returned false");
+                return false;
+            }
+            return true;
+        }
+    }
+    cx.prevent_extensions(target);
+    return true;
 }
 
 // 7.3.15 SetIntegrityLevel. `frozen` false is "sealed": configurable off
@@ -158,7 +180,10 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         arr->elements_configurable = false;
-        if (frozen) { arr->elements_writable = false; }
+        if (frozen) {
+            arr->elements_writable = false;
+            arr->length_writable = false;
+        }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
@@ -200,7 +225,8 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     // question about all of them.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        return !arr->elements_configurable && (!frozen || !arr->elements_writable);
+        return !arr->elements_configurable && (!frozen || !arr->elements_writable) &&
+               (!frozen || !arr->length_writable);
     }
     // EVERY own key, symbols included: 7.3.16 walks OwnPropertyKeys, and a
     // symbol-keyed property that is still configurable makes the object neither
@@ -235,10 +261,6 @@ void install_object(context & cx) {
         if (!object_coercible(c, self, "Object.prototype.hasOwnProperty")) {
             return value::boolean(false);
         }
-        if (self.is_object()) {
-            auto * obj = static_cast<object_object *>(self.as_heap());
-            return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
-        }
         // A PROXY ANSWERS FOR ITSELF, the way `in` already lets it: the trap is
         // the only thing that knows what the proxy is standing in for. `window`
         // is one, and `window.hasOwnProperty('HTMLVideoElement')` reaching past
@@ -254,23 +276,12 @@ void install_object(context & cx) {
             }
             return value::boolean(!c.lookup_property(p->target, key).is_undefined());
         }
-        if (self.is_array()) {
-            auto * arr = static_cast<array_object *>(self.as_heap());
-            if (key == "length") { return value::boolean(true); }
-            // AN INDEX, so the whole key must be one - `"1x" in a` is false.
-            // from_chars reports where it stopped, which is the same check
-            // without strtod's locale sensitivity.
-            double at = 0.0;
-            const auto [stopped, failed] = std::from_chars(key.data(), key.data() + key.size(), at);
-            return value::boolean(failed == std::errc{} && stopped == key.data() + key.size() &&
-                                  at >= 0 && at < static_cast<double>(arr->items.size()));
-        }
-        // A FUNCTION, A NATIVE AND A STRING each have own properties too -
-        // `f.name`, `f.length`, `Array.prototype` and `"abc".length` among
-        // them - and answering false about all of them is what made
-        // test262's verifyProperty report "should be an own property" for
-        // every built-in it looked at. context::has_own_property is the one
-        // answer all four tables share.
+        // AN ARRAY, A FUNCTION, A NATIVE AND A STRING each have own properties
+        // too - `a.length`, a sparse element, a NAMED property on an array
+        // (which an arm here used to answer false about, so `verifyProperty`
+        // reported every `arguments` object's property as not own), `f.name`,
+        // `Array.prototype` and `"abc".length` among them. context::
+        // has_own_property is the one answer all four tables share.
         return value::boolean(c.has_own_property(self, key));
     });
     // `[object Type]`, for whatever the receiver actually is.
@@ -302,6 +313,13 @@ void install_object(context & cx) {
             tag = "Boolean";
         } else if (self.is_kind(heap_kind::symbol)) {
             tag = "Symbol";
+        } else if (value * slot = primitive_slot(self); slot != nullptr) {
+            // A WRAPPER answers for what it wraps (20.1.3.6 steps 6-11); a
+            // Symbol or BigInt wrapper reaches its @@toStringTag below.
+            tag = slot->is_number()    ? "Number"
+                  : slot->is_string()  ? "String"
+                  : slot->is_boolean() ? "Boolean"
+                                       : "Object";
             // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not
             // have: an error and a regular expression are both ordinary objects
             // here, distinguishable only by the prototype they were built on.
@@ -344,14 +362,14 @@ void install_object(context & cx) {
         return c.call(fn, std::span<const value>{}, self);
     });
     method(cx, object_proto, "isPrototypeOf", 1, [](context & c, std::span<value> a) {
+        // 20.1.3.3 step 1: a non-object argument is FALSE before ToObject(this)
+        // gets to refuse a null receiver.
+        const value of = arg_at(a, 0);
+        if (!of.is_object_like()) { return value::boolean(false); }
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.isPrototypeOf")) {
             return value::boolean(false);
         }
-        // 20.1.3.3 step 2: a non-object argument is FALSE, not an error - and
-        // the check is against the argument, so it comes after ToObject(this).
-        const value of = arg_at(a, 0);
-        if (!of.is_object_like()) { return value::boolean(false); }
         value walk = prototype_of(c, of);
         for (int depth = 0; depth < 64 && walk.is_heap(); ++depth) {
             if (self.is_heap() && walk.as_heap() == self.as_heap()) { return value::boolean(true); }
@@ -460,7 +478,12 @@ void install_object(context & cx) {
                 // Object.setPrototypeOf raises - and an object literal's
                 // `__proto__: 5` relies on the first.
                 const value proto = arg_at(a, 0);
-                if (proto.is_object_like() || proto.is_null()) { set_prototype_of(self, proto); }
+                if (!proto.is_object_like() && !proto.is_null()) { return value::undefined(); }
+                // B.2.2.1.2 step 5: a refused [[SetPrototypeOf]] IS an error here.
+                if (!set_prototype_of(c, self, proto)) {
+                    c.throw_error("TypeError",
+                                  "Cyclic __proto__ value or object is not extensible");
+                }
                 return value::undefined();
             })),
         attr_configurable);
@@ -477,8 +500,13 @@ void install_object(context & cx) {
         // no wrapper types. Nothing but identity is observable either way for
         // the uses that matter, and `Object(x) === x` for an object is the
         // property helpers actually depend on.
+        // 20.1.1.1: an object passes through, null and undefined make a fresh
+        // object, and a primitive is BOXED (ToObject) - see
+        // detail::wrap_primitive.
         const value v = arg_at(a, 0);
-        return v.is_object_like() ? v : c.make_object();
+        if (v.is_object_like()) { return v; }
+        if (v.is_nullish()) { return c.make_object(); }
+        return detail::box_primitive(c, v);
     });
     // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.
     //
@@ -565,7 +593,9 @@ void install_object(context & cx) {
             return value::undefined();
         }
         object_object * out = new_table(c);
-        if (proto.is_object()) { out->prototype = proto; }
+        // Any object - a function or an array too, which lookup_property now
+        // walks through (see its object arm).
+        if (proto.is_object_like()) { out->prototype = proto; }
         const value made = value::object(out);
         // A ROOT WHILE THE DESCRIPTORS RUN. Each one is read through [[Get]],
         // which can call a page's getter, which can collect - and `out` lives
@@ -597,7 +627,11 @@ void install_object(context & cx) {
             c.throw_error("TypeError", "Object prototype may only be an Object or null");
             return value::undefined();
         }
-        set_prototype_of(of, proto);
+        if (!set_prototype_of(c, of, proto)) {
+            c.throw_error("TypeError",
+                          "Object.setPrototypeOf: cyclic prototype or object is not extensible");
+            return value::undefined();
+        }
         return of;
     });
     // NAMES, so string keys only - Reflect.ownKeys is the one that reports
@@ -674,21 +708,55 @@ void install_object(context & cx) {
     // through [[Get]] of "0" and "1" - so an entry may be any object with those
     // two, not only an Array, and an entry that is NOT an object is a TypeError
     // rather than a silently skipped element.
+    // 20.1.2.7 Object.fromEntries: AddEntriesFromIterable over the ITERATOR
+    // PROTOCOL - GetIterator refuses a non-iterable, an entry that is not an
+    // object is a TypeError that CLOSES the iterator (step 4.d), a key or
+    // value read that throws closes it too, and a `next` that throws does not.
+    // Each entry lands with CreateDataProperty. `iterable_values` would have
+    // drained the source first and lost every one of those orderings.
     method(cx, object_ctor, "fromEntries", 1, [](context & c, std::span<value> a) {
         if (!object_coercible(c, arg_at(a, 0), "Object.fromEntries")) { return value::undefined(); }
         object_object * out = new_table(c);
         const value made = value::object(out);
         const context::rooted keep{c, made};
-        const double count = detail::array_like_length(c, a[0]);
-        for (double i = 0; i < count; ++i) {
-            const value pair = c.lookup_index(a[0], value::number(i));
-            if (!pair.is_object_like()) {
+        const value iterator = c.get_iterator(a[0]);
+        if (c.throw_pending() || !iterator.is_object()) { return value::undefined(); }
+        const context::rooted keep_iterator{c, iterator};
+        const value next = c.lookup_property(iterator, "next");
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto close = [&] {
+            const value ret = c.lookup_property(iterator, "return");
+            if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
+        };
+        for (;;) {
+            bool done = false;
+            const value entry = c.iterator_step(iterator, next, done);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (done) { break; }
+            if (!entry.is_object_like()) {
+                close();
                 c.throw_error("TypeError", "Iterator value is not an entry object");
                 return value::undefined();
             }
-            const value key = c.lookup_index(pair, value::number(0));
-            const value held = c.lookup_index(pair, value::number(1));
-            out->set(c.to_string(key), held);
+            const context::rooted keep_entry{c, entry};
+            const value key = c.lookup_index(entry, value::number(0));
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            const context::rooted keep_key{c, key};
+            const value held = c.lookup_index(entry, value::number(1));
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            const context::rooted keep_held{c, held};
+            const std::string name = c.to_string(key);
+            if (c.throw_pending()) {
+                close();
+                return value::undefined();
+            }
+            out->set(name, held);
         }
         return made;
     });
@@ -700,15 +768,23 @@ void install_object(context & cx) {
     // own property and [[Extensible]] on the object; freeze clears
     // [[Writable]] as well, except on an accessor, which has none.
     method(cx, object_ctor, "freeze", 1, [](context & c, std::span<value> a) {
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.freeze")) {
+            return value::undefined();
+        }
         set_integrity(c, arg_at(a, 0), true);
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "seal", 1, [](context & c, std::span<value> a) {
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.seal")) {
+            return value::undefined();
+        }
         set_integrity(c, arg_at(a, 0), false);
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "preventExtensions", 1, [](context & c, std::span<value> a) {
-        c.prevent_extensions(arg_at(a, 0));
+        if (!prevent_extensions_or_throw(c, arg_at(a, 0), "Object.preventExtensions")) {
+            return value::undefined();
+        }
         return arg_at(a, 0);
     });
     method(cx, object_ctor, "isFrozen", 1, [](context & c, std::span<value> a) {
@@ -784,7 +860,7 @@ void install_object(context & cx) {
         // primitive target is returned as itself here: there is no wrapper to
         // hand back and the writes have nowhere to land.
         if (!object_coercible(c, target, "Object.assign")) { return value::undefined(); }
-        if (!target.is_object_like()) { return target; }
+        if (!target.is_object_like()) { return detail::box_primitive(c, target); }
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.
@@ -812,9 +888,58 @@ void install_object(context & cx) {
             held.reserve(entries.size());
             for (const auto & entry : entries) { held.push_back(entry.second); }
             const context::rooted_values keep{c, held};
-            for (const auto & [key, item] : entries) { c.store_property(target, key, item); }
+            // Set(to, key, value, TRUE) - 20.1.2.1 step 4.c.iii: a write the
+            // target refuses is a TypeError, sloppy or not.
+            for (const auto & [key, item] : entries) {
+                c.clear_store_rejected();
+                c.store_property(target, key, item);
+                c.strict_store_check(key);
+                if (c.throw_pending()) { return target; }
+            }
         }
         return target;
+    });
+    // 20.1.2.9 Object.groupBy - GroupBy with property keys: every value of
+    // the iterable goes to the callback with its index, and the answer is an
+    // object of arrays keyed by ToPropertyKey of what it returned, in first-
+    // seen order. (The specification gives it a null prototype; this engine
+    // cannot make one - see prototype_of.)
+    method(cx, object_ctor, "groupBy", 2, [](context & c, std::span<value> a) {
+        if (!object_coercible(c, arg_at(a, 0), "Object.groupBy")) { return value::undefined(); }
+        const value callback = arg_at(a, 1);
+        if (!callback.is_callable()) {
+            c.throw_error("TypeError", "Object.groupBy: callback is not a function");
+            return value::undefined();
+        }
+        // GetIterator (step 4 of GroupBy): an object without a callable
+        // @@iterator is a TypeError, not an empty result.
+        if (a[0].is_object_like() && !a[0].is_array() &&
+            !c.lookup_property(a[0], "@@iterator").is_callable()) {
+            if (!c.throw_pending()) { c.throw_error("TypeError", "Object.groupBy: not iterable"); }
+            return value::undefined();
+        }
+        const value items = c.iterable_values(a[0]);
+        if (c.throw_pending() || !items.is_array()) { return value::undefined(); }
+        const context::rooted keep_items{c, items};
+        object_object * out = new_table(c);
+        const value made = value::object(out);
+        const context::rooted keep{c, made};
+        // A COPY, ROOTED: the callback may empty the very array `items` is.
+        const std::vector<value> snapshot = static_cast<array_object *>(items.as_heap())->items;
+        const context::rooted_values keep_snapshot{c, snapshot};
+        for (std::size_t i = 0; i < snapshot.size(); ++i) {
+            const value args[2] = {snapshot[i], value::number(static_cast<double>(i))};
+            const value key = c.call(callback, args);
+            if (c.throw_pending()) { return value::undefined(); }
+            const std::string name = c.to_string(key);
+            value * group = out->find(name);
+            if (group == nullptr) {
+                out->set(name, c.make_array());
+                group = out->find(name);
+            }
+            static_cast<array_object *>(group->as_heap())->items.push_back(snapshot[i]);
+        }
+        return made;
     });
     cx.define_global("Object", value::object(object_ctor));
 }

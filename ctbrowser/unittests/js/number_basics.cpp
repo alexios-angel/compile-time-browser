@@ -95,7 +95,14 @@ int main() {
     // --- parsing --------------------------------------------------------------
     js_expect("Number(\"\")", "0");
     js_expect("Number(\" 12 \")", "12");
-    js_expect("Number(\"12a\")", "NaN"); // whole-string, unlike parseInt
+    // StrWhiteSpaceChar is all of 12.2 WhiteSpace and 12.3 LineTerminator,
+    // fourteen of them non-ASCII (number_format.cpp, js_space_width).
+    js_expect("Number(\"\\u00A0\\u2028\\uFEFF\\u3000 12\\u1680\\u205F\\u202F\\u2009\")", "12");
+    js_expect("Number(\"\\u00A0\")", "0");
+    js_expect("parseFloat(\"\\u2003\\u20031.5\")", "1.5");
+    js_expect("BigInt(\"\\u3000 7 \\u2029\")", "7");
+    js_expect("Number(\"\\u200B1\")", "NaN"); // a zero-width space is not one
+    js_expect("Number(\"12a\")", "NaN");      // whole-string, unlike parseInt
     js_expect("+\"3\"", "3");
     js_expect("parseInt(\"42px\")", "42"); // a PREFIX parse
     js_expect("parseFloat(\"3.14abc\")", "3.14");

@@ -10,6 +10,11 @@
 
 #include "internal.hpp"
 
+namespace ctbrowser::script {
+// Defined in vm/objects/lookup.cpp; see the note there.
+object_object * typed_array_prototype(context & cx, element_kind kind);
+} // namespace ctbrowser::script
+
 namespace ctbrowser::script::detail {
 
 namespace {
@@ -45,6 +50,15 @@ namespace {
         return own_property_names(cx, static_cast<proxy_object *>(of.as_heap())->target, which);
     }
     if (of.is_object()) {
+        // A String wrapper's indices and `length` come first (10.4.3.3), as
+        // they do for the primitive below.
+        if (value * slot = primitive_slot(of); slot != nullptr && slot->is_string()) {
+            if (which != key_filter::symbols) {
+                const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+                for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
+                out.emplace_back("length");
+            }
+        }
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });
@@ -55,7 +69,9 @@ namespace {
     if (which == key_filter::symbols) { return out; }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
-        for (std::size_t i = 0; i < arr->length(); ++i) { out.push_back(std::to_string(i)); }
+        for (std::size_t i = 0; i < arr->length(); ++i) {
+            if (!arr->is_hole(static_cast<std::uint32_t>(i))) { out.push_back(std::to_string(i)); }
+        }
         for (const auto & [at, held] : arr->sparse) {
             (void)held;
             out.push_back(std::to_string(at));
@@ -64,7 +80,12 @@ namespace {
         // Then the named own properties - see array_object::named.
         if (arr->named) {
             arr->named->each_own_key([&](const std::string & k) {
-                if (wanted_key(which, k)) { out.push_back(k); }
+                // An accessor ELEMENT's pair also lives here, under its
+                // index; it was reported above.
+                std::uint32_t at = 0;
+                if (wanted_key(which, k) && !object_object::array_index_key(k, at)) {
+                    out.push_back(k);
+                }
             });
         }
         return out;
@@ -147,7 +168,7 @@ namespace {
     };
     if (of.is_object()) {
         auto * obj = static_cast<object_object *>(of.as_heap());
-        if (obj->prototype.is_object()) { return obj->prototype; }
+        if (obj->prototype.is_object_like()) { return obj->prototype; }
         // Object.prototype's own [[Prototype]] is null, and it is the only
         // table for which that is true.
         if (obj == cx.prototype(context::proto_kind::object)) { return value::null(); }
@@ -181,10 +202,44 @@ namespace {
     if (of.is_string()) { return table(context::proto_kind::string); }
     if (of.is_number()) { return table(context::proto_kind::number); }
     if (of.is_boolean()) { return table(context::proto_kind::boolean); }
-    if (of.is_array()) { return table(context::proto_kind::array); }
+    if (of.is_array()) {
+        // A typed array's is its kind's own prototype object (23.2.7).
+        auto * arr = static_cast<array_object *>(of.as_heap());
+        if (object_object * own = typed_array_prototype(cx, arr->elements)) {
+            return value::object(own);
+        }
+        return table(context::proto_kind::array);
+    }
     if (of.is_kind(heap_kind::symbol)) { return table(context::proto_kind::symbol); }
     if (of.is_kind(heap_kind::bigint)) { return table(context::proto_kind::bigint); }
     return value::null();
+}
+
+// [[SetPrototypeOf]] over the three tables that carry a link - shared by
+// Object.setPrototypeOf, Reflect.setPrototypeOf and the `__proto__` setter.
+// A primitive receiver is a no-op that succeeds. FALSE is 10.1.2.1's refusal:
+// a non-extensible object keeps the prototype it has, a chain may not be made
+// cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
+[[nodiscard]] bool set_prototype_of(context & cx, value of, value proto) {
+    if (!of.is_object_like()) { return true; }
+    if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
+    if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {
+        return false;
+    }
+    if (!cx.is_extensible(of)) { return false; }
+    for (value walk = proto; walk.is_heap();) {
+        if (walk.as_heap() == of.as_heap()) { return false; }
+        if (walk.is_kind(heap_kind::proxy)) { break; } // step 8.c.i: a proxy ends the walk
+        walk = prototype_of(cx, walk);
+    }
+    if (of.is_object()) {
+        static_cast<object_object *>(of.as_heap())->prototype = proto;
+    } else if (of.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
+    } else if (of.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(of.as_heap())->proto_link = proto;
+    }
+    return true;
 }
 
 // 6.2.6.6 ToPropertyDescriptor's OWN three refusals, which nothing here made.

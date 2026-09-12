@@ -199,6 +199,21 @@ int main() {
     js_expect("Math.fround(NaN)", "NaN");
     js_expect("Math.fround(Infinity)", "Infinity");
     js_expect("Math.fround(1e300)", "Infinity");
+    // f16round is the same round trip through binary16 (ties to even, straight
+    // from the double), V8's answers.
+    js_expect("Math.f16round(1.5)", "1.5");
+    js_expect("Math.f16round(1.1)", "1.099609375");
+    js_expect("Math.f16round(65504)", "65504");
+    js_expect("Math.f16round(65519.99)", "65504");
+    js_expect("Math.f16round(65520)", "Infinity");
+    js_expect("Math.f16round(5.960464477539063e-8)", "5.960464477539063e-8"); // least subnormal
+    js_expect("Math.f16round(2.9802322387695312e-8)", "0"); // exactly half of it: ties to even
+    js_expect("Math.f16round(3e-8)", "5.960464477539063e-8");
+    js_expect("Math.f16round(0.1)", "0.0999755859375");
+    js_expect_negative_zero("Math.f16round(-0)", true);
+    js_expect("Math.f16round(NaN)", "NaN");
+    js_expect("Math.f16round(-Infinity)", "-Infinity");
+    js_expect("Math.f16round.length", "1");
     js_expect("Math.clz32(1)", "31");
     js_expect("Math.clz32(0)", "32");
     js_expect("Math.clz32(-1)", "0");

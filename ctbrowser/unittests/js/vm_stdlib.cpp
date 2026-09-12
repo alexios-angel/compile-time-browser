@@ -168,6 +168,20 @@ void test_typed_arrays() {
     // and a typed array does NOT grow: a write past the end is dropped
     expect_result("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
     expect_result("return Uint16Array.BYTES_PER_ELEMENT;", "2");
+    // 23.2.7: each constructor has a prototype OBJECT of its own, with
+    // `constructor` and BYTES_PER_ELEMENT, and an instance's chain starts
+    // there - which is what `class S extends Uint8Array {}` reads.
+    expect_result("return Uint8Array.prototype.constructor === Uint8Array;", "true");
+    expect_result("return Uint8Array.prototype.BYTES_PER_ELEMENT;", "1");
+    expect_result("return Object.getPrototypeOf(new Uint8Array(1)) === Uint8Array.prototype;",
+                  "true");
+    expect_result("return new Uint8Array(1) instanceof Uint8Array;", "true");
+    expect_result("return new Uint8Array(1) instanceof Int8Array;", "false");
+    expect_result("return new Float32Array(1).constructor.name;", "Float32Array");
+    expect_result("Uint8Array.prototype.tag = 'u8'; return new Uint8Array(1).tag;", "u8");
+    // (`class S extends Uint8Array {}; new S(2)` still answers the class's own
+    // instance rather than the typed array super() built - the constructor
+    // path in vm/call, not the prototype - so it is not asserted here.)
     expect_result("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
     expect_result("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');",
                   "2,3");

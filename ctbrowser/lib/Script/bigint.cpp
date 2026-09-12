@@ -86,8 +86,13 @@ std::optional<bigint> bigint_from_double(double v) {
     return bigint{v};
 }
 
+// StringToBigInt strips the same StrWhiteSpaceChar set StringToNumber does -
+// defined in number_format.cpp beside that one, and declared here rather than
+// in the public header because nothing outside these two files wants it.
+[[nodiscard]] std::string_view trim_js_space(std::string_view text);
+
 std::optional<bigint> bigint_from_string(std::string_view text) {
-    const std::string_view body = trim(text, js_whitespace);
+    const std::string_view body = trim_js_space(text);
     if (body.empty()) { return bigint{0}; } // BigInt("") and BigInt(" ") are 0n
     return bigint_from_literal(body);
 }

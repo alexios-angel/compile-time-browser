@@ -88,6 +88,23 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("acosh", [](double x) { return std::acosh(x); });
     unary("atanh", [](double x) { return std::atanh(x); });
     unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
+    // 21.3.2.17 Math.f16round: the nearest binary16, ties to even, straight
+    // from the double - through `float` first would round twice. A binary16
+    // has 10 fraction bits and a least exponent of -14, so the unit in the
+    // last place is 2^(e-10) with e clamped there, the quotient by it is
+    // exact, and nearbyint under the default rounding mode is ties-to-even.
+    // 65520 is the halfway point above the largest finite value (65504) and
+    // rounds to the even 65536, which binary16 cannot hold: Infinity.
+    unary("f16round", [](double x) {
+        if (!std::isfinite(x) || x == 0) { return x; }
+        const double a = std::fabs(x);
+        if (a >= 65520.0) { return std::copysign(std::numeric_limits<double>::infinity(), x); }
+        int e = 0;
+        (void)std::frexp(a, &e); // a = m * 2^e, m in [0.5, 1)
+        const int exponent = std::max(e - 1, -14);
+        const double ulp = std::ldexp(1.0, exponent - 10);
+        return std::copysign(std::nearbyint(a / ulp) * ulp, x);
+    });
     // ToUint32 (7.1.6) OVER AN ALREADY-COERCED NUMBER. `context::to_uint32` is
     // the STATIC conversion and answers 0 for every object, so `Math.imul({
     // valueOf: () => 3}, 2)` was 0 and `Math.clz32("1")` was 32 - both because
@@ -284,21 +301,45 @@ void install_boolean(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * boolean_proto = new_table(cx);
-    method(cx, boolean_proto, "toString", 0, [](context & c, std::span<value>) {
-        return c.string(context::truthy(c.current_this()) ? "true" : "false");
+    // thisBooleanValue, 20.3.3: a Boolean, a wrapper's [[BooleanData]], or
+    // Boolean.prototype itself (whose slot is false) - anything else is a
+    // TypeError rather than a truthiness test. `Boolean.prototype.toString
+    // .call({})` answered "true".
+    const auto this_boolean_value = [](context & c, const char * method, bool & out) {
+        const value self = c.current_this();
+        if (self.is_boolean()) {
+            out = self.as_boolean();
+            return true;
+        }
+        if (value * slot = primitive_slot(self); slot != nullptr && slot->is_boolean()) {
+            out = slot->as_boolean();
+            return true;
+        }
+        if (self.is_object() && self.as_heap() == c.prototype(context::proto_kind::boolean)) {
+            out = false;
+            return true;
+        }
+        c.throw_error("TypeError", std::string{method} + " requires that 'this' be a Boolean");
+        return false;
+    };
+    method(cx, boolean_proto, "toString", 0, [this_boolean_value](context & c, std::span<value>) {
+        bool b = false;
+        if (!this_boolean_value(c, "Boolean.prototype.toString", b)) { return value::undefined(); }
+        return c.string(b ? "true" : "false");
     });
-    method(cx, boolean_proto, "valueOf", 0, [](context & c, std::span<value>) {
-        return value::boolean(context::truthy(c.current_this()));
+    method(cx, boolean_proto, "valueOf", 0, [this_boolean_value](context & c, std::span<value>) {
+        bool b = false;
+        if (!this_boolean_value(c, "Boolean.prototype.valueOf", b)) { return value::undefined(); }
+        return value::boolean(b);
     });
     cx.set_prototype(context::proto_kind::boolean, boolean_proto);
-    auto * boolean_ctor = cx.allocate<native_object>("Boolean", [](context &, std::span<value> a) {
-        return value::boolean(!a.empty() && context::truthy(a[0]));
-    });
-    // A CONVERSION, not a constructor of wrappers - see context::construct. `new
-    // Boolean(x)` evaluates to the converted value here rather than to a wrapper
-    // object; before the flag it evaluated to an empty object and the value was
-    // gone.
-    detail::constant(boolean_ctor, "__conversion", value::boolean(true));
+    // 20.3.1.1: a call converts, `new` wraps - see detail::wrap_primitive.
+    auto * boolean_ctor =
+        cx.allocate<native_object>("Boolean", [](context & c, std::span<value> a) {
+            const value made = value::boolean(!a.empty() && context::truthy(a[0]));
+            const value self = c.current_this();
+            return detail::constructing_this(self) ? detail::wrap_primitive(c, self, made) : made;
+        });
     detail::constant(boolean_ctor, "prototype", value::object(boolean_proto));
     link_constructor(cx, boolean_proto, "Boolean", 1, value::object(boolean_ctor));
     cx.define_global("Boolean", value::object(boolean_ctor));
@@ -318,17 +359,21 @@ void install_number(context & cx) {
     auto * number_ctor = cx.allocate<native_object>("Number", [](context & c, std::span<value> a) {
         // The EXPLICIT conversion, which a BigInt permits - unlike every
         // implicit one. Past the double range it saturates to an infinity.
+        value made = value::number(0.0);
         if (!a.empty() && a[0].is_kind(heap_kind::bigint)) {
-            return value::number(
+            made = value::number(
                 bigint_to_double(static_cast<bigint_object *>(a[0].as_heap())->digits));
+        } else if (!a.empty()) {
+            // ToNumeric, 21.1.1.1 step 1: a Symbol refuses (7.1.4).
+            if (!numeric_arg(c, a[0])) { return value::undefined(); }
+            made = value::number(c.to_number_value(a[0]));
+            if (c.throw_pending()) { return value::undefined(); }
         }
-        return value::number(a.empty() ? 0.0 : c.to_number_value(a[0]));
+        // 21.1.1.1 step 3: a call converts, `new` wraps - see
+        // detail::wrap_primitive.
+        const value self = c.current_this();
+        return detail::constructing_this(self) ? detail::wrap_primitive(c, self, made) : made;
     });
-    // A CONVERSION, not a constructor of wrappers - see context::construct. `new
-    // Number(x)` evaluates to the converted value here rather than to a wrapper
-    // object; before the flag it evaluated to an empty object and the value was
-    // gone.
-    detail::constant(number_ctor, "__conversion", value::boolean(true));
     const auto constant = [&](const char * name, double v) {
         detail::constant(number_ctor, name, value::number(v));
     };

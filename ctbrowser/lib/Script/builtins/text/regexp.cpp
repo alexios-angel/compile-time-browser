@@ -166,7 +166,13 @@ void install_regexp(context & cx) {
         }
         return out;
     };
-    cx.define_native("RegExp", make);
+    // `RegExp.prototype` REACHABLE, with `constructor` back (22.2.5.1,
+    // 22.2.6.2): it was undefined, so every descriptor test262 asks of the
+    // prototype's methods read a property of undefined.
+    auto * regexp_ctor = cx.allocate<native_object>("RegExp", make);
+    detail::constant(regexp_ctor, "prototype", value::object(regexp_proto));
+    link_constructor(cx, regexp_proto, "RegExp", 2, value::object(regexp_ctor));
+    cx.define_global("RegExp", value::object(regexp_ctor));
     cx.define_native(std::string{regexp_factory_name}, make);
 }
 

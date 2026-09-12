@@ -70,11 +70,11 @@ int main() {
     js_expect("0 || \"d\"", "d");
     js_expect("null && \"x\"", "null");
 
-    // --- KNOWN WRONG, pinned so a fix trips over it ---------------------------
     // `new Boolean(false)` is an OBJECT, and every object is truthy - which is
-    // the standard argument against the wrapper constructors. This engine does
-    // not box, so `new Boolean(false)` is the primitive and stays falsy.
-    js_expect("Boolean(new Boolean(false))", "false"); // V8: true
+    // the standard argument against the wrapper constructors. Boxed since
+    // 2026-09-12 (unittests/js/wrapper_objects.cpp is the full account).
+    js_expect("Boolean(new Boolean(false))", "true");
+    js_expect("Boolean.prototype.toString.call({})", "THREW");
 
     REPORT("boolean_basics");
 }

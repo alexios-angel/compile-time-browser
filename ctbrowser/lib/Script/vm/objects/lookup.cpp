@@ -33,6 +33,22 @@
 
 namespace ctbrowser::script {
 
+// `Uint8Array.prototype` for u8: the constructor's own prototype object, found
+// through the global it is installed as (value.hpp, typed_array_global_name),
+// or null before install_typed_arrays has run. A free function with external
+// linkage - vm.hpp is not widened for it - declared again by the two other
+// files that ask (chain.cpp's instance_of, builtins/objects/operations.cpp's
+// prototype_of).
+object_object * typed_array_prototype(context & cx, element_kind kind) {
+    const char * name = typed_array_global_name(kind);
+    if (name == nullptr) { return nullptr; }
+    const value ctor = cx.global(name);
+    if (!ctor.is_kind(heap_kind::native)) { return nullptr; }
+    value * proto = static_cast<native_object *>(ctor.as_heap())->find("prototype");
+    return proto != nullptr && proto->is_object() ? static_cast<object_object *>(proto->as_heap())
+                                                  : nullptr;
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -43,6 +59,28 @@ value context::lookup_index(value target, value key) {
                        : value::undefined();
         }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
+            // A HOLE READS THROUGH TO THE PROTOTYPES and an ACCESSOR element
+            // calls its getter - see array_object::element_attrs, which is
+            // empty for every ordinary array and costs this one test.
+            if (!arr->element_attrs.empty()) [[unlikely]] {
+                if (const std::uint8_t * e =
+                        arr->find_element_attrs(static_cast<std::uint32_t>(i))) {
+                    if ((*e & array_object::elem_hole) != 0) {
+                        const std::string name = std::to_string(i);
+                        if (object_object * table = prototype(proto_kind::array)) {
+                            if (value * found = table->find(name)) { return *found; }
+                        }
+                        return from_object_prototype(target, name);
+                    }
+                    if ((*e & array_object::elem_accessor) != 0 && arr->named) {
+                        if (accessor_entry * entry = arr->named->find_accessor(std::to_string(i))) {
+                            return entry->getter.is_callable()
+                                       ? call(entry->getter, std::span<const value>{}, target)
+                                       : value::undefined();
+                        }
+                    }
+                }
+            }
             return arr->items[static_cast<std::size_t>(i)];
         }
         // AND THE SPARSE HALF, second and behind an empty test so that reading
@@ -97,6 +135,24 @@ value context::lookup_property(value target, const std::string & name) {
         const prehashed_name key{name, hash_name(name)};
         for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
             if (value * found = obj->find(key)) { return *found; }
+            // A STRING WRAPPER'S `length` AND INDICES are own properties off
+            // its [[StringData]] slot (10.4.3.1), asked for only after the own
+            // table missed - nothing in it can shadow them - and only for those
+            // two shapes of name, so an ordinary object's `.length` pays one
+            // comparison.
+            if (depth == 0 &&
+                (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9'))) {
+                if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
+                    const std::string & text = static_cast<string_object *>(slot->as_heap())->text;
+                    if (name == "length") {
+                        return value::number(static_cast<double>(text.size()));
+                    }
+                    if (std::uint32_t at = 0;
+                        object_object::array_index_key(name, at) && at < text.size()) {
+                        return string(std::string{text[at]});
+                    }
+                }
+            }
             // An accessor found anywhere on the chain is CALLED, with the
             // original target as its receiver - a getter defined on a prototype
             // reads the instance, which is the entire point of putting one
@@ -108,9 +164,18 @@ value context::lookup_property(value target, const std::string & name) {
                 }
                 return value::undefined(); // set-only: reading gives undefined
             }
-            obj = obj->prototype.is_object()
-                      ? static_cast<object_object *>(obj->prototype.as_heap())
-                      : nullptr;
+            if (obj->prototype.is_object()) {
+                obj = static_cast<object_object *>(obj->prototype.as_heap());
+                continue;
+            }
+            // A PROTOTYPE THAT IS NOT A PLAIN OBJECT - an Array
+            // (`foo.prototype = [1]`), a function, a proxy - carries on the
+            // walk in its own arm below. Its getters see it as the receiver
+            // rather than `target`, which nothing in the corpus observes.
+            if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
+                return lookup_property(obj->prototype, name);
+            }
+            obj = nullptr;
         }
         return from_object_prototype(target, name);
     }
@@ -167,6 +232,20 @@ value context::lookup_property(value target, const std::string & name) {
         // object's - which is the chain JavaScript actually has, and the reason
         // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.
         if (arr->elements != element_kind::none) {
+            // The kind's own prototype (23.2.7, reached through its global),
+            // then %TypedArray%.prototype behind it.
+            for (object_object * table = typed_array_prototype(*this, arr->elements);
+                 table != nullptr;) {
+                if (value * found = table->find(name)) { return *found; }
+                if (accessor_entry * entry = table->find_accessor(name)) {
+                    return entry->getter.is_callable()
+                               ? call(entry->getter, std::span<const value>{}, target)
+                               : value::undefined();
+                }
+                table = table->prototype.is_object()
+                            ? static_cast<object_object *>(table->prototype.as_heap())
+                            : nullptr;
+            }
             if (object_object * table = prototype(proto_kind::typed_array)) {
                 if (value * found = table->find(name)) { return *found; }
             }

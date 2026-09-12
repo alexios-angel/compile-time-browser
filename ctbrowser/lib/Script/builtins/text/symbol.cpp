@@ -25,12 +25,27 @@ void install_symbol(context & cx) {
     auto counter = std::make_shared<std::uint64_t>(0);
 
     object_object * symbol_proto = new_table(cx);
-    method(cx, symbol_proto, "toString", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
-        if (!self.is_kind(heap_kind::symbol)) { return c.string("Symbol()"); }
+    // thisSymbolValue (20.4.3): the symbol, or a wrapper's (`Object(sym)`,
+    // detail::wrap_primitive) - anything else is a TypeError.
+    const auto this_symbol = [](context & c, const char * method) {
+        value self = c.current_this();
+        if (value * slot = primitive_slot(self); slot != nullptr) { self = *slot; }
+        if (self.is_kind(heap_kind::symbol)) { return self; }
+        c.throw_error("TypeError", std::string{method} + " requires that 'this' be a Symbol");
+        return value::undefined();
+    };
+    method(cx, symbol_proto, "toString", 0, [this_symbol](context & c, std::span<value>) {
+        const value self = this_symbol(c, "Symbol.prototype.toString");
+        if (!self.is_kind(heap_kind::symbol)) { return value::undefined(); }
         return c.string("Symbol(" + static_cast<symbol_object *>(self.as_heap())->description +
                         ")");
     });
+    method(cx, symbol_proto, "valueOf", 0, [this_symbol](context & c, std::span<value>) {
+        return this_symbol(c, "Symbol.prototype.valueOf");
+    });
+    // 20.4.3.6: { false, false, true }, and what Object.prototype.toString
+    // reads for a Symbol wrapper.
+    symbol_proto->define("@@toStringTag", cx.string("Symbol"), attr_configurable);
     cx.set_prototype(context::proto_kind::symbol, symbol_proto);
 
     // Callable AND a namespace: `Symbol('x')` and `Symbol.iterator` are both
@@ -53,19 +68,19 @@ void install_symbol(context & cx) {
     well_known("hasInstance", "@@hasInstance");
     well_known("toPrimitive", "@@toPrimitive");
     well_known("toStringTag", "@@toStringTag");
-    // `Symbol.match` IS CONSULTED, which is why it is here and its four
-    // siblings are not. IsRegExp (7.2.8) reads it to decide whether
-    // `includes`, `startsWith` and `endsWith` must refuse their argument, so
-    // defining it gives a page the documented way to say "this object is a
-    // pattern" or "this RegExp is not one" - and test262's
-    // `return-abrupt-from-searchstring-regexp-test.js` asserts exactly that.
-    //
-    // @@replace, @@search, @@split and @@matchAll are DELIBERATELY ABSENT.
-    // Nothing here dispatches through them - the string methods drive a
-    // pattern's `exec` directly - and a well-known symbol that no operation
-    // reads is a promise the engine does not keep: a page would install a
-    // custom @@replace, see it ignored, and have nothing to say why.
+    // EVERY ONE OF THESE FIVE IS CONSULTED, which is the bar for being here:
+    // a well-known symbol that no operation reads is a promise the engine does
+    // not keep. IsRegExp (7.2.8) reads @@match to decide whether `includes`,
+    // `startsWith` and `endsWith` must refuse their argument, and since
+    // 2026-09-12 String.prototype's match, matchAll, replace, replaceAll,
+    // search and split each ask their argument for its own method first
+    // (string.cpp, symbol_dispatch). A real RegExp still carries none.
     well_known("match", "@@match");
+    well_known("matchAll", "@@matchAll");
+    well_known("replace", "@@replace");
+    well_known("search", "@@search");
+    well_known("split", "@@split");
+    well_known("isConcatSpreadable", "@@isConcatSpreadable"); // read by Array.prototype.concat
     // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to
@@ -128,17 +143,28 @@ void install_symbol(context & cx) {
     // a TypeError in the specification because there is no wrapper object to
     // make. This engine does not box at all, so calling it is the only form.
     object_object * bigint_proto = new_table(cx);
-    method(cx, bigint_proto, "toString", 0, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
-        if (!self.is_kind(heap_kind::bigint)) { return c.string("0"); }
+    // thisBigIntValue (21.2.3): the BigInt, or a wrapper's (`Object(1n)`,
+    // detail::wrap_primitive) - anything else is a TypeError.
+    const auto this_bigint = [](context & c, const char * method) {
+        value self = c.current_this();
+        if (value * slot = primitive_slot(self); slot != nullptr) { self = *slot; }
+        if (self.is_kind(heap_kind::bigint)) { return self; }
+        c.throw_error("TypeError", std::string{method} + " requires that 'this' be a BigInt");
+        return value::undefined();
+    };
+    method(cx, bigint_proto, "toString", 0, [this_bigint](context & c, std::span<value> a) {
+        const value self = this_bigint(c, "BigInt.prototype.toString");
+        if (!self.is_kind(heap_kind::bigint)) { return value::undefined(); }
         const int radix = a.empty() || a[0].is_undefined()
                               ? 10
                               : std::clamp(static_cast<int>(context::to_number(a[0])), 2, 36);
         return c.string(
             bigint_to_string(static_cast<bigint_object *>(self.as_heap())->digits, radix));
     });
-    method(cx, bigint_proto, "valueOf", 0,
-           [](context & c, std::span<value>) { return c.current_this(); });
+    method(cx, bigint_proto, "valueOf", 0, [this_bigint](context & c, std::span<value>) {
+        return this_bigint(c, "BigInt.prototype.valueOf");
+    });
+    bigint_proto->define("@@toStringTag", cx.string("BigInt"), attr_configurable); // 21.2.3.5
     cx.set_prototype(context::proto_kind::bigint, bigint_proto);
 
     auto * bigint_ctor = cx.allocate<native_object>("BigInt", [](context & c, std::span<value> a) {

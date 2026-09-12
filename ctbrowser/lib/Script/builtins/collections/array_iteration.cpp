@@ -47,7 +47,7 @@ namespace ctbrowser::script::detail {
     // nothing it would have to root.
     method_on("next", [](context & c, std::span<value>) {
         auto * out = static_cast<object_object *>(c.make_object().as_heap());
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         array_object * items = nullptr;
         std::size_t at = 0;
         if (self.is_object()) {
@@ -98,12 +98,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // returns false to stop. `each` reports whether it ran to the end, which is
     // what `every` needs and what a `return` out of the middle is not.
     const auto each = [](context & c, std::span<value> a, const char * name, auto && body) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return false; }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return false; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return false; }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             // A HOLE IS SKIPPED, not visited with undefined. That is the whole
             // difference between `[, 1].forEach(f)` calling back once and
@@ -120,13 +124,17 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         return value::undefined();
     });
     method(cx, array_proto, "map", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "map")) { return out; }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
         // in none of the collector's roots. It is allocated BEFORE the first
         // call, so a callback that collects - `$262.gc()`, or gc stress, which
@@ -144,7 +152,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         for (double k = 0; k < len; k += 1.0) {
             if (!detail::has_element(c, self, k)) { continue; }
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            detail::put_element(c, out, k, c.call(callback, call_args, this_arg));
+            if (!detail::put_element(c, out, k, c.call(callback, call_args, this_arg))) {
+                return out;
+            }
         }
         return out;
     });
@@ -166,12 +176,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // with [[Get]] and hands the callback an undefined - which is why neither
     // goes through `each`.
     method(cx, array_proto, "find", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "find")) { return value::undefined(); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             const value item = detail::element_at(c, self, k);
             const value call_args[3] = {item, value::number(k), self};
@@ -180,12 +194,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         return value::undefined();
     });
     method(cx, array_proto, "findIndex", 1, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "findIndex")) { return value::number(-1); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::number(-1); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
         const value this_arg = arg_at(a, 1);
-        const double len = detail::array_like_length(c, self);
         for (double k = 0; k < len; k += 1.0) {
             const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
             if (context::truthy(c.call(callback, call_args, this_arg))) { return value::number(k); }
@@ -216,11 +234,15 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // throw a TypeError on an empty array with no initial value - which was an
     // `undefined` here, and is the one error every fold is written to rely on.
     const auto fold = [](context & c, std::span<value> a, const char * name, bool backwards) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return value::undefined(); }
+        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // `length` getter runs, and its throw wins, even for a callback that
+        // is not callable.
+        const double len = detail::array_like_length(c, self);
+        if (c.throw_pending()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
-        const double len = detail::array_like_length(c, self);
         double k = backwards ? len - 1 : 0;
         const double step = backwards ? -1.0 : 1.0;
         const auto in_range = [&] { return backwards ? k >= 0 : k < len; };
@@ -369,7 +391,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                           "The comparison function must be either a function or undefined");
             return c.current_this();
         }
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "sort")) { return self; }
         if (array_object * dense = detail::dense_array_this(self)) {
             // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
@@ -407,9 +429,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         sort_values(c, work, comparator);
         const auto kept = static_cast<double>(work.size());
         for (double k = 0; k < kept; k += 1.0) {
-            detail::put_element(c, self, k, work[static_cast<std::size_t>(k)]);
+            if (!detail::put_element(c, self, k, work[static_cast<std::size_t>(k)])) {
+                return self;
+            }
         }
-        for (double k = kept; k < len; k += 1.0) { detail::delete_element(c, self, k); }
+        for (double k = kept; k < len; k += 1.0) {
+            if (!detail::delete_element(c, self, k)) { return self; }
+        }
         return self;
     });
     detail::constant(array_ctor, "prototype", value::object(array_proto));
@@ -477,7 +503,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // whatever they were called on, which is what the specification says and
     // what makes `Array.prototype.toReversed.call({length: 2, ...})` an array.
     method(cx, array_proto, "copyWithin", 2, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "copyWithin")) { return self; }
         const double len = detail::array_like_length(c, self);
         const double raw_to = integer_arg(c, a, 0);
@@ -498,7 +524,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         for (; count > 0; count -= 1.0, from += direction, to += direction) {
             if (detail::has_element(c, self, from)) {
-                detail::put_element(c, self, to, detail::element_at(c, self, from));
+                if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
+                    return self;
+                }
             } else {
                 c.delete_index(self, value::number(to));
             }
@@ -506,7 +534,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         return self;
     });
     method(cx, array_proto, "with", 2, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "with")) { return out; }
         const double len = detail::array_like_length(c, self);
@@ -523,19 +551,24 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
         const value replacement = arg_at(a, 1);
         for (double k = 0; k < len; k += 1.0) {
-            detail::put_element(c, out, k, k == at ? replacement : detail::element_at(c, self, k));
+            if (!detail::put_element(c, out, k,
+                                     k == at ? replacement : detail::element_at(c, self, k))) {
+                return out;
+            }
         }
         return out;
     });
     method(cx, array_proto, "toReversed", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "toReversed")) { return out; }
         const double len = detail::array_like_length(c, self);
         const context::rooted keep(c, out);
         if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
         for (double k = 0; k < len; k += 1.0) {
-            detail::put_element(c, out, k, detail::element_at(c, self, len - k - 1));
+            if (!detail::put_element(c, out, k, detail::element_at(c, self, len - k - 1))) {
+                return out;
+            }
         }
         return out;
     });
@@ -544,7 +577,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // specification's SortIndexedProperties does and it is also the only shape
     // that survives a comparator which mutates the array it was handed.
     method(cx, array_proto, "toSorted", 1, [sort_values](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         const value comparator = arg_at(a, 0);
         // The comparator is checked BEFORE the receiver is read, which is the
@@ -575,7 +608,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         return out;
     });
     method(cx, array_proto, "toSpliced", 2, [](context & c, std::span<value> a) {
-        const value self = c.current_this();
+        const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "toSpliced")) { return out; }
         const double len = detail::array_like_length(c, self);
@@ -602,13 +635,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (detail::new_array_of_length(c, out, new_len) == nullptr) { return out; }
         double at = 0;
         for (; at < start; at += 1.0) {
-            detail::put_element(c, out, at, detail::element_at(c, self, at));
+            if (!detail::put_element(c, out, at, detail::element_at(c, self, at))) { return out; }
         }
         for (std::size_t i = 2; i < a.size(); ++i, at += 1.0) {
-            detail::put_element(c, out, at, a[i]);
+            if (!detail::put_element(c, out, at, a[i])) { return out; }
         }
         for (double from = start + skipped; at < new_len; at += 1.0, from += 1.0) {
-            detail::put_element(c, out, at, detail::element_at(c, self, from));
+            if (!detail::put_element(c, out, at, detail::element_at(c, self, from))) { return out; }
         }
         return out;
     });
