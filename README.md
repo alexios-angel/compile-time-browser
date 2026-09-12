@@ -38,7 +38,7 @@ int main() {
             var n = 0;
             document.getElementById('up').addEventListener('click', function () {
               n = n + 1;
-              document.getElementById('n').setText(String(n));
+              document.getElementById('n').textContent = String(n);
             });
           </script>
         </body>

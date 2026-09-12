@@ -70,20 +70,20 @@ notes live here</textarea></div>
         const name = document.getElementById("name");
         const color = document.getElementById("color");
         name.addEventListener("input", function () {
-            status.setText("name: " + name.value);
+            status.textContent = "name: " + name.value;
         });
         document.getElementById("opt").addEventListener("change", function () {
-            status.setText("option one: " + document.getElementById("opt").checked);
+            status.textContent = "option one: " + document.getElementById("opt").checked;
         });
         document.getElementById("s2").addEventListener("change", function () {
-            status.setText("size: large");
+            status.textContent = "size: large";
         });
         color.addEventListener("change", function () {
-            status.setText("color: " + color.value);
+            status.textContent = "color: " + color.value;
         });
         document.getElementById("f").addEventListener("submit", function (e) {
             e.preventDefault();
-            status.setText("submitted: " + name.value + " / " + color.value);
+            status.textContent = "submitted: " + name.value + " / " + color.value;
         });
 
     </script>

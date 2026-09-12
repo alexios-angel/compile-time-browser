@@ -1197,8 +1197,6 @@ private:
 
     void set_text(node_id id, std::string text);
 
-    void edit_classes(node_id id, const std::string & name, bool add);
-
     [[nodiscard]] static std::vector<std::string_view> split(std::string_view text);
 
     void mutated();

@@ -55,27 +55,29 @@
             try {
                 const response = await fetch("fetchboard-data.json");
                 const data = await response.json();
-                document.getElementById("local").setText(
+                document.getElementById("local").textContent =
                     "registry: " + data.what + " — " + data.items.length + " items: " +
-                    data.items.join(", "));
+                    data.items.join(", ");
             } catch (e) {
-                document.getElementById("local").setText("the baked-in resource is missing: " + e.message);
+                document.getElementById("local").textContent =
+                    "the baked-in resource is missing: " + e.message;
             }
 
             try {
                 const response = await fetch("http://example.com/");
                 const html = await response.text();
-                document.getElementById("remote").setText(
+                document.getElementById("remote").textContent =
                     "example.com => HTTP " + response.status + ", " + html.length +
-                    " bytes of HTML, over a socket this program opened");
+                    " bytes of HTML, over a socket this program opened";
             } catch (e) {
-                document.getElementById("remote").setText("no network: " + e.message);
+                document.getElementById("remote").textContent =
+                    "no network: " + e.message;
             }
         }
         boot();
 
-        document.getElementById("status").setText(
-            "registry hits never touch the network; misses block the frame until they answer");
+        document.getElementById("status").textContent =
+            "registry hits never touch the network; misses block the frame until they answer";
 
     </script>
 </body>

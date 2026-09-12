@@ -74,37 +74,6 @@ void dom_bindings::install_operations(context & cx) {
     install_node_methods(cx);
     install_attribute_methods(cx);
     install_control_methods(cx);
-
-    // --- the engine's own helpers, from before the DOM surface existed --------
-    //
-    // Not on any interface; examples/pages/widgets.html and a handful of unit
-    // tests still write them. On Element, where they have always been reachable.
-    define_operation(cx, {"Element"}, "setText", 1, [this](context & c, std::span<value> args) {
-        set_text(receiver(c), arg_string(c, args, 0));
-        return value::undefined();
-    });
-    define_operation(cx, {"Element"}, "getText", 0, [this](context & c, std::span<value>) {
-        const node_id id = receiver(c);
-        return id ? c.string(text_of(id)) : c.string(std::string{});
-    });
-    define_operation(cx, {"Element"}, "addClass", 1, [this](context & c, std::span<value> args) {
-        edit_classes(receiver(c), arg_string(c, args, 0), true);
-        return value::undefined();
-    });
-    define_operation(cx, {"Element"}, "removeClass", 1, [this](context & c, std::span<value> args) {
-        edit_classes(receiver(c), arg_string(c, args, 0), false);
-        return value::undefined();
-    });
-    define_operation(cx, {"Element"}, "hasClass", 1, [this](context & c, std::span<value> args) {
-        const node_id id = receiver(c);
-        if (!id) { return value::boolean(false); }
-        const auto txn = doc_->read();
-        const std::string want = arg_string(c, args, 0);
-        for (const std::string_view cls : split(txn.attribute_value(id, atoms_->intern("class")))) {
-            if (cls == want) { return value::boolean(true); }
-        }
-        return value::boolean(false);
-    });
 }
 
 } // namespace ctbrowser::shell

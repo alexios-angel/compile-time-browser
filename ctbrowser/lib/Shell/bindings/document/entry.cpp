@@ -262,23 +262,6 @@ void dom_bindings::set_text(node_id id, std::string text) {
     mutated();
 }
 
-void dom_bindings::edit_classes(node_id id, const std::string & name, bool add) {
-    if (!id || name.empty()) { return; }
-    const auto txn = doc_->read();
-    std::vector<std::string> classes;
-    for (const std::string_view cls : split(txn.attribute_value(id, atoms_->intern("class")))) {
-        if (cls != name) { classes.emplace_back(cls); }
-    }
-    if (add) { classes.push_back(name); }
-    std::string joined;
-    for (const std::string & cls : classes) {
-        if (!joined.empty()) { joined += ' '; }
-        joined += cls;
-    }
-    (void)doc_->set_attribute(id, atoms_->intern("class"), joined);
-    mutated();
-}
-
 std::vector<std::string_view> dom_bindings::split(std::string_view text) {
     std::vector<std::string_view> out;
     std::size_t at = 0;
