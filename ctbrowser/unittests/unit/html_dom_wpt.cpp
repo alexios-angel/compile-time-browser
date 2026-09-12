@@ -133,7 +133,8 @@ void test_an_anchor_reports_the_parts_of_its_url() {
 
 void test_a_located_document_resolves_its_url_attributes() {
     // The bulk of reflection-*.html's URL rows: with a location set before
-    // the load, `img.src` and `a.href` resolve against it and read the same,
+    // the load, `img.src` and `a.href` resolve against it (the URL standard
+    // trims the spaces) and read the same,
     // and the document's three names for its address all say it.
     browser page{browser_options{400, 300}};
     page.set_location("file:///srv/pages/index.html#top");
@@ -143,8 +144,8 @@ void test_a_located_document_resolves_its_url_attributes() {
                    " document.getElementById('a').href].join('|'));</script>");
     CHECK_EQ(page.bindings().console_output().back(),
              "file:///srv/pages/index.html#top|file:///srv/pages/index.html#top|"
-             "file:///srv/pages/index.html#top|#top|file:///srv/pages/%20cat.png|"
-             "file:///srv/pages/%20cat.png");
+             "file:///srv/pages/index.html#top|#top|file:///srv/pages/cat.png|"
+             "file:///srv/pages/cat.png");
 }
 
 // --- the translate attribute --------------------------------------------------

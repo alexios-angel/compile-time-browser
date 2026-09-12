@@ -49,12 +49,22 @@ namespace {
 // page already encoded would be encoded again and `%20` would become `%2520`.
 // The cost is that a literal `%` not starting an escape survives as-is, which is
 // the same bet every browser makes.
+//
+// AND BEFORE THAT, THE URL STANDARD'S OWN TRIM (basic URL parser, steps 1-3):
+// leading and trailing C0 controls and spaces are removed, and every tab and
+// newline anywhere is - so `<a href=" page.html ">` and a URL a page assembled
+// across lines both parse as the page meant them to.
 [[nodiscard]] std::string pre_encode(std::string_view raw) {
     static constexpr char hex[] = "0123456789ABCDEF";
+    while (!raw.empty() && static_cast<unsigned char>(raw.front()) <= 0x20) {
+        raw.remove_prefix(1);
+    }
+    while (!raw.empty() && static_cast<unsigned char>(raw.back()) <= 0x20) { raw.remove_suffix(1); }
     std::string out;
     out.reserve(raw.size());
     for (const char each : raw) {
         const auto c = static_cast<unsigned char>(each);
+        if (c == '\t' || c == '\n' || c == '\r') { continue; }
         // Printable ASCII minus the characters RFC 3986 excludes from a URI.
         const bool allowed = c > 0x20 && c < 0x7F && c != '"' && c != '<' && c != '>' &&
                              c != '\\' && c != '^' && c != '`' && c != '{' && c != '|' && c != '}';
