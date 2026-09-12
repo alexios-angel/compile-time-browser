@@ -832,8 +832,10 @@ bool primitiveNonBigIntOrigin(mlir::Value origin,
         return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
                          ctjs::StringAttr>(constant.getValue());
     }
+    // Only an admitted dense-array length read has its own GetProperty origin;
+    // element/own-field reads forward their payload's original origin instead.
     return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryOp,
-                                 ctjs::BinaryStaticOp>(definition);
+                                 ctjs::BinaryStaticOp, ctjs::GetPropertyOp>(definition);
 }
 
 bool nonBigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
@@ -1451,6 +1453,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     continue;
                 }
                 const mlir::Value key = origin(op.getOperand(1));
+                if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
+                    const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
+                    if (name && name.getValue() == "length") {
+                        // lookup_property returns js_length as Number before any
+                        // prototype lookup. This exact tracked array admits no
+                        // sparse writes/deletion/accessors. Preserve an independent
+                        // origin, never an element alias or a concrete index/value.
+                        state.origins[op.getResult(0)] = op.getResult(0);
+                        continue;
+                    }
+                }
                 const auto index = key ? ownArrayIndex(key) : std::nullopt;
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or

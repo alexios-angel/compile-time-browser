@@ -129,6 +129,48 @@
   endif()
   message(STATUS "decimal BigInt indices: twelve literal sites, five confined, seven retained; saved identity and live claims agree")
 
+  # A length read returns an independent Number, never the child in slot zero.
+  # Computed indices and writes to length retain their conservative claims.
+  set(_expected_dense_length_rows
+      "denseLengthReleased obj 1 1 0 0 0 - confined"
+      "denseLengthReleased arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthReleased arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "denseLengthSaved obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "denseLengthSaved arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthSaved arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "denseLengthLoaded obj 1 1 0 0 0 - confined"
+      "denseLengthLoaded arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthLoaded arr 1 1 0 0 0 - escapes:passed"
+      "denseLengthLoaded arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "denseLengthEmpty obj 1 1 0 0 0 - confined"
+      "denseLengthEmpty arr 1 1 0 0 0 - escapes:passed"
+      "denseLengthEmpty arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthEmpty arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "denseLengthIndexed obj 1 1 0 0 0 - escapes:stored"
+      "denseLengthIndexed arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthIndexed arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "denseLengthChanged obj 1 1 0 0 0 - escapes:stored"
+      "denseLengthChanged arr 1 0 1 0 0 temporaries:1 escapes:passed"
+      "denseLengthChanged arr 1 0 1 0 0 temporaries:1 escapes:returned")
+  set(_expected_dense_length_literal_pcs
+      "denseLengthReleased obj 3" "denseLengthReleased arr 5" "denseLengthReleased arr 16"
+      "denseLengthSaved obj 4" "denseLengthSaved arr 6" "denseLengthSaved arr 21"
+      "denseLengthLoaded obj 5" "denseLengthLoaded arr 7"
+      "denseLengthLoaded arr 11" "denseLengthLoaded arr 31"
+      "denseLengthEmpty obj 4" "denseLengthEmpty arr 6"
+      "denseLengthEmpty arr 8" "denseLengthEmpty arr 19"
+      "denseLengthIndexed obj 3" "denseLengthIndexed arr 5" "denseLengthIndexed arr 18"
+      "denseLengthChanged obj 3" "denseLengthChanged arr 5" "denseLengthChanged arr 15")
+  list(SORT _dense_length_rows)
+  list(SORT _expected_dense_length_rows)
+  list(SORT _dense_length_literal_pcs)
+  list(SORT _expected_dense_length_literal_pcs)
+  if(NOT _dense_length_rows STREQUAL _expected_dense_length_rows OR
+      NOT _dense_length_literal_pcs STREQUAL _expected_dense_length_literal_pcs)
+    message(FATAL_ERROR "dense length evidence mismatch:\nexpected: ${_expected_dense_length_rows}\nobserved: ${_dense_length_rows}\nliteral PCs: ${_dense_length_literal_pcs}")
+  endif()
+  message(STATUS "dense array length: twenty literal sites, seven confined, thirteen retained; saved length and child claims agree")
+
   # The returned object loses its child, but a saved read retains that child.
   # The compiler now refuses the preceding ordinary-object writes, including
   # the deleted self-cycle's earlier receiver exposure.

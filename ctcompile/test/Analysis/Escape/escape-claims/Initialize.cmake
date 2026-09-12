@@ -11,6 +11,8 @@
   set(_canonical_string_literal_pcs "")
   set(_decimal_bigint_rows "")
   set(_decimal_bigint_literal_pcs "")
+  set(_dense_length_rows "")
+  set(_dense_length_literal_pcs "")
   set(_object_deletion_rows "")
   set(_object_copy_rows "")
   set(_object_copy_path_rows "")
