@@ -12,7 +12,7 @@
 // ONE SOURCE, TWO EXECUTABLES. This file is compiled twice: once alone, and
 // once with the generated bodies and the generated entry table linked in and
 // `CTCOMPILE_LAUNCHER_AOT` defined. The two are then run and their stdout is
-// compared byte for byte by `check-launcher.cmake`. That comparison is the
+// compared byte for byte by `check-application.cmake`. That comparison is the
 // correctness half.
 //
 // AND IT IS ONLY HALF, WHICH IS THE WHOLE DIFFICULTY OF THIS TEST. An
@@ -127,7 +127,7 @@ int main() {
 
     // AND IT HAS TO HAVE RUN. An application whose top level threw before
     // building anything leaves `OUT` an empty string, both arms print nothing,
-    // and the byte comparison in check-launcher.cmake passes on two empty
+    // and the byte comparison in check-application.cmake passes on two empty
     // files. That is the vacuous pass this project keeps finding.
     if (transcript.empty()) {
         std::fprintf(stderr, "launcher: the application produced no transcript\n");

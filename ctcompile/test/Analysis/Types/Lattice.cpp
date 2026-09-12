@@ -575,7 +575,7 @@ int main() {
     // BYTES and the engine's answer for `.length`, and the assertions are
     // between those two and `kDefaultStringEncoding`. A number in this block
     // would be a constant that could go stale silently, which is the failure
-    // GCRoots.cpp records at the other end of the pipeline.
+    // GC/Roots.cpp records at the other end of the pipeline.
     {
         const std::string fixture = "var S = \"\\uD83D\\uDE00\";\n"
                                     "var L = S.length;\n";

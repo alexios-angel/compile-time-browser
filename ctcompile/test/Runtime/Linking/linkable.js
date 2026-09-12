@@ -8,7 +8,7 @@
 // them linked it.
 //
 // So this file exists to be LINKED. It is deliberately not a test of what the
-// generated code computes - GCRoots.cpp does that - only of whether the symbols
+// generated code computes - GC/Roots.cpp does that - only of whether the symbols
 // it names exist. Anything the backend learns to lower belongs here on the same
 // day, or the next unimplemented helper is found by whoever ships first.
 function everything(a, b) {

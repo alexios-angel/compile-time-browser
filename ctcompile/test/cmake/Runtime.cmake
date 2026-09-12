@@ -10,14 +10,14 @@
 # own compiled bodies at startup with no hand-written table anywhere - and
 # printing the same bytes as the same application interpreted.
 #
-# TWO EXECUTABLES FROM ONE DRIVER. LauncherApp.cpp is compiled twice: once
+# TWO EXECUTABLES FROM ONE DRIVER. Application.cpp is compiled twice: once
 # alone, once with the generated bodies and the generated entry table. That is
 # what makes the comparison mean something - the arms differ in exactly the two
 # generated objects and a preprocessor symbol.
 #
 # THE COUNTERS ARE THE ASSERTION, not the transcripts. Both arms run the same
 # program, so an application that silently interpreted everything prints
-# identical bytes and exits 0. check-launcher.cmake asserts instead that the
+# identical bytes and exits 0. check-application.cmake asserts instead that the
 # compiled arm never crossed C++ -> VM, VM -> AOT or AOT -> VM: the interpreter
 # did not run at all.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
@@ -263,7 +263,7 @@ endif()
 # associativity sweep alone is 9261 triples, and the divergence pin has to
 # COMPILE AND RUN JavaScript in the real interpreter to find out what
 # `"\u{1F600}".length` answers, because writing the number down here is exactly
-# the stale-constant failure GCRoots.cpp records at the other end of the tree.
+# the stale-constant failure GC/Roots.cpp records at the other end of the tree.
 #
 # IT LINKS BOTH SIDES, and it is the only test that does: CTNativeDialect for
 # the lattice, ctbrowser::script for the interpreter that judges it. That is the
