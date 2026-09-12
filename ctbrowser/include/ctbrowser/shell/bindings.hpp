@@ -1982,6 +1982,12 @@ private:
     // prototype, and the document's `createRange`.
     void install_range(context & cx);
     [[nodiscard]] value create_range(context & cx);
+    // WRAPPERS THAT LEFT WITH THEIR NODE. `node_from` adopts by cloning into
+    // the other document's slab and rebinding the page's wrapper to the copy;
+    // the node here keeps its slot, and anything that finds it again by id -
+    // `template.content` after the contents were adopted - must answer the
+    // same object. Marked as roots; see wrap().
+    flat_map<std::uint64_t, script::object_object *> adopted_away_;
     // `compareDocumentPosition` against a node or Document of ANOTHER document
     // in the realm: DISCONNECTED and IMPLEMENTATION_SPECIFIC, with the
     // direction the specification only asks to be consistent taken from the

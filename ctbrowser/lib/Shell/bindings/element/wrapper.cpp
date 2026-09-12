@@ -22,6 +22,11 @@ value dom_bindings::wrap(context & cx, node_id id) {
         refresh_element(cx, *it->second, id);
         return value::object(it->second);
     }
+    // A node whose wrapper was adopted into another document IS that object
+    // still - the other document refreshes it. See adopted_away_.
+    if (const auto it = adopted_away_.find(pack(id)); it != adopted_away_.end()) {
+        return value::object(it->second);
+    }
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));

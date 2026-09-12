@@ -88,6 +88,9 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
+    for (const auto & [packed, obj] : adopted_away_) {
+        if (obj != nullptr) { mark(value::object(obj)); }
+    }
     for (const auto & [packed, held] : attr_objects_) {
         for (const auto & [key, obj] : held) {
             if (obj != nullptr) { mark(value::object(obj)); }

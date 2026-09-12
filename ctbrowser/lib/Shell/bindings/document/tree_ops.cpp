@@ -150,6 +150,7 @@ node_id dom_bindings::node_from(context & cx, value v) {
             if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
                 owner->wrappers_.erase(it);
+                owner->adopted_away_[pack(old)] = obj;
                 obj->set(std::string{handle_property},
                          value::number(static_cast<double>(pack(fresh))));
                 wrappers_.emplace(pack(fresh), obj);
