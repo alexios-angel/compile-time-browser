@@ -5,6 +5,8 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace ctcompile::ctnative {
@@ -12,33 +14,27 @@ namespace ctcompile::ctnative {
 // These are possible value flows, not runtime aliases. Distinct invocations
 // of one factory share a target/schema but keep separate environments.
 struct closedValueFlow {
-    llvm::DenseMap<mlir::Value, mlir::Value> parent;
-    llvm::SmallVector<mlir::Value> nodes;
+    llvm::EquivalenceClasses<mlir::Value> classes;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::ReturnOp>> returns;
 
-    void add(mlir::Value value) {
-        if (parent.try_emplace(value, value).second) { nodes.push_back(value); }
+    void add(mlir::Value value) { classes.insert(value); }
+    // The family's leader, or null for a value never added. Consumers report
+    // the first failing member in insertion order, which nodes() preserves.
+    mlir::Value find(mlir::Value value) const {
+        const auto leader = classes.findLeader(value);
+        return leader == classes.member_end() ? mlir::Value{} : *leader;
     }
-    mlir::Value find(mlir::Value value) {
-        auto root = parent.lookup(value);
-        if (!root) { return {}; }
-        while (parent.lookup(root) != root) { root = parent.lookup(root); }
-        while (value != root) {
-            auto next = parent.lookup(value);
-            parent[value] = root;
-            value = next;
-        }
-        return root;
-    }
-    void join(mlir::Value a, mlir::Value b) {
-        add(a);
-        add(b);
-        parent[find(b)] = find(a);
+    void join(mlir::Value a, mlir::Value b) { classes.unionSets(a, b); }
+    auto nodes() const {
+        return llvm::map_range(classes, [](const auto * node) { return node->getData(); });
     }
     static bool closed(ctjs::FuncOp fn) {
         return fn && !fn.getBody().empty() &&
                mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
+    }
+    static bool exactCall(ctjs::CallDirectOp call, ctjs::FuncOp fn) {
+        return closed(fn) && call->getNumOperands() == fn.getBody().front().getNumArguments();
     }
     // Only the returned-table census requests these structural storage edges.
     // Other flow consumers must not acquire new escape permissions implicitly.

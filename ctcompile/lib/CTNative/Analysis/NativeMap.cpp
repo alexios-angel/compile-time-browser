@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 
+#include "ClosedValueFlow.h"
 #include "NativeMap/Presence.h"
 #include "NativeMap/SnapshotCopies.h"
 #include "OwnedGlobalRoots.h"
@@ -58,117 +59,75 @@ struct plan {
     llvm::SmallVector<ctjs::CallOp> calls;
 };
 
-// This graph unifies C++ SCHEMAS, never runtime identities. Two fresh Maps
+// The value flow unifies C++ SCHEMAS, never runtime identities. Two fresh Maps
 // passed to the same parameter need one key/value carrier but remain distinct
 // owning allocations. Every producer in a family must be checked below: a
 // union containing one Map does not prove that another incoming value is one.
-struct flowGraph {
-    llvm::DenseMap<mlir::Value, mlir::Value> parent;
-    llvm::SmallVector<mlir::Value> nodes;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::ReturnOp>> returns;
+bool unify(closedValueFlow & flow, mlir::Value left, mlir::Value right) {
+    flow.add(left);
+    flow.add(right);
+    if (flow.find(left) == flow.find(right)) { return false; }
+    flow.join(left, right);
+    return true;
+}
 
-    void add(mlir::Value value) {
-        if (parent.try_emplace(value, value).second) { nodes.push_back(value); }
-    }
-    mlir::Value find(mlir::Value value) {
-        mlir::Value root = parent.lookup(value);
-        if (!root) { return {}; }
-        while (parent.lookup(root) != root) { root = parent.lookup(root); }
-        while (value != root) {
-            mlir::Value next = parent.lookup(value);
-            parent[value] = root;
-            value = next;
+// The Map-specific edges around closedValueFlow::build: an environment read
+// is its captured slot, and `.set` returns its receiver.
+void connectEnvironmentReads(closedValueFlow & flow, mlir::ModuleOp module) {
+    llvm::StringMap<ctjs::CreateClosureOp> environments;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
+    });
+    module.walk([&](ctjs::LoadUpvalueOp read) {
+        if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
+        auto made = environments.lookup(environmentTarget(read));
+        if (made && read.getIndex() >= 0 &&
+            static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
+            flow.join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
         }
-        return root;
-    }
-    void join(mlir::Value left, mlir::Value right) {
-        add(left);
-        add(right);
-        parent[find(right)] = find(left);
-    }
-    bool unify(mlir::Value left, mlir::Value right) {
-        add(left);
-        add(right);
-        if (find(left) == find(right)) { return false; }
-        join(left, right);
-        return true;
-    }
-    static bool closed(ctjs::FuncOp fn) {
-        return fn && !fn.getBody().empty() &&
-               mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
-    }
-    static bool exactCall(ctjs::CallDirectOp call, ctjs::FuncOp fn) {
-        return fn && !fn.getBody().empty() &&
-               call->getNumOperands() == fn.getBody().front().getNumArguments();
-    }
-    void build(mlir::ModuleOp module) {
-        llvm::StringMap<ctjs::CreateClosureOp> environments;
-        module.walk([&](ctjs::CreateClosureOp made) {
-            if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
-        });
-        module.walk([&](ctjs::LoadUpvalueOp read) {
-            if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
-            auto made = environments.lookup(environmentTarget(read));
-            if (made && read.getIndex() >= 0 &&
-                static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
-                join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
-            }
-        });
-        module.walk([&](ctjs::FuncOp fn) {
-            fn.getBody().walk([&](ctjs::ReturnOp ret) { returns[fn].push_back(ret); });
-            auto & exits = returns[fn];
-            for (ctjs::ReturnOp ret : exits) { join(exits.front().getValue(), ret.getValue()); }
-        });
-        module.walk([&](ctjs::CallDirectOp call) {
-            auto fn = call.getTarget();
-            if (!fn || fn.getBody().empty()) { return; }
-            callers[fn].push_back(call);
-            mlir::Block & entry = fn.getBody().front();
-            for (unsigned i = 3; i < call->getNumOperands() && i < entry.getNumArguments(); ++i) {
-                join(call->getOperand(i), entry.getArgument(i));
-            }
-            for (ctjs::ReturnOp ret : returns[fn]) { join(call.getResult(), ret.getValue()); }
-        });
+    });
+}
+
+void connectSetReceivers(closedValueFlow & flow, mlir::ModuleOp module) {
+    module.walk([&](ctjs::CallOp call) {
+        auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        if (get && ctjs::constantKey(get.getKey()) == "set") {
+            flow.join(call.getReceiver(), call.getResult());
+        }
+    });
+}
+
+// A container's stored values and its get results share one schema.
+// Discover recursively: a get result may itself become a Map receiver.
+// Primitive families remain outside the Map plans; a mixed Map/scalar
+// family reaches collect(), whose producer check refuses it.
+void connectPayloads(closedValueFlow & flow, mlir::ModuleOp module,
+                     llvm::ArrayRef<ctjs::ConstructOp> sites) {
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        llvm::DenseSet<mlir::Value> maps;
+        for (ctjs::ConstructOp made : sites) { maps.insert(flow.find(made.getResult())); }
+        llvm::DenseMap<mlir::Value, mlir::Value> payload;
         module.walk([&](ctjs::CallOp call) {
+            const auto receiver = flow.find(call.getReceiver());
+            if (!maps.contains(receiver)) { return; }
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (get && ctjs::constantKey(get.getKey()) == "set") {
-                join(call.getReceiver(), call.getResult());
+            if (!get || get.getObject() != call.getReceiver()) { return; }
+            const auto key = ctjs::constantKey(get.getKey());
+            mlir::Value value;
+            if (key == "set" && call.getArgs().size() == 2) {
+                value = call.getArgs()[1];
+            } else if (key == "get" && call.getArgs().size() == 1) {
+                value = call.getResult();
+            } else {
+                return;
             }
+            auto [at, fresh] = payload.try_emplace(receiver, value);
+            if (!fresh) { changed |= unify(flow, at->second, value); }
         });
     }
-
-    // A container's stored values and its get results share one schema.
-    // Discover recursively: a get result may itself become a Map receiver.
-    // Primitive families remain outside the Map plans; a mixed Map/scalar
-    // family reaches collect(), whose producer check refuses it.
-    void connectPayloads(mlir::ModuleOp module, llvm::ArrayRef<ctjs::ConstructOp> sites) {
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            llvm::DenseSet<mlir::Value> maps;
-            for (ctjs::ConstructOp made : sites) { maps.insert(find(made.getResult())); }
-            llvm::DenseMap<mlir::Value, mlir::Value> payload;
-            module.walk([&](ctjs::CallOp call) {
-                const auto receiver = find(call.getReceiver());
-                if (!maps.contains(receiver)) { return; }
-                auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (!get || get.getObject() != call.getReceiver()) { return; }
-                const auto key = ctjs::constantKey(get.getKey());
-                mlir::Value value;
-                if (key == "set" && call.getArgs().size() == 2) {
-                    value = call.getArgs()[1];
-                } else if (key == "get" && call.getArgs().size() == 1) {
-                    value = call.getResult();
-                } else {
-                    return;
-                }
-                auto [at, fresh] = payload.try_emplace(receiver, value);
-                if (!fresh) { changed |= unify(at->second, value); }
-            });
-        }
-    }
-};
+}
 
 bool erasedCapture(mlir::OpOperand & use) {
     auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
@@ -184,7 +143,7 @@ bool erasedCapture(mlir::OpOperand & use) {
 // A method value may only be called on the exact instance from which it was
 // loaded. Detached methods, .call/.apply, property writes, escaping instances
 // and real loop-carried aliases need additional proofs and are refused.
-std::string collect(plan & out, flowGraph & graph,
+std::string collect(plan & out, closedValueFlow & graph,
                     const llvm::DenseSet<mlir::Operation *> & sites) {
     for (ctjs::ConstructOp made : out.made) {
         if (!made.getArgs().empty()) { return "native Map requires an empty constructor"; }
@@ -195,18 +154,18 @@ std::string collect(plan & out, flowGraph & graph,
     for (mlir::Value object : out.members) {
         if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(object)) {
             auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-            if (!flowGraph::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
+            if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
                 arg.getArgNumber() < 3 || graph.callers[fn].empty()) {
                 return "native Map parameter requires a closed function with visible callers";
             }
             for (ctjs::CallDirectOp call : graph.callers[fn]) {
-                if (!flowGraph::exactCall(call, fn)) {
+                if (!closedValueFlow::exactCall(call, fn)) {
                     return "native Map call requires matching argument and parameter counts";
                 }
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallDirectOp>()) {
             auto fn = call.getTarget();
-            if (!flowGraph::closed(fn) || !flowGraph::exactCall(call, fn) ||
+            if (!closedValueFlow::closed(fn) || !closedValueFlow::exactCall(call, fn) ||
                 graph.returns[fn].empty()) {
                 return "native Map result requires a closed function with visible returns";
             }
@@ -233,16 +192,16 @@ std::string collect(plan & out, flowGraph & graph,
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
                 auto fn = call.getTarget();
-                if (!flowGraph::closed(fn)) {
+                if (!closedValueFlow::closed(fn)) {
                     return "native Map argument requires a closed callee";
                 }
-                if (!flowGraph::exactCall(call, fn)) {
+                if (!closedValueFlow::exactCall(call, fn)) {
                     return "native Map call requires matching argument and parameter counts";
                 }
                 continue;
             }
             if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(use.getOwner())) {
-                if (!flowGraph::closed(ret->getParentOfType<ctjs::FuncOp>())) {
+                if (!closedValueFlow::closed(ret->getParentOfType<ctjs::FuncOp>())) {
                     return "native Map return requires a closed function";
                 }
                 continue;
@@ -294,8 +253,8 @@ std::string collect(plan & out, flowGraph & graph,
     return {};
 }
 
-std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flowGraph & graph,
-                          llvm::DenseMap<mlir::Value, unsigned> & families,
+std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
+                          closedValueFlow & graph, llvm::DenseMap<mlir::Value, unsigned> & families,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           const OwnedGlobalRoots * globals) {
     llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
@@ -473,10 +432,12 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
             if (sites.insert(made).second) { madeSites.push_back(made); }
         }
     }
-    flowGraph graph;
+    closedValueFlow graph;
     for (ctjs::ConstructOp made : madeSites) { graph.add(made.getResult()); }
+    connectEnvironmentReads(graph, module);
     graph.build(module);
-    graph.connectPayloads(module, madeSites);
+    connectSetReceivers(graph, module);
+    connectPayloads(graph, module, madeSites);
     llvm::SmallVector<plan, 4> plans;
     llvm::DenseMap<mlir::Value, unsigned> families;
     for (ctjs::ConstructOp made : madeSites) {
@@ -485,7 +446,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         if (inserted.second) { plans.emplace_back(); }
         plans[inserted.first->second].made.push_back(made);
     }
-    for (mlir::Value member : graph.nodes) {
+    for (mlir::Value member : graph.nodes()) {
         const auto found = families.find(graph.find(member));
         if (found != families.end()) { plans[found->second].members.push_back(member); }
     }

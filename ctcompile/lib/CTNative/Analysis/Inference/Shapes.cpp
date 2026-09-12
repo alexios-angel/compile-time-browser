@@ -8,6 +8,8 @@
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -70,31 +72,9 @@ bool TypeInference::namesACarriedCell(mlir::Value v) {
 // on to a closure two levels in reaches the third function through the second.
 llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::groupCells(
     mlir::Operation * top) {
-    llvm::DenseMap<mlir::Value, mlir::Value> parent;
-    const auto find = [&parent](mlir::Value v) {
-        mlir::Value root = v;
-        for (auto next = parent.find(root); next != parent.end() && next->second != root;
-             next = parent.find(root)) {
-            root = next->second;
-        }
-        for (mlir::Value at = v; at != root;) {
-            const mlir::Value next = parent.lookup(at);
-            parent[at] = root;
-            at = next;
-        }
-        return root;
-    };
-    const auto join = [&](mlir::Value a, mlir::Value b) {
-        parent.try_emplace(a, a);
-        parent.try_emplace(b, b);
-        const mlir::Value ra = find(a);
-        const mlir::Value rb = find(b);
-        if (ra != rb) { parent[rb] = ra; }
-    };
+    llvm::EquivalenceClasses<mlir::Value> classes;
     top->walk([&](ctjs::CreateCellOp cell) {
-        if (cell->hasAttr("ctnative.carried")) {
-            parent.try_emplace(cell.getResult(), cell.getResult());
-        }
+        if (cell->hasAttr("ctnative.carried")) { classes.insert(cell.getResult()); }
     });
     top->walk([&](ctjs::CallDirectOp call) {
         auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
@@ -105,15 +85,13 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
         for (int32_t index : listed.asArrayRef()) {
             const auto at = static_cast<unsigned>(index);
             if (at >= call->getNumOperands() || at >= entry.getNumArguments()) { continue; }
-            join(call->getOperand(at), entry.getArgument(at));
+            classes.unionSets(call->getOperand(at), entry.getArgument(at));
         }
     });
-    llvm::SmallVector<mlir::Value> nodes;
-    for (const auto & entry : parent) { nodes.push_back(entry.first); }
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> byRoot;
-    for (mlir::Value node : nodes) { byRoot[find(node)].push_back(node); }
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> out;
-    for (const auto & [root, members] : byRoot) {
+    for (const auto * leader : classes) {
+        if (!leader->isLeader()) { continue; }
+        const auto members = llvm::to_vector<4>(classes.members(*leader));
         for (mlir::Value member : members) { out[member] = members; }
     }
     return out;
@@ -168,47 +146,23 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
     mlir::Operation * top) {
     // A union-find over the two kinds of node there are: a closed object
     // literal, and the `%arg0` of a function the lift marked. A node absent
-    // from `parent` is not in any group.
-    llvm::DenseMap<mlir::Value, mlir::Value> parent;
-    const auto find = [&parent](mlir::Value v) {
-        mlir::Value root = v;
-        for (auto next = parent.find(root); next != parent.end() && next->second != root;
-             next = parent.find(root)) {
-            root = next->second;
-        }
-        // Path compression: `a.m()` calling `this.n()` calling `this.o()` is a
-        // chain, and without this the walk is quadratic in its depth.
-        for (mlir::Value at = v; at != root;) {
-            const mlir::Value next = parent.lookup(at);
-            parent[at] = root;
-            at = next;
-        }
-        return root;
-    };
-    const auto join = [&](mlir::Value a, mlir::Value b) {
-        parent.try_emplace(a, a);
-        parent.try_emplace(b, b);
-        const mlir::Value ra = find(a);
-        const mlir::Value rb = find(b);
-        if (ra != rb) { parent[rb] = ra; }
-    };
+    // from `classes` is not in any group.
+    llvm::EquivalenceClasses<mlir::Value> classes;
 
     top->walk([&](ctjs::CreateObjectOp object) {
-        if (hasClosedShape(object.getResult())) {
-            parent.try_emplace(object.getResult(), object.getResult());
-        }
+        if (hasClosedShape(object.getResult())) { classes.insert(object.getResult()); }
     });
     top->walk([&](ctjs::FuncOp fn) {
         if (fn.getBody().empty()) { return; }
         mlir::Block & entry = fn.getBody().front();
         if (fn->hasAttr("ctnative.receiver")) {
             const mlir::Value self = entry.getArgument(0);
-            parent.try_emplace(self, self);
+            classes.insert(self);
         }
         if (auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args")) {
             for (int32_t index : listed.asArrayRef()) {
                 const mlir::Value parameter = entry.getArgument(static_cast<unsigned>(index));
-                parent.try_emplace(parameter, parameter);
+                classes.insert(parameter);
             }
         }
     });
@@ -218,29 +172,25 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         auto fn = call.getTarget();
         if (!fn || fn.getBody().empty()) { return; }
         mlir::Block & entry = fn.getBody().front();
-        if (call->hasAttr("ctnative.receiver")) { join(call.getReceiver(), entry.getArgument(0)); }
+        if (call->hasAttr("ctnative.receiver")) {
+            classes.unionSets(call.getReceiver(), entry.getArgument(0));
+        }
         // ONE GROUP PER PARAMETER, NOT ONE PER FUNCTION. `f(a, b)` taking two
         // objects joins a to %arg3 and b to %arg4; joining them to each other
         // would give both the union of two shapes and a class with fields
         // neither literal has.
         if (listed) {
             for (int32_t index : listed.asArrayRef()) {
-                join(call->getOperand(static_cast<unsigned>(index)),
-                     entry.getArgument(static_cast<unsigned>(index)));
+                classes.unionSets(call->getOperand(static_cast<unsigned>(index)),
+                                  entry.getArgument(static_cast<unsigned>(index)));
             }
         }
     });
 
-    // THE KEYS FIRST, because `find` compresses paths and so writes to
-    // `parent`: resolving while iterating it would be a mutation under an
-    // iterator, and the fact that DenseMap survives an assignment to a key it
-    // already holds is not a thing to rely on.
-    llvm::SmallVector<mlir::Value> nodes;
-    for (const auto & entry : parent) { nodes.push_back(entry.first); }
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> byRoot;
-    for (mlir::Value node : nodes) { byRoot[find(node)].push_back(node); }
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> out;
-    for (const auto & [root, members] : byRoot) {
+    for (const auto * leader : classes) {
+        if (!leader->isLeader()) { continue; }
+        const auto members = llvm::to_vector<2>(classes.members(*leader));
         for (mlir::Value member : members) { out[member] = members; }
     }
     return out;

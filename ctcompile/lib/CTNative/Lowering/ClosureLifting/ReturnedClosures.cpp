@@ -8,7 +8,7 @@ void closureLifter::returnedClosureCensus() {
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     llvm::DenseSet<mlir::Value> returnedFamilies;
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
-    for (mlir::Value value : flow.nodes) {
+    for (mlir::Value value : flow.nodes()) {
         const auto root = flow.find(value);
         families[root].push_back(value);
         for (mlir::Operation * user : value.getUsers()) {

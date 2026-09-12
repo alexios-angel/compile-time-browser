@@ -13,11 +13,6 @@
 namespace ctcompile::ctnative {
 namespace {
 
-bool exactCall(ctjs::CallDirectOp call, ctjs::FuncOp fn) {
-    return closedValueFlow::closed(fn) &&
-           call->getNumOperands() == fn.getBody().front().getNumArguments();
-}
-
 bool mapKeyUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if (!call || use.getOperandNumber() != 2) { return false; }
@@ -98,7 +93,7 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
             safe = liveMapCall(call);
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            safe = exactCall(call, call.getTarget());
+            safe = closedValueFlow::exactCall(call, call.getTarget());
         } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
             auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
             safe = made->hasAttr(kNativeMapSite) && made.getArgs().empty() &&
@@ -209,7 +204,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     module.walk([&](ctjs::CreateObjectOp made) { flow.add(made.getResult()); });
     object_detail::connectValues(flow, module);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
-    for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
+    for (mlir::Value value : flow.nodes()) { families[flow.find(value)].push_back(value); }
     // Property access elsewhere in the module must not enter an unknown
     // object/getter. Schema connectivity proves only possible producers here;
     // it never says that two allocations are the same runtime instance.
@@ -228,7 +223,9 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                 }
             } else if (auto call = member.getDefiningOp<ctjs::CallDirectOp>()) {
                 auto fn = call.getTarget();
-                if (!exactCall(call, fn) || flow.returns[fn].empty()) { return false; }
+                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
+                    return false;
+                }
             } else if (auto call = member.getDefiningOp<ctjs::CallOp>()) {
                 if (nativeMapAction(call) != "get" || !liveMapCall(call)) { return false; }
             } else if (!reads.contains(member.getDefiningOp()) &&
@@ -281,14 +278,14 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     reject("parameter requires a closed function with visible callers");
                 } else {
                     for (ctjs::CallDirectOp call : flow.callers[fn]) {
-                        if (!exactCall(call, fn)) {
+                        if (!closedValueFlow::exactCall(call, fn)) {
                             reject("parameter has a missing or surplus argument");
                         }
                     }
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
                 auto fn = call.getTarget();
-                if (!exactCall(call, fn) || flow.returns[fn].empty()) {
+                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
             } else if (reads.contains(value.getDefiningOp())) {
@@ -331,7 +328,8 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                    call && use.getOperandNumber() >= 3 && exactCall(call, call.getTarget())) {
+                    call && use.getOperandNumber() >= 3 &&
+                    closedValueFlow::exactCall(call, call.getTarget())) {
                     continue;
                 }
                 if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(use.getOwner());

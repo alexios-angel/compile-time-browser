@@ -40,7 +40,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
         return owner && owner->methodTable.has_value();
     };
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
-    for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
+    for (mlir::Value value : flow.nodes()) { families[flow.find(value)].push_back(value); }
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
     for (ctjs::CreateClosureOp made : closures) { ++creations[targetOf(made)]; }
     mlir::DominanceInfo dominance(module);
