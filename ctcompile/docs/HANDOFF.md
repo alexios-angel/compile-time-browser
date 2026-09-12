@@ -47,15 +47,42 @@ and proof rules are unchanged. Stable clang-format22 passes **800 files**;
 bundled23 retains the same **nine baseline files/28 diagnostics**. No browser,
 runtime, carrier or emitter source changed.
 
-**Full gate pending:** `/tmp/ctcompile-inner-full.log` is the standard 534-test
-run on **1367 frozen inputs**, currently identical to committed code. It follows
-`/tmp/ctcompile-inner-test-fix-focused.log`; resume that full gate first if
-interrupted. Fresh full Bootstrap/Data admission counts are not yet measured.
-The exact ordinary Data source **8359592c** still requires dynamic-key/nullable
-and mixed/field-bearing payload proofs, object returns and its recorder callback;
-component/DOM ownership follow. Do not generalize this single-entry invariant
-to Data's empty child publication and deletion. Next audit:
-`/tmp/ctcompile-inner-next.md`. Full native Bootstrap remains unfinished.
+**The standard gate passes 534/534 CTests in 972.71s**, including **162 browser
+tests** and **168/168 lit cases in 665.42s** (CTest wrapper **665.53s**). All
+**1367 selected code/test/parser input hashes** match locally and remotely; the
+snapshot was taken before the final code commits, which contain identical bytes.
+The fresh full Bootstrap result remains **19/574 native functions** in both
+modes. Exact Data remains **0/7 CommonJS, 0/7 browser, 0/8 AMD**. The escape
+fixture still measures **773 observed sites / 27 unclaimed**, zero violations,
+partial or pending cases, precision **9/142**. The final native cohort independently
+confirms **6 native / 22 refusals**, with cross-invocation **5/5** in both modes.
+Generated C++ keeps the original setter, guarded getter and scalar return arms,
+using the existing owning Maps and typed callables without Script symbols.
+
+**Next boundary:** preserve exact ordinary Data **8359592c** (seven functions,
+40 calls, 19 numeric observations). It publishes empty children, uses dynamic
+String keys, permits deletion, and returns nullable/mixed scalar or field-bearing
+object payloads. Its `if (!t.has(e)) return` also needs Host inversion/reaching
+continuation proof; NativeMap already handles the inverted predicate. Object
+returns/identity and its exact recorder callback (including `Array.from(s.keys())`
+and the template diagnostic) remain separate obligations. Component/DOM ownership
+follows through ctbrowser's public subsystem APIs. Do not generalize this single
+required-entry invariant to Data's empty child publication and deletion. The
+same-key repeated lookup now has independent presence/alias rows; a corresponding
+source-level native promotion still needs its own unchanged-source measurement.
+See `/tmp/ctcompile-inner-next.md`. Full native Bootstrap remains unfinished.
+
+This gate uses recorded parser **8eb3375**. Claude's **08:00:13 UTC** journal
+records unintegrated unresolved-global/soft-typeof ABI changes, inferred names
+and image version 5, iterator destructuring, eager generator prologues and yield
+delegation. Re-read that journal and synchronize the recorded submodule after
+integration before interpreting a new oracle disagreement.
+
+Evidence: `/tmp/ctcompile-inner-{corrected-focused.log,test-fix-focused.log,
+full.log,full-detail.log,full-summary.json,full-frozen.json,full-revision.json}`,
+`/tmp/ctcompile-inner-full-measured/summary.json` and
+`/tmp/ctcompile-inner-driver-node.json`. All code and handoffs are committed
+locally; nothing was pushed.
 
 ## Conditional child Maps and recovered UShr, 2026-09-12
 
