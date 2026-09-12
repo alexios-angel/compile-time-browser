@@ -577,7 +577,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             if (bad || parsed.selectors.empty()) { return value::undefined(); }
             rule->selector = representable(parsed.selectors)
                                  ? serialize_selector_list(parsed.selectors, *atoms_, namespaces)
-                                 : collapse_whitespace(text);
+                                 : collapse_whitespace(text, html_whitespace);
             style_sheets_changed();
             return value::undefined();
         });
@@ -740,7 +740,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                            !ascii_iequals(first, "and") && !ascii_iequals(first, "or");
         if (want_name) { return c.string(named ? std::string{first} : std::string{}); }
         const std::string_view whole = rule->prelude;
-        return c.string(collapse_whitespace(named ? whole.substr(at) : whole));
+        return c.string(collapse_whitespace(named ? whole.substr(at) : whole, html_whitespace));
     };
     getter(container_proto, "containerName",
            [container_part](context & c, std::span<value>) { return container_part(c, true); });
@@ -847,7 +847,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            rule->prelude = collapse_whitespace(arg_string(c, a, 0));
+            rule->prelude = collapse_whitespace(arg_string(c, a, 0), html_whitespace);
             style_sheets_changed();
             return value::undefined();
         });
@@ -907,14 +907,16 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         css_rule_record * rule = receiver_rule(c);
         // "Return the LAST rule that matches", which is why the search above
         // walks backwards: a keyframes rule may name the same key twice.
-        const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+        const std::size_t found =
+            keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
         if (rule == nullptr || found == no_index) { return value::null(); }
         return rule_object_for(c, rule->children[found]);
     });
     method(keyframes_proto, "deleteRule",
            [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
                css_rule_record * rule = receiver_rule(c);
-               const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+               const std::size_t found =
+                   keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
                if (rule == nullptr || found == no_index) { return value::undefined(); }
                detach_rule(css_rule_store_, rule->children[found]);
                rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
@@ -933,7 +935,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            rule->selector = collapse_whitespace(arg_string(c, a, 0));
+            rule->selector = collapse_whitespace(arg_string(c, a, 0), html_whitespace);
             style_sheets_changed();
             return value::undefined();
         });

@@ -1585,12 +1585,6 @@ private:
     // ninety neighbours, and running it twice would leave two of each and break
     // every `instanceof` taken across the two documents.
     void adopt_interfaces_of(const dom_bindings & primary);
-    // "Strip and collapse ASCII whitespace", Infra - leading and trailing
-    // removed, every interior run replaced by ONE space. It is applied by
-    // `document.title`'s GETTER and not by its setter, which is why
-    // `document.title = "two  spaces"` reads back as "two spaces" while the
-    // attribute node still holds what was written.
-    [[nodiscard]] static std::string strip_and_collapse(std::string_view text);
     // `document.title`, `document.images` and the seven collections beside it,
     // all as ACCESSORS - see the definition for why not one of them can be a
     // property refreshed on the tick.

@@ -356,21 +356,6 @@ namespace detail {
 // `(max-width: 23px) and (max-width: 45px)` is a query a page may have written
 // on purpose and de-duplicating it is an open CSSWG issue.
 
-[[nodiscard]] std::string collapse_whitespace(std::string_view text) {
-    std::string out;
-    bool space = false;
-    for (const char c : trim(text, html_whitespace)) {
-        if (html_whitespace.find(c) != std::string_view::npos) {
-            space = true;
-            continue;
-        }
-        if (space && !out.empty()) { out += ' '; }
-        space = false;
-        out += c;
-    }
-    return out;
-}
-
 // The top-level commas of a media query list. Top-level because a feature's
 // parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
 // `url()` in a `@supports` prelude does, and this splitter is used for both.
@@ -413,13 +398,13 @@ namespace {
     const std::string_view inside = part.substr(1, part.size() - 2);
     const std::size_t colon = inside.find(':');
     if (colon == std::string_view::npos) {
-        return "(" + ascii_lower_copy(collapse_whitespace(inside)) + ")";
+        return "(" + ascii_lower_copy(collapse_whitespace(inside, html_whitespace)) + ")";
     }
     // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
     // and `(Color)` and `(color)` are one feature; a value may be a string, a
     // `url()` or a number with a unit, none of which fold.
-    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon))) + ": " +
-           collapse_whitespace(inside.substr(colon + 1)) + ")";
+    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon), html_whitespace)) +
+           ": " + collapse_whitespace(inside.substr(colon + 1), html_whitespace) + ")";
 }
 
 } // namespace

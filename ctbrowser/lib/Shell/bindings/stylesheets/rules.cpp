@@ -251,7 +251,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         frame.type = keyframe_rule;
         for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
             if (!frame.selector.empty()) { frame.selector += ", "; }
-            frame.selector += collapse_whitespace(part);
+            frame.selector += collapse_whitespace(part, html_whitespace);
         }
         collect_into(frame, one.substr(brace + 1, shut - brace - 1));
         return css_rule_store_.size() - 1;
@@ -339,7 +339,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
                 if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
                 if (!extra.empty()) { extra += ' '; }
-                extra += collapse_whitespace(part);
+                extra += collapse_whitespace(part, html_whitespace);
                 after = probe;
             }
             if (!href.empty()) {
@@ -388,7 +388,8 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             // `@<feature-type> { <custom-ident>: <integer>+; ... }`. A block
             // whose name is not one of the seven, and an entry whose value is
             // not integers, are dropped as the parser drops them.
-            made.prelude = style::css::serialize_font_family(collapse_whitespace(made.prelude));
+            made.prelude = style::css::serialize_font_family(
+                collapse_whitespace(made.prelude, html_whitespace));
             static constexpr std::string_view feature_types[] = {
                 "stylistic", "historical-forms", "styleset",  "character-variant",
                 "swash",     "ornaments",        "annotation"};
@@ -506,7 +507,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // collapsed either way, so `span  div  ` is `span div` in both.
     made.selector = representable(selectors.selectors)
                         ? serialize_selector_list(selectors.selectors, *atoms_, namespaces)
-                        : collapse_whitespace(prelude);
+                        : collapse_whitespace(prelude, html_whitespace);
     collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;
 }

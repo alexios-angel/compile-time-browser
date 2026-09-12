@@ -124,7 +124,6 @@ inline constexpr std::uint32_t font_feature_values_rule = 14;
     std::span<const style::compiled_selector> list, const atom_table & atoms,
     std::span<const style::css::namespace_declaration> namespaces);
 [[nodiscard]] bool representable(std::span<const style::compiled_selector> list);
-[[nodiscard]] std::string collapse_whitespace(std::string_view text);
 [[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text);
 [[nodiscard]] std::string serialize_media_query_text(std::string_view text);
 [[nodiscard]] std::vector<std::string> parse_media_query_list(std::string_view text);

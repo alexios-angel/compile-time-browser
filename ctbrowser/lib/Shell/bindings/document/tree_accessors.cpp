@@ -192,11 +192,15 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // whose title is the empty string. `document.title-01.html` asserts exactly
     // that before it goes on to prove that a `<title>` appended to the BODY is
     // found.
+    // Strip-and-collapsed by the GETTER and not by the setter, which is why
+    // `document.title = "two  spaces"` reads back as "two spaces" while the
+    // text node still holds what was written (document.title-03.html).
     accessor(
         "title",
         [this](context & c, std::span<value>) {
             const node_id title = title_element();
-            return c.string(title ? strip_and_collapse(text_content(title)) : std::string{});
+            return c.string(title ? collapse_whitespace(text_content(title), html_whitespace)
+                                  : std::string{});
         },
         [this](context & c, std::span<value> a) {
             const std::string wanted = arg_string(c, a, 0);
