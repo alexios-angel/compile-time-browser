@@ -116,7 +116,25 @@ void test_the_things_that_must_survive() {
     ok("width", "min(10px, 5%)", "min(10px, 5%)");
     ok("width", "min(10px,5%)", "min(10px, 5%)");
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
-    ok("font-family", "\"Helvetica Neue\", sans-serif", "\"Helvetica Neue\", sans-serif");
+    // A FONT FAMILY LOSES ITS QUOTES when the name is an identifier sequence
+    // and keeps them, doubled, when it is not - CSSOM's serialize-a-string
+    // rule for `font-family` in particular, and the same answer the computed
+    // value gives (css/cssom's serialize-values and font-family-serialization-001).
+    ok("font-family", "\"Helvetica Neue\", sans-serif", "Helvetica Neue, sans-serif");
+    ok("font-family", "'Lucida Grande'", "Lucida Grande");
+    ok("font-family", "Arial", "Arial");
+    ok("font-family", "'34J', \"serif\", 'A  B'", "\"34J\", \"serif\", \"A  B\"");
+    // A NEGATIVE ZERO IS `0` ON ITS OWN AND `-0` INSIDE A MATH FUNCTION, where
+    // `1 / sign(-0)` still has to come out as -infinity (signed-zero).
+    ok("scale", "-0", "0");
+    ok("scale", "clamp(-1, 1 / sign(calc(-0)), 1)", "calc(-1)");
+    ok("scale", "clamp(-1, 1 / sign(min(-0, 0)), 1)", "calc(-1)");
+    ok("scale", "sign(-0)", "calc(0)");
+    // `decimal` IS THE DEFAULT COUNTER STYLE and CSSOM does not write it.
+    ok("content", "counter(par-num, decimal)", "counter(par-num)");
+    ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");
+    ok("content", "counter(par-num, upper-roman)", "counter(par-num, upper-roman)");
+    ok("content", "counter(par-num)", "counter(par-num)");
     // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
     // Values 5: what its arguments mean is decided after parsing, so a length
     // grammar has no business refusing one.

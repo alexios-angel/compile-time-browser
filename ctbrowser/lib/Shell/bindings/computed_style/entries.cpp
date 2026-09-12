@@ -674,8 +674,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         // 3c. THE FONT FAMILY LIST, whose case is the author's and whose quoting
         //     is CSSOM's. Answered before the keyword fold below, which would
-        //     lowercase it - see `font_family_text`.
-        if (property == "font-family") { return font_family_text(text); }
+        //     lowercase it.
+        if (property == "font-family") { return style::css::serialize_font_family(text); }
+        // 3d. A TRANSFORM LIST, multiplied out to the `matrix()` CSS Transforms
+        //     says its resolved value is - see `transform_matrix_text`.
+        if (property == "transform" && !ascii_iequals(trim(text, html_whitespace), "none")) {
+            return transform_matrix_text(trim(text, html_whitespace));
+        }
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
@@ -775,17 +780,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         return {};
     };
-    const auto sides = [&longhand](std::string_view t, std::string_view r, std::string_view b,
-                                   std::string_view l) -> std::string {
-        const std::string top = longhand(t);
-        const std::string right = longhand(r);
-        const std::string bottom = longhand(b);
-        const std::string left = longhand(l);
-        if (top.empty() || right.empty() || bottom.empty() || left.empty()) { return {}; }
-        if (left != right) { return top + " " + right + " " + bottom + " " + left; }
-        if (bottom != top) { return top + " " + right + " " + bottom; }
-        if (right != top) { return top + " " + right; }
-        return top;
+    const auto collapse = [](const std::array<std::string, 4> & c) -> std::string {
+        if (c[0].empty() || c[1].empty() || c[2].empty() || c[3].empty()) { return {}; }
+        if (c[3] != c[1]) { return c[0] + " " + c[1] + " " + c[2] + " " + c[3]; }
+        if (c[2] != c[0]) { return c[0] + " " + c[1] + " " + c[2]; }
+        if (c[1] != c[0]) { return c[0] + " " + c[1]; }
+        return c[0];
+    };
+    const auto sides = [&longhand, &collapse](std::string_view t, std::string_view r,
+                                              std::string_view b, std::string_view l) {
+        return collapse({longhand(t), longhand(r), longhand(b), longhand(l)});
     };
     // Two components of DIFFERENT properties rather than two sides, so the only
     // collapse is the whole-value one: `gap: normal` when both axes are normal.
@@ -817,8 +821,34 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         } else if (p.name == "border-radius") {
             // CORNERS, clockwise from the top left - not the top/right/bottom/left
             // of the edge shorthands, though the collapsing rule is the same one.
-            text = sides("border-top-left-radius", "border-top-right-radius",
-                         "border-bottom-right-radius", "border-bottom-left-radius");
+            // EACH CORNER IS A PAIR: a horizontal radius and a vertical one,
+            // written `h v` in the longhand and as `h h h h / v v v v` in the
+            // shorthand, the slash and its half omitted when the two lists agree
+            // (getComputedStyle-border-radius-001 and -003).
+            std::array<std::string, 4> h;
+            std::array<std::string, 4> v;
+            const std::array<std::string_view, 4> corners{
+                "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius",
+                "border-bottom-left-radius"};
+            for (std::size_t i = 0; i < 4; ++i) {
+                const std::string both = longhand(corners[i]);
+                // The split is at the one top-level space: a `calc(25% + 10px)`
+                // has spaces of its own and keeps them.
+                int depth = 0;
+                std::size_t split = std::string::npos;
+                for (std::size_t k = 0; k < both.size(); ++k) {
+                    if (both[k] == '(') { ++depth; }
+                    if (both[k] == ')') { --depth; }
+                    if (both[k] == ' ' && depth == 0) {
+                        split = k;
+                        break;
+                    }
+                }
+                h[i] = split == std::string::npos ? both : both.substr(0, split);
+                v[i] = split == std::string::npos ? both : both.substr(split + 1);
+            }
+            text = collapse(h);
+            if (!text.empty() && h != v) { text += " / " + collapse(v); }
         } else if (p.name == "gap") {
             text = both("row-gap", "column-gap");
         } else if (p.name == "overflow") {
