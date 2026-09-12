@@ -442,6 +442,23 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     return false;
 }
 
+// IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked one
+// (both slots null) is a TypeError - FALSE with the throw in flight.
+[[nodiscard]] inline bool is_array_value(context & cx, value v, bool & out) {
+    for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
+        auto * p = static_cast<proxy_object *>(v.as_heap());
+        if (p->handler.is_null()) {
+            cx.throw_error("TypeError",
+                           "Cannot perform 'IsArray' on a proxy that has been revoked");
+            out = false;
+            return false;
+        }
+        v = p->target;
+    }
+    out = v.is_array();
+    return true;
+}
+
 // IsCallable, 7.2.3, at the one place every iteration method checks it: an
 // absent or non-function callback is a TypeError BEFORE anything is read.
 [[nodiscard]] inline bool callable_arg(context & cx, value fn, const char * what) {

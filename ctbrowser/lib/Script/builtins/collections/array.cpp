@@ -40,20 +40,10 @@ void install_array(context & cx) {
     const auto static_method = [&](const char * name, double arity, native_fn fn) {
         method(cx, array_ctor, name, arity, std::move(fn));
     };
-    // IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked
-    // one (both slots null) is a TypeError.
     static_method("isArray", 1, [](context & c, std::span<value> a) {
-        value v = arg_at(a, 0);
-        for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
-            auto * p = static_cast<proxy_object *>(v.as_heap());
-            if (p->handler.is_null()) {
-                c.throw_error("TypeError",
-                              "Cannot perform 'IsArray' on a proxy that has been revoked");
-                return value::boolean(false);
-            }
-            v = p->target;
-        }
-        return value::boolean(v.is_array());
+        bool answer = false;
+        (void)detail::is_array_value(c, arg_at(a, 0), answer);
+        return value::boolean(answer);
     });
     // --- Array.of AND Array.from, 23.1.2.3 AND 23.1.2.1 ---------------------
     //
@@ -819,39 +809,73 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
-    // 23.1.3.1. Generic - and for `concat` that means something specific: the
-    // RECEIVER is spread only when IsArray says it is an array, so
-    // `Array.prototype.concat.call({length: 2, 0: \'a\'}, 4)` is `[obj, 4]` and
-    // not `[\'a\', undefined, 4]`. The old spelling read the receiver with
-    // this_array() and dropped a non-array one entirely.
-    //
-    // NOTHING EXOTIC, deliberately. There is no `Symbol.isConcatSpreadable`
-    // here and no ArraySpeciesCreate: the result is always an ordinary Array
-    // and only a real Array spreads. Honouring the symbol halfway - a truthy
-    // one but not a false one, say - would be worse than not having it, because
-    // a page that sets it would get an answer wrong in a NEW way rather than in
-    // the documented one.
+    // 23.1.3.1, THE WHOLE OF IT but ArraySpeciesCreate: the receiver and each
+    // argument is spread when IsConcatSpreadable says so - its own
+    // @@isConcatSpreadable if that is not undefined, else IsArray (through a
+    // Proxy, refusing a revoked one) - every element through HasProperty and
+    // [[Get]], a hole staying a hole, and `length` set last. The result is
+    // always an ordinary Array; there is no Symbol.species here.
     method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "concat")) { return out; }
         const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
+        double n = 0;
         // One element, or one spread. False means a throw is already in flight
         // and the caller must stop.
         const auto append = [&](value item) {
-            if (!item.is_array()) {
-                result->items.push_back(item);
+            bool spreadable = false;
+            if (item.is_object_like()) {
+                const value flag = c.lookup_property(item, "@@isConcatSpreadable");
+                if (c.throw_pending()) { return false; }
+                if (!flag.is_undefined()) {
+                    spreadable = context::truthy(flag);
+                } else if (!detail::is_array_value(c, item, spreadable)) {
+                    return false;
+                }
+            }
+            if (!spreadable) {
+                if (n >= max_safe_integer) {
+                    c.throw_error("TypeError", "Array.prototype.concat: length exceeds 2^53-1");
+                    return false;
+                }
+                if (!detail::put_element(c, out, n, item)) { return false; }
+                n += 1.0;
                 return true;
             }
-            if (array_object * dense = detail::dense_array_this(item)) {
+            if (array_object * dense = detail::dense_array_this(item);
+                dense != nullptr && detail::dense_array_this(out) != nullptr &&
+                n == static_cast<double>(result->items.size())) {
                 result->items.insert(result->items.end(), dense->items.begin(), dense->items.end());
+                n += static_cast<double>(dense->items.size());
                 return true;
             }
             const double len = detail::array_like_length(c, item);
+            if (c.throw_pending()) { return false; }
+            if (n + len > max_safe_integer) {
+                c.throw_error("TypeError", "Array.prototype.concat: length exceeds 2^53-1");
+                return false;
+            }
             if (!detail::generic_walk_ok(c, len)) { return false; }
-            for (double k = 0; k < len; k += 1.0) {
-                result->items.push_back(detail::element_at(c, item, k));
+            for (double k = 0; k < len; k += 1.0, n += 1.0) {
+                const bool present = detail::has_element(c, item, k);
+                if (c.throw_pending()) { return false; }
+                if (!present) {
+                    // A HOLE STAYS A HOLE: the slot exists in `items` as a
+                    // placeholder and element_attrs says it is not a property.
+                    const auto at = static_cast<std::size_t>(n);
+                    if (result->items.size() <= at) {
+                        result->items.resize(at + 1, value::undefined());
+                    }
+                    result->set_element_attrs(static_cast<std::uint32_t>(at),
+                                              array_object::elem_hole);
+                    continue;
+                }
+                const value element = detail::element_at(c, item, k);
+                if (c.throw_pending()) { return false; }
+                const context::rooted keep_element(c, element);
+                if (!detail::put_element(c, out, n, element)) { return false; }
             }
             return true;
         };
@@ -859,6 +883,7 @@ void install_array(context & cx) {
         for (const value & item : a) {
             if (!append(item)) { return out; }
         }
+        if (!detail::put_length(c, out, n)) { return out; }
         return out;
     });
     // 23.1.3.26, in place and generic. The swap is HasProperty-then-Get on BOTH

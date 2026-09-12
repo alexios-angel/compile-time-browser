@@ -338,14 +338,34 @@ int main() {
               "1");
 
     // --- concat (23.1.3.1): the RECEIVER spreads only if it IS an array ------
-    // There is no Symbol.isConcatSpreadable here, so `IsArray` is the whole
-    // test: an array-like receiver is ONE element of the result.
+    // ...or says it is: IsConcatSpreadable reads @@isConcatSpreadable first
+    // and IsArray (through a Proxy) otherwise, so an array-like receiver is
+    // ONE element of the result unless it carries the symbol.
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var r = Array.prototype.concat.call(o, 1, [2, 3]);"
               " return r.length + ':' + (r[0] === o) + ':' + r[1] + r[2] + r[3]; })()",
               "4:true:123");
     js_expect("[1].concat([2, 3], {length: 2, 0: 'x'}).length", "4");
     js_expect("[1].concat([2, 3]).join(',')", "1,2,3");
+    js_expect(
+        "(function () { var o = {length: 2, 0: 'x', 1: 'y'}; o[Symbol.isConcatSpreadable] = true;"
+        " return [1].concat(o).join(); })()",
+        "1,x,y");
+    js_expect("(function () { var a = [2, 3]; a[Symbol.isConcatSpreadable] = false;"
+              " var r = [1].concat(a); return r.length + ':' + (r[1] === a); })()",
+              "2:true");
+    js_expect("[1].concat(new Proxy([2, 3], {})).join()", "1,2,3");
+    js_expect("(function () { var h = Proxy.revocable([], {}); h.revoke();"
+              " try { [].concat(h.proxy); return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { var a = [1, 2, 3]; delete a[1]; var r = [0].concat(a);"
+              " return r.length + ':' + (2 in r) + ':' + r[3]; })()",
+              "4:false:3");
+    js_expect("[1].concat(Object('ab')).length", "2"); // a String wrapper is one element
+    js_expect("(function () { try { [].concat({length: 2 ** 53 - 1, [Symbol.isConcatSpreadable]: "
+              "true}, 1);"
+              " return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
 
     // --- reverse (23.1.3.26) ------------------------------------------------
     js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
