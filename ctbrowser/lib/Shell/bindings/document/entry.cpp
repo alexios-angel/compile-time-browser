@@ -290,9 +290,11 @@ void dom_bindings::mutated() {
 
 // HTML 4.12.1 "prepare the script element", for a script a page inserted:
 // connected, with a src or non-empty text, and not `already started` - which
-// is what leaving the list means. Run in list order, which is creation order;
-// a script that inserts another arrives back here from that insertion and
-// runs it nested, which is what puts the inner one's output first.
+// is what leaving the list means. THE BATCH IS TAKEN FIRST: every script the
+// mutation made ready leaves the list before any of them runs, so a script
+// that gives a later one its text arrives back here from that insertion and
+// finds only the later one - which runs nested, ahead of the rest of the
+// batch, and that is the order the post-connection steps have.
 // ponytail: creation order, not tree order - the corpus inserts in the order
 // it creates. Sort by tree position if a page ever depends on it.
 void dom_bindings::run_inserted_scripts() {
@@ -300,31 +302,41 @@ void dom_bindings::run_inserted_scripts() {
     context & cx = *cx_;
     const atom src_name = atoms_->intern("src");
     const atom type_name = atoms_->intern("type");
-    for (std::size_t i = 0; i < unstarted_scripts_.size();) {
-        const node_id id = unstarted_scripts_[i];
+    struct prepared {
+        node_id id;
         std::string source;
         std::string src;
         std::string type;
-        bool ready = false;
-        {
-            const auto txn = doc_->read();
+    };
+    std::vector<prepared> batch;
+    {
+        const auto txn = doc_->read();
+        for (std::size_t i = 0; i < unstarted_scripts_.size();) {
+            const node_id id = unstarted_scripts_[i];
             if (!txn.kind(id).has_value()) {
                 unstarted_scripts_.erase(unstarted_scripts_.begin() +
                                          static_cast<std::ptrdiff_t>(i));
                 continue;
             }
-            src = std::string{txn.attribute_value(id, src_name)};
-            type = ascii_lower_copy(trim(txn.attribute_value(id, type_name), html_whitespace));
-            for (const node_id child : txn.children(id)) { source += txn.text(child); }
-            ready = (!src.empty() || !source.empty()) && root_of_tree(txn, id, true) == txn.root();
+            prepared script{
+                id,
+                {},
+                std::string{txn.attribute_value(id, src_name)},
+                ascii_lower_copy(trim(txn.attribute_value(id, type_name), html_whitespace))};
+            for (const node_id child : txn.children(id)) { script.source += txn.text(child); }
+            if ((script.src.empty() && script.source.empty()) ||
+                root_of_tree(txn, id, true) != txn.root()) {
+                ++i;
+                continue;
+            }
+            // Started, whatever happens next: a script that fails to parse,
+            // or whose src is missing, does not run again when its children
+            // change.
+            unstarted_scripts_.erase(unstarted_scripts_.begin() + static_cast<std::ptrdiff_t>(i));
+            batch.push_back(std::move(script));
         }
-        if (!ready) {
-            ++i;
-            continue;
-        }
-        // Started, whatever happens next: a script that fails to parse, or
-        // whose src is missing, does not run again when its children change.
-        unstarted_scripts_.erase(unstarted_scripts_.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    for (auto & [id, source, src, type] : batch) {
         // A classic script only. A data block (`type="text/plain"`) runs
         // nothing; a module's loader is the browser's and is not reached from
         // a mutation.
@@ -372,8 +384,6 @@ void dom_bindings::run_inserted_scripts() {
             const bool handled = dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) { callback_error_ = fault; }
         }
-        // Start over: the script may have inserted more, and removed any.
-        i = 0;
     }
 }
 
