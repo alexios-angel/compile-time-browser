@@ -72,11 +72,22 @@ void tree_builder::sync_foreign(tokenizer & lexer) const {
 
 void tree_builder::handle(const token & t, tokenizer & lexer) {
     switch (t.kind) {
-    // NOTHING DOWNSTREAM RENDERS DIFFERENTLY for the doctype's name or its
-    // public and system identifiers, and one bit of it is still observable:
-    // `document.compatMode` is quirks mode and nothing else, and the tokenizer
-    // has already worked it out (`force_quirks`).
-    case token_kind::doctype: doc_->set_quirks(t.force_quirks); return;
+    // THE DOCTYPE. Nothing downstream renders differently for its name or its
+    // identifiers, and two things are still observable: `document.compatMode`
+    // is quirks mode, which the tokenizer has already worked out
+    // (`force_quirks`), and `document.doctype` is a DocumentType node ahead of
+    // `<html>` - HTML 13.2.6.4.1, the "initial" insertion mode, where a doctype
+    // token is only ever inserted BEFORE anything else has been. One that turns
+    // up later is a parse error and ignored, which is what the emptiness test
+    // on `<html>` says.
+    case token_kind::doctype:
+        if (doc_->read().children(root_).empty() && !in_body_) {
+            doc_->set_quirks(t.force_quirks);
+            const node_id doctype =
+                builder_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
+            builder_->insert_before(doc_->document_node(), doctype, root_);
+        }
+        return;
     case token_kind::comment: return; // dropped: nothing reads comments yet
     case token_kind::character: return insert_text(t.data);
     case token_kind::start_tag: return start(t, lexer);

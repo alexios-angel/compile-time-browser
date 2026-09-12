@@ -25,7 +25,9 @@ token tokenizer::next() {
 }
 
 token tokenizer::next_token() {
-    if (at_ >= input_.size()) { return token{token_kind::end_of_file, {}, {}, {}, false, false}; }
+    if (at_ >= input_.size()) {
+        return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
+    }
     switch (model_) {
     case content_model::data: return in_data();
     case content_model::rcdata: return in_text_until_close(true);
@@ -267,9 +269,34 @@ token tokenizer::doctype() {
     while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '>') {
         out.name += ascii_lower(input_[at_++]);
     }
-    // Public and system identifiers are consumed and discarded: nothing
-    // downstream renders differently for them. force_quirks is the one bit
-    // that would matter, and a missing name is the case that sets it.
+    // The public and system identifiers: `PUBLIC "p" "s"`, `PUBLIC "p"` or
+    // `SYSTEM "s"`, the keyword matched case-insensitively and each identifier
+    // quoted either way, per the DOCTYPE states of the WHATWG tokenizer. They
+    // reach the DocumentType node and nothing else; the quirks decision below
+    // is still the name alone. Anything unexpected runs to the `>` as the spec's
+    // bogus DOCTYPE state does.
+    const auto quoted = [&](std::string & into) {
+        const char quote = peek();
+        if (quote != '"' && quote != '\'') { return false; }
+        ++at_;
+        while (at_ < input_.size() && peek() != quote && peek() != '>') { into += input_[at_++]; }
+        if (at_ < input_.size() && peek() == quote) { ++at_; }
+        return true;
+    };
+    while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+    if (input_.size() - at_ >= 6 && ctbrowser::ascii_iequals(input_.substr(at_, 6), "PUBLIC")) {
+        at_ += 6;
+        while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+        if (quoted(out.public_id)) {
+            while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+            (void)quoted(out.system_id);
+        }
+    } else if (input_.size() - at_ >= 6 &&
+               ctbrowser::ascii_iequals(input_.substr(at_, 6), "SYSTEM")) {
+        at_ += 6;
+        while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
+        (void)quoted(out.system_id);
+    }
     while (at_ < input_.size() && peek() != '>') { ++at_; }
     if (at_ < input_.size()) { ++at_; }
     out.force_quirks = out.name != "html";
