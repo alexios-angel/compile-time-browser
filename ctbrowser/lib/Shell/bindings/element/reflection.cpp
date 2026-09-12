@@ -636,6 +636,10 @@ constexpr reflected_attribute reflection_table[] = {
 // The corpus tests a vertical tab in front of a digit among twenty other
 // spacings and expects it to FAIL, because a vertical tab is not HTML
 // whitespace and `\v7` is therefore not an integer.
+} // namespace
+
+namespace detail {
+
 [[nodiscard]] bool parse_html_integer(std::string_view text, long long & out) {
     std::size_t at = 0;
     while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
@@ -662,6 +666,10 @@ constexpr reflected_attribute reflection_table[] = {
     out = sign * digits;
     return true;
 }
+
+} // namespace detail
+
+namespace {
 
 [[nodiscard]] long long to_int32(double x) {
     const long long unsigned_value = to_uint32(x);

@@ -637,47 +637,37 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // its PIXEL BUFFER rather than of its laid-out box - `canvas.width / 2` is
     // the first line of most canvas pages. Assigning one resizes the surface,
     // which is what the spec means by a canvas being reset by the assignment.
-    const auto reflect_size = [&](std::string property, double fallback) {
+    //
+    // An `unsigned long` reflection, HTML 2.6.9: the rules for parsing
+    // non-negative integers on the way out, and on the way in ToUint32 with
+    // anything past 2^31-1 writing the default - which is why `canvas.width =
+    // 2147483648` reads back as 300.
+    const auto reflect_size = [&](std::string property, long long fallback) {
+        const auto read = [this, id](std::string_view name, long long missing) {
+            const auto txn = doc_->read();
+            long long parsed = 0;
+            const bool ok =
+                parse_html_integer(txn.attribute_value(id, atoms_->intern(name)), parsed);
+            return ok && parsed >= 0 && parsed <= 2147483647LL ? parsed : missing;
+        };
         obj.define_accessor(
             property,
             value::object(cx.allocate<script::native_object>(
                 property,
-                [this, id, property, fallback](context &, std::span<value>) {
-                    const auto txn = doc_->read();
-                    const std::string_view text = txn.attribute_value(id, atoms_->intern(property));
-                    double parsed = 0;
-                    bool any = false;
-                    for (const char c : text) {
-                        if (c < '0' || c > '9') { break; }
-                        parsed = parsed * 10 + (c - '0');
-                        any = true;
-                    }
-                    return value::number(any ? parsed : fallback);
+                [property, fallback, read](context &, std::span<value>) {
+                    return value::number(static_cast<double>(read(property, fallback)));
                 })),
             value::object(cx.allocate<script::native_object>(
-                property, [this, id, property](context &, std::span<value> a) {
-                    const double want = arg_number(a, 0);
-                    (void)doc_->set_attribute(id, atoms_->intern(property),
-                                              std::to_string(static_cast<long long>(want)));
+                property, [this, id, property, fallback, read](context &, std::span<value> a) {
+                    long long want = to_uint32(arg_number(a, 0));
+                    if (want > 2147483647LL) { want = fallback; }
+                    (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(want));
                     // The SURFACE follows, or the canvas keeps drawing into a
                     // buffer of the size it was created at and everything past
                     // that edge is silently discarded.
                     if (canvases_ != nullptr) {
-                        const auto txn = doc_->read();
-                        const auto number = [&](std::string_view name, int missing) {
-                            const std::string_view text =
-                                txn.attribute_value(id, atoms_->intern(name));
-                            int out = 0;
-                            bool any = false;
-                            for (const char c : text) {
-                                if (c < '0' || c > '9') { break; }
-                                out = out * 10 + (c - '0');
-                                any = true;
-                            }
-                            return any ? out : missing;
-                        };
-                        const int w = number("width", 300);
-                        const int h = number("height", 150);
+                        const int w = static_cast<int>(read("width", 300));
+                        const int h = static_cast<int>(read("height", 150));
                         canvases_->resize(id, w, h);
                         // And the WebGL context over the same canvas, which held
                         // a pointer INTO the buffer that resize just replaced.
