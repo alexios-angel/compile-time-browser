@@ -805,7 +805,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(iterable) do {
-            reg(in.a) = iterable_values(reg(in.b));
+            reg(in.a) = spread_values(reg(in.b));
             break;
         }
         while (0);

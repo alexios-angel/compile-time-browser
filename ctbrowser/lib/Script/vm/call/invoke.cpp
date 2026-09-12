@@ -304,6 +304,17 @@ value context::proxy_trap(value proxy, const std::string & name) {
     return found == nullptr ? value::undefined() : *found;
 }
 
+value context::spread_values(value v) {
+    if (v.is_nullish() || (!v.is_heap() && !v.is_string())) {
+        throw_error("TypeError", std::string{v.is_null()        ? "null"
+                                             : v.is_undefined() ? "undefined"
+                                                                : type_of(v)} +
+                                     " is not iterable");
+        return make_array();
+    }
+    return iterable_values(v);
+}
+
 value context::iterable_values(value v) {
     // Already an array: hand it straight back, so the common case allocates
     // nothing. Callers must not mutate what they get.
