@@ -32,6 +32,8 @@
 
 #include <ctjs/vparse.hpp>
 
+#include "child_slots.hpp"
+
 #include <ctbrowser/script/value.hpp>
 
 namespace ctbrowser::script {
@@ -363,16 +365,6 @@ public:
     [[nodiscard]] int resolve_upvalue(std::size_t level, std::string_view name);
 
     [[nodiscard]] int add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc);
-
-    // WHICH OF A NODE'S FOUR FIXED SLOTS ARE ACTUALLY CHILDREN.
-    //
-    // The parser reuses `c` and `d` as BITFIELDS on the kinds that need flags:
-    // a rest parameter is `d == 1`, an async function is `c & 1`, a static class
-    // member is `d & 1`, an object-literal accessor is `c == 3`. Nothing on a
-    // node says which reading applies, so a generic walk over {a, b, c, d}
-    // treats those flags as node indices - and index 1 is a real node, so the
-    // walk goes back round the tree and never terminates.
-    [[nodiscard]] static std::array<std::int32_t, 4> child_slots(const vp::node & n);
 
     // The `${...}` HOLES of a template literal, as raw text.
     //
