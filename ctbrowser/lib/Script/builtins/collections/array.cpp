@@ -835,6 +835,15 @@ void install_array(context & cx) {
         const auto append = [&](value item) {
             bool spreadable = false;
             if (item.is_object_like()) {
+                // [[Get]] on a revoked proxy is a TypeError (10.5.8 step 2) -
+                // raised here once, rather than by the lookup and again by
+                // IsArray.
+                if (item.is_kind(heap_kind::proxy) &&
+                    static_cast<proxy_object *>(item.as_heap())->handler.is_null()) {
+                    c.throw_error("TypeError",
+                                  "Cannot perform 'get' on a proxy that has been revoked");
+                    return false;
+                }
                 const value flag = c.lookup_property(item, "@@isConcatSpreadable");
                 if (c.throw_pending()) { return false; }
                 if (!flag.is_undefined()) {
