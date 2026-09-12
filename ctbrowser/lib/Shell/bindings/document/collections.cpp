@@ -208,15 +208,16 @@ std::vector<node_id> dom_bindings::all_by_class(node_id root,
     const auto txn = doc_->read();
     const atom class_attribute = atoms_->intern("class");
     std::vector<node_id> found;
+    // CASE-SENSITIVE in standards mode, ASCII-case-insensitive in quirks mode
+    // (DOM 4.5 "list of elements with class names") - which is
+    // getElementsByClassName-14.htm, a doctype-less page with `class="a A"`.
+    const bool quirks = doc_->quirks();
     const auto has_every = [&](node_id at) {
-        // CASE-SENSITIVE, which is the standards-mode rule. A quirks-mode
-        // document matches ASCII-case-insensitively; this engine does not carry
-        // the document's mode past the tree builder yet, so the standards answer
-        // is the one given - it is the right one for every document with a
-        // doctype, which is every document a test suite writes on purpose.
         const std::vector<std::string> held = ordered_set(txn.attribute_value(at, class_attribute));
         return std::ranges::all_of(tokens, [&](const std::string & want) {
-            return std::ranges::find(held, want) != held.end();
+            return std::ranges::any_of(held, [&](const std::string & one) {
+                return quirks ? ascii_iequals(one, want) : one == want;
+            });
         });
     };
     const auto walk = [&](auto && self, node_id at, bool include) -> void {
