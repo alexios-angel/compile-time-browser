@@ -216,7 +216,7 @@ void test_aria_element_references_reflect_both_ways() {
        " p.setAttribute('aria-activedescendant', 'i1');"
        " seen.push(p.ariaActiveDescendantElement === i1);"
        " p.ariaActiveDescendantElement = null;"
-       " seen.push(p.hasAttribute('aria-activedescendant'), p.ariaActiveDescendantElement);"
+       " seen.push(p.hasAttribute('aria-activedescendant'), String(p.ariaActiveDescendantElement));"
        " try { p.ariaActiveDescendantElement = 'x'; seen.push('no'); } catch (e) { "
        "seen.push(e.name); }"
        " return seen.join(); })()",
@@ -229,7 +229,7 @@ void test_aria_element_references_reflect_both_ways() {
        " f.ariaLabelledByElements === l);"
        " f.ariaLabelledByElements = [b]; seen.push(f.ariaLabelledByElements[0] === b,"
        " f.getAttribute('aria-labelledby'));"
-       " f.ariaLabelledByElements = null; seen.push(f.ariaLabelledByElements);"
+       " f.ariaLabelledByElements = null; seen.push(String(f.ariaLabelledByElements));"
        " return seen.join(); })()",
        "2,true,true,true,true,,null");
 }

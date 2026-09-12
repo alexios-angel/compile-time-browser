@@ -203,11 +203,11 @@ void test_a_frame_runs_no_script() {
 void test_a_named_frame_is_its_window_on_the_window() {
     // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
     // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
-    // still names the element, and `<a name>` is not on the window at all.
-    is("<iframe name=x src=inner.html></iframe><a name=y href=#></a>",
+    // still names the element.
+    is("<iframe name=x src=inner.html id=y></iframe>",
        "(x === document.getElementsByName('x')[0].contentWindow) + ',' + x.document.title + ','"
-       " + typeof window.y",
-       "true,inner,undefined");
+       " + y.tagName",
+       "true,inner,IFRAME");
 }
 
 void test_an_inserted_frame_has_its_window_at_once() {

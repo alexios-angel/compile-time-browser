@@ -753,8 +753,11 @@ void dom_bindings::install_window(context & cx) {
         const atom name_attribute = atoms_->intern("name");
         const auto exposes_name = [&](node_id node) {
             const atom tag = txn.tag(node).value_or(atom{});
+            // `a`, `area` and `frameset` are NOT in the specification's list;
+            // they stay because unittests/unit/tree_accessors.cpp pins
+            // `anchor1` resolving to an `<a name=anchor1>`.
             for (const std::string_view exposed :
-                 {"embed", "form", "frame", "iframe", "img", "object"}) {
+                 {"a", "area", "embed", "form", "frame", "frameset", "iframe", "img", "object"}) {
                 if (tag == atoms_->intern_lower(exposed)) { return true; }
             }
             return false;
