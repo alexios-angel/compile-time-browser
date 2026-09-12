@@ -6,6 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional child Maps and recovered UShr, 2026-09-12
+
+Resumed the four dirty escape files left by the **05:36:18 UTC failed loop**
+at **d7b131ec**, identified in the synchronization journal and working diff.
+The parallel conditional Map thread had only claims; its source **74539aeb**
+remained intact. Three agents prepared recovery, owner and source/lifetime work,
+then hit rate limits; root completed the measured oracle pins and integration.
+
+**b150141e** finishes static two-original-BigInt unsigned-shift retention.
+The TypeError result has an independent origin and no BigInt category; whole-frame
+exclusions and every structural continuation remain. Seven new bounded rows,
+live mutations and all incomplete budgets run in the existing array matrix.
+The preserved source witness distinguishes Number4, saved-child retention and
+three independent TypeErrors at measured PCs **24/29/11**. Six literal sites
+have twelve instances, three retained; Error sites acquire no source claims.
+The corrected focused gate passes **11/11 CTests in 0.79s**. The current oracle
+measures **747 claims / 773 observed sites / 27 unclaimed**, zero violations,
+partial or pending cases, and precision **9/142**. Historical fixture bodies
+are unchanged; ordinary-object own-data/prototype authority remains absent.
+
+**9c201b2d** proves the complete captured family's outer child-Map payload kind
+before invocation results. A returned child has its own runtime identity and
+unknown contents. Its following set can establish a read fact; possible child
+aliases invalidate mutable facts, while saved owners survive outer mutations.
+Independent ownership rechecks the complete constructor/write and returned-use
+censuses. Existing native schemas and C++ carriers suffice.
+
+**8b153339** promotes the unchanged conditional source **74539aeb** (compiler
+input **660da1c0**) to **4/4 native functions**, both optimization modes, retaining
+**8 calls / trace=41**. All **16 historical nested sources** remain byte-identical;
+four new refusal controls cover mixed sibling payloads in both declaration
+orders, unknown prior contents and possible child aliases. The cohort passes
+**5 native programs / 15 refusals**, **25 typed Node/interpreter observations /
+15 distinguishing mutations** in **9.72s**. Both C++ layouts pass GCC/Clang,
+no-Script checks and ASan/UBSan/leaks through **128 future calls**, child reuse,
+outer clear/replacement, released owners, entry reexecution and final destruction.
+Complete proof budgets are **1777/30 cutoffs**, **3049/31** and conditional
+**2007/32**. The ownership CTest passes in **200.79s**; other focused Host/type
+checks pass. The stronger cross-invocation source **369d7cea/bdf9931e** stays refused.
+
+The integrated runtime exposed two separate compiler gate issues.
+**05840f4e** fixes operator-table early continues in the importer, which skipped
+the common catch-edge emission for binary/compare/unary instructions. The
+emitter's handler-snapshot safety guard remains. The original async source now
+compiles; the expanded existing async lit case passes in **0.10s**.
+**211e53ea** updates only the historical array-string-index differential
+expectation after runtime **aca7091c**: unchanged Number0/String0 sources both
+produce **909/909**, confirmed with Node and interpreter/AOT agreement.
+The **342-step rebuild** and corrected **5/5 integration CTests in 1.18s** pass;
+the differential covers **47 arms with all 53 entries installed**, zero tier
+mismatches. Stable clang-format **22.1.8 passes 800 files**; bundled23 retains
+the same nine baseline files/28 diagnostics, with only browser line shifts.
+No browser, runtime, native emitter or carrier implementation changed.
+
+**Full gate pending:** the standard `tools/remote-build.sh` run is active at
+`/tmp/ctcompile-conditional-full.log` with **534 CTests**. Focused successes above
+are measured; a complete standard pass and fresh full Bootstrap counts are not
+yet claimed. **1278 selected code/test input hashes** are frozen in
+`/tmp/ctcompile-conditional-frozen.json`. The shared ctjs checkout was **4c1d5f3**
+against the recorded gitlink **8eb3375**; Codex did not edit or commit that peer
+change. Read the latest Claude journal before interpreting new oracle differences.
+
+**Next boundary:** preserve cross-invocation **369d7cea/bdf9931e** (five functions,
+nine calls) and establish a complete-family inner-key/type invariant separately
+from child kind and identity. Every retained child must have its key initialized
+before publication, and every reachable mutation must preserve the invariant.
+NativeMap presence needs independent evidence too. Validate original entry-frame
+exits in both scalar return branches; they are currently refused below top level.
+The measured source needs no Map-valued branch-result support. The same-key repeated
+lookup regression establishes Host/owner support only; independently measure
+its native presence before claiming that sibling. Exact ordinary Data **8359592c** additionally needs
+mixed/field-bearing payloads, object returns and its recorder callback; component
+and DOM ownership follow. Full native Bootstrap is unfinished.
+
+Evidence: `/tmp/ctcompile-conditional-{recovery-final.log,main-focused.log,
+corrected-focused.log,lit-fetch.log,measured/summary.json}`,
+`/tmp/ctcompile-conditional-recovery-observed/ushr-joined.json`,
+`/tmp/ctcompile-conditional-source-tests-static.json` and
+`/tmp/ctcompile-conditional-{full.log,frozen.json}`.
+
 ## Fresh child Maps, 2026-09-12
 
 Continued clean **bc639f5d** and the **04:11:42 UTC** synchronization journal.
