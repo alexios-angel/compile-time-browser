@@ -244,13 +244,7 @@ void closureLifter::discardNativeSourceFacts() {
     // Module reports and presentation locations are not operation authority.
     module.walk([](mlir::Operation * op) {
         if (llvm::isa<mlir::ModuleOp>(op)) { return; }
-        llvm::SmallVector<mlir::StringAttr> discard;
-        for (mlir::NamedAttribute attribute : op->getAttrs()) {
-            if (attribute.getName().getValue().starts_with("ctnative.")) {
-                discard.push_back(attribute.getName());
-            }
-        }
-        for (mlir::StringAttr name : discard) { op->removeAttr(name); }
+        removeAttrsWithPrefix(op, "ctnative.");
     });
 }
 

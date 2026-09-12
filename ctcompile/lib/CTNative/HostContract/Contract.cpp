@@ -157,16 +157,18 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     return result;
 }
 
-void clearHostContractReports(mlir::ModuleOp module) {
-    module.walk([](mlir::Operation * op) {
-        llvm::SmallVector<mlir::StringAttr> names;
-        for (mlir::NamedAttribute attribute : op->getAttrs()) {
-            if (attribute.getName().getValue().starts_with("ctnative.host_")) {
-                names.push_back(attribute.getName());
-            }
+void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix) {
+    llvm::SmallVector<mlir::StringAttr> names;
+    for (mlir::NamedAttribute attribute : op->getAttrs()) {
+        if (attribute.getName().getValue().starts_with(prefix)) {
+            names.push_back(attribute.getName());
         }
-        for (mlir::StringAttr name : names) { op->removeAttr(name); }
-    });
+    }
+    for (mlir::StringAttr name : names) { op->removeAttr(name); }
+}
+
+void clearHostContractReports(mlir::ModuleOp module) {
+    module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative.host_"); });
 }
 
 std::string hostContractFingerprint(mlir::ModuleOp module) {

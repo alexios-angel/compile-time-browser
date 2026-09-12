@@ -1,6 +1,7 @@
 #include "Driver.h"
 
 #include "../Specialization/Candidates.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
@@ -56,15 +57,7 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
         return {};
     }
     auto residual = llvm::cast<ctjs::FuncOp>(source->clone());
-    residual.walk([](mlir::Operation * op) {
-        llvm::SmallVector<mlir::StringAttr> remove;
-        for (auto attr : op->getAttrs()) {
-            if (attr.getName().strref().starts_with("ctnative.")) {
-                remove.push_back(attr.getName());
-            }
-        }
-        for (auto name : remove) { op->removeAttr(name); }
-    });
+    residual.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
     std::string name;
     do {
         name = (source.getSymName() + "__supercompiled_" + std::to_string(nextName++)).str();
