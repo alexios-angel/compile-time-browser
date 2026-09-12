@@ -200,9 +200,20 @@ void test_a_frame_runs_no_script() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"undefined"}); }
 }
 
+void test_a_named_frame_is_its_window_on_the_window() {
+    // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
+    // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
+    // still names the element, and `<a name>` is not on the window at all.
+    is("<iframe name=x src=inner.html></iframe><a name=y href=#></a>",
+       "(x === document.getElementsByName('x')[0].contentWindow) + ',' + x.document.title + ','"
+       " + typeof window.y",
+       "true,inner,undefined");
+}
+
 } // namespace
 
 int main() {
+    test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();
     test_a_frame_whose_source_is_xml_is_parsed_as_xml();
     test_a_frame_with_no_source_is_still_a_document();
