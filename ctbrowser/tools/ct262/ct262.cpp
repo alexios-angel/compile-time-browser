@@ -325,6 +325,13 @@ public:
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const program & compile_error() const noexcept { return compile_error_; }
     [[nodiscard]] const std::string & resolution_error() const noexcept { return resolution_; }
+    // A dynamic import that failed is one rejected promise, not a failed run:
+    // clear the record so the next import starts clean.
+    void reset_failure() {
+        failed_ = false;
+        compile_error_ = program{};
+        resolution_.clear();
+    }
 
 private:
     void note(std::string message) {
@@ -416,10 +423,51 @@ int main(int argc, char ** argv) {
         }
     }
 
+    module_loader loader{cx};
+    // WHAT `import(specifier)` CALLS, in both modes: a script may import a
+    // module and a module may import another lazily. The graph is walked
+    // the same two-pass way; a compile failure or a missing file REJECTS the
+    // promise (16.2.1.9 HostLoadImportedModule's failure path) rather than
+    // failing the run, and an evaluation that threw rejects with what it
+    // threw. Settled at once, like the shell's, because the filesystem is
+    // synchronous. A referrer that is not a module - the test script - is
+    // resolved beside the test file.
+    cx.set_module_loader([&loader, &opts](context & c, const std::string & specifier,
+                                          const std::string & referrer) {
+        const std::filesystem::path base = referrer.empty()
+                                               ? opts.test.parent_path()
+                                               : std::filesystem::path{referrer}.parent_path();
+        const std::filesystem::path target = base / specifier;
+        loader.instantiate(target);
+        if (loader.failed()) {
+            const program & bad = loader.compile_error();
+            loader.reset_failure();
+            return c.make_promise(c.make_error("SyntaxError", bad.error), true);
+        }
+        if (!loader.resolution_error().empty()) {
+            const std::string why = loader.resolution_error();
+            loader.reset_failure();
+            return c.make_promise(c.make_error("SyntaxError", why), true);
+        }
+        const run_result ran = loader.evaluate(target);
+        if (!ran.ok) {
+            const value thrown = c.last_thrown();
+            return c.make_promise(thrown.is_undefined() ? c.make_error("Error", ran.error) : thrown,
+                                  true);
+        }
+        auto & registry = c.modules();
+        const auto found =
+            registry.find(std::filesystem::weakly_canonical(target).generic_string());
+        if (found == registry.end()) {
+            return c.make_promise(c.make_error("Error", "module `" + specifier + "` did not load"),
+                                  true);
+        }
+        return c.make_promise(c.module_namespace(found->second), false);
+    });
+
     if (opts.module) {
         // `--strict` is not applied: a module is strict code by definition, and
         // the suite never sets both.
-        module_loader loader{cx};
         loader.instantiate(opts.test);
         if (loader.failed()) {
             report_compile_failure(loader.compile_error());
