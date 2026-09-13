@@ -6,6 +6,120 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Session close: dense indices landed; captured snapshots saved for recovery, 2026-09-13 UTC
+
+Stopped at the user's bedtime request. Resumed **aa7c6bdb**, its **01:30:07 UTC**
+journal and the original numeric-only Data recorder probes in
+`/tmp/ctcompile-recorder-next-probe/`. The old WIP branch was already resolved.
+Three agents split dense-index proof, preserved recorder witnesses, and snapshot
+ownership tests/review. This entry supersedes older next-step and gate claims below.
+
+**Landed: 8349d203**, bounded original array-length snapshots and subtraction of
+nonnegative integral Number literals. Saved lengths/indices retain their original
+values across appends and aliases; invalid bounds/categories remain conservative.
+The array gate passes **64 rows / 19 live states / 2053 retention budget cutoffs**;
+Bootstrap, p5 and Phaser escape corpus CTests pass. The old **109,689 fixture bytes /
+63 source pins** are preserved. Measured oracle: **222 functions / 861 claims /
+895 observed sites / 35 unclaimed / zero violations / precision 24/172**, exactly
+three new confinement claims, including the untouched `denseLengthIndexed` source.
+All old function evidence is preserved except that newly proved child; added global
+closures account for the expected PC shifts. The checker passes **13 evidence
+mutations / eight malformed or duplicate controls**. After Claude's **834bda1e**
+merge, a **640-step rebuild** and final fixture CTest pass (**1.16s**).
+
+**Not landed as implementation: captured Map key snapshots.** All nine changed
+paths, including the new recorder driver, are preserved in
+[the recovery patch](recovery/2026-09-13-captured-map-snapshots.patch), based on
+**8349d203**. SHA256:
+`9f368e807d4f5586dc2f492dff95906f359a7df0bd9e94ab770d7455a1fec6d8`.
+Its header records every target hash. Apply/reverse checks and byte-for-byte
+reconstruction of all nine targets pass. Only our nine working source paths were
+restored after saving the patch; no browser work was discarded. The patch is the
+durable continuation, not an assertion that the feature is fully gated.
+
+The draft reuses existing ordered Map storage, `map_keys`, owning vectors and
+nullable element helpers. It proves exact Array identity, one immediate keys
+iterator consumption, confined read-only length or constant-index strict equality,
+source scope and bounded traversal. It adds no runtime/browser implementation.
+Element reads confer no scalar-return, field-read or callback authority. Iterator
+reuse, intervening effects, foreign Root operands and unsafe indices stay refused.
+
+Measured draft: **325-step build PASS**, **four native snapshot programs / eight
+refusals / 72 typed Node/VM observations / eight distinguishing mutations**. Both
+policies, both layouts, GCC/Clang, no-Script symbols, ASan/UBSan/leaks and **1024 future
+iterations** through retained owners/tables/detached callables pass. Cases cover
+String/numeric insertion order, replacement/delete/reinsert/clear, saved copies,
+empty arrays and out-of-range Undefined. The focused CTest group passes **2/3 in
+244.79s**: `ctcompile_host_contract` and `ctcompile_host_contract_seeded_maps` pass;
+`ctcompile_owned_global_shared_map` fails exactly four new restoration assertions
+(source/prepared, cross-arm/cross-function). Its other checks pass.
+
+The test deliberately retained a forged `ctnative.map_snapshot_copy` attribute
+while reusing the old module fingerprint. Non-host attributes correctly affect that
+fingerprint. The recovery patch includes the prepared **test-only correction**:
+rederive with `requested(*module)` while the forged report remains, then remove the
+attribute before checking the original fingerprint/contract. **This correction has
+not been rebuilt or executed.** Production and driver bytes match the measured
+frozen draft; the corrected test is explicitly distinguished by its hashes.
+
+Resume this recovery before new feature work:
+
+1. Read the latest synchronization journal and claims. Claim the nine patch paths;
+   under `/tmp/ctbrowser-repo-git.lock`, run `git apply --check` then `git apply` on
+   the recovery patch from the repository root. The new browser merge **f52e2430**
+   changes none of these paths. Do not blindly run the old `/tmp` finishing scripts:
+   their frozen manifests predate the saved correction and later merge.
+2. Under `/tmp/ctbrowser-devbox-build.lock`, run `tools/remote-build.sh all`, then
+   on the devbox `ctest --test-dir build -R
+   '^ctcompile_(owned_global_shared_map|host_contract|host_contract_seeded_maps)$'
+   --output-on-failure -V`. Re-run the recorder group through
+   `ctcompile/test/CTNative/Ownership/global-maps.py --group recorder`, with
+   `PYTHONPATH=ctcompile/test`, the built `--translate`, `--opt`, `--reference`,
+   explicit `--node` from `CTCOMPILE_BOOTSTRAP_NODE` in `build/CMakeCache.txt`, and
+   a fresh `--work` directory. The package directory has no `__main__` entry.
+3. Run the formatter; commit the six proof files plus `SharedMap.cpp`, then the
+   driver hook/new recorder driver as a separate concern. Run the standard full
+   `tools/remote-build.sh` gate and fresh Bootstrap/Data measurements. Remove this
+   recovery patch once its contents are safely landed and record the final evidence.
+
+The exact Data source remains **2522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+The original recorder/factory prefix remains **975 bytes / SHA256
+c87ab961b1186537b86b5c96e35a5bec0905c97dbaa90c217f99c4175192efc9**.
+The single/repeated recorder probes remain **1327 / 1733 bytes**, SHA256
+`4ebf1cd4417eb0f54a3c154a1ba0a286eadfbba21526705808e731e3a85c4479` /
+`45d621b3cba163ca44d4e0d9e9fc793f953a505b3664a38b2890e9775caf4e36`.
+All three still measure **0/7 native, both policies**; their exact sources and pins
+are embedded in the recovery driver. Full Bootstrap's last measurement is still
+**19/574**, inherited from the previous session, not rerun tonight. After the recovery
+gate, next prove key categories for the original template diagnostic and the complete
+recorder callable/global-effect boundary across future calls. Exact Data's unguarded
+`.value` and mixed scalar observations separately need per-invocation return evidence.
+Prefix evaluation alone does not authorize these. Later DOM/component work must use
+ctbrowser's public RAII APIs; VM-only behavior needs one lifted core and a thin adapter.
+
+No new full standard gate completed for this snapshot draft. The earlier **540/540**
+result below belongs to **415c4d5c**. Claude's subsequent **834bda1e** browser gate
+reports **536/540**, with `bootstrap_layout`, `cssom_wpt`, `frames`, `layout_blocks`
+failures. At session close Claude merged **f52e2430** (browser tests/docs only),
+reports `layout_blocks` fixed and the other three still open; gate 5 was still running.
+See `ctbrowser/docs/plans/wpt-next.md` and the **03:03:54 UTC** sync journal for that
+handoff and four unmerged browser agent branches. Their pending JS changes are not
+this session's differential oracle. No Codex browser/runtime/parser edits.
+
+The required bundled clang-format **23.0.0git** check retains the known **nine files /
+26 diagnostics**; changed C++ passes. Homebrew **23.1.1** whole check passes
+**803 C++ / 84 Python / 33 web** with the draft installed. Final checkpoint checks
+and job/claim release are recorded in the sync journal. Our queued finish workflow
+was canceled before starting; no Codex devbox jobs remain. Claude's queues were left
+alone. No push. The full native Bootstrap plan remains unfinished.
+
+Detailed local evidence: `/tmp/ctcompile-recorder-{dense-build.log,dense-ctest.log,
+dense-rerun-build.log,dense-rerun.log,native-build.log,native.log,owner.log,
+native-frozen.json}`, `/tmp/ctcompile-dense-index/`,
+`/tmp/ctcompile-recorder-witnesses/`, `/tmp/ctcompile-recorder-audit.md`, and
+`/tmp/ctcompile-recorder-stop/`. Recovery does not depend on these temporary files.
+
 ## Guarded returned fields and original radix BigInt indices, 2026-09-13 UTC
 
 This entry supersedes the integration failures and next steps in older entries below.
