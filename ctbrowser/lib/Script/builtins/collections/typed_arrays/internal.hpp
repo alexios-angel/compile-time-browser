@@ -52,6 +52,7 @@ namespace ctbrowser::script::builtins_detail {
 inline constexpr std::string_view bytes_key = "__bytes";
 inline constexpr std::string_view store_max_key = "@#ArrayBufferMaxByteLength";
 inline constexpr std::string_view store_detached_key = "@#ArrayBufferDetached";
+inline constexpr std::string_view store_immutable_key = "@#ArrayBufferImmutable";
 inline constexpr std::string_view store_views_key = "@#ArrayBufferViews";
 inline constexpr std::string_view store_buffer_key = "@#ArrayBuffer";
 inline constexpr std::string_view view_tracking_key = "@#LengthTracking";
@@ -85,6 +86,10 @@ inline constexpr double max_buffer_bytes = 268435456.0;
 // fresh wrapper over the same store (a Shell-made store has none).
 [[nodiscard]] value buffer_of_store(context & cx, array_object * store);
 [[nodiscard]] bool store_detached(const array_object * store);
+// IsImmutableBuffer (the immutable-arraybuffer proposal): made by
+// transferToImmutable or sliceToImmutable, fixed-length, and refused by
+// every method that writes. The VM's own `ta[i] = v` path does not ask.
+[[nodiscard]] bool store_immutable(const array_object * store);
 [[nodiscard]] std::optional<double> store_max_byte_length(array_object * store);
 [[nodiscard]] inline bool store_resizable(array_object * store) {
     return store_max_byte_length(store).has_value();
@@ -115,8 +120,10 @@ void register_view(context & cx, array_object * store, array_object * view);
 [[nodiscard]] bool typed_array_out_of_bounds(array_object * arr);
 [[nodiscard]] bool typed_array_length_tracking(array_object * arr);
 // ValidateTypedArray (23.2.4.4): `v` as a typed array that is neither
-// detached nor out of bounds, or null with the TypeError in flight.
-[[nodiscard]] array_object * validate_typed_array(context & cx, value v, const char * method);
+// detached nor out of bounds - nor over an immutable buffer when the caller
+// means to `write` - or null with the TypeError in flight.
+[[nodiscard]] array_object * validate_typed_array(context & cx, value v, const char * method,
+                                                  bool write = false);
 // The receiver of a %TypedArray%.prototype method, validated.
 [[nodiscard]] inline array_object * this_typed_array(context & cx, const char * method) {
     return validate_typed_array(cx, cx.current_this(), method);
@@ -147,9 +154,10 @@ void typed_array_set(array_object * arr, std::size_t i, double v);
 // TypedArraySpeciesCreate (23.2.4.1) and TypedArrayCreateFromConstructor
 // (23.2.4.2): undefined with the throw in flight.
 [[nodiscard]] value typed_array_species_create(context & cx, array_object * exemplar,
-                                               std::span<const value> args);
+                                               std::span<const value> args, bool write = false);
 [[nodiscard]] value typed_array_create_from_constructor(context & cx, value ctor,
-                                                        std::span<const value> args);
+                                                        std::span<const value> args,
+                                                        bool write = false);
 // ToIndex (7.1.22): false with the RangeError (or a Symbol's TypeError) in flight.
 [[nodiscard]] bool to_index(context & cx, value v, double & out);
 // ToIntegerOrInfinity through ToPrimitive: false with a throw in flight.

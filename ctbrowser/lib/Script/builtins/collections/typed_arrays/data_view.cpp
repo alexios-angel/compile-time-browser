@@ -277,6 +277,10 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
 [[nodiscard]] value set_view_value(context & c, std::span<value> a, const type_spec & t) {
     view_state v;
     if (!this_data_view(c, (std::string{"set"} + t.name).c_str(), v)) { return value::undefined(); }
+    if (store_immutable(v.store)) {
+        c.throw_error("TypeError", "Cannot write through a DataView over an immutable ArrayBuffer");
+        return value::undefined();
+    }
     double index = 0;
     if (!to_index(c, arg_at(a, 0), index)) { return value::undefined(); }
     std::uint64_t raw = 0;

@@ -251,7 +251,7 @@ constexpr spec kinds[] = {
         if (c.throw_pending()) { return value::undefined(); }
     }
     const value len_arg[1] = {value::number(len)};
-    const value out = typed_array_create_from_constructor(c, ctor, len_arg);
+    const value out = typed_array_create_from_constructor(c, ctor, len_arg, true);
     if (out.is_undefined()) { return out; }
     auto * made = static_cast<array_object *>(out.as_heap());
     for (double k = 0; k < len; k += 1) {
@@ -276,7 +276,7 @@ constexpr spec kinds[] = {
         return value::undefined();
     }
     const value len_arg[1] = {value::number(static_cast<double>(a.size()))};
-    const value out = typed_array_create_from_constructor(c, ctor, len_arg);
+    const value out = typed_array_create_from_constructor(c, ctor, len_arg, true);
     if (out.is_undefined()) { return out; }
     auto * made = static_cast<array_object *>(out.as_heap());
     for (std::size_t k = 0; k < a.size(); ++k) {
@@ -307,12 +307,20 @@ bool typed_array_out_of_bounds(array_object * arr) {
            bytes - at;
 }
 
-array_object * validate_typed_array(context & cx, value v, const char * method) {
+array_object * validate_typed_array(context & cx, value v, const char * method, bool write) {
     if (!is_typed_array(v)) {
         cx.throw_error("TypeError", std::string{method} + ": this is not a typed array");
         return nullptr;
     }
     auto * arr = static_cast<array_object *>(v.as_heap());
+    if (write) {
+        if (array_object * store = typed_array_store(arr);
+            store != nullptr && store_immutable(store)) {
+            cx.throw_error("TypeError",
+                           std::string{method} + ": the typed array's buffer is immutable");
+            return nullptr;
+        }
+    }
     if (typed_array_out_of_bounds(arr)) {
         array_object * store = typed_array_store(arr);
         cx.throw_error("TypeError",
@@ -336,7 +344,13 @@ void typed_array_set(array_object * arr, std::size_t i, double v) {
         view_set(*arr, i, v);
         return;
     }
-    arr->items[i] = value::number(coerce_element(arr->elements, v));
+    // AN INTEGER KIND HAS NO -0: coerce_element's wrap answers -0 for -0, which
+    // a view's byte store cannot hold and an owning array must not either.
+    double coerced = coerce_element(arr->elements, v);
+    if (coerced == 0 && arr->elements != element_kind::f32 && arr->elements != element_kind::f64) {
+        coerced = 0;
+    }
+    arr->items[i] = value::number(coerced);
 }
 
 value make_typed_array_view(context & cx, element_kind kind, array_object * store,
@@ -403,10 +417,16 @@ value typed_array_constructor(context & cx, element_kind kind) {
     return name == nullptr ? value::undefined() : cx.global(name);
 }
 
-value typed_array_create_from_constructor(context & cx, value ctor, std::span<const value> args) {
+value typed_array_create_from_constructor(context & cx, value ctor, std::span<const value> args,
+                                          bool write) {
+    // NOT throw_pending() ALONE: a constructor written in JavaScript that
+    // throws has already unwound to the page's handler by the time construct
+    // returns, and a second throw here would consume a second handler
+    // (internal.hpp, unwind_watch).
+    const detail::unwind_watch watch{cx};
     const value made = cx.construct(ctor, args);
-    if (cx.throw_pending()) { return value::undefined(); }
-    array_object * arr = validate_typed_array(cx, made, "TypedArray species constructor");
+    if (watch.threw()) { return value::undefined(); }
+    array_object * arr = validate_typed_array(cx, made, "TypedArray species constructor", write);
     if (arr == nullptr) { return value::undefined(); }
     if (args.size() == 1 && args[0].is_number() &&
         static_cast<double>(typed_array_length(arr)) < args[0].as_number()) {
@@ -416,12 +436,12 @@ value typed_array_create_from_constructor(context & cx, value ctor, std::span<co
     return made;
 }
 
-value typed_array_species_create(context & cx, array_object * exemplar,
-                                 std::span<const value> args) {
+value typed_array_species_create(context & cx, array_object * exemplar, std::span<const value> args,
+                                 bool write) {
     const value fallback = typed_array_constructor(cx, exemplar->elements);
     const value ctor = species_constructor(cx, value::object(exemplar), fallback);
     if (ctor.is_undefined()) { return value::undefined(); }
-    return typed_array_create_from_constructor(cx, ctor, args);
+    return typed_array_create_from_constructor(cx, ctor, args, write);
 }
 
 void install_typed_arrays(context & cx) {

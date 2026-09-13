@@ -104,7 +104,7 @@ value typed_array_set_method(context & c, std::span<value> a) {
         c.throw_error("RangeError", "offset is out of bounds");
         return value::undefined();
     }
-    if (validate_typed_array(c, self, "TypedArray.prototype.set") == nullptr) {
+    if (validate_typed_array(c, self, "TypedArray.prototype.set", true) == nullptr) {
         return value::undefined();
     }
     const double target_len = len_of(target);
@@ -259,7 +259,11 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
 
     // --- the accessors, 23.2.3.1-4 and 23.2.3.38 -----------------------------
     const auto getter = [&](const char * name, native_fn fn) {
-        auto * made = detail::method_native(cx, std::string{"get "} + name, std::move(fn));
+        // 10.2.9 SetFunctionName: a symbol-keyed getter is named by the
+        // symbol's description in brackets.
+        const std::string shown =
+            std::string{name} == "@@toStringTag" ? "[Symbol.toStringTag]" : std::string{name};
+        auto * made = detail::method_native(cx, "get " + shown, std::move(fn));
         detail::install_arity(cx, made, 0);
         proto->define_accessor(name, value::object(made), value::undefined(), attr_configurable);
     };
@@ -316,7 +320,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     });
     // --- 23.2.3.6 copyWithin --------------------------------------------------
     method(cx, proto, "copyWithin", 2, [](context & c, std::span<value> a) {
-        array_object * arr = this_typed_array(c, "TypedArray.prototype.copyWithin");
+        array_object * arr =
+            validate_typed_array(c, c.current_this(), "TypedArray.prototype.copyWithin", true);
         if (arr == nullptr) { return value::undefined(); }
         const value self = c.current_this();
         double len = len_of(arr);
@@ -402,7 +407,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     walk("forEach", 0);
     // --- 23.2.3.9 fill ---------------------------------------------------------
     method(cx, proto, "fill", 1, [](context & c, std::span<value> a) {
-        array_object * arr = this_typed_array(c, "TypedArray.prototype.fill");
+        array_object * arr =
+            validate_typed_array(c, c.current_this(), "TypedArray.prototype.fill", true);
         if (arr == nullptr) { return value::undefined(); }
         const value self = c.current_this();
         double len = len_of(arr);
@@ -439,7 +445,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             if (context::truthy(answer)) { list->items.push_back(item); }
         }
         const value args[1] = {value::number(static_cast<double>(list->items.size()))};
-        const value out = typed_array_species_create(c, arr, args);
+        const value out = typed_array_species_create(c, arr, args, true);
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (std::size_t i = 0; i < list->items.size(); ++i) {
@@ -578,7 +584,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (!callback_arg(c, a, "map")) { return value::undefined(); }
         const value self = c.current_this();
         const value args[1] = {value::number(len)};
-        const value out = typed_array_species_create(c, arr, args);
+        const value out = typed_array_species_create(c, arr, args, true);
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (double k = 0; k < len; k += 1) {
@@ -629,7 +635,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     reducer("reduceRight", true);
     // --- 23.2.3.25 reverse, 23.2.3.33 toReversed ---------------------------------
     method(cx, proto, "reverse", 0, [](context & c, std::span<value>) {
-        array_object * arr = this_typed_array(c, "TypedArray.prototype.reverse");
+        array_object * arr =
+            validate_typed_array(c, c.current_this(), "TypedArray.prototype.reverse", true);
         if (arr == nullptr) { return value::undefined(); }
         const std::size_t len = typed_array_length(arr);
         for (std::size_t lo = 0, hi = len; lo + 1 < hi; ++lo, --hi) {
@@ -666,7 +673,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         }
         double count = std::max(final - k, 0.0);
         const value args[1] = {value::number(count)};
-        const value out = typed_array_species_create(c, arr, args);
+        const value out = typed_array_species_create(c, arr, args, true);
         if (out.is_undefined()) { return out; }
         if (count == 0) { return out; }
         if (validate_typed_array(c, self, "TypedArray.prototype.slice") == nullptr) {
@@ -679,9 +686,18 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         array_object * from = typed_array_store(arr);
         array_object * to = typed_array_store(made);
         if (from != nullptr && to != nullptr && made->elements == arr->elements) {
+            // ONE BYTE AT A TIME, FORWARD (step 14.e.iii): a species result
+            // over the same buffer at a later offset sees its own writes,
+            // which is what the specification says and what memmove would
+            // not do.
             const std::size_t width = bytes_per_element(arr->elements);
-            copy_bytes(from, arr->byte_offset + static_cast<std::size_t>(k) * width, to,
-                       made->byte_offset, static_cast<std::size_t>(count) * width);
+            std::size_t src = arr->byte_offset + static_cast<std::size_t>(k) * width;
+            std::size_t dst = made->byte_offset;
+            const std::size_t limit =
+                std::min(from->items.size(), src + static_cast<std::size_t>(count) * width);
+            for (; src < limit && dst < to->items.size(); ++src, ++dst) {
+                to->items[dst] = from->items[src];
+            }
             return out;
         }
         for (double n = 0; n < count; n += 1) {
@@ -699,7 +715,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
                 c.throw_error("TypeError", method_name + ": comparator is not a function");
                 return value::undefined();
             }
-            array_object * arr = this_typed_array(c, method_name.c_str());
+            array_object * arr =
+                validate_typed_array(c, c.current_this(), method_name.c_str(), !copy);
             if (arr == nullptr) { return value::undefined(); }
             const std::size_t len = typed_array_length(arr);
             value target = c.current_this();

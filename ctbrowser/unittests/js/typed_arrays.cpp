@@ -181,6 +181,33 @@ int main() {
               "B && b.byteLength === 3; })()",
               "true");
 
+    // An immutable buffer (the immutable-arraybuffer proposal): made by
+    // transferToImmutable or sliceToImmutable, refused by every writing method.
+    js_expect("new ArrayBuffer(2).transferToImmutable().immutable + '|' + new "
+              "ArrayBuffer(2).immutable",
+              "true|false");
+    js_expect("(() => { const b = new ArrayBuffer(4); new Uint8Array(b).set([1, 2, 3, 4]); "
+              "const i = b.sliceToImmutable(1, 3); return new Uint8Array(i).join() + '|' + "
+              "i.immutable + '|' + b.detached; })()",
+              "2,3|true|false");
+    throws("new ArrayBuffer(2).transferToImmutable().transfer()", "TypeError");
+    throws("new ArrayBuffer(2).transferToImmutable().resize(1)", "TypeError");
+    throws("new Uint8Array(new ArrayBuffer(2).transferToImmutable()).fill(1)", "TypeError");
+    throws("new Uint8Array(new ArrayBuffer(2).transferToImmutable()).sort()", "TypeError");
+    throws("new DataView(new ArrayBuffer(2).transferToImmutable()).setUint8(0, 1)", "TypeError");
+    js_expect("new Uint8Array(new ArrayBuffer(2).transferToImmutable()).toSorted().join()", "0,0");
+    // A species constructor that throws: the throw is the page's, once.
+    js_expect("(() => { const C = {}; C[Symbol.species] = function() { throw new "
+              "RangeError('species'); }; const ta = new Uint8Array(2); ta.constructor = C; "
+              "try { ta.slice(); } catch (e) { return e.message; } })()",
+              "species");
+    // -0 has no place in an integer kind; a float kind keeps it.
+    js_expect("1 / Int32Array.of(-0)[0] + '|' + 1 / Float32Array.of(-0)[0]", "Infinity|-Infinity");
+    js_expect("1 / new Int8Array(1).fill(-0)[0]", "Infinity");
+    js_expect("Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Int8Array).prototype, "
+              "Symbol.toStringTag).get.name",
+              "get [Symbol.toStringTag]");
+
     // --- DataView, 25.3 -------------------------------------------------------
     throws("new DataView({})", "TypeError");
     throws("new DataView(new ArrayBuffer(2), 3)", "RangeError");

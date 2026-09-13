@@ -350,7 +350,8 @@ void install_uint8array_codecs(context & cx, native_object * ctor, object_object
             !string_option(c, options, "lastChunkHandling", handlings, 0, handling)) {
             return value::undefined();
         }
-        array_object * arr = this_typed_array(c, "Uint8Array.prototype.setFromBase64");
+        array_object * arr =
+            validate_typed_array(c, c.current_this(), "Uint8Array.prototype.setFromBase64", true);
         if (arr == nullptr) { return value::undefined(); }
         const decode_result result =
             from_base64(static_cast<string_object *>(text.as_heap())->text, alphabet == 1,
@@ -375,7 +376,8 @@ void install_uint8array_codecs(context & cx, native_object * ctor, object_object
         if (!require_string(c, text, "Uint8Array.prototype.setFromHex")) {
             return value::undefined();
         }
-        array_object * arr = this_typed_array(c, "Uint8Array.prototype.setFromHex");
+        array_object * arr =
+            validate_typed_array(c, c.current_this(), "Uint8Array.prototype.setFromHex", true);
         if (arr == nullptr) { return value::undefined(); }
         const decode_result result =
             from_hex(static_cast<string_object *>(text.as_heap())->text, arr->length());

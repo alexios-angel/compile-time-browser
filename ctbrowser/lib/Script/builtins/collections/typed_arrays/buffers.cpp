@@ -135,6 +135,12 @@ bool store_detached(const array_object * store) {
     return flag != nullptr && flag->is_boolean() && flag->as_boolean();
 }
 
+bool store_immutable(const array_object * store) {
+    if (!store->named) { return false; }
+    const value * flag = store->named->find(store_immutable_key);
+    return flag != nullptr && flag->is_boolean() && flag->as_boolean();
+}
+
 std::optional<double> store_max_byte_length(array_object * store) {
     const value max = slot_of(store, store_max_key);
     if (!max.is_number()) { return std::nullopt; }
@@ -197,8 +203,12 @@ bool to_index(context & cx, value v, double & out) {
 }
 
 bool to_integer_or_infinity(context & cx, value v, double & out) {
-    if (!numeric_arg(cx, v)) { return false; }
-    const double n = cx.to_number_value(v);
+    // ToPrimitive FIRST, so a Symbol wrapper (`Object(Symbol())`) is refused
+    // the way a bare Symbol is: to_number_value cannot say it unboxed one.
+    value prim = v;
+    if (v.is_object_like() && !cx.to_primitive_hint(v, "number", prim)) { return false; }
+    if (!numeric_arg(cx, prim)) { return false; }
+    const double n = cx.to_number_value(prim);
     if (cx.throw_pending()) { return false; }
     out = std::isnan(n) ? 0.0 : std::trunc(n);
     if (out == 0) { out = 0; } // -0 is +0
@@ -214,10 +224,16 @@ std::size_t relative_index(double rel, std::size_t len) {
     return rel > length ? len : static_cast<std::size_t>(rel);
 }
 
-// ArrayBufferCopyAndDetach (25.1.3.16), behind transfer and
-// transferToFixedLength.
+// ArrayBufferCopyAndDetach (25.1.3.16), behind transfer,
+// transferToFixedLength and transferToImmutable.
 namespace {
-value copy_and_detach(context & c, std::span<value> a, const char * method, bool preserve) {
+enum class after_copy : std::uint8_t {
+    preserve_resizability,
+    fixed_length,
+    immutable
+};
+
+value copy_and_detach(context & c, std::span<value> a, const char * method, after_copy mode) {
     array_object * store = this_buffer(c, method);
     if (store == nullptr) { return value::undefined(); }
     double new_length = 0;
@@ -230,15 +246,34 @@ value copy_and_detach(context & c, std::span<value> a, const char * method, bool
         c.throw_error("TypeError", "Cannot transfer a detached ArrayBuffer");
         return value::undefined();
     }
+    if (store_immutable(store)) {
+        c.throw_error("TypeError", "Cannot transfer an immutable ArrayBuffer");
+        return value::undefined();
+    }
     std::optional<double> max;
-    if (preserve) { max = store_max_byte_length(store); }
+    if (mode == after_copy::preserve_resizability) { max = store_max_byte_length(store); }
     const value out = make_array_buffer(c, new_length, max);
     if (out.is_undefined()) { return out; }
     array_object * fresh = buffer_store(out);
     const std::size_t n = std::min(fresh->items.size(), store->items.size());
     std::copy_n(store->items.begin(), n, fresh->items.begin());
+    if (mode == after_copy::immutable) {
+        store_slots(fresh).define(store_immutable_key, value::boolean(true), attr_none);
+    }
     detach_store(c, store);
     return out;
+}
+
+// ResolveBounds, as slice and sliceToImmutable spell it: -Infinity is 0.
+[[nodiscard]] bool resolve_bounds(context & c, std::span<value> a, std::size_t len,
+                                  std::size_t & first, std::size_t & final) {
+    double start = 0;
+    if (!to_integer_or_infinity(c, arg_at(a, 0), start)) { return false; }
+    first = relative_index(start, len);
+    double end = static_cast<double>(len);
+    if (!arg_at(a, 1).is_undefined() && !to_integer_or_infinity(c, a[1], end)) { return false; }
+    final = relative_index(end, len);
+    return true;
 }
 } // namespace
 
@@ -327,20 +362,15 @@ void install_array_buffer(context & cx) {
             return value::undefined();
         }
         const std::size_t len = store->items.size();
-        double start = 0;
-        if (!to_integer_or_infinity(c, arg_at(a, 0), start)) { return value::undefined(); }
-        const std::size_t first = relative_index(start, len);
-        double end = static_cast<double>(len);
-        if (!arg_at(a, 1).is_undefined() && !to_integer_or_infinity(c, a[1], end)) {
-            return value::undefined();
-        }
-        const std::size_t final = relative_index(end, len);
+        std::size_t first = 0, final = 0;
+        if (!resolve_bounds(c, a, len, first, final)) { return value::undefined(); }
         const std::size_t new_len = final > first ? final - first : 0;
         const value ctor = species_constructor(c, self, c.global("ArrayBuffer"));
         if (ctor.is_undefined()) { return value::undefined(); }
         const value args[1] = {value::number(static_cast<double>(new_len))};
+        const detail::unwind_watch watch{c};
         const value made = c.construct(ctor, args);
-        if (c.throw_pending()) { return value::undefined(); }
+        if (watch.threw()) { return value::undefined(); }
         array_object * fresh = buffer_store(made);
         if (fresh == nullptr) {
             c.throw_error("TypeError",
@@ -354,6 +384,11 @@ void install_array_buffer(context & cx) {
         }
         if (fresh == store) {
             c.throw_error("TypeError", "ArrayBuffer species constructor returned the same buffer");
+            return value::undefined();
+        }
+        if (store_immutable(fresh)) {
+            c.throw_error("TypeError",
+                          "ArrayBuffer species constructor returned an immutable buffer");
             return value::undefined();
         }
         if (fresh->items.size() < new_len) {
@@ -399,10 +434,49 @@ void install_array_buffer(context & cx) {
         return value::undefined();
     });
     // 25.1.6.8 / 25.1.6.9 transfer and transferToFixedLength
-    method(cx, proto, "transfer", 0,
-           [](context & c, std::span<value> a) { return copy_and_detach(c, a, "transfer", true); });
+    method(cx, proto, "transfer", 0, [](context & c, std::span<value> a) {
+        return copy_and_detach(c, a, "transfer", after_copy::preserve_resizability);
+    });
     method(cx, proto, "transferToFixedLength", 0, [](context & c, std::span<value> a) {
-        return copy_and_detach(c, a, "transferToFixedLength", false);
+        return copy_and_detach(c, a, "transferToFixedLength", after_copy::fixed_length);
+    });
+    // The immutable-arraybuffer proposal: transferToImmutable,
+    // sliceToImmutable and the `immutable` getter.
+    method(cx, proto, "transferToImmutable", 0, [](context & c, std::span<value> a) {
+        return copy_and_detach(c, a, "transferToImmutable", after_copy::immutable);
+    });
+    method(cx, proto, "sliceToImmutable", 2, [](context & c, std::span<value> a) {
+        array_object * store = this_buffer(c, "sliceToImmutable");
+        if (store == nullptr) { return value::undefined(); }
+        if (store_detached(store)) {
+            c.throw_error("TypeError", "Cannot slice a detached ArrayBuffer");
+            return value::undefined();
+        }
+        const std::size_t len = store->items.size();
+        std::size_t first = 0, final = 0;
+        if (!resolve_bounds(c, a, len, first, final)) { return value::undefined(); }
+        const std::size_t new_len = final > first ? final - first : 0;
+        // The bounds ran script: the buffer may be gone or shorter now.
+        if (store_detached(store)) {
+            c.throw_error("TypeError", "Cannot slice a detached ArrayBuffer");
+            return value::undefined();
+        }
+        if (store->items.size() < final) {
+            c.throw_error("RangeError", "ArrayBuffer shrank below the requested end");
+            return value::undefined();
+        }
+        const value out = make_array_buffer(c, static_cast<double>(new_len), std::nullopt);
+        if (out.is_undefined()) { return out; }
+        array_object * fresh = buffer_store(out);
+        std::copy_n(store->items.begin() + static_cast<std::ptrdiff_t>(first), new_len,
+                    fresh->items.begin());
+        store_slots(fresh).define(store_immutable_key, value::boolean(true), attr_none);
+        return out;
+    });
+    getter("immutable", [](context & c, std::span<value>) {
+        array_object * store = this_buffer(c, "immutable");
+        if (store == nullptr) { return value::undefined(); }
+        return value::boolean(store_immutable(store));
     });
 
     cx.define_global("ArrayBuffer", value::object(ctor));
