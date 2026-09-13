@@ -606,6 +606,9 @@ def write_record(results: dict) -> None:
         got = results.get(name)
         if got is None:
             continue
+        body.append(
+            f"# bootstrap-{name}.html versions: {json.dumps(got['versions'], sort_keys=True)}"
+        )
         cells = "" if got.get("cells") is None else f"  cells={got['cells']}"
         body.append(
             f"[bootstrap-{name}.html]  elements={got['elements']}  "
@@ -622,6 +625,7 @@ def report(name, result, limit, show_all):
         f"\n=== bootstrap-{name}.html "
         f"({result['elements']} elements, {len(GEOMETRY + PROPS)} properties) ==="
     )
+    print("  versions: " + json.dumps(result["versions"], sort_keys=True))
     if result["only_mine"] or result["only_theirs"]:
         print(
             f"  TREE SHAPE: {len(result['only_mine'])} ctbrowser-only, "
@@ -657,6 +661,20 @@ def report(name, result, limit, show_all):
             + (f", around {where}" if where else "")
             + " - the number the property diff cannot see"
         )
+
+
+def stop_session(cmp) -> None:
+    """Use the same bounded client as measurements; absent sessions are harmless."""
+    try:
+        answer = cmp.request({"verb": "stop", "args": []})
+    except cmp.NoSession:
+        return
+    except ConnectionRefusedError:
+        if cmp.stale_session():
+            cmp.PORTFILE.unlink(missing_ok=True)
+        return
+    if not answer.get("ok"):
+        raise RuntimeError(f"could not stop comparison session: {answer}")
 
 
 def main() -> int:
@@ -704,26 +722,29 @@ def main() -> int:
     results, rc = {}, 0
     for page in names:
         stem = Path(page).stem.replace("bootstrap-", "")
-        subprocess.run(
-            [sys.executable, str(HERE / "compare.py"), "stop"], capture_output=True, check=False
-        )
-        start = subprocess.run(
-            [
-                sys.executable,
-                str(HERE / "compare.py"),
-                "start",
-                page,
-                "--engine",
-                f"ctbrowse,{args.engine}",
-                "--size",
-                str(VIEWPORT[0]),
-                str(VIEWPORT[1]),
-            ]
-            + (["--remote", args.remote] if args.remote else []),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            stop_session(cmp)
+            start = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "compare.py"),
+                    "start",
+                    page,
+                    "--engine",
+                    f"ctbrowse,{args.engine}",
+                    "--size",
+                    str(VIEWPORT[0]),
+                    str(VIEWPORT[1]),
+                ]
+                + (["--remote", args.remote] if args.remote else []),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=cmp.START_TIMEOUT + cmp.REQUEST_TIMEOUT + cmp.CLOSE_TIMEOUT,
+            )
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as why:
+            print(f"css-parity: session startup failed for {page}: {why}", file=sys.stderr)
+            return 2
         if start.returncode != 0:
             print(
                 f"css-parity: could not start a session for {page}:\n{start.stderr}",
@@ -737,7 +758,9 @@ def main() -> int:
         # something that is not the engine.
         cells = None
         cells_where = ""
+        failed = False
         try:
+            versions = cmp.request({"verb": "info", "args": []})["versions"]
             data = collect(cmp, ["ctbrowse", args.engine])
             cells, cells_where = cells_that_differ(cmp, stem, ["ctbrowse", args.engine])
         except Exception as why:
@@ -745,14 +768,17 @@ def main() -> int:
             # scoring zero cells because no image arrived would be the best
             # possible number for the worst possible reason.
             print(f"css-parity: RIG FAILURE on {page}: {why}", file=sys.stderr)
-            return 2
+            failed = True
         finally:
             if not args.keep:
-                subprocess.run(
-                    [sys.executable, str(HERE / "compare.py"), "stop"],
-                    capture_output=True,
-                    check=False,
-                )
+                try:
+                    stop_session(cmp)
+                except (OSError, ValueError, RuntimeError) as why:
+                    print(f"css-parity: session cleanup failed: {why}", file=sys.stderr)
+                    failed = True
+
+        if failed:
+            return 2
 
         heads = data["heads"]
         widths = {name: h.get("cw") for name, h in heads.items()}
@@ -766,6 +792,7 @@ def main() -> int:
             return 2
 
         result = compare_page(data, "ctbrowse", args.engine)
+        result["versions"] = versions
         result["cells"] = cells
         result["cells_where"] = cells_where
         results[stem] = result
