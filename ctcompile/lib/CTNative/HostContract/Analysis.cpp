@@ -323,7 +323,8 @@ std::string analyzer::environmentProblem() {
     }
     module.walk([&](mlir::Operation * operation) {
         if (!step()) { return; }
-        if (llvm::isa<ctjs::BinaryOp, ctjs::CompareOp, ctjs::UnaryOp, ctjs::TruthyOp>(operation)) {
+        if (llvm::isa<ctjs::BinaryOp, ctjs::CompareOp, ctjs::UnaryOp, ctjs::TruthyOp,
+                      mlir::scf::IfOp, mlir::scf::YieldOp>(operation)) {
             // Even an inactive source arm must have real SSA operands. A
             // selected-arm effect anchor cannot export its local definitions.
             for (mlir::Value operand : operation->getOperands()) {
