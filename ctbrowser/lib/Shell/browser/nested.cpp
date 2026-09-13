@@ -108,18 +108,8 @@ void browser::layout_frames() {
                 // it overflows. The cascade is re-run at the reduced size when
                 // the root asks for one, which is one extra pass on a frame
                 // that asked (viewport-units-scrollbars-compute).
-                float inner_width = width;
-                float inner_height = height;
-                if (const auto root =
-                        layout->resolved.find(ctbrowser::style::engine::key_of(txn.root()));
-                    root != layout->resolved.end() && root->second) {
-                    if (root->second->get(atoms_.intern("overflow-y")) == "scroll") {
-                        inner_width = std::max(0.0f, width - options_.scrollbar_width);
-                    }
-                    if (root->second->get(atoms_.intern("overflow-x")) == "scroll") {
-                        inner_height = std::max(0.0f, height - options_.scrollbar_width);
-                    }
-                }
+                const auto [inner_width, inner_height] = viewport_less_scroll_root(
+                    atoms_, layout->resolved, txn.root(), width, height, options_.scrollbar_width);
                 if (inner_width != width || inner_height != height) {
                     env.viewport_width = inner_width;
                     env.viewport_height = inner_height;
