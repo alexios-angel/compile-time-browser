@@ -175,6 +175,15 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
 
 void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) {
     if (idx < 0) { return; }
+    // 14.6.1 / 14.7.1: IsLabelledFunction(Statement) - a function declaration
+    // behind one or more labels is never the body of an `if` or a loop, and
+    // B.3.3 does not reach it.
+    std::int32_t item = idx;
+    while (at(item).kind == nk::labeled) { item = at(item).a; }
+    if (item != idx && at(item).kind == nk::func_decl) {
+        report("a labelled function declaration cannot be the body of a statement", item);
+        return;
+    }
     const vp::node & n = at(idx);
     if (n.kind == nk::var_decl && n.text != "var") {
         // `let` IS AN IDENTIFIER HERE WHEN A NEWLINE FOLLOWS IT.
@@ -207,6 +216,12 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) 
                    idx);
         } else if (!annex_b_function) {
             report("a function declaration cannot be the body of a loop; it needs a block", idx);
+        } else if (strict()) {
+            // B.3.3 is sloppy-mode only: in strict code an `if` body is a
+            // Statement and a declaration is not one.
+            report("a function declaration cannot be the body of an `if` in strict mode code; "
+                   "it needs a block",
+                   idx);
         }
     }
 }
@@ -319,9 +334,46 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
         }
     }
     if (target.b >= 0) { walk_pattern(target.b); }
+    // A DECLARED HEAD: its names are bindings (13.1.1 in strict code), and
+    // for `let`/`const` (d bit3 / bit0) 14.7.5.1 adds that they are
+    // distinct, that none is `let`, and that none is also var-declared in
+    // the body.
+    std::vector<binding> head;
+    if ((n.d & 2) == 0) {
+        const bool lexical = (n.d & 9) != 0;
+        bound_names(n.a, lexical ? binding_kind::let_ : binding_kind::var, head);
+        check_strict_bindings(head);
+        if (lexical) {
+            std::unordered_set<std::string_view> seen;
+            for (const binding & b : head) {
+                if (b.name == "let") {
+                    report("`let` cannot be the name of a lexically declared loop variable",
+                           b.node);
+                }
+                if (!seen.insert(b.name).second) {
+                    report(quoted(b.name) + " is declared twice in the head of this loop", b.node);
+                }
+            }
+        } else {
+            head.clear();
+        }
+    }
     walk_expression(n.b);
     check_nested_declaration(n.c, false);
-    walk_loop_body(n.c, vars);
+    std::vector<binding> body_vars;
+    walk_loop_body(n.c, body_vars);
+    if (!head.empty()) {
+        for (const binding & v : body_vars) {
+            for (const binding & h : head) {
+                if (h.name != v.name) { continue; }
+                report(quoted(v.name) + " is declared in the head of this loop and with var in "
+                                        "its body",
+                       v.node);
+                break;
+            }
+        }
+    }
+    vars.insert(vars.end(), body_vars.begin(), body_vars.end());
 }
 
 // A switch's CaseBlock is ONE lexical scope spanning every clause

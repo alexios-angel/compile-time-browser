@@ -177,7 +177,12 @@ void checker::check_class(std::int32_t idx) {
         break;
     default: break;
     }
-    walk_expression(n.a); // `extends <expr>`
+    // `extends <expr>` - strict code like the rest of the class (15.7.1),
+    // which is why class_depth_ is raised around it, and outside the body's
+    // private names, which is why that stack is pushed only below.
+    ++class_depth_;
+    walk_expression(n.a);
+    --class_depth_;
     const bool derived = n.a >= 0;
     // 15.7.1: all parts of a class are strict mode code - its NAME included
     // (`class let {}`, `class yield {}`, `class eval {}` are all errors,

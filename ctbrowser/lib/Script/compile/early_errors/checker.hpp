@@ -279,6 +279,10 @@ private:
     [[nodiscard]] bool bracketed(std::int32_t key) const;
     void check_proto_duplicates(std::int32_t idx);
     void check_number(std::int32_t idx);
+    // 12.9.4 / 12.9.6: the escapes a string or template literal may carry,
+    // and that a string ends on its own line. `tagged` is a tagged template,
+    // whose invalid escapes are not an error (the cooked value is undefined).
+    void check_string(std::int32_t idx, bool is_template, bool tagged);
     void check_delete(std::int32_t operand);
     [[nodiscard]] const frame & enclosing_non_arrow_frame() const;
     [[nodiscard]] frame_kind enclosing_non_arrow() const;

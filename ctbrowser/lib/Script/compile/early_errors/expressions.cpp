@@ -293,6 +293,141 @@ void checker::check_number(std::int32_t idx) {
             return;
         }
     }
+    // THE WHOLE DECIMAL GRAMMAR (12.9.3): digits, one `.`, one exponent with
+    // an optional sign and at least one digit. The lexer keeps whatever
+    // identifier characters FOLLOW a number in the token (`3in`, `0b0` after
+    // `00`), because 12.9.3 forbids an IdentifierStart or digit right after
+    // a literal - so this is where they are refused.
+    std::size_t i = 0;
+    const auto digits = [&](bool & any) {
+        while (i < body.size() && (decimal(body[i]) || body[i] == '_')) {
+            any = any || decimal(body[i]);
+            ++i;
+        }
+    };
+    bool whole = false;
+    digits(whole);
+    bool fraction = false;
+    if (i < body.size() && body[i] == '.') {
+        ++i;
+        digits(fraction);
+    }
+    if (i < body.size() && (body[i] == 'e' || body[i] == 'E')) {
+        ++i;
+        if (i < body.size() && (body[i] == '+' || body[i] == '-')) { ++i; }
+        bool exponent = false;
+        digits(exponent);
+        if (!exponent) {
+            report("`" + std::string{text} + "` has an exponent with no digits", idx);
+            return;
+        }
+    }
+    if (i != body.size() || (!whole && !fraction)) {
+        report("`" + std::string{text} + "` is not a numeric literal", idx);
+    }
+}
+
+// 12.9.4.1 / 12.9.6.1: a string literal ends on its own line and its escapes
+// are well formed; a template's escapes must be too unless it is tagged.
+// The lexeme keeps its quotes. `\u{...}` is at most 10FFFF; `\x` takes two
+// hex digits and `\u` four; `\0` not followed by a digit is NUL; any other
+// `\0`-`\7` run is a LegacyOctalEscapeSequence and `\8`/`\9` a
+// NonOctalDecimalEscapeSequence - both refused in strict code and in every
+// template. A template's `${ ... }` holes are code, not text, and are
+// skipped as the lexer skipped them.
+void checker::check_string(std::int32_t idx, bool is_template, bool tagged) {
+    const std::string_view text = at(idx).text;
+    if (text.empty()) { return; }
+    const char quote = text.front();
+    // A str node the parser SYNTHESISED - an import's renamed binding holds
+    // the bare name - has no quotes and nothing to check.
+    if (!is_template && quote != '"' && quote != '\'') { return; }
+    if (!is_template && (text.size() < 2 || text.back() != quote)) {
+        report("this string literal is not terminated", idx);
+        return;
+    }
+    const auto hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    const auto bad = [&](const char * what) {
+        if (is_template && tagged) { return; }
+        report(std::string{what} + " in " +
+                   (is_template ? "a template literal" : "a string literal"),
+               idx);
+    };
+    int hole = 0;
+    for (std::size_t i = 1; i + 1 < text.size(); ++i) {
+        const char c = text[i];
+        if (is_template) {
+            if (hole == 0 && c == '$' && text[i + 1] == '{') {
+                hole = 1;
+                ++i;
+                continue;
+            }
+            if (hole > 0) {
+                if (c == '{') { ++hole; }
+                if (c == '}') { --hole; }
+                continue;
+            }
+        }
+        if (!is_template && (c == '\n' || c == '\r')) {
+            report("a string literal may not contain a line break; use `\\n` or a line "
+                   "continuation",
+                   idx);
+            return;
+        }
+        if (c != '\\') { continue; }
+        const char e = text[i + 1];
+        ++i;
+        if (e == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; } // a CRLF continuation
+        if (e == 'x') {
+            if (i + 2 >= text.size() || !hex(text[i + 1]) || !hex(text[i + 2])) {
+                bad("a `\\x` escape needs two hex digits");
+                return;
+            }
+            i += 2;
+        } else if (e == 'u') {
+            if (i + 1 < text.size() && text[i + 1] == '{') {
+                std::size_t j = i + 2;
+                unsigned long cp = 0;
+                std::size_t count = 0;
+                while (j < text.size() && hex(text[j])) {
+                    cp = cp * 16 + static_cast<unsigned long>(text[j] <= '9'
+                                                                  ? text[j] - '0'
+                                                                  : (text[j] | 0x20) - 'a' + 10);
+                    if (cp > 0x10FFFF) { cp = 0x110000; }
+                    ++count;
+                    ++j;
+                }
+                if (count == 0 || j >= text.size() || text[j] != '}' || cp > 0x10FFFF) {
+                    bad("a `\\u{...}` escape needs hex digits up to 10FFFF and a closing `}`");
+                    return;
+                }
+                i = j;
+            } else {
+                if (i + 4 >= text.size() || !hex(text[i + 1]) || !hex(text[i + 2]) ||
+                    !hex(text[i + 3]) || !hex(text[i + 4])) {
+                    bad("a `\\u` escape needs four hex digits");
+                    return;
+                }
+                i += 4;
+            }
+        } else if (e >= '0' && e <= '7') {
+            const bool nul =
+                e == '0' && (i + 1 >= text.size() || !(text[i + 1] >= '0' && text[i + 1] <= '9'));
+            if (!nul && (is_template || strict())) {
+                bad("a legacy octal escape is not allowed");
+                return;
+            }
+        } else if (e == '8' || e == '9') {
+            if (is_template || strict()) {
+                bad("`\\8` and `\\9` are not allowed");
+                return;
+            }
+        }
+        // Anything else - a character escape, a line continuation, a
+        // non-escape character - is fine.
+    }
 }
 
 // 13.5.1.1: `delete` of a private member is an error wherever it appears -
@@ -504,7 +639,12 @@ void checker::walk_expression(std::int32_t idx) {
 
     // A template's `${...}` holes are raw text inside one token; the
     // compiler parses them separately, so there is nothing here to walk.
-    case nk::tmpl: return;
+    case nk::tmpl: check_string(idx, true, false); return;
+    case nk::tagged:
+        walk_expression(n.a);
+        check_string(n.b, true, true);
+        return;
+    case nk::str: check_string(idx, false, false); return;
 
     default: break;
     }
