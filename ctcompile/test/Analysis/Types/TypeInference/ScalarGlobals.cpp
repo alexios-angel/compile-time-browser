@@ -215,6 +215,56 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     "dynamic global access keeps constant-only observations boxed");
         }
 
+        if (prepared) {
+            for (const char * name : {"globalThis", "window"}) {
+                auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                    replaced(program, kFive, kOneAndAHalf), &context);
+                require(static_cast<bool>(module), "ordinary owner spelling fixture parses");
+                if (!module) { continue; }
+                const auto named = mlir::StringAttr::get(&context, name);
+                module->walk([&](ctjs::LoadGlobalOp load) {
+                    if (load.getName() == "host") { load->setAttr("name", named); }
+                });
+                module->walk([&](ctjs::StoreGlobalOp store) {
+                    if (store.getName() == "host") { store->setAttr("name", named); }
+                });
+                auto contract = requested(*module);
+                contract.roots.front().binding = name;
+                OwnedGlobalRoots complete(*module, contract);
+                require(complete.proved() && complete.scalarReads().size() == 2,
+                        "realm spelling does not change the proved ordinary source owner");
+                if (!complete.proved()) { continue; }
+                check(*module, "a proved ordinary owner preserves the real fractional store type",
+                      "!ctnative.num<f64>", &complete);
+                check(*module, "without ownership the realm spelling still makes globals dynamic",
+                      "!ctnative.boxed");
+                for (unsigned budget : {0u, complete.steps() - 1}) {
+                    OwnedGlobalRoots limited(*module, contract, budget);
+                    require(!limited.proved() && limited.exhausted(),
+                            "incomplete ordinary ownership supplies no realm exemption");
+                    check(*module, "exhausted ownership keeps realm globals boxed",
+                          "!ctnative.boxed", &limited);
+                }
+                auto entry = module->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                mlir::OpBuilder at(&entry.getBody().front(), entry.getBody().front().begin());
+                ctjs::LoadGlobalOp::create(
+                    at, entry.getLoc(), ctjs::ValueType::get(&context),
+                    at.getStringAttr(named.getValue() == "globalThis" ? "window" : "globalThis"),
+                    at.getBoolAttr(false));
+                OwnedGlobalRoots stale(*module, contract);
+                require(!stale.proved() && stale.reason().contains("fingerprint"),
+                        "changed realm access invalidates the old owner fingerprint");
+                check(*module, "stale ownership keeps the original scalar boxed", "!ctnative.boxed",
+                      &stale);
+                contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*module);
+                OwnedGlobalRoots sibling(*module, contract);
+                require(!sibling.proved() && !sibling.exhausted(),
+                        "a fresh proof refuses the unproved sibling realm load");
+                check(*module, "one ordinary owner cannot exempt an unproved sibling realm",
+                      "!ctnative.boxed", &sibling);
+            }
+        }
+
         const auto booleanTag = mlir::TypeID::get<ctjs::BooleanAttr>();
         const auto boolean =
             replaced(literal, std::string("%entryLiteral = ctjs.constant ") + kFive,

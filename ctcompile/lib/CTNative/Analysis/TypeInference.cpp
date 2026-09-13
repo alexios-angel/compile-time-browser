@@ -502,10 +502,12 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // A PROPERTY WRITE THROUGH THE GLOBAL OBJECT is a write to the globals
         // table this index cannot see. `globalThis` and `window` are the two
         // names that reach it; a load of either anywhere in the program is
-        // taken as "the table may be written dynamically" - coarse, and the
-        // safe side of coarse.
+        // taken as "the table may be written dynamically" unless the complete
+        // owner proof identifies that exact read as a source-created ordinary
+        // object. Its binding name alone does not make it the realm object.
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-            if (load.getName() == "globalThis" || load.getName() == "window") {
+            if ((load.getName() == "globalThis" || load.getName() == "window") &&
+                !(ownedRoots_ && ownedRoots_->proved() && ownedRoots_->lookup(load))) {
                 globalsAreDynamic_ = true;
             }
         }
