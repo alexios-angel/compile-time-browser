@@ -147,10 +147,15 @@ touched, and the whole is 35%. By what stands in front of the most tests:
 - **`css/cssom-view`** 44 of 204: `getBoundingClientRect`, `scrollIntoView`,
   `elementFromPoint`, `scroll*` on the element and the window, `matchMedia`
   events.
-- **`html/syntax`** 22 of 221, with **133 TIMEOUTs**: the html5lib
-  tree-construction fixtures (`parsing/html5lib_*.html`) run the DOM's own
-  tree builder over thousands of inputs and most files do not finish in 10 s
-  - a performance question first, then a conformance one.
+- **`html/syntax`** 22 of 221, with **133 TIMEOUTs** - and the TIMEOUTs are
+  not the parser: 126 of them are `speculative-parsing/`, which needs a WPT
+  server (`stash.py`) and can never finish here; the next row of this file
+  drops that directory from the checkout. The html5lib tree-construction
+  fixtures (`parsing/html5lib_write.html` and its siblings, one `.dat` per
+  `<meta name=variant>`) are SKIPPED by the runner, which opens a file and
+  has no query string to hand a variant - so the DOM's own tree builder is
+  still not measured by this corpus. That is an instrument gap, named here so
+  it is not read as a parser at 22 of 221.
 - **`html/webappapis`** 47 of 309 (52 TIMEOUTs), **`html/semantics/forms`**
   58 of 331, **`dom/ranges`** 16 of 63 (9,294 failing subtests: `Range`
   mutations, `extractContents`/`cloneContents`/`deleteContents`),
