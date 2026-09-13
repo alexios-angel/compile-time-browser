@@ -32,4 +32,19 @@ std::expected<void, dom_error> set_element_attribute(document & doc, node_id id,
     return doc.set_attribute(id, attribute_key(doc, id, name), text);
 }
 
+std::expected<attribute_toggle_result, dom_error> toggle_element_attribute(
+    document & doc, node_id id, std::string_view name, std::optional<bool> force) {
+    if (!is_valid_attribute_name(name)) {
+        return std::unexpected{dom_error::invalid_attribute_name};
+    }
+    const atom key = attribute_key(doc, id, name);
+    const bool present = doc.read().has_attribute(id, key);
+    const bool want = force.value_or(!present);
+    if (want == present) { return attribute_toggle_result{present, false}; }
+    const auto written = want ? doc.set_attribute(id, key, "") : doc.remove_attribute(id, key);
+    attribute_toggle_result result{want, true};
+    if (!written) { result.update = std::unexpected{written.error()}; }
+    return result;
+}
+
 } // namespace ctbrowser

@@ -294,6 +294,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         tokenList,
         toggle,
         attribute,
+        toggleAttribute,
+        hasAttribute,
+        removeAttribute,
         string,
         boolean,
         undefined,
@@ -403,12 +406,20 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
                     store && !published && closure && store.getValue() == closure.getResult() &&
+                    store.getName() != "undefined" &&
                     store.getName() == target.getSymName().rsplit('$').first) {
                     published = true;
                     continue;
                 }
                 refusal = "DOM entry wrapper contains observable source operations";
                 return;
+            }
+            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                load && load.getName() == "undefined") {
+                // The DOM provider fixes this initial binding. The complete
+                // source census admits no replacement or script reentry.
+                values[load.getResult()] = Kind::undefined;
+                continue;
             }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                 const auto key = ctjs::constantKey(read.getKey());
@@ -420,6 +431,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (hasKind(read.getObject(), Kind::element) && key == "setAttribute") {
                     values[read.getResult()] = Kind::attribute;
                     provedMethods.emplace_back(read, HostDOMMethod::setAttribute);
+                    continue;
+                }
+                if (hasKind(read.getObject(), Kind::element) &&
+                    (key == "toggleAttribute" || key == "hasAttribute" ||
+                     key == "removeAttribute")) {
+                    values[read.getResult()] = key == "toggleAttribute" ? Kind::toggleAttribute
+                                               : key == "hasAttribute"  ? Kind::hasAttribute
+                                                                        : Kind::removeAttribute;
+                    provedMethods.emplace_back(
+                        read, key == "toggleAttribute" ? HostDOMMethod::toggleAttribute
+                              : key == "hasAttribute"  ? HostDOMMethod::hasAttribute
+                                                       : HostDOMMethod::removeAttribute);
                     continue;
                 }
                 if (hasKind(read.getObject(), Kind::tokenList) && key == "toggle") {
@@ -437,25 +460,48 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     return;
                 }
                 auto arguments = invoke.getArgs();
-                if (hasKind(invoke.getCallee(), Kind::toggle) && arguments.size() == 1 &&
+                if ((hasKind(invoke.getCallee(), Kind::toggle) ||
+                     hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
+                    (arguments.size() == 1 ||
+                     (arguments.size() == 2 && (hasKind(arguments[1], Kind::boolean) ||
+                                                hasKind(arguments[1], Kind::undefined)))) &&
                     hasKind(arguments[0], Kind::string)) {
-                    auto tokens = invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>();
-                    provedCalls.push_back({invoke, HostDOMMethod::toggleClass, tokens.getObject()});
+                    const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
+                    auto element =
+                        classes
+                            ? invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>().getObject()
+                            : invoke.getReceiver();
+                    provedCalls.push_back(
+                        {invoke,
+                         classes ? HostDOMMethod::toggleClass : HostDOMMethod::toggleAttribute,
+                         element});
                     values[invoke.getResult()] = Kind::boolean;
                     continue;
                 }
-                if (hasKind(invoke.getCallee(), Kind::attribute) && arguments.size() == 2 &&
-                    hasKind(arguments[0], Kind::string) &&
-                    (hasKind(arguments[1], Kind::string) || hasKind(arguments[1], Kind::boolean))) {
+                if (hasKind(invoke.getCallee(), Kind::hasAttribute) && arguments.size() == 1 &&
+                    hasKind(arguments[0], Kind::string)) {
+                    provedCalls.push_back(
+                        {invoke, HostDOMMethod::hasAttribute, invoke.getReceiver()});
+                    values[invoke.getResult()] = Kind::boolean;
+                    continue;
+                }
+                const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
+                if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
+                     (hasKind(arguments[1], Kind::string) ||
+                      hasKind(arguments[1], Kind::boolean))) ||
+                    (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
+                     hasKind(arguments[0], Kind::string))) {
                     for (mlir::Operation * user : invoke.getResult().getUsers()) {
                         if (!spend()) { return; }
                         if (!llvm::isa<ctjs::RootOp>(user)) {
-                            refusal = "DOM setAttribute result must be unused";
+                            refusal = "DOM attribute write result must be unused";
                             return;
                         }
                     }
                     provedCalls.push_back(
-                        {invoke, HostDOMMethod::setAttribute, invoke.getReceiver()});
+                        {invoke,
+                         sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
+                         invoke.getReceiver()});
                     values[invoke.getResult()] = Kind::undefined;
                     continue;
                 }

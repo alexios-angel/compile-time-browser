@@ -45,10 +45,27 @@ source, additional initialization effects, calls to the entry from JavaScript,
 captures, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, and nested control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
-`classList.toggle(token)` and `setAttribute(name, String-or-Boolean)`. Tokens
-and names come from source strings; unsupported coercions refuse.
+`classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
+`hasAttribute(name)`, `removeAttribute(name)` and
+`setAttribute(name, String-or-Boolean)`. Tokens and names come from source strings;
+force is a proved Boolean (including an earlier DOM result) or explicit undefined.
+Unsupported coercions and observed set/remove results refuse.
+
+The provider starts with the standard `undefined` binding, independently of
+external script state. Complete source discovery rejects replacement (including
+a declaration named `undefined`) and script reentry. Preparation replaces only
+those proved global reads with constants in a private clone and reproves it
+before publication. This does not claim that the VM makes its globals immutable.
+
+Explicit undefined force preserves the current platform adapters: classList
+treats it as omitted, while Element.toggleAttribute treats it as false. Private
+preparation omits the former argument and replaces the latter with a Boolean
+constant before reproof and C++ type selection. Forced no-ops preserve attribute
+bytes and mutation behavior; invalid toggle names still throw before a no-op.
 
 Generated calls use the public `dom/element.hpp` and `dom/token_list.hpp` APIs.
+Attribute toggling shares `toggle_element_attribute` with the VM adapter;
+presence and removal call the existing document API and shared name folding.
 `validate_element` checks every incoming handle before effects. Token validation
 and DOM write failures propagate as C++ `std::bad_expected_access` exceptions. The
 VM adapters use the same platform implementation and retain their own value
@@ -63,7 +80,14 @@ controls and absence of Script symbols. Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
 Next is retained DOM-backed Data ownership: the document must outlive every
-stored key, not merely one call. Then admit the original Button receiver/action
+stored key, not merely one call. The document itself borrows an atom table.
+The generated owner must therefore destroy Data/component state first, then
+its document, then its atom table. The current Data contract allows extracted
+callables to outlive their table/root; it cannot safely borrow this entry's DOM
+handles. The next proof needs an owning session with direct/member entry calls
+that cannot escape independently, plus distinct DOM-key provenance preserving
+both document and node identity. No such session or retained key is admitted yet.
+Then admit the original Button receiver/action
 and its BaseComponent/Config construction, prototype/static getters and disposal.
 This standalone probe does not change the untouched Bootstrap bundle's admission
 denominator or complete the native application driver.

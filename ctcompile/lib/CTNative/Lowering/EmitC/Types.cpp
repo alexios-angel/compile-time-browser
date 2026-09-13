@@ -16,7 +16,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     });
     const auto retypeValue = [&](mlir::Value v) {
         if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() && call->second.kind == HostDOMMethod::setAttribute) {
+            call != domCalls.end() && !call->second.returnsBoolean()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));

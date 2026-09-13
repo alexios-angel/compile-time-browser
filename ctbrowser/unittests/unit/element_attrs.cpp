@@ -179,6 +179,66 @@ void test_what_an_attribute_may_be_called() {
        "a,b");
 }
 
+void test_toggle_attribute_preserves_conversion_and_notifications() {
+    is(R"JS((function () {
+        var e = document.createElement('button');
+        var first = e.toggleAttribute('DISABLED');
+        var empty = e.getAttribute('disabled');
+        e.setAttribute('disabled', 'kept');
+        var conversions = 0;
+        var force = {valueOf: function () { conversions++; return false; },
+                     toString: function () { conversions++; return ''; }};
+        var kept = e.toggleAttribute('disabled', force) + ':' + e.getAttribute('disabled');
+        var removed = e.toggleAttribute('disabled', undefined);
+        var absent = e.toggleAttribute('disabled', false);
+        return first + ',' + empty + ',' + kept + ',' + conversions + ',' + removed + ',' +
+               absent + ',' + e.toggleAttribute('disabled') + ',' + e.hasAttribute('disabled');
+    })())JS",
+       "true,,true:kept,0,false,false,true,true");
+    // Element's current explicit-undefined behavior differs from PI's. Keep
+    // this refactor from silently changing either adapter's WebIDL conversion.
+    is(R"JS((function () {
+        var pi = document.createProcessingInstruction('pi', '');
+        return pi.toggleAttribute('Mixed', undefined) + ',' + pi.hasAttribute('Mixed') + ',' +
+               pi.hasAttribute('mixed');
+    })())JS",
+       "true,true,false");
+    is("document.createElement('button').toggleAttribute('bad name', false)",
+       "threw:InvalidCharacterError");
+    is(R"JS((function () {
+        var e = document.createElement('button');
+        var name = {toString: function () { e.setAttribute('x', 'kept'); return 'X'; }};
+        return e.toggleAttribute(name) + ',' + e.hasAttribute('x');
+    })())JS",
+       "false,false");
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttributeNS('one', 'p:x', 'first');
+        e.setAttributeNS('two', 'p:x', 'second');
+        return e.toggleAttribute('P:X', false) + ',' + e.getAttributeNS('one', 'x') + ',' +
+               e.getAttributeNS('two', 'x') + ',' + e.hasAttribute('p:x');
+    })())JS",
+       "false,null,second,true");
+    is(R"JS((function () {
+        var e = document.getElementById('test');
+        var m = new MutationObserver(function () {});
+        m.observe(e, {attributes: true, attributeOldValue: true});
+        e.toggleAttribute('disabled', false);
+        var absent = m.takeRecords().length;
+        e.toggleAttribute('disabled', true);
+        var added = m.takeRecords();
+        e.toggleAttribute('disabled', true);
+        var kept = m.takeRecords().length;
+        e.toggleAttribute('disabled');
+        var removed = m.takeRecords();
+        m.disconnect();
+        return absent + ',' + added.length + ':' + added[0].attributeName + ':' +
+               added[0].oldValue + ',' + kept + ',' + removed.length + ':' +
+               removed[0].attributeName + ':' + removed[0].oldValue;
+    })())JS",
+       "0,1:disabled:null,0,1:disabled:");
+}
+
 // --- "validate and extract", and its two different throws -------------------
 
 void test_setattributens_validates_then_extracts() {
@@ -737,6 +797,7 @@ int main() {
     test_the_first_attribute_wins_the_qualified_lookup();
     test_only_an_html_element_folds_its_attribute_names();
     test_what_an_attribute_may_be_called();
+    test_toggle_attribute_preserves_conversion_and_notifications();
     test_setattributens_validates_then_extracts();
     test_the_map_holds_attr_nodes();
     test_the_map_is_iterable_and_named();

@@ -6,6 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native attribute operations and bounded Number indices, 2026-09-13 UTC
+
+Continued clean **03fa27f6**, resuming the native browser boundary in its latest
+HANDOFF and the plan journal. Both histories showed the frame/parser fix complete;
+September 7 WIP is already an ancestor. The unmerged lens branches concern a
+closure-order bug already superseded by **6520fcf2**, not interrupted native work.
+Three agents split public DOM extraction, native execution and the independent
+escape prerequisite; root integrated in `codex-native-dom-ops-20260913`. No push.
+
+**9e5888c3** lifts Element.toggleAttribute into public
+`toggle_element_attribute`, using the existing document and attribute-name APIs.
+The VM binding is a thin adapter preserving validation/conversion order,
+requested-state returns, qualified namespace matching, no-op bytes, failed-write
+handling and mutation notifications. ProcessingInstruction retains its distinct
+force conversion. Native DOM/Core and VM regressions cover those behaviors.
+
+**9a67fd2b** proves and emits `toggleAttribute`, `hasAttribute`, `removeAttribute`
+and optional Boolean force for class toggles. Results can feed later forces.
+Explicit undefined keeps the current adapters' behavior: omitted for classList,
+false for Element.toggleAttribute. The DOM provider fixes the initial undefined
+binding; complete source discovery rejects replacement/reentry, then private
+preparation replaces proved reads with constants and reproves before publication.
+This is not a claim that VM globals are immutable. Generated C++ uses public DOM
+calls, ordinary element identities and Boolean/optional-Boolean values. The gate
+rejects Script/AOT symbols and scalar value-model helpers in Boolean entries.
+
+**f6d61d2a** carries exact bounded Number static-Add facts through the existing
+immutable contents record, storage and simultaneous successor transport. Both
+operands and sum must lie in [0, 2^32-1]; only proper array indices select elements.
+Twenty-nine boundary cases use the existing transactional budget harness. Two
+existing expectations change without changing their bodies: zero+zero Add gains
+an exact index, while length+zero still refuses as a missing element. No branch
+pruning, backedge admission, generic native consumer or source-fixture substitution.
+
+**53a8f49a** resolves the requested strict review's one finding in the new
+implementation: optional-force normalization now happens once in private DOM
+preparation, using original proof plus clone mapping. Fingerprinting and reproof
+still precede publication. No emitter side table, erased-force reconstruction
+or force-specific branch remains in generic function lowering.
+
+Validation: initial **398-step build**, then **59-step / 6 of 6 focused CTest
+PASS in 63.66s**. First full standard gate **682-step build / 543 of 543 CTests
+PASS in 1173.27s**, including **167/167 lit cases in 844.16s**. After the review
+cleanup, unchanged focused **6/6 PASS in 64.21s**; final standard **238-step build /
+543/543 CTests PASS in 1173.88s**, including **167/167 lit cases in 846.11s**.
+The native matrix is **10 sources / 28 refusal controls**, both policies/layouts/
+GCC13.3/configured Clang, **64.20s** focused and **98.85s** in the final full gate.
+All **1398 frozen source/test/config inputs** match isolated and devbox trees.
+Stable whole formatting passes **812 C++ / 86 Python / 33 web**; the required
+bundled formatter has exactly the same **9 baseline files / 26 diagnostics**.
+Full WPT/test262 scores were not remeasured. Evidence: `/tmp/ctcompile-native-dom-ops/`.
+
+The user broadened the requested skills review to the entire monorepo.
+[The review](reviews/2026-09-13-monorepo.md) records eight open correctness/tooling
+findings, three architectural opportunities and five measured simplifications.
+Prioritize the pre-existing scheduler teardown and slab capacity defects; Canvas
+numeric bounds and output/resource failure handling also remain open. These
+paths were not changed here. The scope inventory spans 1486 first-party files;
+it is not exhaustive line-by-line coverage. Two Python-only tooling checks ran.
+The c-review/code-improver workflows require an unavailable Workflow tool, and an
+automated security filter stopped preparation of C++ reproductions; no sanitizer
+confirmation or successful automated review loop is claimed.
+
+Fresh complete Bootstrap remains **19/574 native / 0 of 43 globals resolved**,
+both policies, no skipped/pruned functions. The complete escape oracle remains
+**222 functions / 861 claims / 895 observed sites / 35 unclaimed / zero violations /
+39 of 172 precision**. This adds synchronous actions, not retained DOM Data,
+original Button construction, full Bootstrap initialization or an application driver.
+
+**Exact next browser boundary:** a nonmovable generated owner holds atoms, document,
+then Data/component state in that declaration order, so teardown destroys state
+before document before atoms. Existing extracted Data callables can outlive their
+owner; borrowing DOM keys into that carrier would dangle. Prove direct/member
+session calls that cannot escape independently and distinct DOM-key provenance
+preserving document plus node identity, including detachment and equal-bit foreign
+nodes. Then original Button/BaseComponent/Config construction and disposal.
+**Exact next escape boundary:** prove zero/+1 induction and a strict same-stable-array
+length guard for original confinedArray before bounded repeated-block execution.
+Its source and refusal remain intact; generic escape facts still lack a native consumer.
+
 ## Frame stylesheet failure fixed, 2026-09-13 UTC
 
 After **c478d66f**, the user requested fixing the remaining `frames` failure before

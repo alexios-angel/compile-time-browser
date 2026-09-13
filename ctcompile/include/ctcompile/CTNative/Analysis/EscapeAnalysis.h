@@ -469,7 +469,10 @@ struct ArrayContentsEvidence {
 /// success remain unproved. Mixed/opaque inputs and unsigned BigInt shifts still
 /// refuse. Non-BigInt static conversion never
 /// invokes user code, including on a fresh object (a documented VM deviation
-/// from source JS). Results infer no Number value, index or branch liveness.
+/// from source JS). Static Add separately carries an exact Number index when
+/// both saved facts or original Number literals and their sum lie in [0, 2^32-1].
+/// Bounded literal subtraction also preserves that fact; no branch liveness or
+/// loop admission follows. Other static results infer no Number value or index.
 /// String conversion can allocate C++ temporaries; absence of allocation and
 /// its success are not proved.
 /// Neg/Plus/BitNot yield Number only for independently primitive non-BigInt

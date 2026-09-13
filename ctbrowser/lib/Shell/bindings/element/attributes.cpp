@@ -744,20 +744,14 @@ void dom_bindings::install_attribute_methods(context & cx) {
             return value::boolean(false);
         }
         if (!id) { return value::boolean(false); }
-        const atom key = attribute_key(doc_->read(), id, name);
-        const bool present = doc_->read().has_attribute(id, key);
         // `force` is TRISTATE: absent means "flip", a present `false` means
         // "remove whether or not it is there". `args.size()` is the only thing
         // that can tell the first from the second.
-        const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
-        if (want == present) { return value::boolean(present); }
-        if (want) {
-            (void)doc_->set_attribute(id, key, "");
-        } else {
-            (void)doc_->remove_attribute(id, key);
-        }
-        mutated();
-        return value::boolean(want);
+        const auto result = toggle_element_attribute(
+            *doc_, id, name,
+            args.size() > 1 ? std::optional{context::truthy(args[1])} : std::nullopt);
+        if (!result->update || *result->update) { mutated(); }
+        return value::boolean(result->present);
     });
     // `getAttributeNames()` - the QUALIFIED names, in order, which is the one
     // answer `element.attributes` cannot give in a single string comparison.

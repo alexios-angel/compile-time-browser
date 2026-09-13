@@ -188,6 +188,60 @@ module {
         check(!DOMEntryAnalysis(*promise, contract).proved(),
               "Promise completion cannot become a synchronous Boolean DOM entry");
     }
+    const std::string globalForce =
+        replaced(source, "%state = ctjs.call %toggle(%list, %active)",
+                 "%force = ctjs.load_global \"undefined\"\n"
+                 "    %state = ctjs.call %toggle(%list, %active, %force)");
+    for (const auto & [name, expected] :
+         {std::pair{"undefined", true}, std::pair{"unknownForce", false}}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(
+            replaced(globalForce, "ctjs.load_global \"undefined\"",
+                     std::string{"ctjs.load_global \""} + name + "\""),
+            &context);
+        check(static_cast<bool>(input), "DOM provider initial global force fixture parses");
+        if (!input) { continue; }
+        contract.moduleSha256 = hostContractFingerprint(*input);
+        check(DOMEntryAnalysis(*input, contract).proved() == expected,
+              "only the DOM provider's initial undefined binding is known");
+    }
+    for (const auto & [name, kind] :
+         {std::pair{"toggleAttribute", HostDOMMethod::toggleAttribute},
+          std::pair{"hasAttribute", HostDOMMethod::hasAttribute},
+          std::pair{"removeAttribute", HostDOMMethod::removeAttribute}}) {
+        std::string text = replaced(source, "setAttribute", name);
+        if (kind != HostDOMMethod::toggleAttribute) {
+            text = replaced(text, "%attribute(%element, %name, %state)",
+                            "%attribute(%element, %name)");
+        } else {
+            text = replaced(text, "ctjs.return %state", "ctjs.return %unused");
+        }
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(input), "typed DOM attribute operation fixture parses");
+        if (!input) { continue; }
+        contract.moduleSha256 = hostContractFingerprint(*input);
+        ctjs::CallOp operation;
+        input->walk([&](ctjs::CallOp call) { operation = call; });
+        DOMEntryAnalysis query(*input, contract);
+        const auto * edge = query.call(operation);
+        check(query.proved() && edge && edge->kind == kind &&
+                  edge->returnsBoolean() == (kind != HostDOMMethod::removeAttribute),
+              "attribute proof distinguishes Boolean state from an unused write result");
+        if (!query.proved()) { continue; }
+        for (unsigned budget = 0; budget < query.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, contract, budget);
+            check(!limited.proved() && limited.exhausted() && !limited.call(operation) &&
+                      !limited.entry() && limited.parameters().empty(),
+                  "every incomplete attribute proof budget withholds the entire capability");
+        }
+        mlir::Value receiver = operation.getReceiver();
+        operation->setOperand(1, operation.getArgs()[0]);
+        (*input)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+        contract.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis forged(*input, contract);
+        check(!forged.proved() && !forged.call(operation) && !forged.entry(),
+              "new attribute methods cannot detach from their receiver using fresh reports");
+        operation->setOperand(1, receiver);
+    }
 }
 
 void checkCallables(mlir::MLIRContext & context) {

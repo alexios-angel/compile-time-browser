@@ -14,9 +14,10 @@ inline void require_element(ctbrowser::element_ref element) {
 
 inline constexpr llvm::StringLiteral kDOMToggleHelpers = R"cpp(
 namespace ctnative {
-inline bool toggle_class(ctbrowser::element_ref element, std::string_view token) {
+inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
+                         std::optional<bool> force = std::nullopt) {
     auto result = ctbrowser::toggle_token(*element.owner, element.id,
-        element.owner->atoms().intern("class"), token).value();
+        element.owner->atoms().intern("class"), token, force).value();
     result.update.value();
     return result.present;
 }
@@ -31,6 +32,35 @@ inline void set_attribute(ctbrowser::element_ref element, std::string_view name,
 }
 inline void set_attribute(ctbrowser::element_ref element, std::string_view name, bool value) {
     set_attribute(element, name, value ? std::string_view("true") : std::string_view("false"));
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMAttributeToggleHelpers = R"cpp(
+namespace ctnative {
+inline bool toggle_attribute(ctbrowser::element_ref element, std::string_view name,
+                             std::optional<bool> force = std::nullopt) {
+    auto result = ctbrowser::toggle_element_attribute(*element.owner, element.id, name, force).value();
+    result.update.value();
+    return result.present;
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMAttributePresenceHelpers = R"cpp(
+namespace ctnative {
+inline bool has_attribute(ctbrowser::element_ref element, std::string_view name) {
+    return element.owner->read().has_attribute(element.id,
+        ctbrowser::attribute_key(*element.owner, element.id, name));
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMAttributeRemovalHelpers = R"cpp(
+namespace ctnative {
+inline void remove_attribute(ctbrowser::element_ref element, std::string_view name) {
+    element.owner->remove_attribute(element.id,
+        ctbrowser::attribute_key(*element.owner, element.id, name)).value();
 }
 } // namespace ctnative
 )cpp";

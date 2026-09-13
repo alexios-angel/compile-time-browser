@@ -2,6 +2,8 @@
 
 #include <ctbrowser/dom/document.hpp>
 
+#include <optional>
+
 namespace ctbrowser {
 
 // A borrowed element: equal node IDs in different documents are different
@@ -32,5 +34,19 @@ struct element_ref {
 [[nodiscard]] std::expected<void, dom_error> set_element_attribute(document & doc, node_id id,
                                                                    std::string_view name,
                                                                    std::string_view text);
+
+struct attribute_toggle_result {
+    // The requested state, even when another namespaced match remains.
+    bool present;
+    // False for a forced no-op, true for a successful attempted change.
+    // A failed write retains the requested presence for VM adapters.
+    std::expected<bool, dom_error> update;
+};
+
+// Toggle the first attribute with this qualified name, preserving its bytes
+// on a forced no-op. Name validation precedes all DOM reads and writes;
+// native callers validate their element and check both result and update.
+[[nodiscard]] std::expected<attribute_toggle_result, dom_error> toggle_element_attribute(
+    document & doc, node_id id, std::string_view name, std::optional<bool> force = std::nullopt);
 
 } // namespace ctbrowser

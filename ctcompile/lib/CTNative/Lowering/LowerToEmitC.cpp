@@ -41,6 +41,7 @@
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -150,10 +151,45 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             // An explicit library entry may replace only its proved inert
             // declaration wrapper. Prepare privately, discard supplied native
             // reports, and reprove before publishing the exported function.
-            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
+            mlir::IRMapping mapping;
+            mlir::OwningOpRef<mlir::ModuleOp> prepared(
+                llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
             if (auto wrapper = source.wrapper()) {
                 prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
             }
+            // Only the initialized DOM provider and complete source proof
+            // authorize this binding. Normalize in the private clone, then
+            // reprove it below; no VM lookup or C++ global survives emission.
+            prepared->walk([](ctjs::LoadGlobalOp load) {
+                if (load.getName() != "undefined") { return; }
+                mlir::OpBuilder at(load);
+                auto constant = ctjs::ConstantOp::create(
+                    at, load.getLoc(), ctjs::UndefinedAttr::get(load.getContext()));
+                load.getResult().replaceAllUsesWith(constant.getResult());
+                load.erase();
+            });
+            // Normalize optional force while the original method proof is
+            // available. Token lists omit undefined; Element coerces it to
+            // false. The emitter then needs only ordinary Boolean arguments.
+            source.entry().walk([&](ctjs::CallOp original) {
+                const auto * edge = source.call(original);
+                if (!edge || (edge->kind != HostDOMMethod::toggleClass &&
+                              edge->kind != HostDOMMethod::toggleAttribute)) {
+                    return;
+                }
+                auto call = llvm::cast<ctjs::CallOp>(mapping.lookup(original.getOperation()));
+                if (call.getArgs().size() != 2) { return; }
+                auto force = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+                if (!force || !llvm::isa<ctjs::UndefinedAttr>(force.getValue())) { return; }
+                if (edge->kind == HostDOMMethod::toggleClass) {
+                    call.getArgsMutable().erase(1);
+                } else {
+                    mlir::OpBuilder at(call);
+                    auto value = ctjs::ConstantOp::create(
+                        at, call.getLoc(), ctjs::BooleanAttr::get(call.getContext(), false));
+                    call.getArgsMutable().slice(1, 1).assign(value.getResult());
+                }
+            });
             prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
             HostContract transformed = *hostContract;

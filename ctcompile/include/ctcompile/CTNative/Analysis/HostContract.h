@@ -34,6 +34,8 @@ struct HostContract {
     // Indices name explicit JS parameters, excluding the three implicit ones.
     // The document owns each node and must outlive this synchronous invocation;
     // identity includes the document, not just the node_id's bits.
+    // The provider starts with the standard undefined binding. The complete
+    // source proof excludes replacement and external script reentry.
     std::vector<unsigned> elementParameters;
     std::vector<HostRootRequest> roots;
     std::vector<std::string> observations;
@@ -62,13 +64,19 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 
 enum class HostDOMMethod {
     toggleClass,
-    setAttribute
+    setAttribute,
+    toggleAttribute,
+    hasAttribute,
+    removeAttribute
 };
 
 struct HostDOMCall {
     ctjs::CallOp operation;
     HostDOMMethod kind;
     mlir::Value element;
+    [[nodiscard]] bool returnsBoolean() const {
+        return kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
+    }
 };
 
 // Live evidence for one synchronous typed DOM entry. Only the checked source

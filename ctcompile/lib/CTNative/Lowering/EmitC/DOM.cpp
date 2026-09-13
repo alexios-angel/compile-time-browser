@@ -14,6 +14,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry) {
             domCalls[call] = *edge;
             needsDOMToggle |= edge->kind == HostDOMMethod::toggleClass;
             needsDOMAttributes |= edge->kind == HostDOMMethod::setAttribute;
+            needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
+            needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
+            needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
         }
     });
 }
@@ -27,14 +30,21 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     mlir::OpBuilder at(call);
     llvm::SmallVector<mlir::Value> arguments{edge.element};
     llvm::append_range(arguments, call.getArgs());
-    if (edge.kind == HostDOMMethod::toggleClass) {
-        auto value =
-            callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{at.getI1Type()},
-                                       at.getStringAttr("ctnative::toggle_class"), arguments);
+    llvm::StringRef callee;
+    switch (edge.kind) {
+    case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
+    case HostDOMMethod::setAttribute: callee = "ctnative::set_attribute"; break;
+    case HostDOMMethod::toggleAttribute: callee = "ctnative::toggle_attribute"; break;
+    case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;
+    case HostDOMMethod::removeAttribute: callee = "ctnative::remove_attribute"; break;
+    }
+    if (edge.returnsBoolean()) {
+        auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{at.getI1Type()},
+                                                at.getStringAttr(callee), arguments);
         call.getResult().replaceAllUsesWith(value.getResult(0));
     } else {
-        callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{},
-                                   at.getStringAttr("ctnative::set_attribute"), arguments);
+        callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{}, at.getStringAttr(callee),
+                                   arguments);
         if (!call.getResult().use_empty()) {
             call.getResult().replaceAllUsesWith(absentConstant(at, call.getLoc()));
         }

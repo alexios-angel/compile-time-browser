@@ -123,6 +123,17 @@ void lowering::declareGlobals() {
         if (needsDOMAttributes) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
         }
+        if (needsDOMAttributeToggle) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeToggleHelpers));
+        }
+        if (needsDOMAttributePresence) {
+            ec::VerbatimOp::create(b, module.getLoc(),
+                                   b.getStringAttr(kDOMAttributePresenceHelpers));
+        }
+        if (needsDOMAttributeRemoval) {
+            ec::VerbatimOp::create(b, module.getLoc(),
+                                   b.getStringAttr(kDOMAttributeRemovalHelpers));
+        }
     }
     if (!ownedGlobals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
