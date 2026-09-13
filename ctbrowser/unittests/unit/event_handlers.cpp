@@ -354,18 +354,18 @@ void test_a_content_attribute_compiles_to_a_function() {
        " return window.seenType; })()",
        "scroll");
     // THE SCOPE CHAIN, HTML 8.1.8.1: the document, then the form owner, then
-    // the element, are object environments around the body. `id` reads the
-    // element's, `title` the document's, `form` the owner's `name` - and
-    // `remove` is the GLOBAL, because Element.prototype[@@unscopables] vetoes
-    // the method (remove-unscopable.html).
+    // the element, are object environments around the body - innermost last,
+    // so `id` reads the element's, `body` the document's (an element has no
+    // `body`), `acceptCharset` the form owner's - and `remove` is the GLOBAL,
+    // because Element.prototype[@@unscopables] vetoes the method
+    // (remove-unscopable.html).
     is("(function () {"
-       " document.title = 'doc-title';"
        " var el = document.createElement('div');"
        " el.id = 'the-id';"
-       " el.setAttribute('onscroll', 'window.seen = id + \"/\" + title');"
+       " el.setAttribute('onscroll', 'window.seen = id + \"/\" + body.tagName');"
        " el.dispatchEvent(new Event('scroll'));"
        " return window.seen; })()",
-       "the-id/doc-title");
+       "the-id/BODY");
     is("(function () {"
        " window.remove = 'global';"
        " var el = document.createElement('div');"

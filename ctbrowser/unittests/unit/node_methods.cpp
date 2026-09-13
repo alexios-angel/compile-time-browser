@@ -558,7 +558,7 @@ void test_the_table_model() {
         const ids = list => Array.from(list, e => e.id || e.tagName).join();
         const rows = t.rows;
         console.log('rows=' + ids(rows) + ' bodies=' + t.tBodies.length +
-                    ' head=' + t.tHead.id + ' foot=' + t.tFoot.id + ' cap=' + t.caption);
+                    ' head=' + t.tHead.tagName + ' foot=' + t.tFoot.tagName + ' cap=' + t.caption);
         console.log('idx=' + [document.getElementById('b2').rowIndex,
                     document.getElementById('b2').sectionRowIndex,
                     document.getElementById('c1').cellIndex,
