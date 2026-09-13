@@ -6,6 +6,55 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native Bootstrap survey and shared DOM token API, 2026-09-13 UTC
+
+Continued clean **a4458ae1**. The lookup-mode thread was already committed and merged;
+its final sync claims were the interrupted remainder, now released. The old September 7
+WIP is already an ancestor. The user requested an honest Bootstrap survey, then directed
+continued API adaptation and authorized pushing `ctcompile-v1` after the gates.
+
+[bootstrap-native-next.md](bootstrap-native-next.md) records the browser critical path.
+Full Bootstrap **5.3.8 / 133,701 bytes / SHA5b29f169** remains **19/574 native**, both
+policies, no skipped/pruned functions and **0/43 globals resolved**. The 7/7 browser
+UMD result is the source-derived Data probe with ordinary object keys, manifest/prefix
+and explicit1m budget; it does not establish real Window/DOM/component execution.
+Fresh full-source IR exposes **272 this-receiver / 137 own-closure / 70 boxed-parameter /
+29 passed-closure / 15 lexical-this** leading refusals. Generic plan25 contents/verdict
+refinements have no native-emitter consumer; current vector admission uses the separate
+TypeInference proof. CommonJS publication is useful independent work, not the next
+browser capability.
+
+**1e71c6ad**, landed atomically as **29a76492**, lifts ordered token parsing, validation,
+attribute updates and toggle from the VM binding into public `dom/token_list.hpp` and
+`lib/DOM/token_list.cpp`. The associated attribute is generic: classList, blocking and
+class-name collections reuse the core. The binding retains conversion, exception and
+mutation notification behavior, including current omitted-token conversion, validation
+priority, force/no-op handling and stale-write results. No Script type or context enters
+the core. Two regressions exercise real document/node handles and the VM adapter. The
+new native unit's normal CTest target links only DOM/Core plus configured test support.
+This is a shared native API milestone, **not compiler DOM admission or a compiled Button**.
+
+Validation: baseline standard build and **539/540 CTests in 1125.70s**, lit **167/167 in
+808.86s**. Final isolated **1067-step build** and **540/541 CTests in 1133.92s**, lit
+**167/167 in 807.09s**. The only failure in both runs is byte-identical browser
+`frames.cpp:70`. The subsequent test-link-only CMake change passed a two-step build and
+**1/1 CTest in 0.01s**; no production code changed after the full gate. Both standalone
+Clang and GCC13.3 core/client checks pass, with no Script/AOT symbols; the ordinary
+CTest binary passes the same symbol check. All **1358 final inputs** match local,
+isolated and devbox trees. Whole stable formatting passes **807 C++ / 85 Python /
+33 web files**; required bundled formatting retains the same **nine baseline files /
+26 diagnostics**, with all changed C++ passing. Full WPT/test262 scores were not
+remeasured. Evidence and reproducible link commands: `/tmp/ctcompile-bootstrap-survey/`.
+
+**Exact next compiler boundary:** typed native document/node entry capability and real
+DOM-backed Data keys, preserving document identity/domain, node identity and detached-node
+lifetime. Then compile original Button.toggle against the shared token API, explicitly
+labelling an action-only milestone until original BaseComponent/Config construction,
+prototype/static getters and disposal are admitted. Retained events, DOMContentLoaded,
+lexical-this callbacks, transitions/layout and the native application driver remain.
+Use public ctbrowser cores; the existing boxed AOT ABI and Script-linked Shell are not a
+native entry. The user-authorized branch push follows the final handoff commit.
+
 ## Source lookup provenance and native browser UMD, 2026-09-13 UTC
 
 Resumed the interrupted 13:04–13:09 UTC thread from dirty compiler files, the existing
