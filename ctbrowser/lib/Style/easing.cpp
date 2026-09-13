@@ -2,11 +2,13 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/properties.hpp>
+#include <ctbrowser/style/css/token.hpp>
 
 #include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <system_error>
 #include <vector>
 
@@ -28,8 +30,33 @@ namespace {
 [[nodiscard]] std::optional<double> number_of(std::string_view text) {
     double n = 0;
     const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), n);
-    if (ec != std::errc{} || end != text.data() + text.size()) { return std::nullopt; }
+    if (ec != std::errc{} || end != text.data() + text.size() || !std::isfinite(n)) {
+        return std::nullopt;
+    }
     return n;
+}
+
+[[nodiscard]] std::optional<int> step_count(std::string_view text) {
+    const css::token_stream tokens = css::tokenize(text);
+    if (tokens.tokens.size() != 2) { return std::nullopt; } // one token and EOF
+    const css::css_token & token = tokens.tokens.front();
+    if (token.type != css::token_type::number || (token.flags & css::flag_integer) == 0 ||
+        tokens.text_of(token) != text) {
+        return std::nullopt;
+    }
+    std::string_view digits = tokens.text_of(token);
+    if (digits.starts_with('+')) { digits.remove_prefix(1); }
+    // The tokenizer owns integer syntax. Read its spelling rather than its
+    // double value so even a very long positive integer clamps before the
+    // conversion to the supported count range.
+    int count = 0;
+    const auto [end, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), count);
+    if (ec == std::errc::result_out_of_range && !digits.starts_with('-')) {
+        count = std::numeric_limits<int>::max();
+    } else if (ec != std::errc{} || end != digits.data() + digits.size()) {
+        return std::nullopt;
+    }
+    return count > 0 ? std::optional{count} : std::nullopt;
 }
 
 } // namespace
@@ -125,10 +152,10 @@ namespace {
     if (lowered.starts_with("steps(")) {
         const auto args = split_arguments(std::string_view{lowered}.substr(6, lowered.size() - 7));
         if (args.empty() || args.size() > 2) { return std::nullopt; }
-        const std::optional<double> count = number_of(args[0]);
-        if (!count || *count != std::floor(*count) || *count <= 0) { return std::nullopt; }
+        const std::optional<int> count = step_count(args[0]);
+        if (!count) { return std::nullopt; }
         out.shape = easing::kind::steps;
-        out.steps = static_cast<int>(*count);
+        out.steps = *count;
         if (args.size() == 2) {
             const std::string_view p = args[1];
             if (p == "start" || p == "jump-start") {

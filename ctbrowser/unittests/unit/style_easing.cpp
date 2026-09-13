@@ -20,6 +20,20 @@ void test_easing() {
     CHECK(parse_easing("step-start").value()(0.5, false) == 1);
     CHECK(parse_easing("step-end").value()(0.5, false) == 0);
 
+    CHECK(parse_easing("steps(2147483647, end)"));
+    CHECK(parse_easing("cubic-bezier(0, 1e100, 1, -1e100)"));
+
+    const auto maximum = parse_easing("steps(2147483647)").value();
+    for (const auto large : {"steps(2147483648)", "steps(9007199254740993)",
+                             "steps(+99999999999999999999999999999999)"}) {
+        const auto clamped = parse_easing(large).value();
+        CHECK(clamped(0.5, false) == maximum(0.5, false));
+        CHECK(clamped(1, true) == maximum(1, true));
+    }
+    const auto beyond_double = parse_easing("steps(" + std::string(400, '9') + ")").value();
+    CHECK(beyond_double(0.5, false) == maximum(0.5, false));
+    CHECK(parse_easing("steps(+0004)").value()(0.3, false) == 0.25);
+
     const auto end = parse_easing("steps(4, end)").value();
     CHECK(end(0.5, false) == 0.5);
     CHECK(end(0.5, true) == 0.25);
@@ -42,9 +56,29 @@ void test_easing() {
     const auto held = parse_easing(source).value();
     source.assign("linear");
     CHECK(held(0.3, false) == 0.25);
-    for (const auto invalid : {"", "bogus", "cubic-bezier(0, 1, 1)", "cubic-bezier(-1, 0, 1, 1)",
-                               "cubic-bezier(0, 0, 2, 1)", "steps(0)", "steps(1.5)",
-                               "steps(1, jump-none)", "steps(2, sideways)"}) {
+    for (const auto invalid : {"",
+                               "bogus",
+                               "cubic-bezier(0, 1, 1)",
+                               "cubic-bezier(-1, 0, 1, 1)",
+                               "cubic-bezier(0, 0, 2, 1)",
+                               "steps(0)",
+                               "steps(1.5)",
+                               "steps(1, jump-none)",
+                               "steps(2, sideways)",
+                               "steps(-2147483649)",
+                               "steps(-0)",
+                               "steps(1.0)",
+                               "steps(1e0)",
+                               "steps(1e100)",
+                               "steps(.4)",
+                               "steps(4.)",
+                               "steps(4px)",
+                               "steps(4/**/5)",
+                               "steps(4/**)",
+                               "steps(inf)",
+                               "cubic-bezier(nan, 0, 1, 1)",
+                               "cubic-bezier(0, inf, 1, 1)",
+                               "cubic-bezier(0, 0, 1, -infinity)"}) {
         CHECK(!parse_easing(invalid));
     }
 }
