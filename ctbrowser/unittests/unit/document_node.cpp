@@ -265,6 +265,22 @@ void test_normalize_merges_the_text_nodes_below_the_document() {
        "3");
 }
 
+// --- createElement's name rule: two rests, DOM 4.9 -------------------------
+
+void test_create_element_and_its_name_rule() {
+    // After an ASCII alpha anything but a tag-name break; after `:`, `_` or a
+    // non-ASCII start only name characters (name-validation.html).
+    is("document.createElement('a!').localName", "a!");
+    is("document.createElement('f}oo').localName", "f}oo");
+    is("document.createElement('_a-b.c:d').localName", "_a-b.c:d");
+    is("document.createElement('\\u0300foo').localName", "̀foo");
+    is("document.createElement(':!')", "threw:InvalidCharacterError");
+    is("document.createElement('_ ')", "threw:InvalidCharacterError");
+    is("document.createElement('\\u00e9!')", "threw:InvalidCharacterError");
+    is("document.createElement('1foo')", "threw:InvalidCharacterError");
+    is("document.createElement('a>')", "threw:InvalidCharacterError");
+}
+
 // --- createAttribute, and the name rule that is worth more than the object --
 
 void test_create_attribute_and_its_name_rule() {
@@ -361,6 +377,7 @@ int main() {
     test_lookup_namespace_uri_and_its_two_siblings();
     test_append_and_prepend_on_the_document();
     test_normalize_merges_the_text_nodes_below_the_document();
+    test_create_element_and_its_name_rule();
     test_create_attribute_and_its_name_rule();
     test_the_font_face_set();
     REPORT("document_node");
