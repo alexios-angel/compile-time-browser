@@ -707,15 +707,25 @@ void civil_from_days(long long z, long long & y, int & m, int & d) {
     for (const double v : {year, month, day, h, m, s, ms}) {
         if (!std::isfinite(v)) { return std::nan(""); }
     }
+    // MakeTime FIRST and in ITS order - ((h + m) + s) + milli, each product
+    // rounded as IEEE double - because test262's fp-evaluation-order.js
+    // asserts the exact rounding of `Date.UTC(1970, 0, 1, 80063993375, 29, 1,
+    // -288230376151711740)`, and MakeDate is then day * msPerDay + time.
+    const double time =
+        ((std::trunc(h) * 3600000.0 + std::trunc(m) * 60000.0) + std::trunc(s) * 1000.0) +
+        std::trunc(ms);
     const double y = std::trunc(year), mo = std::trunc(month);
     const double ym = y + std::floor(mo / 12.0);
     const int mn = static_cast<int>(mo - std::floor(mo / 12.0) * 12.0);
-    if (std::fabs(ym) > 400000.0) { return std::nan(""); }
+    // A year past 2^40 has no time value TimeClip could keep, however the
+    // day count is offset; days_from_civil's arithmetic stays in range there.
+    if (std::fabs(ym) > 1099511627776.0) { return std::nan(""); }
     const double days =
         static_cast<double>(days_from_civil(static_cast<long long>(ym), mn + 1, 1)) +
         std::trunc(day) - 1.0;
-    return days * ms_per_day + std::trunc(h) * 3600000.0 + std::trunc(m) * 60000.0 +
-           std::trunc(s) * 1000.0 + std::trunc(ms);
+    if (!std::isfinite(days)) { return std::nan(""); }
+    const double tv = days * ms_per_day + time;
+    return std::isfinite(tv) ? tv : std::nan("");
 }
 
 struct fields {
@@ -743,8 +753,10 @@ constexpr const char * day_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", 
 constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
+// 21.4.4.41.2 DateString / 21.4.4.43 step 8: a sign for a negative year and
+// AT LEAST four digits either way - "-0001", not the ISO form's "-000001".
 [[nodiscard]] std::string year_text(double year) {
-    return year < 0 ? std::format("-{:06}", -static_cast<int>(year))
+    return year < 0 ? std::format("-{:04}", -static_cast<int>(year))
                     : std::format("{:04}", static_cast<int>(year));
 }
 // 21.4.4.41.2 DateString: "Fri Feb 13 2009".
@@ -1025,6 +1037,21 @@ void install_date(context & cx) {
         setter(p + "Seconds", 5, 2, 2);
         setter(p + "Milliseconds", 6, 1, 1);
     }
+    // B.2.3.2 setYear: MakeFullYear of the argument (0-99 is 1900-1999, NaN
+    // stays NaN) over an invalid date's +0.
+    method(cx, date_proto, "setYear", 1, [this_time, set_time](context & c, std::span<value> a) {
+        double t = 0;
+        if (!this_time(c, "Date.prototype.setYear", t)) { return value::undefined(); }
+        if (!numeric_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const double y = c.to_number_value(arg_at(a, 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        if (std::isnan(y)) { return set_time(c, std::nan("")); }
+        const double whole = std::trunc(y);
+        const double yyyy = whole >= 0 && whole <= 99 ? 1900 + whole : y;
+        const fields f = split(std::isnan(t) ? 0.0 : t);
+        return set_time(
+            c, time_clip(make_date(yyyy, f.month, f.day, f.hour, f.minute, f.second, f.ms)));
+    });
     method(cx, date_proto, "setTime", 1, [this_time, set_time](context & c, std::span<value> a) {
         double t = 0;
         if (!this_time(c, "Date.prototype.setTime", t)) { return value::undefined(); }
@@ -1048,6 +1075,10 @@ void install_date(context & cx) {
     stringer("toDateString", date_string);
     stringer("toTimeString", time_string);
     stringer("toUTCString", utc_string);
+    // B.2.3.3 toGMTString IS toUTCString - the same function object.
+    if (const value * utc = date_proto->find("toUTCString")) {
+        date_proto->define("toGMTString", *utc, attr_builtin);
+    }
     stringer("toLocaleString",
              [](const fields & f) { return date_string(f) + " " + time_string(f); });
     stringer("toLocaleDateString", date_string);
