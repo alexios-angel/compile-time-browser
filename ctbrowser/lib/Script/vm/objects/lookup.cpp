@@ -429,7 +429,7 @@ value context::lookup_property(value target, const std::string & name) {
                 return string(closure->proto->display_name());
             }
             if (name == "length" && !closure->length_erased) {
-                return value::number(closure->proto->param_count);
+                return value::number(closure->proto->length);
             }
             // A SLOPPY function's `caller` and `arguments` are null (Annex B's
             // implementation-defined answer, and every browser's); a strict

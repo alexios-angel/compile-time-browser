@@ -357,6 +357,14 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::ret, callee});
     }
     finish_frame(index, params.size());
+    // `f.length` counts the parameters before the first default or rest
+    // (15.1.5 ExpectedArgumentCount).
+    std::uint16_t expected = 0;
+    for (const std::int32_t p : params) {
+        if (at(p).a >= 0 || at(p).d == 1) { break; }
+        ++expected;
+    }
+    out_.functions[index].length = expected;
     pop_scope();
     frames_.pop_back();
     in_chain_ = saved_in_chain;

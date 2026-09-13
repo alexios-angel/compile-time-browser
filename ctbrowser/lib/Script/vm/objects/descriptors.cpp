@@ -331,7 +331,7 @@ bool context::own_property(value target, const std::string & name, property_desc
                 return true;
             }
             if (name == "length" && !closure->length_erased) {
-                out = property_descriptor::data(value::number(closure->proto->param_count),
+                out = property_descriptor::data(value::number(closure->proto->length),
                                                 attr_configurable);
                 out.virtual_slot = true;
                 return true;

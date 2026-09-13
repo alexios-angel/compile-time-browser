@@ -170,6 +170,11 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- `f.length` is ExpectedArgumentCount (15.1.5), not the register count
+    answers("function f(a, b = 1, c) {} function g(...r) {} function h(a, b,) {}"
+            " return f.length + ':' + g.length + ':' + h.length + ':' + ((x, y) => 0).length;",
+            "1:0:2:2");
+
     // --- the heritage (15.7.14 steps 6-9) and `super.x` with a receiver
     answers("var r = 'none'; try { class C extends 42 {} } catch (e) { r = e.name; } return r;",
             "TypeError");
