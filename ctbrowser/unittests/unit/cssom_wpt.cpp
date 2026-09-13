@@ -216,7 +216,7 @@ void test_flat_tree_and_pseudo_arguments() {
         const sheet = document.createElement('style');
         sheet.textContent = '#host::highlight(name) { color: rgb(0, 128, 0) }'
             + ' #host::view-transition-old(x) { color: rgb(0, 0, 128) }';
-        document.head.appendChild(sheet);
+        document.documentElement.insertBefore(sheet, document.body); // the page has no <head>
         console.log('hl=' + getComputedStyle(host, '::highlight(name)').color + '|' +
                     getComputedStyle(host, '::highlight(other)').color + '|' +
                     getComputedStyle(host, '::view-transition-old(x)').color + '|' +
