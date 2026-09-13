@@ -528,6 +528,10 @@ private:
     // in document order. One sheet rather than one per element, for the source-
     // order reason load_author_styles' comment gives.
     [[nodiscard]] std::string collect_author_styles();
+    // The same walk over ANY document: the page's (announcing each sheet's
+    // `load`) or a frame's, whose bindings answer the CSSOM's edited text.
+    [[nodiscard]] std::string collect_author_styles(document & doc, dom_bindings * bindings,
+                                                    bool announce);
     // ...and rebuild the author origin from it if it has changed. See the
     // definition for why it does not go through the CSSOM.
     void refresh_author_styles();
@@ -586,6 +590,36 @@ private:
     void install_embedder_natives();
 
     void run_layout();
+
+    // --- NESTED BROWSING CONTEXTS (browser/nested.cpp) ----------------------
+    //
+    // A frame's document run through the same stages as the page - the cascade
+    // with its own sheets, the box tree, layout - at the size its <iframe> box
+    // got, so `frame.contentWindow.getComputedStyle(el).height` and `100vw`
+    // inside the frame answer about the frame. Nothing is PAINTED: a frame is
+    // still an empty box on screen, and this is the half the DOM reads.
+    struct frame_layout {
+        node_id element;         // the <iframe>, in its owner's document
+        dom_bindings * bindings; // over the frame's document
+        // What this layout was made from, so a read knows when it is stale.
+        std::uint64_t version = 0;
+        std::uint64_t style_stamp = 0;
+        float width = 0;
+        float height = 0;
+        std::unique_ptr<ctbrowser::style::engine> styles;
+        ctbrowser::style::style_map resolved;
+        box_node boxes;
+        fragment fragments;
+    };
+    std::vector<std::unique_ptr<frame_layout>> frame_layouts_;
+    // After run_layout: every loaded frame, recursively, at its box's size.
+    void layout_frames();
+    // Whether any frame document moved since layout_frames last saw it.
+    [[nodiscard]] bool frames_stale() const;
+    // The stages a script's read needs NOW - getComputedStyle, offsetWidth -
+    // page first, then the frames. The level is left at `paint` afterwards:
+    // the display list still has to be re-recorded before anything is drawn.
+    void flush_for_read();
 
     void record();
 

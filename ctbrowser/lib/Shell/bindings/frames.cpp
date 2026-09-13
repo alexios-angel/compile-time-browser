@@ -38,9 +38,10 @@
 //   * NO SCRIPTS RUN IN A FRAME. The frame's document is parsed, not executed:
 //     one realm and one event loop mean a frame's script would be the page's
 //     script wearing the frame's name, which is worse than nothing.
-//   * A FRAME LAYS OUT AS AN EMPTY BOX, as it always did. This is the DOM half
-//     of an iframe; the painting half would need a second layout tree inside
-//     the first, and nothing here pretends to have one.
+//   * A FRAME PAINTS AS AN EMPTY BOX. This is the DOM half of an iframe; the
+//     frame's document IS laid out, at the size its box got, by the browser
+//     (browser/nested.cpp) so that what a script measures inside it is about
+//     the frame - but nothing draws that layout into the page's.
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -156,7 +157,7 @@ void dom_bindings::reconcile_frames() {
     // writes into one, and answering `undefined` is the failure that reads as
     // "iframes do not exist".
     const std::vector<node_id> elements = all_html_elements("iframe");
-    std::vector<std::pair<std::uint64_t, std::string>> still;
+    std::vector<frame_entry> still;
     still.reserve(elements.size());
     for (const node_id id : elements) {
         std::string src;
@@ -166,13 +167,12 @@ void dom_bindings::reconcile_frames() {
         }
         const std::uint64_t key = pack(id);
         const auto seen =
-            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.first == key; });
-        if (seen != frames_.end() && seen->second == src) {
+            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.key == key; });
+        if (seen != frames_.end() && seen->src == src) {
             still.push_back(*seen);
             continue;
         }
-        load_frame(*cx_, id, src);
-        still.emplace_back(key, src);
+        still.push_back(frame_entry{key, src, load_frame(*cx_, id, src)});
     }
     // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
     // secondary bindings stay in `secondary_documents_` because a page may
@@ -213,7 +213,7 @@ void dom_bindings::install_frame_accessors(context & cx) {
 // Build the frame's document. Synchronous, because the bytes are already on
 // disk or in the registry; the EVENT it queues is what makes the load
 // asynchronous in the way a page can observe.
-void dom_bindings::load_frame(context & cx, node_id id, const std::string & src) {
+dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::string & src) {
     std::string bytes;
     // A FRAME ALWAYS LOADS. A navigation that fetched nothing - a 404, and
     // here a name the registry cannot find - still ends in a document (the
@@ -303,7 +303,7 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // document is reachable from the element that owns it and the collector
     // needs no new root: `wrappers_` is already marked.
     const value element = wrap(cx, id);
-    if (!element.is_object()) { return; }
+    if (!element.is_object()) { return nullptr; }
     auto * frame_object = static_cast<script::object_object *>(element.as_heap());
     frame_object->set("contentDocument", made.document_);
 
@@ -394,6 +394,7 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // ON THE PRIMARY'S QUEUE, which is the one the tick drains, naming the
     // owner whose element it is; settle_frame hands it back.
     top.frame_loads_.push_back(pending_frame{id, ok, false, &top == this ? nullptr : this});
+    return &made;
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does

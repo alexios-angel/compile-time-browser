@@ -170,7 +170,11 @@ void browser::frame(scheduler * pool) {
     // The four stages the dirty level chooses between. What each costs is
     // benchmarks/' job; that a scroll skips three of them is layout_count()'s.
     if (dirty_ >= dirty::styles) { resolve_styles(); }
-    if (dirty_ >= dirty::layout) { run_layout(); }
+    if (dirty_ >= dirty::layout) {
+        run_layout();
+    } else if (frames_stale()) {
+        layout_frames();
+    }
     if (dirty_ >= dirty::paint) { record(); }
     dirty_ = dirty::nothing;
     ++frames_;
@@ -259,6 +263,8 @@ void browser::run_layout() {
         // stale, so the two go together.
         (void)bindings_->refresh_wrappers();
     }
+    // The frames inside, at the sizes this layout just gave them.
+    layout_frames();
 }
 
 void browser::record() {

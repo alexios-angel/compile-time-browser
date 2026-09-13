@@ -139,9 +139,7 @@ void browser::run_scripts() {
     if (const script::value inner = script_->global("getComputedStyle"); inner.is_callable()) {
         auto * flushing = script_->allocate<script::native_object>(
             "getComputedStyle", [this, inner](script::context & c, std::span<script::value> args) {
-                if (dirty_ >= dirty::styles) { resolve_styles(); }
-                if (dirty_ >= dirty::layout) { run_layout(); }
-                if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
+                flush_for_read();
                 return c.call(inner, args);
             });
         // `inner` LIVES IN A C++ CAPTURE, which the precise collector cannot
@@ -152,11 +150,7 @@ void browser::run_scripts() {
         script_->define_global("getComputedStyle", script::value::object(flushing));
     }
     // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
-    bindings_->set_layout_hook([this] {
-        if (dirty_ >= dirty::styles) { resolve_styles(); }
-        if (dirty_ >= dirty::layout) { run_layout(); }
-        if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
-    });
+    bindings_->set_layout_hook([this] { flush_for_read(); });
     install_embedder_natives();
     script_error_.clear();
 
