@@ -306,6 +306,15 @@ void install_dynamic_function(context & cx) {
             c.make_error("SyntaxError", "a source text module has no module source to import"),
             true);
     });
+    // See init_fields_name.
+    cx.define_native(std::string{init_fields_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2 || !a[1].is_kind(heap_kind::function)) { return value::undefined(); }
+        auto * klass = static_cast<closure_object *>(a[1].as_heap());
+        if (value * fields = klass->find("__fields"); fields != nullptr && fields->is_callable()) {
+            (void)c.call(*fields, {}, a[0]);
+        }
+        return value::undefined();
+    });
     // See delete_ref_name.
     cx.define_native(std::string{delete_ref_name}, [](context & c, std::span<value> a) {
         const value target = a.empty() ? value::undefined() : a[0];

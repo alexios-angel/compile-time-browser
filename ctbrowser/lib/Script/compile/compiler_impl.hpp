@@ -904,6 +904,9 @@ public:
     // one the running method was written into.
     void emit_super_base(std::uint16_t dst);
     void emit_super_get(std::uint16_t key, std::uint16_t dst);
+    // After `super(...)` returned: the derived class's fields on the bound
+    // `this` (see init_fields_name).
+    void emit_init_fields_after_super();
 
     [[nodiscard]] bool any_spread(std::span<const std::int32_t> args) const;
 

@@ -1019,6 +1019,22 @@ void compiler_impl::emit_super_base(std::uint16_t dst) {
     proto().emit(instruction{op::get_proto, dst, dst});
 }
 
+void compiler_impl::emit_init_fields_after_super() {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    // The class: the constructor's home object is C.prototype, whose
+    // `constructor` is C. Through an arrow too, which inherits the home.
+    const std::uint16_t klass = alloc_reg();
+    proto().emit(instruction{op::load_home, klass});
+    proto().emit(instruction{op::get_prop, klass, klass, name_operand("constructor")});
+    proto().emit(instruction{op::call, callee, 2});
+    release_to(mark);
+}
+
 // `dst = __ctbrowser_super_get(HomeObject.[[Prototype]], key, this)`.
 void compiler_impl::emit_super_get(std::uint16_t key, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
@@ -1143,6 +1159,7 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
     if (flag != nullptr) { emit_super_done(*flag); }
+    if (callee.kind == vp::nk::super_lit) { emit_init_fields_after_super(); }
     proto().emit(instruction{op::move, dst, target});
     release_to(mark);
 }
@@ -1215,6 +1232,7 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
                              static_cast<std::uint16_t>(args.size()),
                              receiver ? self : std::uint16_t{0}});
     if (flag != nullptr) { emit_super_done(*flag); }
+    if (callee.kind == vp::nk::super_lit) { emit_init_fields_after_super(); }
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
