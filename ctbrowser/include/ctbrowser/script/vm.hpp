@@ -686,9 +686,16 @@ public:
     // bind_this_name): a native pushes no frame, so frames_.back() is its
     // caller's - the derived constructor whose `super()` just returned. An
     // arrow's frame (a `super()` inside one) rebinds only the arrow's own
-    // receiver.
+    // receiver. ONLY WHEN THE PARENT IS A COMPILED FUNCTION: a native parent
+    // (Array, Object, a bound function) reached through super() is CALLED
+    // with the instance as `this`, and what it answers is an object of its
+    // own, not a return override - binding it lost `class A extends Array`
+    // its A.prototype (test262 subclass-builtins, gate 3).
     void rebind_receiver(value v) {
-        if (!frames_.empty()) { frames_.back().receiver = v; }
+        if (frames_.empty()) { return; }
+        const closure_object * me = frames_.back().closure;
+        if (me == nullptr || !me->proto_link.is_kind(heap_kind::function)) { return; }
+        frames_.back().receiver = v;
     }
     // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
     // that has to CONVERT a throw crossing one of its `call`s - into a rejected
