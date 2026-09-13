@@ -159,7 +159,16 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
-                compile_pattern_binding(decl.b, r, false);
+                // A DECLARATION'S write, even where declare_pattern_names made
+                // no local - a `for (const [x] = ...` at a script's top level
+                // binds globals, which the strict assignment check must not
+                // take for assignments (see declaring_).
+                {
+                    const bool outer_declaring = declaring_;
+                    declaring_ = true;
+                    compile_pattern_binding(decl.b, r, false);
+                    declaring_ = outer_declaring;
+                }
                 release_to(mark);
                 continue;
             }

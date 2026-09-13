@@ -281,6 +281,10 @@ int main() {
     answers("'use strict'; var r = 'no'; try { zz2 = 1; } catch (e) { r = e.name; } return r;",
             "ReferenceError");
     answers("qq = 5; return qq;", "5"); // sloppy code still may
+    answers(
+        "'use strict'; var n = 0; for (const [p, q] = [1, 2]; n < 1; n++) {} for (var [s] = [3];;)"
+        " { break; } { const { t } = { t: 4 }; n += t; } return n + s;",
+        "8");
     // ...while a declaration's own first write is not an assignment
     answers("'use strict'; var a = 1; a = 2; let b = 1; b = 3; class C {} C = 0;"
             " const [d] = [4]; for (const e of [5]) { a += e; } return a + b + d;",
