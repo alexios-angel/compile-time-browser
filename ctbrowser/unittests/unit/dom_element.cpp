@@ -122,11 +122,99 @@ void test_case_and_namespace() {
     CHECK(second != nullptr && second->name == name && second->value == "two");
 }
 
+void test_attribute_toggle() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id element = doc.create_element(atoms.intern("button"));
+    const atom disabled = atoms.intern("disabled");
+    doc.log_writes(true);
+    auto before = doc.version();
+    auto result = toggle_element_attribute(doc, element, "DISABLED").value();
+    CHECK(result.present && result.update.value());
+    CHECK(doc.read().has_attribute(element, disabled));
+    CHECK(doc.read().attribute_value(element, disabled).empty());
+    CHECK_EQ(doc.version(), before + 1);
+    const auto writes = doc.take_writes();
+    CHECK_EQ(writes.size(), 1u);
+    if (!writes.empty()) { CHECK(writes.front().name == disabled); }
+
+    CHECK(doc.set_attribute(element, disabled, "kept").has_value());
+    (void)doc.take_writes();
+    before = doc.version();
+    result = toggle_element_attribute(doc, element, "DISABLED", true).value();
+    CHECK(result.present && !result.update.value());
+    CHECK_EQ(doc.read().attribute_value(element, disabled), "kept");
+    CHECK_EQ(doc.version(), before);
+    CHECK(doc.take_writes().empty());
+
+    result = toggle_element_attribute(doc, element, "disabled").value();
+    CHECK(!result.present && result.update.value());
+    CHECK(!doc.read().has_attribute(element, disabled));
+    CHECK_EQ(doc.version(), before + 1);
+    // Removals are observed from the tree; write notes only record value writes.
+    CHECK(doc.take_writes().empty());
+    before = doc.version();
+    result = toggle_element_attribute(doc, element, "disabled", false).value();
+    CHECK(!result.present && !result.update.value());
+    CHECK_EQ(doc.version(), before);
+    CHECK(doc.take_writes().empty());
+
+    const auto interned = atoms.size();
+    for (const std::string_view name :
+         {std::string_view{}, std::string_view{"bad name"}, std::string_view{"a\0b", 3}}) {
+        // Validation wins even over an invalid handle, before interning a name.
+        const auto invalid = toggle_element_attribute(doc, {}, name, false);
+        CHECK(!invalid && invalid.error() == dom_error::invalid_attribute_name);
+    }
+    CHECK_EQ(atoms.size(), interned);
+    CHECK_EQ(doc.version(), before);
+    CHECK(doc.take_writes().empty());
+    for (const node_id invalid : {node_id{}, node_id{element.slot, element.generation + 1u}}) {
+        result = toggle_element_attribute(doc, invalid, "disabled").value();
+        CHECK(result.present && !result.update && result.update.error() == dom_error::no_such_node);
+    }
+    result = toggle_element_attribute(doc, doc.create_text("text"), "disabled").value();
+    CHECK(result.present && !result.update && result.update.error() == dom_error::not_an_element);
+}
+
+void test_toggle_case_and_namespace() {
+    atom_table atoms;
+    document doc{atoms};
+    document xml{atoms};
+    xml.set_xml(true);
+    const node_id svg = doc.create_element(atoms.intern("svg"), node_ns::svg);
+    const node_id html_in_xml = xml.create_element(atoms.intern("div"));
+    const atom mixed = atoms.intern("viewBox");
+    const atom folded = atoms.intern("viewbox");
+    for (const element_ref element : {element_ref{&doc, svg}, element_ref{&xml, html_in_xml}}) {
+        const auto result = toggle_element_attribute(*element.owner, element.id, "viewBox").value();
+        CHECK(result.present && result.update.value());
+        CHECK(element.owner->read().has_attribute(element.id, mixed));
+        CHECK(!element.owner->read().has_attribute(element.id, folded));
+    }
+
+    const node_id element = doc.create_element(atoms.intern("div"));
+    const atom name = atoms.intern("p:attr");
+    CHECK(doc.set_attribute_ns(element, atoms.intern("urn:first"), name, "one").has_value());
+    CHECK(doc.set_attribute_ns(element, atoms.intern("urn:second"), name, "two").has_value());
+    const auto result = toggle_element_attribute(doc, element, "P:ATTR", false).value();
+    CHECK(!result.present && result.update.value());
+    // The return value is the requested state; only the first qualified match
+    // is removed, so another namespace can still hold the same qualified name.
+    const auto txn = doc.read();
+    CHECK_EQ(txn.attributes(element).size(), 1u);
+    CHECK(txn.find_attribute_ns(element, "urn:first", "attr") == nullptr);
+    const auto * second = txn.find_attribute_ns(element, "urn:second", "attr");
+    CHECK(second != nullptr && second->value == "two");
+}
+
 } // namespace
 
 int main() {
     test_borrowed_identity();
     test_attribute_names_and_writes();
     test_case_and_namespace();
+    test_attribute_toggle();
+    test_toggle_case_and_namespace();
     REPORT("dom_element");
 }
