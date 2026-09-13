@@ -231,4 +231,8 @@ ctjs::CreateObjectOp OwnedGlobalRoots::returnedLeaf(mlir::Value value) const {
     return {};
 }
 
+PrimitiveAlternatives OwnedGlobalRoots::returnedScalar(mlir::Value value) const {
+    return proved() && value ? returnedScalarEdges.lookup(value) : PrimitiveAlternatives{};
+}
+
 } // namespace ctcompile::ctnative

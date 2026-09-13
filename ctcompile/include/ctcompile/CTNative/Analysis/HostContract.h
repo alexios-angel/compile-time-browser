@@ -127,6 +127,16 @@ struct HostReturnedLeaf {
     }
 };
 
+// Primitive alternatives of one checked entry invocation, independent of the
+// reusable method's result and parameter categories.
+struct HostReturnedScalar {
+    mlir::Operation * call = nullptr;
+    PrimitiveAlternatives alternatives;
+    bool operator==(const HostReturnedScalar & other) const {
+        return call == other.call && alternatives == other.alternatives;
+    }
+};
+
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
@@ -177,6 +187,7 @@ struct HostCapturedMap {
     std::vector<mlir::Operation *> snapshotOperations{};
     std::vector<HostScalarCallback> scalarCallbacks{};
     std::vector<HostReturnedLeaf> returnedLeaves{};
+    std::vector<HostReturnedScalar> returnedScalars{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

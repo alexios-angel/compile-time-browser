@@ -296,7 +296,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
         }
         return {};
     }
-    HostCallableEdge edge{operation, read, write, closure, function, capture, {}};
+    HostCallableEdge edge{operation, read, write, closure, function, std::nullopt, {}};
     if (capture) {
         const auto parameters = llvm::find_if(
             capture->parameters, [&](const auto & member) { return member.function == function; });
@@ -323,6 +323,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             edge.arguments.push_back({parameter, actual, parameters->alternatives[index], made});
         }
     }
+    edge.capturedMap = std::move(capture);
     return edge;
 }
 
@@ -884,7 +885,18 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         return mlir::WalkResult::advance();
     });
     if (fieldCensus.wasInterrupted()) { return {}; }
-    if (!unguarded.empty()) {
+    bool scalarStore = false;
+    if (unguarded.empty()) {
+        const auto stores = entry.getBody().walk([&](ctjs::StoreGlobalOp store) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            // An already scalar generalized result needs no entry refinement.
+            scalarStore |= familyInvocations.contains(store.getValue().getDefiningOp()) &&
+                           !completedResults.lookup(store.getValue()).tag();
+            return mlir::WalkResult::advance();
+        });
+        if (stores.wasInterrupted()) { return {}; }
+    }
+    if (!unguarded.empty() || scalarStore) {
         // Complete reusable effects above remain independent of these optional
         // entry-order facts. Never carry mutable state through the category DAG:
         // its iteration order groups calls by method, not by execution order.
@@ -894,6 +906,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         initial.completeKeys = true;
         initial.currentSize = 0;
         std::vector<HostReturnedLeaf> leaves;
+        std::vector<HostReturnedScalar> scalars;
         unsigned visited = 0;
         bool complete = true;
         for (mlir::Operation & operation : entry.getBody().front()) {
@@ -948,9 +961,14 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 dominance.properlyDominates(leaf.getOperation(), &operation)) {
                 leaves.push_back({&operation, leaf});
             }
+            if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
+                if (!step()) { return {}; }
+                scalars.push_back({&operation, alternatives});
+            }
         }
         if (complete && visited == familyInvocations.size()) {
             result.returnedLeaves = std::move(leaves);
+            result.returnedScalars = std::move(scalars);
             for (ctjs::GetPropertyOp read : unguarded) {
                 if (!step()) { return {}; }
                 if (!ctjs::ordinaryKey(ctjs::constantKey(read.getKey())) ||

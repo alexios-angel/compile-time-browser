@@ -3,6 +3,186 @@
 namespace ctcompile::test::owned_global_shared_map {
 namespace {
 
+void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & distinct,
+                             bool prepared) {
+    using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+    const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
+    const auto null = mlir::TypeID::get<ctjs::NullAttr>();
+    auto scalar =
+        replaced(distinct, "    %uncheckedField = ctjs.get_property %answer[%fieldKey]\n", "");
+    const std::string firstRead = prepared ? "%getterEnv, %actual)" : "%getter(%owned, %actual)";
+    const std::string numberRead = prepared ? "%getterEnv, %future)" : "%getter(%owned, %future)";
+    scalar = replaced(scalar, firstRead, numberRead);
+    scalar = replaced(scalar, "ctjs.store_global \"trace\", %entrySame",
+                      "ctjs.store_global \"trace\", %answer");
+    scalar = replaced(scalar, "      scf.yield %saved : !ctjs.value", R"MLIR(
+      %payloadFlag = ctjs.truthy %saved
+      %selected = scf.if %payloadFlag -> (!ctjs.value) {
+        scf.yield %saved : !ctjs.value
+      } else {
+        %fallback = ctjs.constant #ctjs.null
+        scf.yield %fallback : !ctjs.value
+      }
+      scf.yield %selected : !ctjs.value
+)MLIR");
+    scalar = replaced(scalar, "%missing = ctjs.constant #ctjs.boolean<false>",
+                      "%missing = ctjs.constant #ctjs.null");
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & text, std::optional<mlir::TypeID> first,
+                             std::optional<mlir::TypeID> second, const char * label,
+                             bool live = false, bool publish = true) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "exact scalar source/prepared fixture parses");
+        if (!module) { return; }
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.returned_scalar",
+                               mlir::StringAttr::get(&context, "number"));
+            operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
+        });
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() && owner.proved() && !host.exhausted() && !owner.exhausted(), label);
+        if (!host.proved() || !owner.proved() || owner.roots().empty()) {
+            std::fprintf(stderr, "exact scalar %s row %u: host=%s owner=%s\n",
+                         prepared ? "prepared" : "source", rows, host.reason().str().c_str(),
+                         owner.reason().str().c_str());
+            return;
+        }
+        const auto & table = *owner.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        const auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        std::vector<mlir::Operation *> getters, setters;
+        for (const auto & edge : table.calls) {
+            (edge.function == getter ? getters : setters).push_back(edge.call);
+            check(edge.capturedMap && edge.capturedMap->returnedScalars == capture.returnedScalars,
+                  "every callable edge retains the same completed exact scalar evidence");
+        }
+        check(getters.size() == 2 && setters.size() == 3 && capture.leafReads.empty() &&
+                  capture.childLeafContents && capture.childScalarContents == Alternatives{},
+              "only direct scalar stores demand exact facts for the mixed getter family");
+        if (getters.size() != 2 || setters.size() != 3) { return; }
+        const auto firstValue = getters.front()->getResult(0);
+        const auto secondValue = getters.back()->getResult(0);
+        auto payload =
+            capture.leafWrites.front()->getOperand(0).getDefiningOp<ctjs::CreateObjectOp>();
+        const auto matches = [&](const OwnedGlobalRoots & query) {
+            return query.returnedScalar(firstValue).tag() == first &&
+                   query.returnedScalar(secondValue).tag() == second &&
+                   (first || query.returnedScalar(firstValue) == Alternatives{}) &&
+                   (second || query.returnedScalar(secondValue) == Alternatives{}) &&
+                   query.returnedLeaf(firstValue) ==
+                       (publish && !first ? payload : ctjs::CreateObjectOp{}) &&
+                   query.returnedLeaf(secondValue) ==
+                       (publish && !second ? payload : ctjs::CreateObjectOp{});
+        };
+        check(matches(owner), label);
+        check(payload && owner.returnedScalar(payload.getResult()) == Alternatives{} &&
+                  owner.returnedScalar(capture.leafWrites.front()->getOperand(2)) ==
+                      Alternatives{} &&
+                  owner.returnedScalar(getters.front()->getOperand(prepared ? 4u : 2u)) ==
+                      Alternatives{},
+              "literal and allocation values cannot borrow an exact family-call result");
+        if (!publish) {
+            check(capture.returnedScalars.empty() && capture.returnedLeaves.empty(),
+                  "one unproved invocation discards all earlier optional result evidence");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "exact scalar ownership preserves the complete source fingerprint");
+        if (!live) { return; }
+        const auto noResults = [&](const OwnedGlobalRoots & query) {
+            return empty(*module, query) && query.returnedScalar(firstValue) == Alternatives{} &&
+                   query.returnedScalar(secondValue) == Alternatives{} &&
+                   !query.returnedLeaf(firstValue) && !query.returnedLeaf(secondValue);
+        };
+        const unsigned completion = owner.steps();
+        check(completion > 2 && completion < 100000, "exact scalar proof has a bounded census");
+        if (completion <= 2 || completion >= 100000) { return; }
+        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      noResults(limited),
+                  "incomplete owner budgets expose no exact scalar or leaf result");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion && matches(exact),
+              "the exact budget publishes both independently checked invocation results");
+        const unsigned keyOperand = prepared ? 4u : 2u;
+        const auto key = getters.front()->getOperand(keyOperand);
+        getters.front()->setOperand(keyOperand, getters.back()->getOperand(keyOperand));
+        OwnedGlobalRoots stale(*module, contract);
+        OwnedGlobalRoots changed(*module, requested(*module));
+        check(!stale.proved() && stale.reason().contains("fingerprint") && noResults(stale),
+              "changing the exact call invalidates all old Number-result evidence");
+        check(changed.proved() && !changed.exhausted() &&
+                  changed.returnedScalar(firstValue) == Alternatives{} &&
+                  changed.returnedLeaf(firstValue) == payload,
+              "a fresh object-returning invocation ignores forged Number reports");
+        getters.front()->setOperand(keyOperand, key);
+        const unsigned payloadOperand = prepared ? 5u : 3u;
+        const auto input = setters.back()->getOperand(payloadOperand);
+        setters.back()->setOperand(payloadOperand, getters.front()->getOperand(prepared ? 0u : 1u));
+        OwnedGlobalRoots failed(*module, requested(*module));
+        check(!failed.proved() && !failed.exhausted() && noResults(failed),
+              "an unsupported live payload invalidates every exact scalar publication");
+        setters.back()->setOperand(payloadOperand, input);
+        OwnedGlobalRoots restored(*module, contract);
+        check(restored.proved() && matches(restored),
+              "restoring the source rederives Number and object results separately");
+        std::printf("exact scalar %s: 2 live mutations, 4 incomplete budgets, %u steps\n",
+                    prepared ? "prepared" : "source", completion);
+    };
+    variant(scalar, number, {}, "one getter invocation is Number while another owns a caller leaf",
+            true);
+    variant(replaced(scalar, "    ctjs.store_global \"trace\", %answer\n",
+                     "    ctjs.store_global \"trace\", %answer\n"
+                     "    ctjs.store_global \"trace\", %againAnswer\n"),
+            number, {}, "a later object store cannot inherit the first store's Number evidence");
+    for (const char * literal : {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
+                                 "#ctjs.number<9221120237041090560>", "#ctjs.boolean<false>",
+                                 "#ctjs.undefined", "#ctjs.null"}) {
+        variant(replaced(scalar, "%fieldValue = ctjs.constant #ctjs.number<4634204016564240384>",
+                         "%fieldValue = ctjs.constant " + std::string(literal)),
+                null, {}, "falsy stored values select Null instead of exact Number evidence");
+    }
+    variant(replaced(scalar, numberRead,
+                     prepared ? "%getterEnv, %fieldKey)" : "%getter(%owned, %fieldKey)"),
+            null, {}, "a missing key returns Null without borrowing another call's Number");
+    variant(replaced(scalar, ", %future, %fieldValue)", ", %actual, %fieldValue)"), null, number,
+            "an aliased later write changes only the actual key and its exact invocation");
+    const std::string seeded =
+        "    %seeded = ctjs.call %childSetter(%value, %payloadKey, %input)\n";
+    const std::string erase = R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %eraser = ctjs.get_property %value[%deleteKey]
+    %wrongKey = ctjs.constant #ctjs.string<"wrong">
+    %erased = ctjs.call %eraser(%value, %payloadKey)
+)MLIR";
+    const auto deleted = replaced(scalar, seeded, seeded + erase);
+    variant(deleted, null, null, "deleted payloads return Null for each independent invocation");
+    variant(replaced(deleted, "%eraser(%value, %payloadKey)", "%eraser(%value, %wrongKey)"), number,
+            {}, "wrong-key deletion preserves exact Number and object returns");
+    variant(
+        replaced(deleted, erase,
+                 erase + "    %restored = ctjs.call %childSetter(%value, %payloadKey, %input)\n"),
+        number, {}, "reinsertion rederives the actual payload after deletion");
+    auto unknown = replaced(scalar, "    %laterResult =",
+                            "    %opaqueNumber = ctjs.binary add %fieldValue, %fieldValue\n"
+                            "    %laterResult =");
+    unknown = replaced(unknown, ", %future, %fieldValue)", ", %future, %opaqueNumber)");
+    variant(unknown, {}, {},
+            "an unproved truthiness branch withholds the whole optional invocation scan", false,
+            false);
+    check(rows == 14, "all exact scalar, falsy, alias, deletion and transactional controls ran");
+}
+
 void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & source,
                               bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -192,7 +372,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                      "ctjs.set_property %payload[%fieldKey], %payload"),
             false, "a caller object cycle invalidates the complete child family");
     variant(replaced(fixture, "scf.yield %matches : !ctjs.value", "scf.yield %saved : !ctjs.value"),
-            true, "a checked child leaf may return without primitive or output-carrier authority");
+            true, "a checked child leaf may return without primitive or output-carrier authority",
+            4, 1);
     check(rows == 16, "all mixed child category, receiver and unsafe-use controls ran");
 
     const auto returned =
@@ -454,6 +635,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                  "      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)"),
         false, "an inactive zero-size arm still needs complete independent effects");
     check(invocationRows == 11, "all invocation object-key and size-branch controls ran");
+    checkExactScalarReturns(context, distinct, prepared);
 
     for (const auto & liveFixture : {returnedIdentity, guarded, unguarded}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(liveFixture, &context);

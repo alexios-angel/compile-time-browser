@@ -73,6 +73,7 @@ public:
     // Exact caller leaf returned by this invocation; the method's reusable
     // return schema remains independent of this source-order proof.
     [[nodiscard]] ctjs::CreateObjectOp returnedLeaf(mlir::Value value) const;
+    [[nodiscard]] PrimitiveAlternatives returnedScalar(mlir::Value value) const;
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
 
@@ -85,6 +86,7 @@ private:
     llvm::DenseMap<mlir::Operation *, unsigned> scalarEdges;
     llvm::SmallVector<HostObjectGlobalRead> checkedObjectReads;
     llvm::DenseMap<mlir::Operation *, unsigned> objectEdges;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> returnedScalarEdges;
     std::string refusal;
     unsigned workSteps = 0;
     bool budgetExhausted = false;

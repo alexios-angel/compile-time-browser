@@ -72,6 +72,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     llvm::DenseSet<mlir::Operation *> argumentObjects;
     for (const HostCallableEdge & edge : host.callables()) {
         if (!spend()) { return; }
+        if (edge.capturedMap) {
+            for (const auto & returned : edge.capturedMap->returnedScalars) {
+                (void)returned;
+                // Charge comparison and the final callable edge's copy.
+                if (!spend() || !spend()) { return; }
+            }
+        }
         auto method = edge.function;
         auto closure = edge.closure;
         auto write = edge.write;
@@ -92,6 +99,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->snapshotOperations != capture->snapshotOperations ||
                          edge.capturedMap->scalarCallbacks != capture->scalarCallbacks ||
                          edge.capturedMap->returnedLeaves != capture->returnedLeaves ||
+                         edge.capturedMap->returnedScalars != capture->returnedScalars ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
@@ -467,6 +475,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     }
 
     llvm::DenseSet<mlir::Operation *> observations;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> returnedScalars;
     if (capture) {
         llvm::DenseSet<mlir::Operation *> returnedCalls;
         for (const auto & returned : capture->returnedLeaves) {
@@ -480,6 +489,25 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 reject("owned returned leaf lacks its exact current call and caller allocation");
                 return;
             }
+        }
+        for (const auto & returned : capture->returnedScalars) {
+            // Charge validation/indexing and the owning table's copy.
+            if (!spend() || !spend()) { return; }
+            const auto alternatives = returned.alternatives;
+            constexpr unsigned truthy = PrimitiveAlternatives::Boolean |
+                                        PrimitiveAlternatives::Number |
+                                        PrimitiveAlternatives::String;
+            constexpr unsigned falsy =
+                truthy | PrimitiveAlternatives::Null | PrimitiveAlternatives::Undefined;
+            if (!returned.call || !methodCalls.contains(returned.call) ||
+                !returnedCalls.insert(returned.call).second ||
+                returned.call->getNumResults() != 1 || returned.call->getParentOp() != entry ||
+                !alternatives.known || !(alternatives.truthy | alternatives.falsy) ||
+                (alternatives.truthy & ~truthy) || (alternatives.falsy & ~falsy)) {
+                reject("owned returned scalar lacks its exact current call and primitive evidence");
+                return;
+            }
+            returnedScalars.try_emplace(returned.call->getResult(0), alternatives);
         }
         for (ctjs::GetPropertyOp read : capture->leafReads) {
             if (!spend()) { return; }
@@ -938,6 +966,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     scalarEdges = std::move(scalarIndex);
     checkedObjectReads = std::move(objectReads);
     objectEdges = std::move(objectIndex);
+    returnedScalarEdges = std::move(returnedScalars);
 }
 
 } // namespace ctcompile::ctnative
