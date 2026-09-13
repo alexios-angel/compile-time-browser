@@ -16,7 +16,7 @@ set_property(TARGET ctbrowser-test-core_basics PROPERTY LINK_LIBRARIES "${_core_
 
 # The native DOM clients must link without the interpreter or Shell.
 # Keep the test helper's configured trace libraries and DOM/Core dependencies.
-foreach(client dom_token_list dom_element)
+foreach(client dom_token_list dom_element dom_shadow)
   get_target_property(_dom_libs ctbrowser-test-${client} LINK_LIBRARIES)
   list(FILTER _dom_libs EXCLUDE REGEX "^ctbrowser::(script|style|layout|paint|raster|shell|ctbrowser)$")
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_dom_libs}")

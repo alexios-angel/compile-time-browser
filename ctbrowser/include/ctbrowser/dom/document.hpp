@@ -51,6 +51,8 @@ enum class dom_error : std::uint8_t {
     would_cycle,            // reparenting a node beneath its own descendant
     is_root,                // the root has no parent to detach from
     invalid_attribute_name, // the qualified name cannot round-trip through HTML
+    invalid_shadow_host,    // only supported HTML names may host a shadow tree
+    shadow_root_exists,     // an element can host only one shadow tree
 };
 
 class document;
@@ -123,6 +125,9 @@ public:
 
     // self first, then ancestors
     [[nodiscard]] bool is_ancestor_of(node_id ancestor, node_id descendant) const noexcept;
+    // Top of the ordinary tree, or through shadow hosts when composed. Like
+    // parent(), this returns the root element rather than its Document node.
+    [[nodiscard]] node_id root_of_tree(node_id from, bool composed = false) const;
 
 private:
     const document * doc_;
@@ -231,6 +236,19 @@ public:
     // are a handful of templates in a page. Empty when the element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
+
+    // Shadow roots are detached fragments with sparse host/mode metadata.
+    // Closed mode affects exposure to script, not these native tree queries.
+    struct shadow_tree {
+        node_id host;
+        bool open = true;
+    };
+    [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, bool open);
+    [[nodiscard]] node_id shadow_root_of(node_id host) const;
+    // Borrowed until the next attach_shadow; the document owns the metadata.
+    [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;
+    // Snapshot for callers that walk trees and may attach another root.
+    [[nodiscard]] std::vector<node_id> shadow_roots() const;
 
     // --- the parse path -----------------------------------------------------
     // Building a document by repeatedly appending through the published path
@@ -381,6 +399,8 @@ private:
     // them would race the other's walk.
     mutable std::mutex templates_;
     std::vector<std::pair<node_id, node_id>> template_contents_;
+    flat_map<std::uint64_t, node_id> shadow_roots_;
+    flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
     node_id root_{};
     node_id document_node_{};
     std::atomic<std::uint64_t> version_{1};

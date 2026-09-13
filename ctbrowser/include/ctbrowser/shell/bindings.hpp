@@ -1877,32 +1877,8 @@ private:
     [[nodiscard]] value compile_handler_attribute(context & cx, value self,
                                                   const std::string & name);
 
-    // --- shadow DOM ---
-    //
-    // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS. `node_kind` already
-    // has a document_fragment - a parentless bag of nodes - which is exactly
-    // the shape DOM 4.8 gives a shadow root; what a fragment does not carry is
-    // its HOST and its MODE, and neither belongs on `node`, which is the most
-    // replicated object in the engine and pays for every field in every
-    // document. So they live here, keyed on pack(node_id) like `wrappers_`.
-    //
-    // A SHADOW TREE DOES NOT RENDER: the fragment is detached, so style,
-    // layout and paint never see it. Flattening it into the box tree is the
-    // slot-assignment (flat-tree) problem.
-    struct shadow_tree {
-        node_id host;
-        // `mode: "open"` - the only thing that decides whether `host.shadowRoot`
-        // answers with the root or with null. A closed root is not hidden from
-        // anything else here: `getRootNode()` on a node inside one still returns
-        // it, which is what the specification says and what a page relies on.
-        bool open = true;
-    };
-    // pack(host) -> the shadow root, and pack(root) -> the host and its mode.
-    // Two maps rather than one because both directions are asked for on the hot
-    // path: `element.shadowRoot` walks one way and `getRootNode({composed:true})`
-    // the other.
-    flat_map<std::uint64_t, node_id> shadow_roots_;
-    flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
+    // --- shadow DOM adapters over the owning document ---
+    using shadow_tree = document::shadow_tree;
 
     [[nodiscard]] node_id shadow_root_of(node_id host) const;
     [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;

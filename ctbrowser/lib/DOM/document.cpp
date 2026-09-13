@@ -19,6 +19,34 @@ constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
 constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
 constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 
+// Keep the existing shadow-map key order: custom-element reactions enumerate
+// these maps, so changing the hash input would change their visitation order.
+[[nodiscard]] constexpr std::uint64_t shadow_key(node_id id) {
+    return (static_cast<std::uint64_t>(id.generation) << 32) | id.slot;
+}
+
+[[nodiscard]] bool valid_shadow_host_name(std::string_view name) {
+    constexpr std::string_view ordinary[] = {
+        "article", "aside", "blockquote", "body",   "div",  "footer", "h1", "h2",      "h3",
+        "h4",      "h5",    "h6",         "header", "main", "nav",    "p",  "section", "span"};
+    if (std::ranges::find(ordinary, name) != std::end(ordinary)) { return true; }
+    // Preserve the binding's custom-name validation, including its reserved
+    // names. Full CustomElementRegistry name validation is a separate policy.
+    if (name.size() < 2 || name.front() < 'a' || name.front() > 'z' ||
+        name.find('-') == std::string_view::npos) {
+        return false;
+    }
+    for (const char c : name) {
+        if (c >= 'A' && c <= 'Z') { return false; }
+    }
+    for (const std::string_view taken :
+         {"annotation-xml", "color-profile", "font-face", "font-face-src", "font-face-uri",
+          "font-face-format", "font-face-name", "missing-glyph"}) {
+        if (name == taken) { return false; }
+    }
+    return true;
+}
+
 // Does this attribute answer to (namespace, local name)? THAT PAIR IS AN
 // ATTRIBUTE'S IDENTITY in the DOM, and the prefix is deliberately no part of
 // it: `foo:bar` and `quux:bar` in the same namespace are ONE attribute.
@@ -320,6 +348,22 @@ bool read_txn::is_ancestor_of(node_id ancestor, node_id descendant) const noexce
         if (at == ancestor) { return true; }
     }
     return false;
+}
+
+node_id read_txn::root_of_tree(node_id from, bool composed) const {
+    node_id at = from;
+    // Preserve the bounded walk even if a caller creates a shadow/host cycle.
+    for (std::size_t step = 0; at && step < 4096; ++step) {
+        if (const node_id up = parent(at)) {
+            at = up;
+            continue;
+        }
+        if (!composed) { break; }
+        const document::shadow_tree * tree = doc_->shadow_tree_of(at);
+        if (tree == nullptr || !tree->host) { break; }
+        at = tree->host;
+    }
+    return at;
 }
 
 document::document(atom_table & atoms) : atoms_(&atoms) {
@@ -664,6 +708,47 @@ void document::set_template_content(node_id element, node_id fragment) {
         }
     }
     template_contents_.emplace_back(element, fragment);
+}
+
+std::expected<node_id, dom_error> document::attach_shadow(node_id host, bool open) {
+    const auto txn = read();
+    if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
+    if (txn.kind(host).value_or(node_kind::text) != node_kind::element ||
+        txn.element_ns(host) != node_ns::html ||
+        !valid_shadow_host_name(atoms_->text(txn.tag(host).value_or(atom{})))) {
+        return std::unexpected{dom_error::invalid_shadow_host};
+    }
+    if (shadow_root_of(host)) { return std::unexpected{dom_error::shadow_root_exists}; }
+    const node_id root = create_fragment();
+    try {
+        shadow_roots_.emplace(shadow_key(host), root);
+        shadow_hosts_.emplace(shadow_key(root), shadow_tree{host, open});
+    } catch (...) {
+        shadow_roots_.erase(shadow_key(host));
+        shadow_hosts_.erase(shadow_key(root));
+        (void)nodes_.erase(root);
+        throw;
+    }
+    return root;
+}
+
+node_id document::shadow_root_of(node_id host) const {
+    if (!host) { return {}; }
+    const auto it = shadow_roots_.find(shadow_key(host));
+    return it == shadow_roots_.end() ? node_id{} : it->second;
+}
+
+const document::shadow_tree * document::shadow_tree_of(node_id root) const {
+    if (!root) { return nullptr; }
+    const auto it = shadow_hosts_.find(shadow_key(root));
+    return it == shadow_hosts_.end() ? nullptr : &it->second;
+}
+
+std::vector<node_id> document::shadow_roots() const {
+    std::vector<node_id> roots;
+    roots.reserve(shadow_roots_.size());
+    for (const auto & [host, root] : shadow_roots_) { roots.push_back(root); }
+    return roots;
 }
 
 void document::builder::append(node_id parent, node_id child) {
