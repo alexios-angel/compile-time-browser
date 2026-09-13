@@ -395,9 +395,13 @@ void dom_bindings::run_inserted_scripts() {
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
-        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
         // AN UNCAUGHT THROW IS REPORTED AND THE INSERTING SCRIPT CARRIES ON,
         // exactly as a listener's is - see fire_at for the two ways to fail.
+        // Reported BEFORE currentScript is put back: "run a classic script"
+        // reports the exception inside "execute the script element" step 6,
+        // and step 7 is the restore - so a window.onerror reading
+        // document.currentScript sees the script that threw
+        // (Document.currentScript.html, "script-window-error").
         if (threw || cx.failed()) {
             const context::rooted keep_thrown{cx, thrown};
             const std::string fault =
@@ -409,6 +413,7 @@ void dom_bindings::run_inserted_scripts() {
             const bool handled = dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) { callback_error_ = fault; }
         }
+        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
     }
 }
 

@@ -208,6 +208,24 @@ void test_an_inserted_script_runs_when_it_connects() {
        " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
        " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
        "1");
+    // ...and STILL `currentScript` while its uncaught throw - and its parse
+    // error - is reported: "execute the script element" restores the previous
+    // one after "run a classic script" has reported (Document.currentScript
+    // .html, "script-window-error").
+    is("(function () { window.seen = []; window.onerror = function () {"
+       " seen.push(document.currentScript ? document.currentScript.id : 'null'); };"
+       " var s = document.createElement('script'); s.id = 'runtime'; s.textContent = 'nope();';"
+       " var t = document.createElement('script'); t.id = 'parse'; t.textContent = '{';"
+       " document.body.appendChild(s); document.body.appendChild(t); return seen.join(); })()",
+       "runtime,parse");
+    // An inline SVG's <script> is the page's script too, and names its own
+    // element (Document.currentScript.html, "script-svg").
+    browser svg_page{browser_options{400, 300}};
+    svg_page.load_html("<!DOCTYPE html><html><body><svg><script id=s>"
+                       "console.log(document.currentScript.id + ':' +"
+                       " document.currentScript.namespaceURI)</script></svg></body></html>");
+    CHECK_EQ(svg_page.bindings().console_output().back(),
+             std::string{"s:http://www.w3.org/2000/svg"});
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><body><script id=empty></script><script>"
                    "var e = document.getElementById('empty');"
