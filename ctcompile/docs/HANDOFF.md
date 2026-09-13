@@ -6,6 +6,123 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Distinct Data entry keys and scalar snapshot payloads, 2026-09-13 UTC
+
+Continued clean **cef8c834**, resuming its exact full-Data next step from the
+latest HANDOFF, both commit logs and the synchronization journal. No interrupted
+compiler edits remained; `codex-wip-20260907` was already an ancestor. Three agents
+worked independently on invocation tests, execution and source escape soundness;
+root integrated their changes and serialized all Git/devbox operations.
+
+**27de9b13** extends the existing optional invocation analysis with canonical
+entry object-key identities, exact/read-time Map-size equality and truth retained
+through a selected yield. Only independently checked entry allocations dominating
+the call prove distinctness; aliases, method-local sites and schemas do not.
+Eleven source/prepared controls cover aliases, unknown keys, child recreation,
+wrong-key deletion, saved size, reversed/negated branches and inactive effects.
+Live mutations and incomplete/exact budgets pass. Focused **258-step rebuild /
+7 of 7 CTests in 244.62s** passed.
+
+**0f664eb5** passes complete live captured-snapshot read edges into the existing
+scalar-field environment. This lets ordinary `{value: 64}` payloads coexist with
+`Array.from(s.keys())[0]`; numeric keys elsewhere and prototype effects still
+refuse. Getter ABI, emitted source calls and runtime storage stay broad. No new
+runtime helper, Script dependency or browser implementation was added.
+
+The separate exact-prefix entry-object probe is **1999 bytes**, SHA256
+**5dc98179c1a06bcac5b7136ce8a86d11690e7a7e93de8229e82488c09c52e030**. It retains
+**16 method calls / five field reads**, distinct keys and aliases, conflict and
+wrong-key effects, mixed Object/Number payloads, deletion and reinsertion.
+Measured **7/7 native at explicit1m**, **0/7 at unchanged default100k**, both
+policies. Final recorder execution passes
+**9 native programs / 30 refusals / 317 typed observations / 13 mutations**,
+both layouts, GCC/Clang, no-Script and ASan/UBSan/leaks. The new future harness
+runs **1024 rounds**, retains saved leaves across scalar overwrite/deletion,
+and checks detached callables, entry reruns, independent owners and destruction.
+
+**4b002f13**, committed first, conservatively repairs the optional escape contents
+query: both non-BigInt BinaryStatic operands need independent primitive origins.
+Fresh objects/arrays can invoke inherited conversion hooks that retain a child;
+Node counterexamples and compiler mutation controls cover both operands. Generic
+VM-relative BinaryStatic effect metadata is unchanged and remains a separate
+source-semantics coordination issue. The complete fixture snapshot is byte-identical
+to the predecessor: **1123 rows / 112,001 JavaScript bytes / 222 functions /
+861 claims / 895 sites / 35 unclaimed / zero violations / precision 39/172**.
+Fixture rerun **1.14s**, 13 evidence mutations, eight malformed controls and the
+three vendor escape gates passed. No precision increase is claimed.
+
+The original full Data source remains **2522 bytes / SHA8359592c / 0 of 7 native**.
+A separately declared-manifest control now uses the existing
+`undefined_bindings: ["undefined"]` without changing those source bytes. At1m
+both policies complete ownership, including distinct keys and the returned leaf;
+the original empty manifest still refuses. The next actual native refusal is
+`standard Map identity is unproved with other host/global value reads`:
+`Analysis/NativeMap.cpp` does not consume fixed-undefined host evidence. The older
+property-receiver diagnostic was fallback after speculative preparation failed.
+All temporary diagnostic edits were restored to committed bytes before the gate.
+
+Final **259-step build** passed. Standard CTest first ran **538/540 in 386.10s**:
+**165/166 lit cases** passed; failures were the existing browser `frames` test and
+the new declared-manifest harness wrongly requiring unprepared call operands after
+successful ownership. **b74cd063** fixes only that new control: all source calls
+and the **23 entry method calls/order** survive, and fresh forged reports leave
+the prepared operands unchanged. The complete corrected `global-maps.test` then
+passed filtered CTest: **1/1 in 711.46s**, lit **711.38s**. All compiler CTests and
+all **166 lit cases** have passing results across these two runs; the sole
+remaining failure is the unchanged browser `frames` baseline.
+
+All **1285 final frozen inputs** match locally and on the devbox. The required
+bundled **23.0.0git** formatter retains **nine baseline files / 26 diagnostics**;
+changed files pass. Whole formatting with Homebrew **23.1.1** passes
+**804 C++ / 84 Python / 33 web files**. No production input changed after
+**0f664eb5**; only the new regression changed after the first full run.
+
+Fresh Bootstrap remains **19/574 native**, both policies. Fresh exact-source
+measurements under both policies (default stays 100,000 steps):
+
+| Source (SHA256 prefix) | Bytes | Default 100k | Explicit 1m |
+|---|---:|---:|---:|
+| Single recorder (`4ebf1cd4`) | 1327 | 7/7 | — |
+| Repeated recorder (`45d621b3`) | 1733 | 0/7 | 7/7 |
+| Entry objects (`5dc98179`) | 1999 | 0/7 | 7/7 |
+| Full Data, either manifest (`8359592c`) | 2522 | 0/7 | 0/7 |
+| Captured child template (`e39ea887`) | 1303 | 6/6 | — |
+| Captured outer template (`db9730ef`) | 1108 | 0/6 | 6/6 |
+| Original returned field (`9d4c8b9c`) | 595 | 5/5 | — |
+| Recreated object (`3385321d`) | 660 | 6/6 | — |
+
+Full Data ownership is **false at default**, with either manifest; it is **true at
+1m only with declared undefined**, while native emission remains refused.
+The browser `frames` baseline is still `0px,184px,rgb(0, 0, 0),184,0,8px` versus
+`200px,50px,rgb(1, 2, 3),50,1,0px`, with zero frame style elements.
+
+Next native work: in `LowerToEmitC.cpp`'s private validated clone, after the first
+complete owner proof, materialize only contract-declared present-undefined loads
+as ordinary UndefinedAttr constants. Charge the collection, recompute the derived
+fingerprint and reprove before preparation/publication; preserve missing, absent,
+reassigned, stale and exhausted controls. Existing constant paths then serve Map
+recognition, typing and emission. This is a proposed next step, not measured code.
+
+Next after that: `HostContract/Values.cpp` currently discards each invocation's
+PrimitiveAlternatives while retaining its exact returned-leaf edge. Carry complete
+Number evidence to the precise `StoreGlobal` observation (first `traceGet`), keeping
+the getter/call ABI broad and the whole global store census consistent. Preserve
+source pins, recorder effects, falsy/missing controls and future calls. Do not
+replace source `undefined` with `void 0` or narrow a signature to one observation.
+Read `/tmp/ctcompile-data-distinct/next-data-final.md` for exact producer/consumer
+paths and trust constraints; subsequent native admission is not yet measured.
+Full native Bootstrap and the application driver remain unfinished; browser
+calls must continue through public ctbrowser RAII subsystem APIs.
+
+Next escape prerequisite is still literal own-definition semantics/provenance for
+`objectFrameDeletedChild`, **fn15/pc2 / 138 bytes / SHA88644673**. Coordinate with
+Claude before importing that fact; fresh allocation does not bypass inherited
+assignment setters. Opaque conversions need primitive proof, and original
+`confinedArray` needs an actual loop/index invariant. Read-only audits, generated
+C++, frozen inputs and all logs are in `/tmp/ctcompile-data-distinct/`.
+This entry supersedes the prior distinct-key/size next step. No browser/runtime/
+parser files changed; no push.
+
 ## Per-invocation Data returns and private arrays, 2026-09-13 UTC
 
 Resumed the interrupted **07:40:50 UTC** thread, explicitly abandoned at
