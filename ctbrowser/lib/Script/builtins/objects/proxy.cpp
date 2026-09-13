@@ -88,26 +88,136 @@ void install_proxy(context & cx) {
     // thing - `Reflect.get(t, k)` inside a `get` trap is how a proxy adds
     // behaviour instead of replacing it.
     object_object * reflect = new_table(cx);
-    method(cx, reflect, "get", 2, [](context & c, std::span<value> a) {
-        return c.lookup_index(arg_at(a, 0), arg_at(a, 1));
-    });
-    method(cx, reflect, "set", 3, [](context & c, std::span<value> a) {
-        if (arg_at(a, 0).is_object()) {
-            static_cast<object_object *>(a[0].as_heap())
-                ->set(c.to_string(arg_at(a, 1)), arg_at(a, 2));
+    // 28.1: every Reflect function REFUSES a non-object target with a
+    // TypeError - the one place the namespace is stricter than Object - and
+    // coerces its key with ToPropertyKey (a symbol passes through as its
+    // key, see symbol_object).
+    const auto target_of = [](context & c, std::span<value> a, const char * name) {
+        if (arg_at(a, 0).is_object_like()) { return true; }
+        c.throw_error("TypeError", std::string{"Reflect."} + name + " called on non-object");
+        return false;
+    };
+    // ToPropertyKey, 7.1.19: ToPrimitive(hint String) then the key - an
+    // object's `toString` runs, and can throw.
+    const auto key_of = [](context & c, value raw, std::string & out) {
+        value primitive = raw;
+        if (raw.is_object_like()) {
+            if (!c.to_primitive_hint(raw, "string", primitive)) { return false; }
         }
-        return value::boolean(true);
+        out = c.to_string(primitive);
+        return !c.throw_pending();
+    };
+    // 28.1.6 Reflect.get, WITH ITS RECEIVER: an accessor found on the chain is
+    // called on `receiver`, which is the whole reason the third argument
+    // exists. A proxy target answers through its trap (context::lookup_index),
+    // which takes no receiver; so does the two-argument form.
+    method(cx, reflect, "get", 2, [target_of, key_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "get")) { return value::undefined(); }
+        std::string key;
+        if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
+        if (a.size() < 3 || a[0].is_kind(heap_kind::proxy)) {
+            return c.lookup_index(a[0], c.string(key));
+        }
+        const value receiver = a[2];
+        value walk = a[0];
+        for (int hops = 0; hops < 10000 && walk.is_object_like(); ++hops) {
+            if (walk.is_kind(heap_kind::proxy)) { return c.lookup_index(walk, c.string(key)); }
+            context::property_descriptor found;
+            if (c.own_property(walk, key, found)) {
+                if (!found.is_accessor()) { return found.held; }
+                if (!found.getter.is_callable()) { return value::undefined(); }
+                return c.call(found.getter, {}, receiver);
+            }
+            if (c.throw_pending()) { return value::undefined(); }
+            walk = prototype_of(c, walk);
+        }
+        return value::undefined();
+    });
+    // 28.1.13 Reflect.set: OrdinarySet (10.1.9.2) with a receiver, answering
+    // FALSE where a plain assignment is silently refused - a non-writable
+    // slot, an accessor with no setter, a non-extensible receiver, a receiver
+    // that is not an object at all.
+    method(cx, reflect, "set", 3, [target_of, key_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "set")) { return value::undefined(); }
+        std::string key;
+        if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
+        const value v = arg_at(a, 2);
+        const value receiver = a.size() > 3 ? a[3] : a[0];
+        value walk = a[0];
+        context::property_descriptor own;
+        bool found = false;
+        for (int hops = 0; hops < 10000 && walk.is_object_like(); ++hops) {
+            if (walk.is_kind(heap_kind::proxy)) {
+                // The proxy's own [[Set]] - its trap - with the store path
+                // this engine has, which carries no receiver.
+                c.clear_store_rejected();
+                c.store_index(walk, c.string(key), v);
+                return value::boolean(!c.throw_pending());
+            }
+            found = c.own_property(walk, key, own);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (found) { break; }
+            walk = prototype_of(c, walk);
+        }
+        if (found && own.is_accessor()) {
+            if (!own.setter.is_callable()) { return value::boolean(false); }
+            const value args[1] = {v};
+            (void)c.call(own.setter, args, receiver);
+            return value::boolean(!c.throw_pending());
+        }
+        if (found && !own.writable) { return value::boolean(false); }
+        if (!receiver.is_object_like()) { return value::boolean(false); }
+        context::property_descriptor existing;
+        if (c.own_property(receiver, key, existing)) {
+            if (existing.is_accessor() || !existing.writable) { return value::boolean(false); }
+            context::property_descriptor wanted;
+            wanted.has_value = true;
+            wanted.held = v;
+            return value::boolean(c.define_own_property(receiver, key, wanted));
+        }
+        if (c.throw_pending()) { return value::undefined(); }
+        context::property_descriptor fresh;
+        fresh.has_value = fresh.has_writable = fresh.has_enumerable = fresh.has_configurable = true;
+        fresh.held = v;
+        fresh.writable = fresh.enumerable = fresh.configurable = true;
+        return value::boolean(c.define_own_property(receiver, key, fresh));
     });
     // HasProperty, 7.3.11 - not "reads as something other than undefined".
     // `Reflect.has({x: undefined}, 'x')` was false, and so was every accessor
     // whose getter returns undefined. context::has_property is the operator
     // `in` uses and is the same question.
-    method(cx, reflect, "has", 2, [](context & c, std::span<value> a) {
-        return value::boolean(c.has_property(arg_at(a, 0), arg_at(a, 1)));
+    method(cx, reflect, "has", 2, [target_of, key_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "has")) { return value::undefined(); }
+        std::string key;
+        if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
+        return value::boolean(c.has_property(a[0], key));
     });
+    // CreateListFromArrayLike, 7.3.20: any object with a `length`, read
+    // through [[Get]] - a non-object is the TypeError of step 2.
+    const auto list_from = [](context & c, value list, std::vector<value> & out,
+                              const char * name) {
+        if (!list.is_object_like()) {
+            c.throw_error("TypeError",
+                          std::string{"Reflect."} + name + ": arguments list must be an object");
+            return false;
+        }
+        if (list.is_array() && detail::dense_array_this(list) != nullptr &&
+            !list.is_kind(heap_kind::proxy)) {
+            out = static_cast<array_object *>(list.as_heap())->items;
+            return true;
+        }
+        const double n = detail::array_like_length(c, list);
+        if (c.throw_pending()) { return false; }
+        if (!detail::generic_walk_ok(c, n)) { return false; }
+        for (double i = 0; i < n; i += 1.0) {
+            out.push_back(detail::element_at(c, list, i));
+            if (c.throw_pending()) { return false; }
+        }
+        return true;
+    };
     // 28.1.2: target and newTarget must both be constructors, and the
     // argument list must be an object (CreateListFromArrayLike step 2).
-    method(cx, reflect, "construct", 2, [](context & c, std::span<value> a) {
+    method(cx, reflect, "construct", 2, [list_from](context & c, std::span<value> a) {
         if (!is_constructor(arg_at(a, 0))) {
             c.throw_error("TypeError", "Reflect.construct: target is not a constructor");
             return value::undefined();
@@ -116,12 +226,9 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Reflect.construct: newTarget is not a constructor");
             return value::undefined();
         }
-        if (!arg_at(a, 1).is_object_like()) {
-            c.throw_error("TypeError", "Reflect.construct: arguments list must be an object");
-            return value::undefined();
-        }
         std::vector<value> args;
-        if (a[1].is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
+        if (!list_from(c, arg_at(a, 1), args, "construct")) { return value::undefined(); }
+        const context::rooted_values keep{c, args};
         const value made = c.construct(a[0], args);
         // GetPrototypeFromConstructor off newTarget (10.1.14): context::construct
         // takes none, so an ordinary object a built-in made is re-parented
@@ -134,10 +241,17 @@ void install_proxy(context & cx) {
         }
         return made;
     });
-    method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
+    // 28.1.1 Reflect.apply: a non-callable target is a TypeError BEFORE the
+    // list is read.
+    method(cx, reflect, "apply", 3, [list_from](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_callable()) {
+            c.throw_error("TypeError", "Reflect.apply: target is not a function");
+            return value::undefined();
+        }
         std::vector<value> args;
-        if (arg_at(a, 2).is_array()) { args = static_cast<array_object *>(a[2].as_heap())->items; }
-        return c.call(arg_at(a, 0), args, arg_at(a, 1));
+        if (!list_from(c, arg_at(a, 2), args, "apply")) { return value::undefined(); }
+        const context::rooted_values keep{c, args};
+        return c.call(a[0], args, arg_at(a, 1));
     });
     method(cx, reflect, "ownKeys", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
@@ -159,17 +273,15 @@ void install_proxy(context & cx) {
     // The un-throwing halves of Object.defineProperty and friends: Reflect
     // ANSWERS FALSE where Object throws, which is the whole difference between
     // the two namespaces.
-    method(cx, reflect, "defineProperty", 3, [](context & c, std::span<value> a) {
+    method(cx, reflect, "defineProperty", 3, [target_of, key_of](context & c, std::span<value> a) {
         // FALSE is only for the VALIDATION step. A target that is not an object
         // and a descriptor that is malformed are both TypeErrors here exactly
         // as they are for Object.defineProperty (28.1.3 steps 1 and 3) - the
         // difference between the two namespaces is what a REFUSED but
         // well-formed define does, and that is the boolean below.
-        if (!arg_at(a, 0).is_object_like()) {
-            c.throw_error("TypeError", "Reflect.defineProperty called on non-object");
-            return value::boolean(false);
-        }
-        const std::string key = c.to_string(arg_at(a, 1));
+        if (!target_of(c, a, "defineProperty")) { return value::undefined(); }
+        std::string key;
+        if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
         if (!arg_at(a, 2).is_object_like()) {
             c.throw_error("TypeError", "Property description must be an object");
             return value::boolean(false);
@@ -178,21 +290,73 @@ void install_proxy(context & cx) {
         if (!valid_descriptor(c, wanted)) { return value::boolean(false); }
         return value::boolean(c.define_own_property(a[0], key, wanted));
     });
-    method(cx, reflect, "getOwnPropertyDescriptor", 2, [](context & c, std::span<value> a) {
-        context::property_descriptor found;
-        if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
-            return value::undefined();
+    method(cx, reflect, "getOwnPropertyDescriptor", 2,
+           [target_of, key_of](context & c, std::span<value> a) {
+               if (!target_of(c, a, "getOwnPropertyDescriptor")) { return value::undefined(); }
+               std::string key;
+               if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
+               context::property_descriptor found;
+               if (!c.own_property(a[0], key, found)) { return value::undefined(); }
+               return c.from_property_descriptor(found);
+           });
+    method(cx, reflect, "deleteProperty", 2, [target_of, key_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "deleteProperty")) { return value::undefined(); }
+        std::string key;
+        if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
+        return value::boolean(c.delete_own_property(a[0], key));
+    });
+    // 28.1.9, and 10.5.3 for a proxy: the `isExtensible` trap's boolean,
+    // which must agree with the target's.
+    method(cx, reflect, "isExtensible", 1, [target_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "isExtensible")) { return value::undefined(); }
+        if (a[0].is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(a[0].as_heap());
+            if (!p->handler.is_object_like()) {
+                c.throw_error("TypeError",
+                              "Cannot perform 'isExtensible' on a proxy that has been revoked");
+                return value::undefined();
+            }
+            const value trap = c.lookup_property(p->handler, "isExtensible");
+            if (c.throw_pending()) { return value::undefined(); }
+            if (trap.is_callable()) {
+                const value args[1] = {p->target};
+                const bool answered = context::truthy(c.call(trap, args, p->handler));
+                if (c.throw_pending()) { return value::undefined(); }
+                if (answered != c.is_extensible(p->target)) {
+                    c.throw_error("TypeError", "'isExtensible' on proxy: trap result does not "
+                                               "reflect extensibility of proxy target");
+                    return value::undefined();
+                }
+                return value::boolean(answered);
+            }
+            if (!trap.is_nullish()) {
+                c.throw_error("TypeError", "proxy trap 'isExtensible' is not a function");
+                return value::undefined();
+            }
         }
-        return c.from_property_descriptor(found);
+        return value::boolean(c.is_extensible(a[0]));
     });
-    method(cx, reflect, "deleteProperty", 2, [](context & c, std::span<value> a) {
-        return value::boolean(c.delete_own_property(arg_at(a, 0), c.to_string(arg_at(a, 1))));
-    });
-    method(cx, reflect, "isExtensible", 1, [](context & c, std::span<value> a) {
-        return value::boolean(c.is_extensible(arg_at(a, 0)));
-    });
-    method(cx, reflect, "preventExtensions", 1, [](context & c, std::span<value> a) {
-        c.prevent_extensions(arg_at(a, 0));
+    // 28.1.10: a proxy's trap answers the boolean (10.5.4); an ordinary
+    // object always says true.
+    method(cx, reflect, "preventExtensions", 1, [target_of](context & c, std::span<value> a) {
+        if (!target_of(c, a, "preventExtensions")) { return value::undefined(); }
+        if (a[0].is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(a[0].as_heap());
+            const value trap = c.proxy_trap(a[0], "preventExtensions");
+            if (trap.is_callable()) {
+                const value args[1] = {p->target};
+                const bool ok = context::truthy(c.call(trap, args, p->handler));
+                if (c.throw_pending()) { return value::undefined(); }
+                if (ok && c.is_extensible(p->target)) {
+                    c.throw_error("TypeError",
+                                  "'preventExtensions' on proxy: trap returned truish but the "
+                                  "proxy target is extensible");
+                    return value::undefined();
+                }
+                return value::boolean(ok);
+            }
+        }
+        c.prevent_extensions(a[0]);
         return value::boolean(true);
     });
     // THE SAME [[GetPrototypeOf]] Object.getPrototypeOf answers with. It read
@@ -220,6 +384,7 @@ void install_proxy(context & cx) {
         }
         return value::boolean(detail::set_prototype_of(c, a[0], proto));
     });
+    reflect->define("@@toStringTag", cx.string("Reflect"), attr_configurable); // 28.1.14
     cx.define_global("Reflect", value::object(reflect));
 }
 
