@@ -1099,9 +1099,11 @@ The typed arrays were one 273-line file that knew nine constructors, `set`,
 25.1 and 25.3 as written: `%TypedArray%` as the [[Prototype]] of the nine
 constructors with `from`, `of` and `@@species`, every `%TypedArray%.prototype`
 method and accessor, `ArrayBuffer` with `maxByteLength`, `resize`, `slice`,
-`transfer`, `transferToFixedLength`, `detached` and a real detach, `DataView`
-for every element type in both byte orders (Float16 and the BigInt64 pair
-included), and the ES2025 `Uint8Array` base64/hex codecs. The header in that
+`transfer`, `transferToFixedLength`, `detached` and a real detach - plus the
+immutable-arraybuffer proposal's `transferToImmutable`, `sliceToImmutable`
+and `immutable`, which every writing method refuses - `DataView` for every
+element type in both byte orders (Float16 and the BigInt64 pair included),
+and the ES2025 `Uint8Array` base64/hex codecs. The header in that
 directory is the storage model; two decisions in it are worth knowing:
 
 * **A typed array made from a length or a list OWNS its elements** (in
@@ -1124,4 +1126,17 @@ be one; and `vm/objects/lookup.cpp` answers `buffer`, `length`, `byteLength`
 and `byteOffset` for a view before any prototype getter is asked, building a
 fresh wrapper for `buffer` each read, so `ta.buffer === ta.buffer` is false.
 `$262.detachArrayBuffer` in tools/ct262 still throws; the engine's detach is
-`ArrayBuffer.prototype.transfer`'s, one call away.
+`ArrayBuffer.prototype.transfer`'s, one call away. Smaller, found by the same
+measurement and also the VM's: `ta[i] = -0` on an integer kind keeps the -0
+(`coerce_element`'s wrap), `Object.defineProperty(ta, "length", ...)` resizes
+an owning typed array, a typed array reports `length` as an own key, and
+`class X extends Uint8Array` neither inherits the statics nor produces a typed
+array from `super()`.
+
+Measured on the devbox at the commit that landed this (test262 files, PASS
+before -> after, 4 workers, 10 s, 2 GB, the detachArrayBuffer.js tests still
+skipped): TypedArray 1 -> 745 of 1,446, TypedArrayConstructors 74 -> 275 of
+738, ArrayBuffer 24 -> 190 of 221, DataView 0 -> 438 of 561, Uint8Array 4 ->
+64 of 70, and built-ins/Array 2,774 -> 2,787 of 3,082 from its
+testTypedArray.js rows. Nothing went PASS -> FAIL. Of what is left, ~750
+files want `BigInt64Array` and ~30 the subclass `super()`.
