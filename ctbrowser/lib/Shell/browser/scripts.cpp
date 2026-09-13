@@ -55,6 +55,9 @@ void browser::run_scripts() {
     // repaint, it makes the flush a no-op and the read answers from before the
     // write. `styles` is the honest level: the only callers are script mutating
     // the document, and every one of them can change which rules match.
+    // The frames' layouts point into the bindings being replaced; a stale
+    // pointer there would be followed on the next layout_frames.
+    frame_layouts_.clear();
     bindings_ = std::make_unique<dom_bindings>(
         *doc_, atoms_, canvases_, forms_,
         [this] {
