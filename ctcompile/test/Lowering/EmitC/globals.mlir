@@ -25,10 +25,17 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
   %g = ctjs.load_global "Math"
-  // `typeof exports` - a load_global whose ONLY use is typeof - is the one
-  // read that must not throw for an unbound name, so it takes the soft row.
-  %e = ctjs.load_global "exports"
+  // Only source IdentifierReference provenance permits a silent absent read.
+  %e = ctjs.load_global "exports" {typeof_lookup = true}
   %t = ctjs.unary typeof %e
+  // The same sole-TypeOf use after an ordinary GetValue remains throwing.
+  %saved = ctjs.load_global "saved"
+  %saved_type = ctjs.unary typeof %saved
+  // An explicitly ordinary lookup has the same hard behavior.
+  %ordinary = ctjs.load_global "ordinary" {typeof_lookup = false}
+  %ordinary_type = ctjs.unary typeof %ordinary
+  // Its users do not change a source-soft lookup's semantics either.
+  %unused = ctjs.load_global "unused" {typeof_lookup = true}
   // A NAME THAT IS NOT AN IDENTIFIER, which is legal JavaScript:
   // `globalThis["odFd"] = 1`. The importer carries whatever the source
   // said, so the backend cannot assume otherwise.
@@ -42,6 +49,11 @@ ctjs.func @globals(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // whose name contains a zero byte is legal and strlen would stop at it.
 // CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "Math", 4, {{v[0-9]+}});
 // CHECK: ctbrowser::aot::ct_aot_global_get_soft({{v[0-9]+}}, "exports", 7);
+// CHECK-NEXT: {{v[0-9]+}} = ctbrowser::aot::ct_aot_check({{v[0-9]+}});
+// CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "saved", 5, {{v[0-9]+}});
+// CHECK: ctbrowser::aot::ct_aot_global_get({{v[0-9]+}}, "ordinary", 8, {{v[0-9]+}});
+// CHECK: ctbrowser::aot::ct_aot_global_get_soft({{v[0-9]+}}, "unused", 6);
+// CHECK-NEXT: {{v[0-9]+}} = ctbrowser::aot::ct_aot_check({{v[0-9]+}});
 
 // AND THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE. `od`, byte 0x01, `Fd` -
 // five characters. Written "od\x01Fd" the C++ compiler reads the escape as

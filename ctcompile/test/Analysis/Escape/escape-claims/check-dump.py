@@ -21,7 +21,7 @@ if want != got:
 # Independent hand-written recording: one live literal, one implicit Error,
 # and two unobserved literals. Reordering is harmless; losing any row is not.
 recording = """ctbrowser-type-recording 2
-opcodes 93 writers 68
+opcodes 94 writers 69
 defs recorded 0 dropped 0 orphan-frames 0
 escape budget unlimited pops 1 unwinds 0 checks 1 unframed 0 unresolved 0
 programs 1

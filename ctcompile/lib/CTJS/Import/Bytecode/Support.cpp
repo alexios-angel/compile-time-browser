@@ -131,7 +131,8 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
             out.stores.push_back(*name);
             break;
         }
-        case op::get_global: {
+        case op::get_global:
+        case op::get_global_typeof: {
             const std::string * name = name_at(in.bx());
             if (name == nullptr) {
                 missing();

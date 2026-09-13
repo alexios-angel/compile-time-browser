@@ -30,8 +30,14 @@ def CTJS_LoadGlobalOp : CTJS_RuntimeOp<"load_global", "ct_aot_global_get", CTJS_
   let description = [{
     Generic effects because a global may be an accessor on the global object,
     and reading one runs a getter.
+
+    typeof_lookup records a source typeof IdentifierReference: an unresolvable
+    name yields undefined, while getter and other lookup exceptions still
+    propagate. The default is an ordinary throwing GetValue read. This mode
+    comes from the bytecode opcode, never from the result's users: forwarding
+    a saved ordinary read into typeof must not silence its ReferenceError.
   }];
-  let arguments = (ins StrAttr:$name);
+  let arguments = (ins StrAttr:$name, DefaultValuedAttr<BoolAttr, "false">:$typeof_lookup);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$name attr-dict";
 }

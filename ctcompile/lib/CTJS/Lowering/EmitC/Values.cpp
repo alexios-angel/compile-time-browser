@@ -282,16 +282,11 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // THE GLOBALS. A READ HAS AN EDGE since 2026-09-12: a name that is
-    // neither a binding nor a property of the global object is an
-    // unresolvable reference and ct_aot_global_get throws ReferenceError
-    // (may_throw 1, status and out-slot like every other throwing row) -
-    // EXCEPT the operand of `typeof` (13.5.3 step 2), which the interpreter
-    // recognises as get_global immediately followed by type_of and which is
-    // here a load_global whose only use is a typeof: that one goes through
-    // ct_aot_global_get_soft and reads undefined, as the run loop does. A
-    // write is still (0, 0, 0) - defining a global cannot fail - so it stays
-    // one call.
+    // THE GLOBALS. Only the source's typeof IdentifierReference may answer
+    // undefined for an unresolvable name. A saved ordinary read forwarded
+    // into typeof still throws, so the opcode-derived mode decides the helper.
+    // Both forms can run a throwing global getter. The soft helper returns
+    // its value directly, so classify its status before using that value.
     //
     // THE NAME IS BYTES AND A LENGTH, not a NUL-terminated string, which is
     // why the length is emitted rather than left to strlen: a global whose
@@ -303,17 +298,14 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
                                          c_string_literal(name));
         const mlir::Value length = literal(build, where, opaque(build.getContext(), "uint32_t"),
                                            std::to_string(name.size()));
-        const bool only_typeof = [&] {
-            if (!global.getResult().hasOneUse()) { return false; }
-            auto unary = mlir::dyn_cast<UnaryOp>(*global.getResult().getUsers().begin());
-            return unary && unary.getKind() == UnaryKind::TypeOf;
-        }();
-        if (only_typeof) {
-            mapping.map(global.getResult(),
-                        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                                 callee("ct_aot_global_get_soft"),
-                                                 mlir::ValueRange{scope.frame, text, length})
-                            .getResult(0));
+        if (global.getTypeofLookup()) {
+            const mlir::Value loaded =
+                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                         callee("ct_aot_global_get_soft"),
+                                         mlir::ValueRange{scope.frame, text, length})
+                    .getResult(0);
+            status_call_void(scope, build, where, callee("ct_aot_check"), {scope.frame});
+            mapping.map(global.getResult(), loaded);
             return true;
         }
         mapping.map(global.getResult(),

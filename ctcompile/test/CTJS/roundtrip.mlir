@@ -51,6 +51,10 @@ ctjs.func @constants(%unused: !ctjs.value) -> !ctjs.value attributes {upvalue_co
 ctjs.func @bindings(%closure: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 2 : i32} {
   // CHECK: ctjs.load_global "console"
   %g = ctjs.load_global "console"
+  // CHECK: ctjs.load_global "exports" {typeof_lookup = true}
+  %typeof_read = ctjs.load_global "exports" {typeof_lookup = true}
+  // CHECK: ctjs.load_global "ordinary"
+  %ordinary_read = ctjs.load_global "ordinary" {typeof_lookup = false}
   // CHECK: ctjs.store_global "answer", %{{.*}}
   ctjs.store_global "answer", %g
   ctjs.return %g

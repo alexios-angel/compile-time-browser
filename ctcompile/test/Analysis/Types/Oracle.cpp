@@ -208,13 +208,13 @@ void report(const char * which, const tally & t) {
 // --- the self-test -----------------------------------------------------------
 
 int self_test(const char * out_path) {
-    // 68 OF 93, counted from bytecode_opcodes.def's own writes_a column rather
+    // 69 OF 94, counted from bytecode_opcodes.def's own writes_a column rather
     // than written down. If a new opcode arrives this number changes and the
     // change should be deliberate: a definer the recorder does not know about
     // is a register whose type it silently never sees.
-    static_assert(ctbrowser::script::opcode_count == 93,
+    static_assert(ctbrowser::script::opcode_count == 94,
                   "the opcode count moved - re-derive the writer count below");
-    static_assert(ctbrowser::script::opcode_writer_count == 68,
+    static_assert(ctbrowser::script::opcode_writer_count == 69,
                   "the set of register-defining opcodes changed; confirm the recorder still "
                   "sees every def and update this number deliberately");
 

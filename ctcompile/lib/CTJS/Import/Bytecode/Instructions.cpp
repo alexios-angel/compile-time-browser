@@ -183,12 +183,14 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     }
     case op::get_global:
+    case op::get_global_typeof:
         if (in.bx() >= proto.names.size()) {
             state.give_up(at, in.code, "name index out of range");
             break;
         }
         set(in.a, ctjs::LoadGlobalOp::create(into, where, value_type,
-                                             into.getStringAttr(proto.names[in.bx()])));
+                                             into.getStringAttr(proto.names[in.bx()]),
+                                             into.getBoolAttr(in.code == op::get_global_typeof)));
         break;
     case op::set_global:
         if (in.bx() >= proto.names.size()) {
