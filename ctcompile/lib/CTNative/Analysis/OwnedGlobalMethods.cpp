@@ -729,6 +729,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             if (llvm::isa<ctjs::RootOp>(user) || user == initialization.getOperation()) {
                 continue;
             }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+                continue;
+            }
             if (use.getOperandNumber() == 0 &&
                 (user == field.getOperation() ||
                  llvm::is_contained(slot.reads, llvm::dyn_cast<ctjs::GetPropertyOp>(user)))) {

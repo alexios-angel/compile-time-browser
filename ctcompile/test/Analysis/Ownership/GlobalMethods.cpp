@@ -166,6 +166,16 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                                     {liftedMutation, true, 2, 1},
                                     {withSet(specialized), true, 2, 1}};
     for (const auto & [source, lifted] :
+         {std::pair{browserIndirect, false}, std::pair{browserPrepared, true}}) {
+        auto inspected = replaced(source, "%alias = ctjs.load_global \"host\"",
+                                  "%alias = ctjs.load_global \"host\"\n"
+                                  "    %kind = ctjs.unary typeof %alias");
+        inspected = replaced(inspected, "%host = ctjs.load_global \"host\"",
+                             "%host = ctjs.load_global \"host\"\n"
+                             "    %kind = ctjs.unary typeof %host");
+        specimens.push_back({std::move(inspected), lifted, 1, 0});
+    }
+    for (const auto & [source, lifted] :
          {std::pair{mutated, false}, std::pair{liftedMutation, true}}) {
         specimens.push_back(
             {replaced(source, "    %key = ctjs.constant #ctjs.string<\"size\">",
@@ -253,6 +263,17 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                 invocation->setOperands(operands);
             }
         }
+        module->walk([&](ctjs::UnaryOp unary) {
+            if (unary.getKind() != ctjs::UnaryKind::TypeOf) { return; }
+            const auto kind = unary.getKindAttr();
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus));
+            OwnedGlobalRoots coercing(*module, requested(*module));
+            check(!coercing.proved() && !coercing.exhausted() && empty(*module, coercing),
+                  "non-escaping typeof on an owned root cannot authorize coercing that root");
+            unary.setKindAttr(kind);
+            check(proved(OwnedGlobalRoots(*module, contract), lifted),
+                  "restoring pure root type inspection independently restores ownership");
+        });
         auto method = module->lookupSymbol<ctjs::FuncOp>("get$3");
         auto returned = llvm::cast<ctjs::ReturnOp>(method.getBody().front().getTerminator());
         returned->setOperand(0, method.getBody().front().getArgument(0));
