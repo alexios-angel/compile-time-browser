@@ -830,12 +830,8 @@ CONSTANT_GLOBAL_UNOWNED = {
     "constant_boolean_read_before_write",
     "constant_boolean_dynamic_global",
     "constant_boolean_future_method_write",
-    "constant_boolean_optional",
-    "constant_boolean_mixed",
     "constant_string_read_before_write",
     "constant_string_future_method_write",
-    "constant_string_optional",
-    "constant_string_mixed",
 }
 CONSTANT_GLOBAL_CARRIERS = {
     "constant_undefined",
@@ -845,6 +841,11 @@ CONSTANT_GLOBAL_CARRIERS = {
     "constant_boolean_mixed_write",
     "constant_string_duplicate_write",
     "constant_string_mixed_write",
+    # Pure entry selections retain ownership; mixed globals still block Map identity.
+    "constant_boolean_optional",
+    "constant_boolean_mixed",
+    "constant_string_optional",
+    "constant_string_mixed",
 }
 CONSTANT_GLOBAL_EXISTING = {
     "constant_exact_historical": "scalar_constant_only",

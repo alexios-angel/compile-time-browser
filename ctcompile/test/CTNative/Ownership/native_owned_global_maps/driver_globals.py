@@ -731,10 +731,6 @@ def check_constant_global_refusals(args, positives, node, reference):
                         "constant_future_method_write": "property call lacks a current source getter proof",
                         "constant_boolean_future_method_write": "property call lacks a current source getter proof",
                         "constant_string_future_method_write": "property call lacks a current source getter proof",
-                        "constant_boolean_optional": "owned global method table requires unconditional straight-line operations",
-                        "constant_boolean_mixed": "owned global method table requires unconditional straight-line operations",
-                        "constant_string_optional": "owned global method table requires unconditional straight-line operations",
-                        "constant_string_mixed": "owned global method table requires unconditional straight-line operations",
                     }[name]
                 if f'{attribute} = "{reason}"' not in text:
                     raise RuntimeError(
