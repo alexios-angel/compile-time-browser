@@ -600,7 +600,9 @@ int main() {
     // exits 0 and looks exactly like a passing one; this is the number to
     // update when a case is added, and the reason it is here rather than a
     // lower bound is that a lower bound would not notice a case being deleted.
-    const int expectedChecks = 146;
+    // 61 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 6 interpreter pins and 5 C++ carrier checks.
+    const int expectedChecks = 141;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);
