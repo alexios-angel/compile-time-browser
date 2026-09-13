@@ -943,6 +943,16 @@ public:
 
     // The comma operator: evaluate everything, yield the last.
     void compile_sequence(const vp::node & n, std::uint16_t dst);
+    // `tag\`a${x}b\`` (13.2.8, 13.3.11): the tag called with the site's cached
+    // strings array (cooked, with `raw` on it) and the substitution values.
+    void compile_tagged(const vp::node & n, std::int32_t idx, std::uint16_t dst);
+    // The template's text cut at its `${ }` holes: the literal chunks (raw
+    // spelling, between the delimiters) and the hole sources.
+    static void split_template(std::string_view raw, std::vector<std::string> & chunks,
+                               std::vector<std::string> & holes);
+    // Whether a template chunk's escapes are all well formed (12.9.6.1): a
+    // tagged template with a bad one has an undefined cooked value.
+    [[nodiscard]] static bool template_chunk_cooks(std::string_view chunk);
 
     // A function whose whole body is `this.x = <init>` for each instance field,
     // in declaration order. `new` runs it against the fresh object before the

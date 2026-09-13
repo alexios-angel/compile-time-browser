@@ -198,10 +198,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
              "docs/plans/modules.md");
         proto().emit(instruction{op::load_undef, dst});
         break;
-    case vp::nk::tagged:
-        fail("tagged template literals are not in this VM subset");
-        proto().emit(instruction{op::load_undef, dst});
-        break;
+    case vp::nk::tagged: compile_tagged(n, idx, dst); break;
     default:
         // Every kind the compiler once refused by name has its own case
         // above; what reaches here is a kind the parser grew that this
@@ -782,6 +779,168 @@ void compiler_impl::compile_ternary(const vp::node & n, std::uint16_t dst) {
     patch_here(to_alt);
     compile_expr(n.c, dst);
     patch_here(to_end);
+}
+
+void compiler_impl::split_template(std::string_view raw, std::vector<std::string> & chunks,
+                                   std::vector<std::string> & holes) {
+    if (raw.size() >= 2 && raw.front() == '`' && raw.back() == '`') {
+        raw = raw.substr(1, raw.size() - 2);
+    }
+    std::string chunk;
+    for (std::size_t i = 0; i < raw.size();) {
+        if (raw[i] == '\\' && i + 1 < raw.size()) {
+            chunk += raw[i];
+            chunk += raw[i + 1];
+            i += 2;
+            continue;
+        }
+        if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
+            chunks.push_back(std::move(chunk));
+            chunk.clear();
+            std::size_t depth = 1;
+            std::size_t at_char = i + 2;
+            const std::size_t start = at_char;
+            while (at_char < raw.size() && depth > 0) {
+                if (raw[at_char] == '{') { ++depth; }
+                if (raw[at_char] == '}') { --depth; }
+                if (depth > 0) { ++at_char; }
+            }
+            holes.emplace_back(raw.substr(start, at_char - start));
+            i = at_char + 1;
+            continue;
+        }
+        chunk += raw[i++];
+    }
+    chunks.push_back(std::move(chunk));
+}
+
+bool compiler_impl::template_chunk_cooks(std::string_view chunk) {
+    const auto hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    for (std::size_t i = 0; i + 1 < chunk.size(); ++i) {
+        if (chunk[i] != '\\') { continue; }
+        const char e = chunk[++i];
+        if (e == 'x') {
+            if (i + 2 >= chunk.size() || !hex(chunk[i + 1]) || !hex(chunk[i + 2])) { return false; }
+            i += 2;
+        } else if (e == 'u') {
+            if (i + 1 < chunk.size() && chunk[i + 1] == '{') {
+                std::size_t j = i + 2;
+                unsigned long cp = 0;
+                std::size_t count = 0;
+                for (; j < chunk.size() && hex(chunk[j]); ++j) {
+                    cp = cp * 16 + static_cast<unsigned long>(chunk[j] <= '9'
+                                                                  ? chunk[j] - '0'
+                                                                  : (chunk[j] | 0x20) - 'a' + 10);
+                    if (cp > 0x10FFFF) { cp = 0x110000; }
+                    ++count;
+                }
+                if (count == 0 || j >= chunk.size() || chunk[j] != '}' || cp > 0x10FFFF) {
+                    return false;
+                }
+                i = j;
+            } else {
+                if (i + 4 >= chunk.size() || !hex(chunk[i + 1]) || !hex(chunk[i + 2]) ||
+                    !hex(chunk[i + 3]) || !hex(chunk[i + 4])) {
+                    return false;
+                }
+                i += 4;
+            }
+        } else if (e >= '0' && e <= '9') {
+            // `\0` not followed by a digit is NUL; any other digit escape is
+            // the legacy octal / non-octal-decimal form a template refuses.
+            if (!(e == '0' &&
+                  (i + 1 >= chunk.size() || chunk[i + 1] < '0' || chunk[i + 1] > '9'))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::uint16_t dst) {
+    const vp::node & tmpl = at(n.b);
+    std::vector<std::string> chunks;
+    std::vector<std::string> holes;
+    split_template(tmpl.text, chunks, holes);
+
+    const std::uint32_t mark = reg_mark();
+    // The call's window: callee, then the strings array and one register per
+    // substitution, then the receiver (a member tag is called on its object).
+    const std::uint16_t base = alloc_reg();
+    std::vector<std::uint16_t> arg_regs;
+    arg_regs.reserve(holes.size() + 1);
+    for (std::size_t i = 0; i <= holes.size(); ++i) { arg_regs.push_back(alloc_reg()); }
+    const vp::node & tag = at(n.a);
+    const bool receiver = tag.kind == vp::nk::member || tag.kind == vp::nk::index;
+    const std::uint16_t self = receiver ? alloc_reg() : base;
+    if (receiver) {
+        compile_expr(tag.a, self);
+        if (tag.kind == vp::nk::member) {
+            proto().emit(instruction{op::get_prop, base, self, member_operand(tag.text)});
+        } else {
+            const std::uint32_t inner = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(tag.b, key);
+            proto().emit(instruction{op::get_index, base, self, key});
+            release_to(inner);
+        }
+    } else {
+        compile_expr(n.a, base);
+    }
+
+    // GetTemplateObject: `strings = __ctbrowser_template_object(key, cooked, raw)`.
+    // The key names the SITE - the template's offset in this source, salted
+    // with the source itself - so one site hands the same frozen array to its
+    // tag every time and two sites never share one. ponytail: two identical
+    // scripts compiled separately share a site; a per-program salt fixes it if
+    // anything observes that.
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{template_object_name})));
+        const std::uint16_t key = alloc_reg();
+        emit_string(key, std::to_string(std::hash<std::string_view>{}(source_view_)) + ":" +
+                             std::to_string(offset_of(n.b)) + ":" + std::to_string(idx));
+        const std::uint16_t cooked = alloc_reg();
+        const std::uint16_t raw = alloc_reg();
+        proto().emit(instruction{op::new_array, cooked});
+        proto().emit(instruction{op::new_array, raw});
+        const std::uint16_t piece = alloc_reg();
+        for (const std::string & chunk : chunks) {
+            if (template_chunk_cooks(chunk)) {
+                emit_string(piece, decode_string_literal(chunk));
+            } else {
+                proto().emit(instruction{op::load_undef, piece});
+            }
+            proto().emit(instruction{op::append, cooked, piece});
+            // TRV: a raw chunk keeps its escapes, with CRLF and CR read as LF.
+            std::string spelled;
+            for (std::size_t i = 0; i < chunk.size(); ++i) {
+                if (chunk[i] == '\r') {
+                    spelled += '\n';
+                    if (i + 1 < chunk.size() && chunk[i + 1] == '\n') { ++i; }
+                } else {
+                    spelled += chunk[i];
+                }
+            }
+            emit_string(piece, std::move(spelled));
+            proto().emit(instruction{op::append, raw, piece});
+        }
+        proto().emit(instruction{op::call, callee, 3});
+        proto().emit(instruction{op::move, arg_regs[0], callee});
+        release_to(inner);
+    }
+    for (std::size_t i = 0; i < holes.size(); ++i) {
+        compile_owned_expr("(" + holes[i] + ")", arg_regs[i + 1]);
+    }
+    proto().emit(instruction{receiver ? op::call_receiver : op::call, base,
+                             static_cast<std::uint16_t>(holes.size() + 1),
+                             receiver ? self : std::uint16_t{0}});
+    proto().emit(instruction{op::move, dst, base});
+    release_to(mark);
 }
 
 void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {

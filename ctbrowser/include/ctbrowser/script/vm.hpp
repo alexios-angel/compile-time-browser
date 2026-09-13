@@ -323,6 +323,11 @@ inline constexpr std::string_view import_source_name = "__ctbrowser_import_sourc
 // out; `step(stack, kind, value)` disposes ONE resource of an async stack and
 // answers what to await, or the stack itself when it is empty (throwing the
 // folded completion then); `failed(stack, e)` folds an awaited rejection in.
+// GetTemplateObject (13.2.8.4) for a tagged template: `(key, cooked, raw)`
+// answers the frozen strings array - `raw` frozen and hung off it - cached
+// per site under `key`, so the same site hands the same object to its tag
+// on every evaluation. See compile_tagged.
+inline constexpr std::string_view template_object_name = "__ctbrowser_template_object";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";

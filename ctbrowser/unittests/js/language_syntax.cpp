@@ -146,7 +146,17 @@ int main() {
     refused("0\\u00620");
     answers("return 0b11 + 0o7 + 0xf + 1_0;", "35");
 
-    // --- tagged templates parse (the VM does not run them yet), and `?.` refuses one
+    // --- tagged templates (13.2.8): cooked and raw strings, one frozen array
+    // per site, the tag called on its object; `?.` refuses one
+    answers("function tag(s, ...v) { return s.length + ':' + s.raw[0] + ':' + v[0]; }"
+            " return tag`x\\n${7}`;",
+            "2:x\\n:7");
+    answers("function t(s) { return s; } var a = []; for (var i = 0; i < 2; i++) a.push(t`k`);"
+            " return a[0] === a[1] && Object.isFrozen(a[0]) && Object.isFrozen(a[0].raw);",
+            "true");
+    answers("var o = { t(s) { return this === o; } }; return o.t`q`;", "true");
+    answers("function t(s) { return s[0] === undefined && s.raw[0]; } return t`\\unicode`;",
+            "\\unicode");
     refused("a?.`x`");
     refused("a?.b`x`");
 

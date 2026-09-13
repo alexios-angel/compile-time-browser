@@ -644,6 +644,35 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See template_object_name. The cache is a plain object RETAINED by the
+    // native (native_object::retained is traced), so the collector sees every
+    // array in it; the lambda holds the raw pointer that retention keeps alive.
+    {
+        object_object * cache = detail::new_table(cx);
+        auto * native = cx.allocate<native_object>(
+            std::string{template_object_name}, [cache](context & c, std::span<value> a) {
+                if (a.size() < 3 || !a[1].is_array() || !a[2].is_array()) {
+                    return value::undefined();
+                }
+                const std::string key = c.to_string(a[0]);
+                if (value * cached = cache->find(key)) { return *cached; }
+                // 13.2.8.4 steps 10-14: `raw` frozen on the cooked array, both
+                // frozen, and the site remembers the result.
+                auto * cooked = static_cast<array_object *>(a[1].as_heap());
+                auto * raw = static_cast<array_object *>(a[2].as_heap());
+                for (array_object * arr : {raw, cooked}) {
+                    arr->extensible = false;
+                    arr->elements_writable = false;
+                    arr->elements_configurable = false;
+                    arr->length_writable = false;
+                }
+                cooked->named_table().define("raw", a[2], attr_none);
+                cache->set(key, a[1]);
+                return a[1];
+            });
+        native->retained.push_back(value::object(cache));
+        cx.define_global(std::string{template_object_name}, value::object(native));
+    }
     cx.define_native(std::string{define_accessor_name}, [](context & c, std::span<value> a) {
         // A CLASS IS A CLOSURE: `static get [k]()` defines on the constructor,
         // which is_object() (heap_kind::object exactly) does not admit - so
