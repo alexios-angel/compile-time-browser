@@ -6,6 +6,136 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original recorder callbacks and String offsets, 2026-09-13 UTC
+
+Resumed the interrupted **05:44:18 UTC** recorder thread, explicitly abandoned
+at **05:47:51 UTC**, from **07863005** and its 15 dirty tracked paths plus
+`ScalarCallbacks.cpp`. Predecessor bytes were saved before editing. The old
+`codex-wip-20260907` is already an ancestor. Three agents split ownership tests,
+callback review and the independent escape proposal; root integrated and gated
+all changes. The recorder work was committed before the escape increment.
+This entry supersedes the pending-recorder/String-offset instructions below.
+
+**0246604d** proves the source-owned `console.error` callable separately from
+exported methods and pure snapshots. Evidence records the unique initialized
+own slot, exact zero-capture target, all String arguments and callback arms,
+and both Number globals' initializers, reads and writes. Replacement, unknown
+calls, reentry, unsafe inactive arms and captured Map/caller-object access remain
+refused. Existing nullable Number storage preserves initial Undefined; ordinary
+sole-store scalar and type-inference rules are unchanged.
+
+**a1137fc2** reuses existing local-cell and unused lexical-receiver normalization
+on a fingerprint-validated clone, then requires fresh complete owner proofs before
+publishing it. Existing lifting privatizes the source callback target, and existing
+closure carriers emit its owner field. Pure entry selections are admitted; entry
+calls/stores/allocations still require unconditional positions. Old conservative
+selection assertions were updated; invalid scope and conditional-effect controls
+remain. **32dcf4d5** supplies the source-preserving execution/lifetime checks.
+
+Focused final gate: **257-step rebuild**, **3/3 ownership/host CTests in 238.33s**.
+Callback tests cover **23 source / 25 prepared rows**, two live mutations each,
+stale/forged evidence and incomplete/exact budgets. Recorder group: **eight native
+programs / 27 refusals / 225 typed Node/VM observations / 11 distinguishing
+mutations**. Both policies/layouts, GCC/Clang, no-Script symbols and ASan/UBSan/leaks
+pass. **1024 future rounds / 2048 callback effects** cover copied String storage,
+entry reruns, old/new callable families using current globals, detached callbacks
+outliving destroyed recorder owners, and final Map/object destruction. All ten
+historical source assignments and their hashes remain unchanged.
+
+Fresh full Bootstrap is **19/574 native**, both policies. Exact-source census:
+
+| Source (SHA256 prefix) | Bytes | Default 100k steps | Explicit 1m steps |
+|---|---:|---:|---:|
+| Original single recorder (`4ebf1cd4`) | 1327 | 7/7 | — |
+| Original repeated recorder (`45d621b3`) | 1733 | 0/7 | 7/7 |
+| Exact full Data (`8359592c`) | 2522 | 0/7 | 0/7 |
+| Captured child template (`e39ea887`) | 1303 | 6/6 | — |
+| Captured outer template (`db9730ef`) | 1108 | 0/6 | 6/6 |
+
+Every listed count is measured under both optimization policies. The compiler's
+100,000-step default is unchanged. Exact Data retains the diagnostic
+`property receiver lacks a fresh own-data object proof`; its full SHA256 is
+`8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3`.
+The other full source pins remain in `native_owned_global_maps/driver_recorder.py`.
+
+**12e1074d** extends existing length subtraction to a canonical original String
+literal RHS using `ownArrayIndex`; it adds no parser or state map. Exact bounds,
+original provenance, whole-function effect closure and charged proof limits remain.
+Noncanonical, computed, oversized and BigInt offsets stay conservative. The
+**256-step build**, arrays **117 rows / 33 live states / 3698 retention cutoffs**,
+and all three vendor escape gates pass. Fixture rerun: **1.16s**, including
+**13 evidence mutations / eight malformed controls**.
+
+All **112,001 fixture JavaScript bytes and old pins** remain unchanged. Exactly
+one of **1123 complete snapshot rows** changes: `denseIndexStringOffset`,
+**fn 219 / pc 3**, Stored to Confined; every other allocation, count, route,
+observation and claim matches. Oracle: **222 functions / 861 claims / 895 sites /
+35 unclaimed / zero violations / precision 27/172**. Original witness: **144 bytes /
+SHA256 373e33a520eb82e157c0e5137c0f14928a155fe768b0cc111a1447bf2913803f**.
+
+Standard full gate at **12e1074d**: **538/540 CTests in 964.95s**. The failures
+were the existing browser `frames` test and one old constant-global ownership
+expectation in lit (**165/166 cases passed in 654.11s**). **7a1a3490** corrects
+exactly four optional/mixed Boolean/String entry selections: they now prove
+ownership but remain **0/5 native**, with their independent Map-identity refusal.
+All **71 constant source bodies**, repairs and source pins are unchanged. Their
+focused observation/repair/stale/fresh/rerun checks pass: **8 unowned / 11 complete
+owners**, including the previously native Undefined case.
+
+The corrected **entire `global-maps.test` passes** through filtered CTest:
+**1/1 lit case in 716.29s**, CTest **716.36s** (total **716.37s**). The other
+165 lit cases passed in the full run. Thus all 166 lit cases and all compiler
+CTests are covered by passing results across these runs. Only the two expectation
+test files differ; production, browser and parser inputs are identical. All
+**1285 final frozen inputs** match locally and on the devbox; the final source
+census is identical to the full-run census. The sole remaining failure is browser
+`frames`, still observing `0px,184px,rgb(0, 0, 0),184,0,8px` instead of
+`200px,50px,rgb(1, 2, 3),50,1,0px`, with zero frame style elements.
+
+The required bundled formatter **23.0.0git** retains the same **nine baseline
+files / 26 diagnostics**. Changed files pass formatting; the whole check with
+Homebrew **23.1.1** passes **804 C++ / 84 Python / 33 web files**. Independent
+read-only review found no concrete soundness regression in the source normalization.
+
+Next native increment: advance the unchanged exact Data source's mixed
+Number/owning-object contents and **per-invocation return/identity evidence**, in
+particular its unguarded `.value` and scalar observations. Preserve the recorder
+proof and all exact source pins; a reusable method's alternatives alone cannot
+prove one invocation returns an object. Keep guards, future calls, independent
+owners and stale/forged report controls. Future browser API calls go through public
+ctbrowser RAII subsystem APIs; this source-defined recorder needed no extraction.
+
+Start with the unchanged `nested_map_mixed_child_returned_field` probe in
+`driver_nested_maps.py`: **595 bytes / five functions / 16 source calls / SHA256
+9d4c8b9c5e52297f6dd7f37f2a3a8c1a955f0d8348912cf35365de1ec00f57a0**. Its adjacent
+strict-identity probe already compiles; adding a source guard would evade the task.
+Static audit: `HostContract/Values.cpp::capturedMap()` already has an invocation
+worklist, but `completedResults` keeps only categories and each body starts with
+unknown Map contents. Reuse the existing checked body transfers with bounded
+actual-call state and result provenance, distinct factory/child invocation identity,
+keys, mutations and invalidations; preserve the independent whole-family proof.
+Recheck exact returned leaf/initializer evidence through `guardedLeafRead` and
+`OwnedGlobalMethods`. Full Data also needs proved Number extraction from the mixed
+return carrier: keep `joinedReturnType()`'s general getter ABI, then extract at the
+proved use. Narrowing only a CallDirect result type would mismatch the emitted
+callee signature. These are inferred next seams, not newly measured diagnostics.
+
+Next independent escape increment: private fresh array receiver confinement.
+Start with unchanged `denseLengthEmpty`, **fn 208 / pc 6**, **157 bytes / SHA256
+181331ed8a69ad6ca61f6b476bbd34c7adf8f731cfffe3eadb74135cc93e1992**. Its empty
+array is read only through own `length`, observed confined but claimed Passed.
+`refineArrayRetention` currently only clears Stored candidates despite complete
+contents evidence. Reuse the complete effect, graph, all-path and budget proof;
+keep generic property sink roles, returned arrays/children, missing slots, unknown
+effects and cycles conservative. A guard must work even without a Stored child.
+`canonicalStringSaved`, **fn 197 / pc 5**, is a second existing private-array
+witness. Measure the whole dump; related private arrays may also improve.
+
+Evidence: `/tmp/ctcompile-recorder-finalize/` contains frozen manifests, focused/full
+logs, the whole snapshot comparison, exact-source census, generated recorder C++,
+and the read-only `next-escape.md` / `next-data.md` audits. No browser/runtime/parser files changed.
+No push; native Bootstrap and the application driver remain unfinished.
+
 ## Captured String-key templates and literal BigInt indices, 2026-09-13 UTC
 
 Resumed **9132ada5**, its **04:10:47 UTC** synchronization journal and the
