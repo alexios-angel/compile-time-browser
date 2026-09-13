@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/dom/token_list.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -166,19 +168,7 @@ std::string dom_bindings::namespace_of(node_id id) const {
 }
 
 std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
-    std::vector<std::string> out;
-    for (std::size_t at = 0; at < text.size();) {
-        const std::size_t start = text.find_first_not_of(html_whitespace, at);
-        if (start == std::string_view::npos) { break; }
-        std::size_t end = text.find_first_of(html_whitespace, start);
-        if (end == std::string_view::npos) { end = text.size(); }
-        std::string token{text.substr(start, end - start)};
-        // AN ORDERED *SET*: "a a" asks for one class twice, and a duplicate in
-        // the wanted list is a match requirement that is already satisfied.
-        if (std::ranges::find(out, token) == out.end()) { out.push_back(std::move(token)); }
-        at = end;
-    }
-    return out;
+    return parse_ordered_tokens(text);
 }
 
 std::vector<node_id> dom_bindings::all_by_class(node_id root,

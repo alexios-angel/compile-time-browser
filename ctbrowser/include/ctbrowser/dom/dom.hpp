@@ -15,6 +15,7 @@
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/html.hpp>
 #include <ctbrowser/dom/node.hpp>
+#include <ctbrowser/dom/token_list.hpp>
 #include <ctbrowser/dom/tokenizer.hpp>
 #include <ctbrowser/dom/treebuilder.hpp>
 #include <ctbrowser/dom/xml.hpp>
