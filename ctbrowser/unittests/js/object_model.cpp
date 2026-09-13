@@ -96,6 +96,14 @@ int main() {
               "var d=Object.getOwnPropertyDescriptor(p,'a');"
               "return d.value+','+d.writable+','+d.enumerable+','+d.configurable;})()",
               "a!,true,true,true");
+    // 20.1.3.2: hasOwnProperty is [[GetOwnProperty]] - the descriptor trap,
+    // not `has`, which is `in`. An HTMLCollection's prototype members are the
+    // case: `in` says yes, hasOwnProperty says no (Element-children).
+    js_expect("(function(){var p=new Proxy({a:1},{has:function(){return true;},"
+              "getOwnPropertyDescriptor:function(t,k){return k==='a'?"
+              "{value:1,configurable:true}:undefined;}});"
+              "return ['b' in p, p.hasOwnProperty('b'), p.hasOwnProperty('a')].join();})()",
+              "true,false,true");
     js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(){return "
               "{value:1};}});var d=Object.getOwnPropertyDescriptor(p,'a');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",

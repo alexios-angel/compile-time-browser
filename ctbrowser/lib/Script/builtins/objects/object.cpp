@@ -268,6 +268,19 @@ void install_object(context & cx) {
         // `has_property` opcode exactly.
         if (self.is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(self.as_heap());
+            // 20.1.3.2 step 3 is [[GetOwnProperty]], which for a proxy is the
+            // getOwnPropertyDescriptor trap: an HTMLCollection's `length`,
+            // `item` and `namedItem` are on its prototype and its trap says so
+            // (Element-children: `for (p in list) if (list.hasOwnProperty(p))`
+            // is the indices only). The `has` trap is `in`, not this - it is
+            // asked only of a proxy with no descriptor trap, which is the
+            // engine's own window and style proxies, whose globals and
+            // declarations ARE own.
+            if (const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor");
+                describe.is_callable()) {
+                const value args[2] = {p->target, c.string(key)};
+                return value::boolean(!c.call(describe, args, p->handler).is_undefined());
+            }
             const value trap = c.proxy_trap(self, "has");
             if (trap.is_callable()) {
                 const value args[2] = {p->target, c.string(key)};
