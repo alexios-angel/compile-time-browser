@@ -117,7 +117,7 @@ std::optional<std::string> closureLifter::whyReadIsNotACall(mlir::Value read, ct
 // graph that led back to a closure already on the chain would otherwise
 // recurse for ever.
 std::optional<std::string> closureLifter::examineCapturedSlot(
-    functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot, unsigned depth,
+    functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot,
     llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> & examined) {
     if (!examined.insert({made.getOperation(), slot}).second) { return std::nullopt; }
     ctjs::FuncOp holder = targetOf(made);
@@ -171,14 +171,14 @@ std::optional<std::string> closureLifter::examineCapturedSlot(
     if (bad) { return bad; }
     for (auto & [nested, index] : inward) {
         if (const std::optional<std::string> why =
-                examineCapturedSlot(plan, nested, index, depth + 1, examined)) {
+                examineCapturedSlot(plan, nested, index, examined)) {
             return "a function one frame further in names the binding through its enclosing "
                    "closure, which did not lift: " +
                    *why;
         }
     }
     // POST-ORDER, WHICH IS THE DEEPEST-FIRST ORDER THE REWRITE NEEDS.
-    plan.slots.push_back({made, slot, depth});
+    plan.slots.push_back({made, slot});
     return std::nullopt;
 }
 
@@ -253,7 +253,7 @@ std::optional<std::string> closureLifter::examineFunctionBinding(ctjs::CreateCel
     llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> examined;
     for (auto & [made, slot] : plan.captured) {
         if (const std::optional<std::string> why =
-                examineCapturedSlot(plan, made, slot, 0, examined)) {
+                examineCapturedSlot(plan, made, slot, examined)) {
             return why;
         }
     }
@@ -424,7 +424,7 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
             read.getResult().replaceAllUsesWith(plan.closure.getResult());
             read.erase();
         }
-        for (auto & [made, slot, depth] : plan.slots) {
+        for (auto & [made, slot] : plan.slots) {
             ctjs::FuncOp holder = targetOf(made);
             llvm::SmallVector<ctjs::LoadUpvalueOp> named;
             holder.getBody().walk([&](ctjs::LoadUpvalueOp read) {
@@ -462,10 +462,7 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
                 }
                 read.erase();
             }
-            // AND THE SHALLOWEST DEPTH ANY BINDING NAMED THIS CLOSURE
-            // AT, which is the key pass B orders on.
             slotRemoval & removal = removals[made.getOperation()];
-            removal.depth = removal.slots.empty() ? depth : std::min(removal.depth, depth);
             removal.slots.push_back(slot);
         }
         ++out.bindings;
