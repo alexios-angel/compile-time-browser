@@ -868,11 +868,6 @@ bool primitiveNonBigIntOrigin(mlir::Value origin,
                                  ctjs::BinaryStaticOp, ctjs::GetPropertyOp>(definition);
 }
 
-bool nonBigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
-    return primitiveNonBigIntOrigin(origin, bigIntOrigins) ||
-           llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp>(origin.getDefiningOp());
-}
-
 bool bigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
     if (bigIntOrigins.contains(origin)) { return true; }
     auto constant = origin.getDefiningOp<ctjs::ConstantOp>();
@@ -1378,17 +1373,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     state.origins[binary.getResult()] = binary.getResult();
                     continue;
                 }
-                if (!nonBigIntOrigin(lhs, state.bigIntOrigins) ||
-                    !nonBigIntOrigin(rhs, state.bigIntOrigins)) {
+                if (!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
+                    !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                // binary_op_static's non-BigInt arm uses only static to_number /
-                // to_int32 / to_uint32. It returns Number without user reentry,
-                // an input alias or a catchable JS throw. String parsing may
-                // allocate ordinary C++ temporaries; this proves neither absence
-                // of allocation nor its success. Even fresh objects convert
-                // statically here, a documented VM deviation from source JS.
-                // This proves no numeric value, key, alias or branch liveness.
+                // Independent primitive origins exclude source user conversion.
+                // Fresh objects/arrays are insufficient: inherited valueOf or
+                // toString can retain them or their contents even though today's
+                // VM converts them statically. The independent Number result
+                // proves no value, key, branch liveness or allocation success.
                 state.origins[binary.getResult()] = binary.getResult();
                 continue;
             }

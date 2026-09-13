@@ -27,12 +27,32 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
                           .exit = "a -> {a}; a -> {a}"}},
-            {.contents = {.what = "static conversion of local objects retains neither operand",
+            {.contents = {.what = "fresh static operands can invoke inherited source conversions",
                           .body = values + operation +
                                   " %x, %a {storage_test_id = \"produced\"}\n"
                                   "  ctjs.return %produced\n",
-                          .arrays = "a:[x]",
-                          .exit = "produced -> {}"}},
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            // Source Array.prototype.valueOf can retain this[0] before the
+            // overwrite. The current VM's static conversion is not authority.
+            {.contents = {.what = "fresh array conversion can retain an overwritten child",
+                          .body = values + operation + " %a, %zero\n" + overwrite,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what =
+                              "an inactive forwarded fresh operand still needs a primitive proof",
+                          .body = values +
+                                  "  %flag = ctjs.truthy %zero\n"
+                                  "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                                  "^join(%zero : !ctjs.value)\n"
+                                  "^join(%operand: !ctjs.value):\n" +
+                                  operation + " %operand, %zero\n" + overwrite,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "saved array operands remain objects after slot replacement",
+                          .body = values +
+                                  "  %box = ctjs.create_array [%a]\n"
+                                  "  %operand = ctjs.get_property %box[%zero]\n"
+                                  "  ctjs.set_property %box[%zero], %zero\n" +
+                                  operation + " %zero, %operand\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "stored static Number results carry no operand identity",
                           .body = values + produce +
                                   "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %a\n",
@@ -46,14 +66,12 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                                   "  ctjs.return %result\n",
                           .arrays = "a:[x]",
                           .exit = "produced -> {}"}},
-            {.contents = {.what = "a saved child still retains its original identity",
+            {.contents = {.what = "a saved fresh object still needs a primitive operand proof",
                           .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + operation +
                                   " %saved, %zero {storage_test_id = \"produced\"}\n"
                                   "  ctjs.set_property %a[%zero], %produced\n"
                                   "  ctjs.return %saved\n",
-                          .arrays = "a:[produced]",
-                          .reads = "a[0]=x",
-                          .exit = "x -> {x}"},
+                          .failure = ArrayContentsFailure::UnsupportedOperation},
              .discharged = ""},
             {.contents = {.what = "a static operation cannot exclude BigInt on an opaque lhs",
                           .body = values + operation + " %p, %zero\n" + done,
@@ -311,9 +329,11 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
             ctjs::BinaryStaticOp binary;
             ctjs::CreateObjectOp child;
+            ctjs::CreateArrayOp array;
             ctjs::ConstantOp big;
             module->walk([&](ctjs::BinaryStaticOp op) { binary = op; });
             module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+            module->walk([&](ctjs::CreateArrayOp op) { array = op; });
             module->walk([&](ctjs::ConstantOp op) {
                 if (llvm::isa<ctjs::BigIntAttr>(op.getValue())) { big = op; }
             });
@@ -337,7 +357,9 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                 binary->setOperand(position, function.getBody().front().getArgument(3));
                 inspect(ArrayContentsFailure::UnknownValue);
                 binary->setOperand(position, child.getResult());
-                inspect(ArrayContentsFailure::None);
+                inspect(ArrayContentsFailure::UnsupportedOperation);
+                binary->setOperand(position, array.getResult());
+                inspect(ArrayContentsFailure::UnsupportedOperation);
                 binary->setOperand(position, number);
             }
             for (const auto invalid :
