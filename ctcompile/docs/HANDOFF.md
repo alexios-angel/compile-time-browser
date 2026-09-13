@@ -6,6 +6,104 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact Data Number observations, 2026-09-13 UTC
+
+Resumed the interrupted **10:38:21 / 10:39:13 UTC** Number-result thread from
+**01073560** and the synchronization journal's explicit **10:40:15** abandonment.
+The checkout was clean; the old `codex-wip-20260907` is already an ancestor.
+Three agents split producer/query, source/prepared tests and exact-source execution;
+root integrated them and ran all devbox/Git operations. Follow-up review agents
+hit rate limits, so root completed the review and next-boundary audit locally.
+
+The predecessor's **01073560** already materializes contract-declared fixed
+undefined reads on a privately validated clone, with complete ownership before
+and after rewriting. Its focused build/three owner CTests and `globals.test`
+passed. Missing/absent bindings, source writes and stale/exhausted proofs remain
+refused. This session resumed the remaining scalar boundary instead of repeating
+that implementation.
+
+**62838bcf** retains each complete entry-order invocation's primitive alternatives
+beside its exact returned-leaf edge. Only complete scans publish; a direct scalar
+store can demand the scan without an unrelated field read. Whole-owner validation
+checks unique actual calls and rejects conflicting scalar/leaf edges, then indexes
+queries by exact result. Generalized parameter/return evidence stays separate.
+The captured result moves into its callable edge instead of copying the new vector.
+Fourteen source/prepared controls cover Number versus object results, six falsy
+values, missing/alias/deletion/reinsertion, stale/forged evidence, incomplete/exact
+budgets and a later unsupported invocation that discards all optional facts.
+The original direct mixed-return row now gains one independently proved leaf;
+its fixture and all earlier source literals remain unchanged.
+
+**6c56354d** consumes only exact Number evidence at the actual StoreGlobal use.
+Object-family admission, the complete global store census and emission agree on
+that use; every other store still requires its own proof. The reusable getter,
+its parameters and its mixed result ABI remain broad. A checked Number extraction
+borrows the existing object/scalar carrier; no generic object coercion, runtime
+context, Script dependency or browser implementation was added. All source calls,
+recorder callbacks, ownership and field reads remain live.
+
+Original full Data is still **2522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**. With
+`undefined_bindings: ["undefined"]`, it now emits **7/7 native functions under both
+optimization policies at explicit 1,000,000 steps**. It remains **0/7 at the unchanged
+100,000-step default**, and the original empty-manifest case remains **0/7** at
+both budgets. All five original recorder source definitions and their pins match.
+The generated entry retains **23 method calls in order / one field read**.
+
+Focused validation: **256-step rebuild / 3 of 3 CTests in 237.08s**. The recorder
+gate passes **10 native programs / 32 refusals / 394 typed observations / 13
+mutations**. Both C++ layouts, GCC/Clang, no-Script and ASan/UBSan/leak checks pass,
+including **1024 mixed future rounds**, zero-to-null, saved leaves across scalar
+overwrite/deletion, detached callables, entry reruns and final owner destruction.
+Three new same-global Object/missing/zero stores refuse even after restoring the
+final Number observation. The longer zero control uses explicit **2m** to reach
+its semantic refusal; default and original exact Data budgets are unchanged.
+The new default100k check asserts unchanged calls and failed ownership: a failed
+private preparation can report its original property-receiver refusal, not the
+private clone's exhausted budget.
+
+Final standard devbox gate: configure/build passed (no remaining Ninja work),
+then **539/540 CTests in 1092.70s**, including every compiler CTest and **166/166
+lit cases in 768.42s** (CTest wrapper 768.49s). The sole failure is the unchanged
+browser `frames` baseline at `unittests/unit/frames.cpp:70`: embedded style is
+missing and viewport measurements disagree. Escape fixture CTest passed in
+**1.71s**. Fresh full Bootstrap remains **19/574 native / zero of 43 globals
+resolved**, under both optimization policies.
+
+All **1285 frozen inputs** match locally and on the devbox. Required
+`tools/format.sh --check` with bundled **23.0.0git** retains **nine baseline files /
+26 diagnostics**; every changed C++ file passes. The same whole check using
+Homebrew **23.1.1** passes **804 C++ / 84 Python / 33 web files**. No production
+or test input changed after **6c56354d**.
+
+Fresh native-manifest UMD probes remain **0/7** with `optimize=false` and explicit
+1m, before and after existing prefix specialization: CommonJS **3117 bytes /
+cc6c3960**, ordinary browser **3218 / 80a6fd87**, realm fallback **3568 / a8dd4151**.
+`tools/check/bootstrap-host-prefix.py` deliberately omits a native manifest in
+its standard census; passing a freshly fingerprinted manifest alone does not
+close this boundary. These are its original `_provider_objects` cases.
+
+Next native subject: the unchanged **3218-byte ordinary browser UMD** source.
+Its wrapper has five CTJS arguments, factory at `%arg4`, and an unused fallback
+actual still reading script `this`. `HostContract/Values.cpp` recognizes indirect
+factories only at `%arg3` of a four-argument wrapper;
+`Analysis/OwnedGlobalMethods.cpp` permits only three/four wrapper arguments.
+Selected wrapper code also retains absent-binding `typeof` expressions.
+Reuse exact actual/formal and complete live ownership proofs, preserve evaluation
+effects, and never turn a general absent load into present undefined. CommonJS
+additionally replaces `module.exports` while retaining the old `exports` alias;
+realm fallback needs actual typed embedding ownership. Do not use prefix reports
+as authority or rewrite fixture bytes. `/tmp/ctcompile-data-number/next-bootstrap.md`
+contains measured pins, exact code seams and the separate proof obligations.
+
+Escape production/fixtures are unchanged. The original confinedArray loop/index
+invariant and Claude-coordinated literal own-definition provenance remain the next
+independent work; no primitive/index exemption or precision gain is claimed here.
+Full native Bootstrap and its application driver remain unfinished. Browser APIs
+must continue through public ctbrowser RAII subsystem headers. No browser/runtime/
+parser edits and no push. Logs, frozen inputs and generated C++ are under
+`/tmp/ctcompile-data-number/`.
+
 ## Distinct Data entry keys and scalar snapshot payloads, 2026-09-13 UTC
 
 Continued clean **cef8c834**, resuming its exact full-Data next step from the
