@@ -84,6 +84,30 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                            "    %host = ctjs.load_global \"host\"");
     const auto indirect = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
                                    "ctjs.call %factory(%u)");
+    const auto wrapperArguments = [](std::string source, llvm::StringRef formals,
+                                     llvm::StringRef actuals) {
+        source = replaced(source, "@publish$1(%u, %u, %wrapper, %factory)",
+                          "@publish$1(%u, %u, %wrapper, " + actuals.str() + ")");
+        return replaced(source,
+                        "@publish$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                        "%factory: !ctjs.value)",
+                        "@publish$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, " +
+                            formals.str() + ")");
+    };
+    constexpr llvm::StringLiteral browserFormals = "%fallback: !ctjs.value, %factory: !ctjs.value";
+    const auto browserIndirect = wrapperArguments(indirect, browserFormals, "%this, %factory");
+    const auto browserPrepared = wrapperArguments(prepared, browserFormals, "%this, %factory");
+    const auto laterIndirect = wrapperArguments(
+        indirect, "%before: !ctjs.value, %fallback: !ctjs.value, %factory: !ctjs.value",
+        "%u, %this, %factory");
+    const auto trailingIndirect = wrapperArguments(
+        indirect, "%factory: !ctjs.value, %fallback: !ctjs.value", "%factory, %this");
+    auto importedBrowser = replaced(importedCapturedFixture, "@publish$1(%6, %7, %3, %5)",
+                                    "@publish$1(%6, %7, %3, %arg0, %5)");
+    importedBrowser = replaced(importedBrowser, "%arg2: !ctjs.value, %arg3: !ctjs.value)",
+                               "%arg2: !ctjs.value, %arg3: !ctjs.value, %arg4: !ctjs.value)");
+    importedBrowser = replaced(importedBrowser, "ctjs.call %arg3(%2)", "ctjs.call %arg4(%2)");
+    importedBrowser = replaced(importedBrowser, "ctjs.frame_enter 4", "ctjs.frame_enter 5");
     constexpr llvm::StringLiteral set = R"MLIR(
     %entryKey = ctjs.constant #ctjs.string<"x">
     %value = ctjs.constant #ctjs.number<4607182418800017408>
@@ -131,6 +155,11 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                                     {importedCapturedFixture, false, 1, 0},
                                     {prepared, true, 1, 0},
                                     {specialized, true, 1, 0},
+                                    {browserIndirect, false, 1, 0},
+                                    {browserPrepared, true, 1, 0},
+                                    {laterIndirect, false, 1, 0},
+                                    {trailingIndirect, false, 1, 0},
+                                    {importedBrowser, false, 1, 0},
                                     {withSet(capturedFixture), false, 2, 1},
                                     {mutated, false, 2, 1},
                                     {importedMutation, false, 2, 1},
@@ -187,6 +216,43 @@ void checkCapturedMap(mlir::MLIRContext & context) {
               "exact capture completion budget publishes its source graph");
         check(!OwnedGlobalRoots(*module, contractFor(*module)).proved(),
               "a Map capture requires the explicit standard intrinsic identity");
+        const auto & table = *query.roots().front().methodTable;
+        if (auto factory = llvm::dyn_cast<ctjs::CallOp>(table.factoryCall)) {
+            auto argument = llvm::cast<mlir::BlockArgument>(factory.getCallee());
+            auto invocation = table.wrapperCall;
+            const auto actual = invocation->getOperand(argument.getArgNumber());
+            mlir::Builder attributes(&context);
+            (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            invocation->setAttr("ctnative.host_callable", attributes.getStringAttr("forged"));
+            check(proved(OwnedGlobalRoots(*module, contract), lifted),
+                  "forged wrapper reports cannot replace or change a complete live proof");
+            invocation->setOperand(argument.getArgNumber(), invocation.getReceiver());
+            OwnedGlobalRoots staleActual(*module, contract);
+            check(!staleActual.proved() && staleActual.reason().contains("fingerprint") &&
+                      empty(*module, staleActual),
+                  "changing the exact factory actual invalidates the original fingerprint");
+            OwnedGlobalRoots changedActual(*module, requested(*module));
+            check(!changedActual.proved() && !changedActual.exhausted() &&
+                      empty(*module, changedActual),
+                  "a fresh fingerprint and forged reports cannot supply a missing factory");
+            invocation->setOperand(argument.getArgNumber(), actual);
+            check(proved(OwnedGlobalRoots(*module, contract), lifted),
+                  "restoring the exact factory actual independently restores ownership");
+            const auto operands = llvm::to_vector(invocation->getOperands());
+            for (const bool excess : {false, true}) {
+                auto mismatched = operands;
+                if (excess) {
+                    mismatched.push_back(invocation.getReceiver());
+                } else {
+                    mismatched.pop_back();
+                }
+                invocation->setOperands(mismatched);
+                OwnedGlobalRoots mismatch(*module, requested(*module));
+                check(!mismatch.proved() && !mismatch.exhausted() && empty(*module, mismatch),
+                      "missing and extra wrapper actuals cannot supply an exact formal window");
+                invocation->setOperands(operands);
+            }
+        }
         auto method = module->lookupSymbol<ctjs::FuncOp>("get$3");
         auto returned = llvm::cast<ctjs::ReturnOp>(method.getBody().front().getTerminator());
         returned->setOperand(0, method.getBody().front().getArgument(0));
@@ -209,6 +275,24 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         OwnedGlobalRoots result(*module, requested(*module));
         check(!result.proved() && !result.exhausted() && empty(*module, result), message);
     };
+    for (const auto & source : {browserIndirect, browserPrepared}) {
+        constexpr llvm::StringLiteral invocation = "@publish$1(%u, %u, %wrapper, %this, %factory)";
+        refuse(source, invocation, "@publish$1(%u, %u, %wrapper, %factory, %this)",
+               "factory identity follows the exact explicit formal rather than any actual");
+        refuse(source, invocation,
+               invocation.str() + "\n    %again = ctjs.call_direct " + invocation.str(),
+               "wider wrappers still require one invocation for descendant Map identity");
+        refuse(source, "ctjs.set_property %host[%slot], %table",
+               "ctjs.set_property %host[%slot], %table\n"
+               "    ctjs.store_global \"escapedFactory\", %factory",
+               "a factory transported through a later formal cannot escape the wrapper");
+        refuse(source, "ctjs.set_property %host[%slot], %table\n    ctjs.return %u",
+               "ctjs.set_property %host[%slot], %table\n    ctjs.return %fallback",
+               "returning the script-this actual violates the wrapper's undefined result");
+    }
+    refuse(browserIndirect, "ctjs.call %factory(%u)",
+           "ctjs.call %factory(%u)\n    %again = ctjs.call %factory(%u)",
+           "later callback formals cannot merge repeated factory allocations");
     refuse(capturedFixture, "ctjs.cell_set %cell, %state",
            "ctjs.cell_set %cell, %state\n    ctjs.cell_set %cell, %u",
            "multiple writes revoke immutable captured environment ownership");

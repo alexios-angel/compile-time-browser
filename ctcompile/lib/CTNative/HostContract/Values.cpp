@@ -47,12 +47,11 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
         module.walk([&](ctjs::CallOp call) {
             if (!step() || !call.getArgs().empty()) { return; }
             auto argument = llvm::dyn_cast<mlir::BlockArgument>(call.getCallee());
-            if (!argument || argument.getArgNumber() != 3) { return; }
+            if (!argument || argument.getArgNumber() < ctjs::implicit_arguments) { return; }
             auto wrapper = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
             if (!wrapper || wrapper == entry || wrapper.getUpvalueCount() != 0 ||
                 !llvm::hasSingleElement(wrapper.getBody()) ||
-                argument.getOwner() != &wrapper.getBody().front() ||
-                argument.getOwner()->getNumArguments() != 4 || callers[wrapper].size() != 1) {
+                argument.getOwner() != &wrapper.getBody().front() || callers[wrapper].size() != 1) {
                 return;
             }
             auto * invocation = callers[wrapper].front();

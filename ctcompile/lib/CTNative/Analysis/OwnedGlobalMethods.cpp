@@ -57,8 +57,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     if (capture &&
         (capture->allocation->getParentOfType<ctjs::FuncOp>() != factory || wrapper == factory ||
          wrapper.getUpvalueCount() != 0 || wrapper.getBody().empty() ||
-         (wrapper.getBody().front().getNumArguments() != 3 &&
-          wrapper.getBody().front().getNumArguments() != 4))) {
+         wrapper.getBody().front().getNumArguments() < ctjs::implicit_arguments)) {
         reject("owned global captured table requires one wrapper, factory and Map environment");
         return;
     }
