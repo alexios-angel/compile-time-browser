@@ -22,6 +22,11 @@ foreach(client dom_token_list dom_element dom_shadow)
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_dom_libs}")
 endforeach()
 
+# Easing/interpolation is callable by native Style clients without Script or Shell.
+get_target_property(_easing_libs ctbrowser-test-style_easing LINK_LIBRARIES)
+list(FILTER _easing_libs EXCLUDE REGEX "^ctbrowser::(script|layout|paint|raster|shell|ctbrowser)$")
+set_property(TARGET ctbrowser-test-style_easing PROPERTY LINK_LIBRARIES "${_easing_libs}")
+
 # vm_operators is the one file that still runs ctjs - `diff_vs_v1` sends an
 # expression through the previous engine's interpreter as well - and that
 # public header also reaches its nested ctc dependency.

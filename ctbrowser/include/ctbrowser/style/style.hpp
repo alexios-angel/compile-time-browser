@@ -20,6 +20,7 @@
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/css/token.hpp>
+#include <ctbrowser/style/easing.hpp>
 #include <ctbrowser/style/engine.hpp>
 #include <ctbrowser/style/selector.hpp>
 #include <ctbrowser/style/ua.hpp>
