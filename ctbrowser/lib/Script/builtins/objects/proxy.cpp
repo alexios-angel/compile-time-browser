@@ -382,6 +382,12 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Object prototype may only be an Object or null");
             return value::boolean(false);
         }
+        if (a[0].is_kind(heap_kind::proxy) &&
+            !static_cast<proxy_object *>(a[0].as_heap())->handler.is_object_like()) {
+            c.throw_error("TypeError",
+                          "Cannot perform 'setPrototypeOf' on a proxy that has been revoked");
+            return value::undefined();
+        }
         return value::boolean(detail::set_prototype_of(c, a[0], proto));
     });
     reflect->define("@@toStringTag", cx.string("Reflect"), attr_configurable); // 28.1.14
