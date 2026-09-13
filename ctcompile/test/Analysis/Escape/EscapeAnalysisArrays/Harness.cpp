@@ -251,11 +251,16 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
             if (after.by != verdict.by || after.position != verdict.position) {
                 fail(r, "an unchanged retained site lost its original witness");
             }
-        } else if (verdict.reason != EscapeReason::Stored ||
+        } else if ((verdict.reason != EscapeReason::Stored &&
+                    !(verdict.reason == EscapeReason::Passed &&
+                      llvm::isa<ctjs::CreateArrayOp>(site) && verdict.position == 0 &&
+                      llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(
+                          verdict.by))) ||
                    after.reason != EscapeReason::Confined || after.by != nullptr ||
                    after.position != 0 || !refined.arrayRetentionComplete) {
-            fail(r, "the consumer changed a verdict outside the complete Stored refinement");
-        } else {
+            fail(r, "the consumer changed a verdict outside complete storage/receiver retention");
+        } else if (verdict.reason == EscapeReason::Stored) {
+            // This counter remains about retained contents, not private receivers.
             discharged.push_back(contentsLabel(site));
         }
     }

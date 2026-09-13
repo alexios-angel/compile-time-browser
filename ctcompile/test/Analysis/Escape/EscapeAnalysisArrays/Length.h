@@ -29,15 +29,78 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         return mlir::parseSourceString<mlir::ModuleOp>(
             std::string{kPrologue} + expected.body + "}\n", &context);
     };
-    const auto run = [&](const contents_row & expected, const char * discharged = "x") {
+    const auto run = [&](const contents_row & expected, const char * discharged = "x",
+                         const char * receiverVerdict = nullptr) {
         if (auto module = parse(expected)) {
             check(*module, expected, discharged);
+            if (receiverVerdict != nullptr) {
+                ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+                mlir::DataFlowSolver solver;
+                solver.load<mlir::dataflow::DeadCodeAnalysis>();
+                solver.load<mlir::dataflow::SparseConstantPropagation>();
+                solver.load<EscapeAnalysis>();
+                const row r{
+                    .what = expected.what, .body = expected.body, .expected = receiverVerdict};
+                if (failed(solver.initializeAndRun(*module))) {
+                    fail(r, "the private receiver solver did not converge");
+                } else {
+                    ctjs::CreateArrayOp receiver;
+                    module->walk([&](ctjs::CreateArrayOp op) {
+                        if (contentsLabel(op) == "a") { receiver = op; }
+                    });
+                    if (!receiver ||
+                        verdictString(computeVerdicts(solver, function, 0), receiver) !=
+                            "escapes:passed" ||
+                        verdictString(computeVerdicts(solver, function), receiver) !=
+                            receiverVerdict) {
+                        fail(r, "the private receiver verdict or original Passed witness differs");
+                    }
+                }
+            }
         } else {
             fail(row{.what = expected.what, .body = expected.body, .expected = ""},
                  "the dense length fixture did not parse");
         }
         ++rows;
     };
+    const std::string privateValues =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %key = ctjs.constant #ctjs.string<\"length\"> {storage_test_id = \"key\"}\n"
+        "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n";
+    run({.what = "a private own-length receiver needs no Stored child candidate",
+         .body = privateValues + read + done,
+         .arrays = "a:[]",
+         .exit = "length -> {}"},
+        "", "confined");
+    run({.what = "a returned array keeps its first Passed witness after own length",
+         .body = privateValues + read + "  ctjs.return %a\n",
+         .arrays = "a:[]",
+         .exit = "a -> {a}"},
+        "", "escapes:passed");
+    run({.what = "a returned saved child does not retain its overwritten private array",
+         .body = values + "  %index = ctjs.constant #ctjs.string<\"0\">\n"
+                          "  %saved = ctjs.get_property %a[%index]\n"
+                          "  ctjs.set_property %a[%index], %zero\n"
+                          "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "", "confined");
+    run({.what = "a private own-length receiver cannot hide an inactive unknown effect",
+         .body = privateValues + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^effect, ^safe\n"
+                 "^effect:\n  %called = ctjs.call %p(%a)\n  ctjs.return %length\n"
+                 "^safe:\n  ctjs.return %length\n",
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        "", "escapes:passed");
+    run({.what = "an own element overwrite can be the private array's first Passed witness",
+         .body = "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+                 "  %a = ctjs.create_array [%zero] {storage_test_id = \"a\"}\n" +
+                 overwrite + "  ctjs.return %zero\n",
+         .arrays = "a:[zero]",
+         .exit = "zero -> {}"},
+        "", "confined");
     run({.what = "an original dense length has no element or array identity",
          .body = values + read + done,
          .arrays = "a:[x]",

@@ -6,7 +6,7 @@
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
 # Measured baseline: 222 functions, 895 observed sites, 35 unclaimed, zero violations;
-# precision 27/172. Original source SHA pins remain in Initialize.cmake.
+# precision 39/172. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
 program 4a20324d7d3db801
@@ -257,7 +257,7 @@ alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 8 arrayFrameSavedRead
 alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 6 obj 1 1 0 0 0 - confined
-alloc 8 arr 1 1 0 0 0 - escapes:passed
+alloc 8 arr 1 1 0 0 0 - confined
 fn 9 arrayFrameOverwrite
 alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 obj 1 0 1 0 0 temporaries:1 escapes:stored
@@ -1089,7 +1089,7 @@ alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
 site 24 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 187 primitiveUShrRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
-alloc 8 arr 2 2 0 0 0 - escapes:passed
+alloc 8 arr 2 2 0 0 0 - confined
 site 29 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 188 primitiveUShrOpaque
 alloc 3 obj 2 2 0 0 0 - escapes:stored
@@ -1102,7 +1102,7 @@ alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
 site 24 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 191 primitiveMixedStaticRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
-alloc 8 arr 2 2 0 0 0 - escapes:passed
+alloc 8 arr 2 2 0 0 0 - confined
 site 29 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 192 primitiveMixedStaticOpaque
 alloc 3 obj 2 2 0 0 0 - escapes:stored
@@ -1114,7 +1114,7 @@ alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
 site 24 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 194 primitiveMixedAddRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:stored
-alloc 8 arr 2 2 0 0 0 - escapes:passed
+alloc 8 arr 2 2 0 0 0 - confined
 site 29 obj 1 0 1 0 0 thrown:1 unclaimed
 fn 195 primitiveMixedAddOpaque
 alloc 3 obj 2 2 0 0 0 - escapes:stored
@@ -1128,14 +1128,14 @@ alloc 2 obj 1 1 0 0 0 - confined
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 197 canonicalStringSaved
 alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
-alloc 5 arr 1 1 0 0 0 - escapes:passed
+alloc 5 arr 1 1 0 0 0 - confined
 fn 198 canonicalStringLookalike
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 199 canonicalStringLoaded
 alloc 5 obj 1 1 0 0 0 - confined
 alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 11 arr 1 1 0 0 0 - confined
 alloc 27 arr 1 0 1 0 0 temporaries:1 escapes:returned
 
 # Original decimal BigInts reach the same dense slots after primitive key
@@ -1145,14 +1145,14 @@ alloc 2 obj 1 1 0 0 0 - confined
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 201 decimalBigIntSaved
 alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
-alloc 5 arr 1 1 0 0 0 - escapes:passed
+alloc 5 arr 1 1 0 0 0 - confined
 fn 202 decimalBigIntSecond
 alloc 2 obj 1 1 0 0 0 - confined
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 203 decimalBigIntLoaded
 alloc 5 obj 1 1 0 0 0 - confined
 alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 11 arr 1 1 0 0 0 - confined
 alloc 27 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 204 decimalBigIntNegative
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
@@ -1171,11 +1171,11 @@ alloc 21 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 207 denseLengthLoaded
 alloc 5 obj 1 1 0 0 0 - confined
 alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 11 arr 1 1 0 0 0 - escapes:passed
+alloc 11 arr 1 1 0 0 0 - confined
 alloc 31 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 208 denseLengthEmpty
 alloc 4 obj 1 1 0 0 0 - confined
-alloc 6 arr 1 1 0 0 0 - escapes:passed
+alloc 6 arr 1 1 0 0 0 - confined
 alloc 8 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 19 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 209 denseLengthIndexed
@@ -1201,7 +1201,7 @@ alloc 19 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 213 radixBigIntLoaded
 alloc 4 obj 1 1 0 0 0 - confined
 alloc 6 arr 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 10 arr 1 1 0 0 0 - escapes:passed
+alloc 10 arr 1 1 0 0 0 - confined
 alloc 26 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 214 radixBigIntString
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
@@ -1220,7 +1220,7 @@ alloc 26 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 217 denseIndexLoaded
 alloc 5 obj 1 1 0 0 0 - confined
 alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 14 arr 1 1 0 0 0 - escapes:passed
+alloc 14 arr 1 1 0 0 0 - confined
 alloc 32 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 218 denseIndexPaths
 alloc 3 obj 2 1 1 0 0 temporaries:1 escapes:stored

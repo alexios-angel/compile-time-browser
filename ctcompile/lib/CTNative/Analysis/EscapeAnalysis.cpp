@@ -301,10 +301,16 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
 }
 
 void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std::size_t workLimit) {
+    const auto candidate = [](mlir::Operation * site, const Verdict & verdict) {
+        return verdict.reason == EscapeReason::Stored ||
+               (llvm::isa<ctjs::CreateArrayOp>(site) && verdict.reason == EscapeReason::Passed &&
+                verdict.position == 0 &&
+                llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(verdict.by));
+    };
     if (workLimit == 0 || verdicts.unvisitedSites != 0 || verdicts.unvisitedOperands != 0 ||
         verdicts.wholeFunction || !verdicts.directStorage.complete ||
-        !verdicts.directLoads.complete || !llvm::any_of(verdicts.sites, [](const auto & entry) {
-            return entry.second.reason == EscapeReason::Stored;
+        !verdicts.directLoads.complete || !llvm::any_of(verdicts.sites, [&](const auto & entry) {
+            return candidate(entry.first, entry.second);
         })) {
         return;
     }
@@ -383,16 +389,18 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
     llvm::SmallVector<mlir::Operation *, 8> confined;
     for (const auto & [site, verdict] : verdicts.sites) {
         if (!spend()) { return; }
-        if (verdict.reason == EscapeReason::Stored && retained.count(site) == 0) {
+        if (candidate(site, verdict) && incoming.contains(site) && retained.count(site) == 0) {
             confined.push_back(site);
         }
     }
     // Transactional commit: not even the first candidate changes before the
     // final graph/verdict visit. Reachable children keep their Stored witnesses,
     // because returning a container does not give each child a unique owner.
+    // Array receivers lose Passed only after the complete current query proved
+    // every access own and excluded all other exposure, including later effects.
     for (mlir::Operation * site : confined) {
+        if (verdicts.sites[site].reason == EscapeReason::Stored) { ++verdicts.confinedStoredSites; }
         verdicts.sites[site] = Verdict{};
-        ++verdicts.confinedStoredSites;
     }
     verdicts.arrayRetentionComplete = true;
 }
