@@ -203,24 +203,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
 
-        VM_CASE(get_global) do {
-            {
-                // The hit path is the one map lookup it always was; a MISS asks
-                // the embedder, then the global object, then throws - unless
-                // this read is `typeof x`'s operand, which the compiler emits as
-                // this instruction immediately followed by type_of on the same
-                // register. The peek is on the miss path only.
-                const auto it = globals_.find(vm_proto->names[in.bx()]);
-                if (it != globals_.end()) {
-                    reg(in.a) = it->second;
-                    break;
-                }
-                const bool silent = vm_frame->ip < vm_proto->code.size() &&
-                                    vm_proto->code[vm_frame->ip].code == op::type_of &&
-                                    vm_proto->code[vm_frame->ip].b == in.a;
-                reg(in.a) = global_or_named(vm_proto->names[in.bx()], silent);
+        VM_CASE(get_global)
+        VM_CASE(get_global_typeof) do {
+            const auto it = globals_.find(vm_proto->names[in.bx()]);
+            if (it != globals_.end()) {
+                reg(in.a) = it->second;
                 break;
             }
+            reg(in.a) = global_or_named(vm_proto->names[in.bx()], in.code == op::get_global_typeof);
+            break;
         }
         while (0);
         VM_NEXT;

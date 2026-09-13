@@ -108,7 +108,7 @@ bool compiler_impl::emit_with_object(std::string_view name, std::uint16_t obj) {
     return true;
 }
 
-void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst) {
+void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup) {
     if (const local * l = find_local_entry(fn(), name)) {
         proto().emit(instruction{l->boxed ? op::cell_get : op::move, dst, l->reg});
         return;
@@ -123,7 +123,8 @@ void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst) {
     // Reaching this point means the mention is at TOP LEVEL, where a script
     // has no arguments and reading the name is an ordinary global lookup -
     // which is what a browser does too.
-    proto().emit(instruction::with_bx(op::get_global, dst, name_operand(std::string{name})));
+    proto().emit(instruction::with_bx(typeof_lookup ? op::get_global_typeof : op::get_global, dst,
+                                      name_operand(std::string{name})));
 }
 
 void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {

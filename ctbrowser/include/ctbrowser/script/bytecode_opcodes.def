@@ -127,14 +127,18 @@ CT_OPCODE(/* name */ move, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unus
 
 /* Indexes `names`, not `constants`. The binding table first; a miss asks
  * the embedder's undeclared-name hook, then the global object (own and
- * inherited - the global environment's object record), and a name that is
- * nowhere THROWS ReferenceError (6.2.5.5 GetValue) - EXCEPT when the very
- * next instruction is type_of reading this one's register a, which is how
- * the compiler spells `typeof foo` and the one read that is silent (13.5.3
- * step 2): the run loop peeks, and a backend must lower a load_global whose
- * only consumer is typeof through ct_aot_global_get_soft. may_reenter and
- * is_safepoint because the global object is a proxy whose traps run. */
+ * inherited). An unresolved ordinary read throws ReferenceError (GetValue).
+ * may_reenter and is_safepoint because the global object can be a proxy. */
 CT_OPCODE(/* name */ get_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
+          /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
+          /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm.hpp:context::global_or_named")
+
+/* Only the unresolved IdentifierReference operand of source `typeof` is
+ * silent (13.5.3 step 2). Local/upvalue and property reads keep their normal
+ * behavior. This opcode preserves that distinction across moves and lowering;
+ * a later type_of consumer does not make an ordinary read silent. Hooks and
+ * proxy traps can still throw, so its effects match get_global. */
+CT_OPCODE(/* name */ get_global_typeof, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm.hpp:context::global_or_named")
 
@@ -759,9 +763,9 @@ CT_OPCODE(/* name */ ret_undef, /* a_kind */ unused, /* b_kind */ unused, /* c_k
 /* `typeof` looks like the cheapest opcode in the set and is in fact the only
  * NON-arithmetic allocator here - one heap string per execution, so
  * interning the eight fixed answers is an obvious AOT win. may_throw is only
- * the allocation ceiling. `typeof undeclared` is get_global + this on one
- * register, and it is the get_global that makes the pair silent - see its
- * row. */
+ * the allocation ceiling. `typeof undeclared` is get_global_typeof + this on one
+ * register; only the source lookup mode suppresses an unresolved-name error.
+ * See the get_global_typeof row. */
 CT_OPCODE(/* name */ type_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm/coerce.cpp:type_of")

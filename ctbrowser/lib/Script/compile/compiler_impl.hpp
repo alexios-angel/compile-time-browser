@@ -584,7 +584,7 @@ public:
     // step 6 via WithBaseObject).
     [[nodiscard]] bool call_needs_receiver(const vp::node & callee);
     // compile_ident without the with lookup: a local, an upvalue or a global.
-    void emit_plain_read(std::string_view name, std::uint16_t dst);
+    void emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup = false);
     void emit_plain_write(std::string_view name, std::uint16_t src);
 
     // A numeric literal's value. The radix prefixes take the integer overload
@@ -825,7 +825,7 @@ public:
     // drift out of agreement with the read side - which is `compile_ident`.
     void emit_write(std::string_view name_text, std::uint16_t src);
 
-    void compile_ident(const vp::node & n, std::uint16_t dst);
+    void compile_ident(const vp::node & n, std::uint16_t dst, bool typeof_lookup = false);
 
     // `delete o.x` / `delete o[k]`. Anything else - `delete x` on a plain
     // variable - is a no-op that yields false, which is what non-strict

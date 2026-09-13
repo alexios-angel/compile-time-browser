@@ -686,20 +686,15 @@ CT_AOT_HELPER(/* name */ ct_aot_global_get, /* ret */ int32_t,
               /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
 CT_AOT_COVERS(/* helper */ ct_aot_global_get, /* opcode */ get_global)
 
-/* THE SAME READ, SILENT: undefined instead of ReferenceError for a name that
- * is nowhere. It exists for exactly one consumer - `typeof x` (13.5.3 step
- * 2), which the compiler spells as get_global immediately followed by type_of
- * on the same register, and which the run loop recognises by peeking. A
- * backend must lower a load_global whose only use is typeof through this
- * row and every other load_global through ct_aot_global_get, or compiled
- * code throws where the interpreter answers "undefined". The hook and the
- * global object's traps still run, so may_reenter and is_safepoint stay;
- * the only failure is the raise tier.
+/* The source typeof IdentifierReference lookup: only an unresolved name
+ * yields undefined. Hooks and proxy traps still run and can throw. The raw
+ * value ABI requires ct_aot_check before consuming the result; a TypeOf user
+ * alone never authorizes this lookup.
  * DELEGATES TO: context::global_or_named(name, silent = true). */
 CT_AOT_HELPER(/* name */ ct_aot_global_get_soft, /* ret */ uint64_t,
               /* params */ (struct ct_aot_frame *fr, const char *name, uint32_t name_len),
-              /* may_throw */ 0, /* may_reenter */ 1, /* is_safepoint */ 1)
-CT_AOT_COVERS(/* helper */ ct_aot_global_get_soft, /* opcode */ get_global)
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_global_get_soft, /* opcode */ get_global_typeof)
 
 /* Cannot share with the read: different direction, different arity. Two
  * things it must NOT become. (1) It bypasses accessors - if a binding layer

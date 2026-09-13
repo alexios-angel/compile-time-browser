@@ -47,8 +47,9 @@ enum class op : std::uint8_t {
     move,       // a = b
 
     // --- globals and locals
-    get_global, // a = globals[k[bx]]
-    set_global, // globals[k[bx]] = a
+    get_global,        // a = globals[k[bx]], unresolved names throw
+    get_global_typeof, // same lookup, unresolved names yield undefined
+    set_global,        // globals[k[bx]] = a
 
     // --- captured variables. A local that some nested function refers to is
     // stored in a heap CELL rather than directly in its register, and every

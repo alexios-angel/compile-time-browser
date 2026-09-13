@@ -274,8 +274,9 @@ std::int32_t aot_bridge::global_get(aot::ct_aot_frame * f, const char * name,
     return status;
 }
 
-// ct_aot_global_get_soft: `typeof x`'s read - undefined on a miss, never a
-// throw. The row says which load_global a backend routes here.
+// ct_aot_global_get_soft: source `typeof x`'s global read. An unresolved name
+// yields undefined; a getter or proxy trap can still throw. Check the frame
+// status before consuming this value, as the helper's row requires.
 std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * name,
                                           std::uint32_t name_len) {
     context & cx = *frame_of(f).ctx;

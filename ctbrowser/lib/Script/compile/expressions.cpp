@@ -221,7 +221,7 @@ void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
     emit_plain_write(name_text, src);
 }
 
-void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
+void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst, bool typeof_lookup) {
     if (tdz_frame_ == frames_.size() - 1 &&
         std::find(tdz_names_.begin(), tdz_names_.end(), n.text) != tdz_names_.end()) {
         emit_throw("ReferenceError",
@@ -234,7 +234,7 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t obj = alloc_reg();
     if (emit_with_object(n.text, obj)) {
         const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
-        emit_plain_read(n.text, dst);
+        emit_plain_read(n.text, dst, typeof_lookup);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
         proto().emit(instruction{op::get_prop, dst, obj, name_operand(std::string{n.text})});
@@ -243,7 +243,7 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst) {
         return;
     }
     release_to(mark);
-    emit_plain_read(n.text, dst);
+    emit_plain_read(n.text, dst, typeof_lookup);
 }
 
 // `yield* expr` (14.4.14): every value the inner iterator produces is
@@ -450,30 +450,14 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
     }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t operand = alloc_reg();
-    // `typeof x` ON AN UNRESOLVABLE NAME IS "undefined", NOT A THROW (13.5.3
-    // step 2). No special form is emitted: the pair get_global + type_of on
-    // one register is what the run loop and the AOT lowering recognise as
-    // the silent read - see op::get_global in bytecode_opcodes.def.
-    //
-    // Inside a `with` the pair has to stay adjacent on the fallback path, so
-    // the object's answer and the plain read each get their own type_of.
+    // Only an IdentifierReference suppresses an unresolved-name error. Keep
+    // normal binding resolution, TDZ checks and with-object property reads.
     if (n.text == "typeof" && at(n.a).kind == vp::nk::ident) {
-        const std::uint16_t obj = alloc_reg();
-        if (emit_with_object(at(n.a).text, obj)) {
-            const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, obj});
-            emit_plain_read(at(n.a).text, operand);
-            proto().emit(instruction{op::type_of, dst, operand});
-            const std::size_t done = proto().emit(instruction{op::jump});
-            patch_here(bound);
-            proto().emit(
-                instruction{op::get_prop, operand, obj, name_operand(std::string{at(n.a).text})});
-            proto().emit(instruction{op::type_of, dst, operand});
-            patch_here(done);
-            release_to(mark);
-            return;
-        }
+        const at_source here{*this, n.a};
+        compile_ident(at(n.a), operand, true);
+    } else {
+        compile_expr(n.a, operand);
     }
-    compile_expr(n.a, operand);
     if (n.text == "-") {
         proto().emit(instruction{op::negate, dst, operand});
     } else if (n.text == "!") {
