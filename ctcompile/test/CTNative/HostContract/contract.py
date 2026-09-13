@@ -66,6 +66,10 @@ def main():
         "missing_root": "var host = 42; var trace = host;",
         "absent_write": "var host = {}; host.slot = 42; var missing = 1; var trace = host.slot;",
         "absent_read": "var host = {}; host.slot = 42; var unseen = missing; var trace = host.slot;",
+        "absent_typeof": "var host = {}; host.slot = 42; typeof missing; var trace = host.slot;",
+        "absent_parens": "var host = {}; host.slot = 42; typeof (missing); var trace = host.slot;",
+        "absent_comma": "var host = {}; host.slot = 42; typeof (0, missing); var trace = host.slot;",
+        "absent_alias": "var host = {}; host.slot = 42; var saved = missing; typeof saved; var trace = host.slot;",
         "throwing": "function publish(target) { target.slot = 42; throw 7; } var host = {}; publish(host); var trace = host.slot;",
         "repeated_factory_escape": "function make() { return {}; } var host = {}; host.slot = 1; var a = make(); var b = make(); a.link = host; b.link.slot = 42; var trace = host.slot;",
         "repeated_factory": "function make() { return {}; } var host = {}; host.slot = 1; var a = make(); var b = make(); a.link = {slot: 42}; host.slot = b.link.slot; var trace = host.slot;",
@@ -100,6 +104,8 @@ def main():
             "getter_alias",
             "getter_string",
             "getter_replaced",
+            "absent_typeof",
+            "absent_parens",
         }
         report, _, _ = analyze(args.opt, ir, contract, args.work / f"{name}-check")
         if report["proved"] != positive:
@@ -157,7 +163,7 @@ def main():
     if exhausted["proved"] or "budget" not in exhausted["reason"]:
         raise RuntimeError("budget exhaustion did not withhold proof")
     print(
-        "host contract: 8 publication positives, 22 source refusals, stale/forged/provider/claim/budget controls passed"
+        "host contract: 10 publication positives, 24 source refusals, stale/forged/provider/claim/budget controls passed"
     )
 
 

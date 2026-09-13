@@ -250,7 +250,11 @@ def main():
             standalone(args, output, label, "trace=undefined\n", compilers, nm)
         for name, declarations, reason in (
             ("missing", {}, "unproved host binding `undefined`"),
-            ("absent", {"absent": ("undefined",)}, "absent binding is read outside typeof"),
+            (
+                "absent",
+                {"absent": ("undefined",)},
+                "absent binding lacks source typeof lookup mode",
+            ),
             ("other-name", {"undefined": ("otherUndefined",)}, "unproved host binding `undefined`"),
         ):
             fresh = contract(args, ir, f"{label}-{name}", **declarations)

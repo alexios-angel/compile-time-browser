@@ -54,9 +54,9 @@ namespace ctcompile::ctnative {
 namespace {
 using namespace lowering_detail;
 
-// Called only on the private clone after complete ownership validation. Absent
-// bindings and source writes never reach this constant path. Collect and charge
-// every rewrite before mutation; the caller must reprove the changed module.
+// Called only on the private clone after complete ownership validation. A
+// declared absent binding also requires source typeof-lookup provenance; source
+// writes never reach this path. Charge before mutation, then reprove the clone.
 bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contract,
                                const OwnedGlobalRoots & owners, unsigned remaining) {
     const auto spend = [&] {
@@ -85,15 +85,18 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
             }
             auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
             if (!load) { return mlir::WalkResult::advance(); }
-            for (const std::string & name : contract.undefinedBindings) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                if (load.getName() != name) { continue; }
-                for ([[maybe_unused]] mlir::OpOperand & use : load.getResult().getUses()) {
+            for (const auto * names : {&contract.undefinedBindings, &contract.absentBindings}) {
+                if (names == &contract.absentBindings && !load.getTypeofLookup()) { continue; }
+                for (const std::string & name : *names) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (load.getName() != name) { continue; }
+                    for ([[maybe_unused]] mlir::OpOperand & use : load.getResult().getUses()) {
+                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    }
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    reads.push_back(load);
+                    return mlir::WalkResult::advance();
                 }
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                reads.push_back(load);
-                break;
             }
             return mlir::WalkResult::advance();
         });

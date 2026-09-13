@@ -377,11 +377,8 @@ std::string analyzer::environmentProblem() {
                 reject(("unproved host binding `" + load.getName() + "`").str());
             }
             if (llvm::is_contained(contract.absentBindings, load.getName())) {
-                for (mlir::Operation * user : load.getResult().getUsers()) {
-                    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
-                    if (active(user) && (!unary || unary.getKind() != ctjs::UnaryKind::TypeOf)) {
-                        reject("absent binding is read outside typeof");
-                    }
+                if (!load.getTypeofLookup()) {
+                    reject("absent binding lacks source typeof lookup mode");
                 }
             } else if (!definitions.empty() &&
                        !llvm::any_of(definitions, [&](ctjs::StoreGlobalOp store) {

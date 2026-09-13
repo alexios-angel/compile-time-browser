@@ -1073,7 +1073,9 @@ PrimitiveAlternatives analyzer::entryCategories(
             return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
         }
         const auto & stores = globals[load.getName()];
-        if (stores.empty() && llvm::is_contained(contract.undefinedBindings, load.getName())) {
+        if (stores.empty() && (llvm::is_contained(contract.undefinedBindings, load.getName()) ||
+                               (load.getTypeofLookup() &&
+                                llvm::is_contained(contract.absentBindings, load.getName())))) {
             return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>());
         }
         if (stores.size() != 1 || !before(stores.front(), load)) { return {}; }
@@ -1257,7 +1259,9 @@ mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
     }
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
         auto & stores = globals[load.getName()];
-        if (stores.empty() && llvm::is_contained(contract.undefinedBindings, load.getName())) {
+        if (stores.empty() && (llvm::is_contained(contract.undefinedBindings, load.getName()) ||
+                               (load.getTypeofLookup() &&
+                                llvm::is_contained(contract.absentBindings, load.getName())))) {
             return ctjs::UndefinedAttr::get(context);
         }
         return stores.size() == 1 ? primitive(stores.front().getValue(), depth + 1)
@@ -1269,11 +1273,6 @@ mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
             return bit ? ctjs::BooleanAttr::get(context, !*bit) : mlir::Attribute{};
         }
         if (unary.getKind() != ctjs::UnaryKind::TypeOf) { return {}; }
-        if (auto load = unary.getOperand().getDefiningOp<ctjs::LoadGlobalOp>();
-            load && globals[load.getName()].empty() &&
-            llvm::is_contained(contract.absentBindings, load.getName())) {
-            return ctjs::StringAttr::get(context, "undefined");
-        }
         auto operand = primitive(unary.getOperand(), depth + 1);
         llvm::StringRef name;
         if (llvm::isa_and_nonnull<ctjs::UndefinedAttr>(operand)) {

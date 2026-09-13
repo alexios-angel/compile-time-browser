@@ -106,13 +106,10 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         auto found = globals.find(load.getName());
         if (found == globals.end()) { return stop(operation, "unproved host binding"); }
         if (found->second.kind == prefixValue::Kind::absent) {
-            for (mlir::Operation * user : load.getResult().getUsers()) {
-                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
-                auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
-                if (!unary || unary.getKind() != ctjs::UnaryKind::TypeOf) {
-                    return stop(operation, "absent binding is read outside typeof");
-                }
+            if (!load.getTypeofLookup()) {
+                return stop(operation, "absent binding lacks source typeof lookup mode");
             }
+            return prefixValue::constant(ctjs::UndefinedAttr::get(context));
         }
         return found->second;
     }
