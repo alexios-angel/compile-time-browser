@@ -168,7 +168,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             op->removeAttr("ctnative.object_reason");
         }
     });
-    const bool fieldsSafe = object_detail::scalarFieldEnvironment(module);
+    const bool fieldsSafe = object_detail::scalarFieldEnvironment(module, globals);
     int64_t nextFieldGroup = 0;
     closedValueFlow flow;
     flow.build(module);

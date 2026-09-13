@@ -88,6 +88,28 @@ host.slot.set(element, "bs.alert", 64);
 var traceSecondKept = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
 var traceSecondRejected = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
+# Separate invocation-proof probe; EXACT_DATA still has its Number carrier boundary.
+ENTRY_OBJECTS = (
+    DATA_PREFIX + """var element = {}; var other = {}; var absent = {}; var alias = element;
+var instance = {value: 64};
+host.slot.set(element, "bs.alert", instance);
+host.slot.set(other, "bs.alert", 21);
+var traceDistinct = host.slot.get(element, "bs.alert").value;
+var traceAlias = host.slot.get(alias, "bs.alert").value;
+var traceOther = host.slot.get(other, "bs.alert") === 21 ? 1 : 0;
+var traceAbsent = host.slot.get(absent, "bs.alert") === null ? 1 : 0;
+host.slot.remove(element, "bs.missing");
+var traceWrongRemove = host.slot.get(element, "bs.alert").value;
+host.slot.set(element, "bs.collapse", 99);
+var traceConflict = host.slot.get(element, "bs.alert").value;
+host.slot.remove(element, "bs.alert");
+var traceRemoved = host.slot.get(element, "bs.alert") === null ? 1 : 0;
+host.slot.set(alias, "bs.collapse", instance);
+var traceReinserted = host.slot.get(element, "bs.collapse").value;
+var traceIdentity = host.slot.get(alias, "bs.collapse") === instance ? 1 : 0;
+var traceOtherAfter = host.slot.get(other, "bs.alert") === 21 ? 1 : 0;
+"""
+)
 
 
 def recorder_cases():
@@ -131,6 +153,24 @@ def recorder_cases():
                 traceWrongKeyRemove=1,
             ),
         ),
+        "recorder_entry_objects": dict(
+            source=ENTRY_OBJECTS,
+            entry_objects=True,
+            values=dict(
+                traceDistinct=64,
+                traceAlias=64,
+                traceOther=1,
+                traceAbsent=1,
+                traceWrongRemove=64,
+                traceConflict=64,
+                traceRemoved=1,
+                traceReinserted=64,
+                traceIdentity=1,
+                traceOtherAfter=1,
+                traceErrorCount=1,
+                traceErrorMessage=1,
+            ),
+        ),
     }
     pins = {
         "recorder_single": (
@@ -144,6 +184,10 @@ def recorder_cases():
         "recorder_exact_data": (
             2522,
             "8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3",
+        ),
+        "recorder_entry_objects": (
+            1999,
+            "5dc98179c1a06bcac5b7136ce8a86d11690e7a7e93de8229e82488c09c52e030",
         ),
     }
     assert hashlib.sha256(DATA_PREFIX.encode()).hexdigest() == (
@@ -218,6 +262,18 @@ def recorder_refusals():
             ),
         )
     cases["recorder_before_initialization"]["values"] = dict(original["values"], traceBefore=1)
+    entry = recorder_cases()["recorder_entry_objects"]
+    for name, source in (
+        (
+            "dynamic_snapshot_index",
+            ENTRY_OBJECTS.replace(
+                "Array.from(s.keys())[0]", "Array.from(s.keys())[traceErrorCount]"
+            ),
+        ),
+        ("prototype_effect", ENTRY_OBJECTS + "instance.__proto__ = {};\n"),
+    ):
+        assert source != ENTRY_OBJECTS, name
+        cases["recorder_entry_" + name] = dict(entry, source=source)
     for row in cases.values():
         # A completed source rejection must not be disguised as a budget cutoff.
         row.update(admitted=False, max_steps=1_000_000)
@@ -342,6 +398,20 @@ def recorder_mutations():
             "Array.from(s.keys())[0]",
             '"bs.alert"',
             dict(cases["recorder_repeat"]["values"], traceErrorMessage=1),
+        ),
+        (
+            "recorder_entry_remove_other",
+            ENTRY_OBJECTS,
+            'host.slot.remove(element, "bs.missing");',
+            'host.slot.remove(other, "bs.alert");',
+            dict(cases["recorder_entry_objects"]["values"], traceOtherAfter=0),
+        ),
+        (
+            "recorder_entry_fresh_reinsert",
+            ENTRY_OBJECTS,
+            'host.slot.set(alias, "bs.collapse", instance);',
+            'host.slot.set(alias, "bs.collapse", {value: 65});',
+            dict(cases["recorder_entry_objects"]["values"], traceReinserted=65, traceIdentity=0),
         ),
         (
             "snapshot_length_removed",
@@ -686,8 +756,8 @@ int main() {{
 """
 
 
-def recorder_future_body():
-    return """    remove(element, "bs.alert");
+def recorder_future_body(entry_objects=False):
+    body = """    remove(element, "bs.alert");
     remove(element, "bs.collapse");
     const before = traceErrorCount;
     let key = "bs.alert";
@@ -710,29 +780,84 @@ def recorder_future_body():
     remove(element, original);
     if (get(element, original) !== null) { traceFuture = 0; }
 """
+    if entry_objects:
+        body += """    const payload = {value: i + 0.5};
+    const alias = payload;
+    const other = {}, absent = {};
+    set(element, "bs.alert", payload);
+    set(other, "bs.alert", 21);
+    const saved = get(element, "bs.alert");
+    payload.value = i + 2;
+    if (saved !== alias || saved.value !== i + 2 ||
+        get(other, "bs.alert") !== 21 || get(absent, "bs.alert") !== null) { traceFuture = 0; }
+    remove(element, "bs.missing"); remove(absent, "bs.alert");
+    if (get(element, "bs.alert") !== payload || get(other, "bs.alert") !== 21 ||
+        traceErrorCount !== before + 2) { traceFuture = 0; }
+    set(element, "bs.alert", 43);
+    if (get(element, "bs.alert") !== 43 || saved.value !== i + 2) { traceFuture = 0; }
+    remove(element, "bs.alert");
+    if (get(element, "bs.alert") !== null || saved !== payload) { traceFuture = 0; }
+    set(element, "bs.collapse", payload);
+    if (get(element, "bs.collapse") !== payload ||
+        get(element, "bs.alert") !== null || get(other, "bs.alert") !== 21) { traceFuture = 0; }
+    remove(element, "bs.collapse"); remove(other, "bs.alert");
+"""
+    return body
 
 
-def recorder_future_source():
+def recorder_future_source(entry_objects=False):
     return (
         "var traceFuture = 1;\n(function(element) {\n"
         "const set = host.slot.set, get = host.slot.get, remove = host.slot.remove;\n"
         "host = {};\nfor (let i = 0; i < 1024; ++i) {\n"
-        + recorder_future_body()
+        + recorder_future_body(entry_objects)
         + "}\n})(element);\n"
     )
 
 
-def recorder_lifetime_cpp(cpp, values):
-    changed = instrument_leaf_objects(cpp)
+def recorder_lifetime_cpp(cpp, values, entry_objects=False):
+    changed = instrument_leaf_objects(cpp, allocations=4 if entry_objects else 1)
+    equal = "object_strict_equal" if entry_objects else "scalar_strict_equal"
     body = re.sub(
-        r"(get\(element, [^)]+\)) !== (null|[0-9]+)",
-        lambda match: "!ctnative::scalar_strict_equal("
+        r"(get\((?:element|other|absent), [^)]+\)) !== (null|[0-9]+|payload)",
+        lambda match: "!ctnative::"
+        + equal
+        + "("
         + match[1]
         + ", "
-        + ("ctnative::nullable_scalar::null()" if match[2] == "null" else match[2] + ".0")
+        + (
+            "ctnative::nullable_scalar::null()"
+            if match[2] == "null"
+            else match[2] if match[2] == "payload" else match[2] + ".0"
+        )
         + ")",
-        recorder_future_body(),
+        recorder_future_body(entry_objects),
     )
+    if entry_objects:
+        body = (
+            body.replace(
+                "const payload = {value: i + 0.5};",
+                "auto payload = std::make_shared<ctnative::identity_object>();\n"
+                "    payload->field_76616c7565 = ctnative::nullable_scalar{i + 0.5};\n"
+                "    std::weak_ptr payload_lifetime = payload;",
+            )
+            .replace("const alias = payload;", "auto alias = payload;")
+            .replace(
+                "const other = {}, absent = {};",
+                "auto other = std::make_shared<ctnative::identity_object>();\n"
+                "    auto absent = std::make_shared<ctnative::identity_object>();",
+            )
+            .replace("const saved =", "auto saved =")
+            .replace("saved !== alias", "!ctnative::object_strict_equal(saved, alias)")
+            .replace("saved !== payload", "!ctnative::object_strict_equal(saved, payload)")
+            .replace("saved.value", "saved.object->field_76616c7565.value")
+            .replace("payload.value = i + 2;", "payload->field_76616c7565.value = i + 2;")
+        )
+        body += """    payload.reset(); alias.reset();
+    if (payload_lifetime.expired() || saved.object->field_76616c7565.value != i + 2) { return 138; }
+    saved = {};
+    if (!payload_lifetime.expired()) { return 139; }
+"""
     body = (
         body.replace("!==", "!=")
         .replace("traceFuture = 0;", "return 124;")
@@ -779,7 +904,7 @@ int main() {
             changed += (
                 f"    if (ctnative::global_number(g_{binding}) != {value}) {{ return 126; }}\n"
             )
-    return changed + """    set(element, "bs.alert", 42);
+    changed += """    set(element, "bs.alert", 42);
     const auto next = ctn_test_maps.size();
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() <= next || element == g_element ||
         !recorder_owner_lifetime.expired() ||
@@ -828,12 +953,46 @@ int main() {
     return 0;
 }
 """
+    if entry_objects:
+        changed = (
+            changed.replace(
+                "g_host.reset(); g_element.reset();",
+                "g_host.reset(); g_element.reset(); g_other.reset(); g_absent.reset();\n"
+                "    g_alias.reset(); g_instance.reset();",
+            )
+            .replace("ctnative::scalar_strict_equal(get(", "ctnative::object_strict_equal(get(")
+            .replace(
+                "ctnative::scalar_strict_equal(g_host->slot->m_get(",
+                "ctnative::object_strict_equal(g_host->slot->m_get(",
+            )
+            .replace(
+                'ctnative::global_number(get(element, "bs.alert")) != 42',
+                '!ctnative::object_strict_equal(get(element, "bs.alert"), js_num{42})',
+            )
+        )
+        changed = re.sub(
+            r"\b(set|m_set)\(([^;\n]+), ([0-9]+)\)",
+            r"\1(\2, js_num{\3})",
+            changed,
+        )
+        signature = (
+            "std::function<ctnative::object_value("
+            "std::shared_ptr<ctnative::identity_object>, std::string)>"
+        )
+        changed = changed.replace(
+            "auto get = table->m_get;",
+            "auto get = table->m_get;\n"
+            f"    static_assert(std::is_same_v<decltype(get), {signature}>);",
+        )
+    return changed
 
 
-def template_lifetime(args, cpp, name, mode, expected, compilers, nm, child, recorder_values=None):
+def template_lifetime(
+    args, cpp, name, mode, expected, compilers, nm, child, recorder_values=None, entry_objects=False
+):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(
-        recorder_lifetime_cpp(cpp, recorder_values)
+        recorder_lifetime_cpp(cpp, recorder_values, entry_objects)
         if recorder_values is not None
         else template_lifetime_cpp(cpp, child)
     )
@@ -899,7 +1058,7 @@ def check_recorders(args, node, reference, compilers, nm):
         if row["admitted"]:
             values = dict(row["values"], traceFuture=1)
             future = row["source"] + (
-                recorder_future_source()
+                recorder_future_source(row.get("entry_objects", False))
                 if row.get("recorder")
                 else (
                     template_future_source(row["child"])
@@ -999,6 +1158,28 @@ for (let i = 0; i < 1024; ++i) {
             owned.standalone(args, default, name, expected, compilers, nm)
             for mode in ("explicit", "deduced"):
                 cpp = (args.work / f"{name}.{mode}.cpp").read_text()
+                if row.get("entry_objects"):
+                    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+                    if not entry:
+                        raise RuntimeError(f"{name}/{mode}: missing original entry")
+                    methods_by_value = dict(
+                        re.findall(
+                            r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]
+                        )
+                    )
+                    calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+                    sequence = [
+                        methods_by_value[callee]
+                        for callee, _ in calls
+                        if callee in methods_by_value
+                    ]
+                    if (
+                        sequence != re.findall(r"host\.slot\.(set|get|remove)\(", row["source"])
+                        or len(re.findall(r"ctnative::object_get_field_76616c7565\(", cpp)) != 5
+                    ):
+                        raise RuntimeError(
+                            f"{name}/{mode}: changed live entry calls or field reads"
+                        )
                 if "child" in row or row.get("recorder"):
                     template_lifetime(
                         args,
@@ -1010,6 +1191,7 @@ for (let i = 0; i < 1024; ++i) {
                         nm,
                         row.get("child", False),
                         recorder_values=row["values"] if row.get("recorder") else None,
+                        entry_objects=row.get("entry_objects", False),
                     )
                 else:
                     methods.lifetime(args, cpp, name, mode, expected, compilers[1])

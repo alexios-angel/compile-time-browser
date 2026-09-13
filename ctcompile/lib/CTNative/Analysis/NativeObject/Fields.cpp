@@ -1,4 +1,5 @@
 #include "Fields.h"
+#include "../OwnedGlobalRoots.h"
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
@@ -35,9 +36,22 @@ bool scalarFieldOperation(mlir::Operation * op) {
     return true;
 }
 
-bool scalarFieldEnvironment(mlir::ModuleOp module) {
+bool scalarFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
+    llvm::DenseSet<mlir::Operation *> snapshotReads;
+    if (globals && globals->proved()) {
+        for (const auto & root : globals->roots()) {
+            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+            for (auto * op : root.methodTable->capturedMap->snapshotOperations) {
+                if (llvm::isa<ctjs::GetPropertyOp>(op)) { snapshotReads.insert(op); }
+            }
+        }
+    }
     bool safe = true;
-    module.walk([&](mlir::Operation * op) { safe &= scalarFieldOperation(op); });
+    // Only completed source ownership authorizes these snapshot reads. Numeric
+    // property keys elsewhere still need the ordinary prototype/accessor guard.
+    module.walk([&](mlir::Operation * op) {
+        safe &= snapshotReads.contains(op) || scalarFieldOperation(op);
+    });
     return safe;
 }
 
