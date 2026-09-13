@@ -168,11 +168,19 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
 
     reader->set("readyState", value::number(2)); // DONE, either way
     auto * event = cx.allocate<script::object_object>();
+    // ROOTED UNTIL IT IS HANDED OVER: every `cx.string`, the btoa call and
+    // the array-buffer build below allocate, and the event is reachable from
+    // nothing until the handler's argument list holds it. A collection in
+    // between freed it, and the handler's `e.target` read freed memory -
+    // image_basics' file reader did exactly that once the heap was a few
+    // objects busier.
+    const context::rooted keep_event{cx, value::object(event)};
     event->set("target", waiting.reader);
     if (!readable) {
         // NOT a silent empty string. A page that reads something that is not a
         // blob gets the error branch, which is what it is written for.
         auto * failure = cx.allocate<script::object_object>();
+        const context::rooted keep_failure{cx, value::object(failure)};
         failure->set("name", cx.string("NotReadableError"));
         failure->set("message", cx.string("FileReader was given something with no bytes"));
         reader->set("error", value::object(failure));
