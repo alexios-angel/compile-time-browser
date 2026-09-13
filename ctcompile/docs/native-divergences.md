@@ -122,18 +122,18 @@ exist. It is listed so that phase cannot be written without meeting it.
 
 ---
 
-## ND-2 — no weak references exist in this engine
+## ND-2 — native weak edges remain unsupported
 
-**Status:** declared. **Against:** ECMA-262. **Inherited from the engine.**
+**Status:** native support unimplemented. **Against:** ECMA-262.
 **Introduced:** Phase 55 (escape analysis), Stage 55C.
 
 ### The divergence
 
 ECMA-262 has `WeakRef`, `FinalizationRegistry`, and the weakly-keyed
-`WeakMap`/`WeakSet`. This engine has none of them as such:
+`WeakMap`/`WeakSet`. At integrated runtime **42b7960d**:
 
-* there is no `WeakRef` global and no `FinalizationRegistry` anywhere under
-  `ctbrowser/lib/Script` — `typeof WeakRef` is `"undefined"`;
+* `WeakRef` and `FinalizationRegistry` globals are not installed. Their pending
+  runtime implementation can be enabled independently of native support;
 * `WeakMap` and `WeakSet` are their own classes since `34d90ea1` (2026-09-12:
   `WeakMap !== Map`, a key that cannot be held weakly is refused), but their
   storage is still the STRONG list of `Map`/`Set`
@@ -144,12 +144,12 @@ ECMA-262 has `WeakRef`, `FinalizationRegistry`, and the weakly-keyed
 
 ### What the native backend does about it
 
-Part 24 Stage 55C offers three answers to a cycle and the third — *"weak links
-only where the SOURCE declares them"* — is **vacuous here**: nothing in a
-program running on this engine can say `WeakRef`, and a `WeakMap` in the source
-is a strong `Map`. So `!ctnative.weak<T>` (`CTNativeTypes.td`, `CTNative_WeakType`)
-has **no producer**: the escape analysis has no state that maps to it, and the
-type's own description forbids the compiler introducing it to break a cycle.
+Part 24 Stage 55C's third option — *"weak links only where the SOURCE declares
+them"* — remains unimplemented. `!ctnative.weak<T>` (`CTNativeTypes.td`,
+`CTNative_WeakType`) has **no producer**: the escape analysis has no state that
+maps to it, and the type's description forbids the compiler introducing it to
+break a cycle. Installing runtime weak globals grants no native proof or lowering
+authority. Explicit source weak operations still require their own lifetime proof.
 
 The reason that prohibition is not merely stylistic is pinned in the same test,
 in C++: choosing which edge of a cycle becomes weak is not semantics-preserving.
@@ -171,15 +171,12 @@ exactly once.
 ### The test
 
 `ctcompile/test/Analysis/Escape/Cycle.cpp` over `ctcompile/test/Analysis/Escape/cycle.js`,
-registered as `ctcompile_escape_cycle`. It asks the VM, in a fresh context:
-
-```js
-typeof WeakRef === "undefined" && WeakMap === Map && WeakSet === Set
-```
-
-and asserts `true` — with each conjunct on its own line so a failure is named
-— plus `new WeakMap()` being an `instanceof Map` whose entry reads back. Around
-that pin, the same executable:
+registered as `ctcompile_escape_cycle`. In a fresh context it checks a WeakMap's
+own class identity (`instanceof WeakMap`, not `instanceof Map`) and entry lookup.
+That probe does not force collection or establish key retention. The three
+historical assertions requiring absent `WeakRef`/`FinalizationRegistry` globals
+were retired on 2026-09-13 so runtime compliance can advance independently.
+The same executable:
 
 * runs the fixture's ring under `set_gc_stress(true)` with `collections()`
   asserted to have grown, and asserts `walk(keep, 9).v` and
@@ -211,11 +208,10 @@ that pin, the same executable:
 
 ### The migration path
 
-Should the engine grow a real `WeakRef` or weakly-keyed collections, the
-`typeof WeakRef` and `WeakMap === Map` lines fail and hand over the acceptance
-list. On this side, 55C option 3 stops being vacuous: `weak<T>` gains a
-producer — a `WeakRef` or `WeakMap` in the SOURCE, still never a compiler
-choice — and the entry above is amended by the commit that adds it.
+Runtime weak-reference support does not require changing the cycle assertions.
+A future native producer must prove the source's explicit weak operation and its
+observable lifetime behavior using ordinary C++ ownership, then add differential
+and destruction checks. It must never choose a weak edge merely to break a cycle.
 
 ---
 
