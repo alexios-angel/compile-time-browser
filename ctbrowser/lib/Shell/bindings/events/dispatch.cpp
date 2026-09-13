@@ -322,6 +322,35 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
             related_steps[i] = retarget(related, path[i]);
         }
     }
+    // AND THE TARGET'S SIDE THE SAME WAY: each step's shadow-adjusted target
+    // and whether the step's own node is in a shadow tree are the path
+    // struct's fields, fixed as it is appended - so a listener that moves a
+    // node out of the shadow tree mid-dispatch (event-global-extra.window.js,
+    // "nodes moving post-dispatch") changes neither what the later steps see
+    // as `target` nor whether `window.event` is hidden from them.
+    std::vector<node_id> shown_steps(path.size());
+    std::vector<bool> hidden_steps(path.size());
+    if (target_in_shadow) {
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            shown_steps[i] = retarget(at.node, path[i]);
+            hidden_steps[i] = path[i].on == listen_on::node && in_shadow(path[i].node);
+        }
+    }
+    // Steps 6.10-6.11, decided here too: what the event names as `target` and
+    // `relatedTarget` once it has stopped travelling - the last node step's
+    // shadow-adjusted pair - and whether both are cleared because either is
+    // still inside a shadow tree.
+    node_id last = at.node;
+    node_id last_related = related;
+    for (std::size_t i = path.size(); i-- > 0;) {
+        if (path[i].on != listen_on::node) { continue; }
+        if (target_in_shadow) { last = shown_steps[i]; }
+        if (related_in_shadow) { last_related = related_steps[i]; }
+        break;
+    }
+    const bool clear_targets =
+        (target_in_shadow || related_in_shadow) &&
+        ((last && in_shadow(last)) || (last_related && in_shadow(last_related)));
     if (related_in_shadow && at.on == listen_on::node && retarget(related, at) == at.node &&
         related != at.node) {
         object->set("target", value::null());
@@ -389,11 +418,11 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         const path_step & step = path[index];
         node_id shown = at.node;
         if (target_in_shadow) {
-            shown = retarget(at.node, step);
+            shown = shown_steps[index];
             const value shown_object = wrap(cx, shown);
             object->set("target", shown_object);
             object->set("srcElement", shown_object);
-            expose(step.on == listen_on::node && in_shadow(step.node) ? value::undefined() : event);
+            expose(hidden_steps[index] ? value::undefined() : event);
         }
         const bool is_target = (step.on == at.on && step.node == at.node) ||
                                (step.on == listen_on::node && step.node == shown);
@@ -428,19 +457,10 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         // retargeted one - and BOTH are null when either is still inside a
         // shadow tree (`clearTargets`), so nothing of a closed tree is left
         // on the object.
-        node_id last = at.node;
-        node_id last_related = related;
-        for (std::size_t i = path.size(); i-- > 0;) {
-            if (path[i].on != listen_on::node) { continue; }
-            last = retarget(at.node, path[i]);
-            if (related_in_shadow) { last_related = related_steps[i]; }
-            break;
-        }
-        const bool clear = (last && in_shadow(last)) || (last_related && in_shadow(last_related));
-        const value final_target = clear ? value::null() : wrap(cx, last);
+        const value final_target = clear_targets ? value::null() : wrap(cx, last);
         object->set("target", final_target);
         object->set("srcElement", final_target);
-        object->set("relatedTarget", clear               ? value::null()
+        object->set("relatedTarget", clear_targets       ? value::null()
                                      : related_in_shadow ? wrap(cx, last_related)
                                                          : related_value);
     }
