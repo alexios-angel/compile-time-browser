@@ -258,9 +258,14 @@ int main() {
     js_expect("(() => { const a = new Uint8Array(4); const r = a.setFromBase64('AQID'); "
               "return a.join() + '|' + r.read + '|' + r.written; })()",
               "1,2,3,0|4|3");
-    js_expect("(() => { const a = new Uint8Array(2); const r = a.setFromBase64('AQIDBA'); "
+    // Only WHOLE chunks that fit are decoded: 'BAU' would be two bytes and
+    // one slot is left, so the read stops at the chunk before it.
+    js_expect("(() => { const a = new Uint8Array(4); const r = a.setFromBase64('AQIDBAU'); "
               "return a.join() + '|' + r.read + '|' + r.written; })()",
-              "1,2|4|2");
+              "1,2,3,0|4|3");
+    js_expect("(() => { const a = new Uint8Array(5); const r = a.setFromBase64('AQIDBAU'); "
+              "return a.join() + '|' + r.read + '|' + r.written; })()",
+              "1,2,3,4,5|7|5");
     js_expect("(() => { const a = new Uint8Array(2); const r = a.setFromHex('0102ff'); "
               "return a.join() + '|' + r.read + '|' + r.written; })()",
               "1,2|4|2");

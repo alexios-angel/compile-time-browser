@@ -353,6 +353,13 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     });
     // --- 23.2.3.7 / 23.2.3.19 / 23.2.3.35 entries, keys, values, @@iterator ---
     object_object * iter_proto = install_iterator_prototype(cx);
+    // ROOTED THROUGH THE PROTOTYPE IT SERVES. The three natives below hold
+    // the table as a C++ capture, which the precise collector cannot see
+    // (docs/script.md, "A value captured by a native lambda is not a GC
+    // root"); the first collection freed it and every `ta.values().next`
+    // read freed memory. A private-keyed slot on %TypedArray%.prototype is
+    // reachable from the globals and invisible to a page.
+    proto->define("@#ArrayIteratorPrototype", value::object(iter_proto), attr_none);
     const auto iterator_method = [&](const char * name, double kind) {
         method(cx, proto, name, 0, [iter_proto, kind, name](context & c, std::span<value>) {
             array_object * arr =
