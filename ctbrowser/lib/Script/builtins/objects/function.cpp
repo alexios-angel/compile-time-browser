@@ -306,6 +306,39 @@ void install_dynamic_function(context & cx) {
             c.make_error("SyntaxError", "a source text module has no module source to import"),
             true);
     });
+    // See delete_ref_name.
+    cx.define_native(std::string{delete_ref_name}, [](context & c, std::span<value> a) {
+        const value target = a.empty() ? value::undefined() : a[0];
+        const bool strict = a.size() > 2 && context::truthy(a[2]);
+        if (a.size() > 3 && context::truthy(a[3])) {
+            c.throw_error("ReferenceError", "Unsupported reference to 'super'");
+            return value::undefined();
+        }
+        if (target.is_nullish()) {
+            c.throw_error("TypeError", "Cannot convert " +
+                                           std::string{target.is_null() ? "null" : "undefined"} +
+                                           " to object");
+            return value::undefined();
+        }
+        const std::string key = c.to_string(a.size() > 1 ? a[1] : value::undefined());
+        if (c.throw_pending()) { return value::undefined(); }
+        // A primitive base is ToObject'd: a string's `length` and indices are
+        // not configurable, anything else on it is not there and deletes true.
+        bool ok = true;
+        if (target.is_string()) {
+            std::uint32_t at = 0;
+            const std::size_t n = static_cast<string_object *>(target.as_heap())->text.size();
+            ok = !(key == "length" || (object_object::array_index_key(key, at) && at < n));
+        } else if (target.is_object_like()) {
+            ok = c.delete_own_property(target, key);
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+        if (!ok && strict) {
+            c.throw_error("TypeError", "Cannot delete property '" + key + "'");
+            return value::undefined();
+        }
+        return value::boolean(ok);
+    });
     // See param_eval_name. The intrinsic eval is remembered so a page that
     // rebinds the global `eval` gets its own function called instead.
     {

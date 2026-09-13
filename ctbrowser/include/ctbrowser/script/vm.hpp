@@ -359,6 +359,13 @@ inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
 // unless the function is an arrow or names a parameter so - which is the
 // SyntaxError the eval throws.
 inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
+// `delete o.k` / `delete o[k]` (13.5.1.2): `(obj, key, strict, super)` is
+// ToObject(obj).[[Delete]](ToPropertyKey(key)) with its ANSWER - the opcodes
+// delete_prop/delete_index produce none - a TypeError for a null or undefined
+// base, a TypeError in strict code when the delete answers false, and a
+// ReferenceError for `delete super.x` (`super` true; the key is still
+// evaluated first).
+inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";

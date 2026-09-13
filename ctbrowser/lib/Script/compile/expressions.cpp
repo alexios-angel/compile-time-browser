@@ -344,18 +344,32 @@ void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std:
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const vp::node & target = at(n.a);
-    if (target.kind == vp::nk::member) {
+    if (target.kind == vp::nk::member || target.kind == vp::nk::index) {
+        // Through delete_ref_name, which answers the boolean 13.5.1.2 gives
+        // and throws where it says - the opcodes answer nothing. `delete
+        // super.x` evaluates the key and is the ReferenceError.
+        const bool on_super = at(target.a).kind == vp::nk::super_lit;
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{delete_ref_name})));
         const std::uint16_t object = alloc_reg();
-        compile_expr(target.a, object);
-        proto().emit(instruction{op::delete_prop, object, member_operand(target.text)});
-        emit_const(dst, value::boolean(true));
-    } else if (target.kind == vp::nk::index) {
-        const std::uint16_t object = alloc_reg();
-        compile_expr(target.a, object);
+        if (on_super) {
+            proto().emit(instruction{op::load_undef, object});
+        } else {
+            compile_expr(target.a, object);
+        }
         const std::uint16_t key = alloc_reg();
-        compile_expr(target.b, key);
-        proto().emit(instruction{op::delete_index, object, key});
-        emit_const(dst, value::boolean(true));
+        if (target.kind == vp::nk::member) {
+            emit_string(key, std::string{target.text});
+        } else {
+            compile_expr(target.b, key);
+        }
+        const std::uint16_t strict = alloc_reg();
+        proto().emit(instruction{fn().is_strict ? op::load_true : op::load_false, strict});
+        const std::uint16_t super_flag = alloc_reg();
+        proto().emit(instruction{on_super ? op::load_true : op::load_false, super_flag});
+        proto().emit(instruction{op::call, callee, 4});
+        proto().emit(instruction{op::move, dst, callee});
     } else if (target.kind == vp::nk::ident) {
         // `delete x` inside a `with` whose object binds x deletes the
         // property (13.5.1.2 step 3.b through the object environment's
@@ -370,7 +384,11 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
             patch_here(unbound);
         }
     } else {
-        emit_const(dst, value::boolean(false));
+        // `delete 1`, `delete void a.b`, `delete f()`: not a reference - the
+        // operand is evaluated and the answer is true (13.5.1.2 step 2).
+        const std::uint16_t scratch = alloc_reg();
+        compile_expr(n.a, scratch);
+        emit_const(dst, value::boolean(true));
     }
     release_to(mark);
 }

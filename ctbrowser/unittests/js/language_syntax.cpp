@@ -172,6 +172,22 @@ int main() {
             " await new Promise(r => Promise.resolve().then(r)); return r;",
             "boom");
 
+    // --- `delete` answers what 13.5.1.2 says and throws where it says
+    answers("var o = { a: 1 }; Object.defineProperty(o, 'b', { value: 2 });"
+            " return [delete o.a, delete o.b, delete o.zz, delete 1, delete void 0, 'a' in o,"
+            " 'b' in o].join();",
+            "true,false,true,true,true,false,true");
+    answers("'use strict'; var r = 'none'; try { delete Math.PI; } catch (e) { r = e.name; }"
+            " return r;",
+            "TypeError");
+    answers("var r = 'none'; try { delete null.x; } catch (e) { r = e.name; } return r;",
+            "TypeError");
+    answers("var r = 'none'; class B {} class C extends B { m() { delete super.x; } }"
+            " try { new C().m(); } catch (e) { r = e.name; } return r;",
+            "ReferenceError");
+    answers("return [delete 'abc'.length, delete 'abc'[1], delete 'abc'.foo].join();",
+            "false,false,true");
+
     // --- yield* in an async generator: GetIterator(obj, async) refuses a
     // non-object result before any next() (7.4.3)
     answers("var r = 'none'; var obj = { [Symbol.asyncIterator]() { return true; } };"
