@@ -30,8 +30,8 @@ CLEANUP = (
 )
 
 
-def contract(args, ir, name, binding="host"):
-    value = host.manifest(args.opt, ir)
+def contract(args, ir, name, binding="host", *, absent=(), undefined=()):
+    value = host.manifest(args.opt, ir, absent=absent, undefined=undefined)
     value["roots"][0]["binding"] = binding
     path = args.work / f"{name}.contract.json"
     path.write_text(json.dumps(value, indent=2) + "\n")
@@ -184,6 +184,11 @@ def main():
             "host",
             42,
         ),
+        "fixed_undefined": (
+            "var host = {slot: 42}; var trace = host.slot; trace = undefined;",
+            "host",
+            "undefined",
+        ),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
@@ -191,7 +196,12 @@ def main():
         if count != 1:
             raise RuntimeError(f"{name}: changed source denominator")
         expected = f"trace={value}\n"
-        if host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected:
+        observer = boundary.NODE
+        if name == "fixed_undefined":
+            observer = observer.replace(
+                "typeof trace !== 'number' || !Number.isFinite(trace)", "trace !== undefined"
+            )
+        if host.run([node, "-e", observer, str(js)]).stdout != expected:
             raise RuntimeError(f"{name}: Node source oracle mismatch")
         reference_expected = "ignored=1\n" + expected if name == "unobserved_numeric" else expected
         if host.run([str(reference), str(js)]).stdout != reference_expected:
@@ -208,7 +218,9 @@ def main():
             if changed != 1:
                 raise RuntimeError(f"{name}: did not mark its exact source operation")
             ir.write_text(text)
-        config = contract(args, ir, name, binding)
+        config = contract(
+            args, ir, name, binding, undefined=("undefined",) if name == "fixed_undefined" else ()
+        )
         output = lower(args, ir, name, config)
         text = output.read_text()
         if (
@@ -220,6 +232,96 @@ def main():
             raise RuntimeError(f"{name}: expected 1/1 native with a live owner\n{text}")
         standalone(args, output, name, expected, compilers, nm)
         saved[name] = ir, config
+
+    # A present-undefined contract authorizes only its exact unchanged binding.
+    # Refusal must retain the load, including when the source owner proved but
+    # the private normalization clone exhausted its remaining budget.
+    ir, config = saved["fixed_undefined"]
+    source = positives["fixed_undefined"][0]
+    original, manifest_text = ir.read_text(), config.read_text()
+    if original.count('ctjs.load_global "undefined"') != 1:
+        raise RuntimeError("fixed undefined witness lost its source global read")
+    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+        label = f"fixed-undefined-{policy}"
+        output = lower(args, ir, label, config, options=options)
+        if output.read_text() != (args.work / "fixed_undefined.native.mlir").read_text():
+            raise RuntimeError(f"{label}: fixed undefined changed with optimization policy")
+        if policy == "disabled":
+            standalone(args, output, label, "trace=undefined\n", compilers, nm)
+        for name, declarations, reason in (
+            ("missing", {}, "unproved host binding `undefined`"),
+            ("absent", {"absent": ("undefined",)}, "absent binding is read outside typeof"),
+            ("other-name", {"undefined": ("otherUndefined",)}, "unproved host binding `undefined`"),
+        ):
+            fresh = contract(args, ir, f"{label}-{name}", **declarations)
+            refused(args, ir, f"{label}-{name}", fresh, options=options, reason=reason)
+        for name, changed_source in (
+            ("early-store", "undefined = 7; " + source),
+            ("late-store", source + " undefined = 7;"),
+            ("inactive-store", source + " if (false) { undefined = 7; }"),
+        ):
+            _, changed, _ = boundary.prepare(args, f"{label}-{name}", changed_source)
+            fresh = contract(args, changed, f"{label}-{name}", undefined=("undefined",))
+            refused(
+                args,
+                changed,
+                f"{label}-{name}",
+                fresh,
+                options=options,
+                reason="a fixed undefined host binding has a source write",
+            )
+        refused(
+            args,
+            ir,
+            f"{label}-budget-zero",
+            config,
+            options=options + " host-max-steps=0",
+            reason="budget",
+        )
+    _, changed, _ = boundary.prepare(args, "fixed-undefined-stale", source.replace("42", "43"))
+    refused(args, changed, "fixed-undefined-stale", config, reason="fingerprint mismatch")
+    forged = args.work / "fixed-undefined-forged.mlir"
+    text, count = re.subn(
+        r"\bmodule attributes \{",
+        "module attributes {ctnative.host_owner_proved = true, ctnative.host_proved = true, "
+        'ctnative.host_owner_reason = "", ',
+        original,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("fixed undefined forgery did not mark its source module")
+    forged.write_text(text)
+    fresh = contract(args, forged, "fixed-undefined-forged")
+    refused(
+        args, forged, "fixed-undefined-forged", fresh, reason="unproved host binding `undefined`"
+    )
+    _, reasons = boundary.native(args, forged, "fixed-undefined-no-manifest", 1)
+    if boundary.GLOBAL_ESCAPE not in reasons:
+        raise RuntimeError("fixed undefined forgery supplied authority without a manifest")
+
+    low, high = 0, 100000
+    while high - low > 1:
+        budget = (low + high) // 2
+        candidate = lower(
+            args,
+            ir,
+            f"fixed-undefined-budget-{budget}",
+            config,
+            options=f"host-max-steps={budget}",
+            cleanup=False,
+        )
+        if boundary.NATIVE.search(candidate.read_text()):
+            high = budget
+        else:
+            low = budget
+    rollback = refused(
+        args, ir, "fixed-undefined-rollback", config, options=f"host-max-steps={low}"
+    )
+    if "ctnative.host_owner_proved = true" not in rollback.read_text():
+        raise RuntimeError("fixed undefined budget control did not reach private-clone rollback")
+    if ir.read_text() != original or config.read_text() != manifest_text:
+        raise RuntimeError("fixed undefined normalization rewrote supplied IR or manifest")
+
     ir, config = saved["ordinary"]
     # Default-disabled and default-enabled entry both preserve the driver's
     # fingerprinted IR before ownership admission; source operations remain.
@@ -281,7 +383,9 @@ def main():
     print(
         f"native owned globals: {len(positives)} complete 1/1 programs; Node/interpreter and "
         "explicit/deduced GCC/Clang agree; owning lifetime sanitizers and "
-        f"{len(refusals)} source refusals plus stale/forged/budget controls pass"
+        f"{len(refusals)} source refusals plus stale/forged/budget controls pass; "
+        "fixed undefined preserves its exact tag and rejects missing/absent/written bindings, "
+        f"stale/forged proofs and incomplete normalization (rollback at {low}, complete at {high})"
     )
 
 

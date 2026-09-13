@@ -54,6 +54,46 @@ namespace ctcompile::ctnative {
 namespace {
 using namespace lowering_detail;
 
+// Called only on the private clone after complete ownership validation. Absent
+// bindings and source writes never reach this constant path. Collect and charge
+// every rewrite before mutation; the caller must reprove the changed module.
+bool materializeFixedUndefined(mlir::ModuleOp module, const HostContract & contract,
+                               unsigned remaining) {
+    if (contract.undefinedBindings.empty()) { return true; }
+    const auto spend = [&] {
+        if (!remaining) { return false; }
+        --remaining;
+        return true;
+    };
+    llvm::SmallVector<ctjs::LoadGlobalOp> reads;
+    const auto walked = module.walk<mlir::WalkOrder::PreOrder>(
+        [&](mlir::Operation * operation) -> mlir::WalkResult {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+            if (!load) { return mlir::WalkResult::advance(); }
+            for (const std::string & name : contract.undefinedBindings) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (load.getName() != name) { continue; }
+                for ([[maybe_unused]] mlir::OpOperand & use : load.getResult().getUses()) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                }
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                reads.push_back(load);
+                break;
+            }
+            return mlir::WalkResult::advance();
+        });
+    if (walked.wasInterrupted()) { return false; }
+    for (ctjs::LoadGlobalOp load : reads) {
+        mlir::OpBuilder at(load);
+        auto constant = ctjs::ConstantOp::create(at, load.getLoc(), load.getResult().getType(),
+                                                 ctjs::UndefinedAttr::get(module.getContext()));
+        load.getResult().replaceAllUsesWith(constant.getResult());
+        load.erase();
+    }
+    return true;
+}
+
 struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerToEmitCPass> {
     using CTNativeLowerToEmitCBase::CTNativeLowerToEmitCBase;
 
@@ -138,23 +178,28 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             HostContract normalizedContract = *hostContract;
             normalizedContract.moduleSha256 = hostContractFingerprint(*normalized);
             const OwnedGlobalRoots original(*normalized, normalizedContract, hostMaxSteps);
-            if (original.proved() && !original.roots().empty()) {
+            if (original.proved() && !original.roots().empty() &&
+                materializeFixedUndefined(*normalized, normalizedContract,
+                                          hostMaxSteps - original.steps())) {
                 // Prepare only the checked table and environment, speculatively.
                 // A stale input never reaches this rewrite. Its internally
                 // derived contract is usable only if the complete live owner
                 // and callable queries succeed again on the transformed IR.
                 mlir::OwningOpRef<mlir::ModuleOp> prepared(std::move(normalized));
+                normalizedContract.moduleSha256 = hostContractFingerprint(*prepared);
                 const OwnedGlobalRoots source(*prepared, normalizedContract, hostMaxSteps);
                 closureLifter preparation{*prepared};
                 std::optional<liftReport> result;
-                if (original.roots().front().methodTable) {
-                    result = preparation.prepareOwnedGlobalMethodTables(source, normalizedContract,
-                                                                        hostMaxSteps);
-                } else {
-                    // Scalar owners need no closure rewrite, but old native
-                    // facts must not erase their live stores either.
-                    preparation.discardNativeSourceFacts();
-                    result = liftReport{};
+                if (source.proved() && !source.roots().empty()) {
+                    if (source.roots().front().methodTable) {
+                        result = preparation.prepareOwnedGlobalMethodTables(
+                            source, normalizedContract, hostMaxSteps);
+                    } else {
+                        // Scalar owners need no closure rewrite, but old native
+                        // facts must not erase their live stores either.
+                        preparation.discardNativeSourceFacts();
+                        result = liftReport{};
+                    }
                 }
                 if (result) {
                     HostContract transformed = normalizedContract;
