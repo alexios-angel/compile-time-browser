@@ -328,6 +328,13 @@ inline constexpr std::string_view import_source_name = "__ctbrowser_import_sourc
 // per site under `key`, so the same site hands the same object to its tag
 // on every evaluation. See compile_tagged.
 inline constexpr std::string_view template_object_name = "__ctbrowser_template_object";
+// PutValue on an unresolvable reference in STRICT code (6.2.5.6 step 3.a): the
+// compiler calls this with the name before a set_global that is an
+// ASSIGNMENT (never a declaration's own write), and it throws the
+// ReferenceError when the name is neither a global nor on the global object.
+// A call rather than a check inside op::set_global, whose contract says it
+// cannot throw.
+inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";

@@ -272,7 +272,13 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     //
     // The binding is made before the methods are COMPILED so they capture
     // it, and written as soon as the class value exists.
-    if (!n.text.empty()) { emit_write(n.text, dst); }
+    if (!n.text.empty()) {
+        // The class's own binding, a declaration's first write (see declaring_).
+        const bool outer_declaring = declaring_;
+        declaring_ = true;
+        emit_write(n.text, dst);
+        declaring_ = outer_declaring;
+    }
 
     // TWO PASSES, WHICH IS THE SPECIFICATION'S ORDER: every method and accessor
     // is defined first (ClassDefinitionEvaluation step 26), then the class's

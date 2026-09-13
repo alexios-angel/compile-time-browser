@@ -1065,6 +1065,12 @@ public:
     // whether one is open - see compile_chain.
     std::vector<std::size_t> optional_exits_;
     bool in_chain_ = false;
+    // A DECLARATION IS WRITING ITS OWN BINDING: `let x = 1`, `class C {}`,
+    // `var x = 1` at a script's top level all reach set_global, and in strict
+    // code only an ASSIGNMENT to a name nothing declares is the
+    // ReferenceError - see emit_strict_assign_check.
+    bool declaring_ = false;
+    void emit_strict_assign_check(std::string_view name);
     std::size_t handler_depth_ = 0;
 };
 

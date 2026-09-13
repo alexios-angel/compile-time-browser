@@ -47,7 +47,12 @@ void compiler_impl::declare_pattern_names(std::int32_t pat) {
 
 void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring) {
     if (declaring) { declare_pattern_names(pat); }
+    // A declaration's names at a script's top level are globals written
+    // through emit_write - a declaration's own write, see declaring_.
+    const bool outer_declaring = declaring_;
+    declaring_ = declaring_ || declaring;
     compile_pattern(pat, src);
+    declaring_ = outer_declaring;
 }
 
 void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {

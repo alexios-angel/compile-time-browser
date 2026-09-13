@@ -170,6 +170,18 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- strict code cannot create a global by assignment (6.2.5.6)
+    answers("var r; (function () { 'use strict'; try { zz1 = 1; } catch (e) { r = e.name; } })();"
+            " return r;",
+            "ReferenceError");
+    answers("'use strict'; var r = 'no'; try { zz2 = 1; } catch (e) { r = e.name; } return r;",
+            "ReferenceError");
+    answers("qq = 5; return qq;", "5"); // sloppy code still may
+    // ...while a declaration's own first write is not an assignment
+    answers("'use strict'; var a = 1; a = 2; let b = 1; b = 3; class C {} C = 0;"
+            " const [d] = [4]; for (const e of [5]) { a += e; } return a + b + d;",
+            "14");
+
     // --- `using` (9.13): the syntax and the early errors. The disposal
     // itself needs Symbol.dispose, which is not installed yet (see the
     // report of 2026-09-12); a null resource registers nothing and runs.

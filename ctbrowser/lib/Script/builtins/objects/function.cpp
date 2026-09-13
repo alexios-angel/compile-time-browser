@@ -644,6 +644,17 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See strict_assign_check_name.
+    cx.define_native(std::string{strict_assign_check_name}, [](context & c, std::span<value> a) {
+        const std::string name = a.empty() ? std::string{} : c.to_string(a[0]);
+        if (c.has_global(name)) { return value::undefined(); }
+        const value global = c.global_this();
+        if (global.is_heap() && c.has_property(global, c.string(name))) {
+            return value::undefined();
+        }
+        c.throw_error("ReferenceError", name + " is not defined");
+        return value::undefined();
+    });
     // See template_object_name. The cache is a plain object RETAINED by the
     // native (native_object::retained is traced), so the collector sees every
     // array in it; the lambda holds the raw pointer that retention keeps alive.

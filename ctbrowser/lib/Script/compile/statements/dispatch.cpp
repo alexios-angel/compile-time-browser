@@ -116,6 +116,13 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // function-scoped, so at any depth it is still the script's.
         if (frames_.size() == 1 && !module_scope_ &&
             (n.text == "var" || fn().scope_marks.size() <= 1)) {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            const struct restore {
+                bool & flag;
+                bool to;
+                ~restore() { flag = to; }
+            } restoring{declaring_, outer_declaring};
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
                 const std::uint32_t mark = reg_mark();
@@ -211,7 +218,12 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // A DECLARATION, so its name is a binding of this scope - which is
         // the whole difference from the expression form.
         compile_class(n, r, true);
-        emit_write(std::string{n.text}, r);
+        {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            emit_write(std::string{n.text}, r);
+            declaring_ = outer_declaring;
+        }
         break;
     }
     case vp::nk::switch_stmt: compile_switch(n); break;
