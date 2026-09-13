@@ -661,6 +661,87 @@ host.slot.poison(); trace = host.slot.get();
         expected_trace=True,
         observations={"traceMissing": True, "traceNumber": True, "traceObject": 64},
     )
+    # Strict identity refines this exact lexical result, never every later get().
+    # Script-scope const is a global in this importer, so each saved result lives
+    # in its own block; the public scalar observations remain ordinary globals.
+    for name, expression in (
+        ("same", "saved === key ? saved.value : 0"),
+        ("reversed", "key === saved ? saved.value : 0"),
+        ("inverted", "!(saved === key) ? 0 : saved.value"),
+    ):
+        source = returned
+        for observation, comparison in (
+            ("traceMissing", "null"),
+            ("traceNumber", "64"),
+            ("traceObject", "key"),
+        ):
+            source = source.replace(
+                f"var {observation} = host.slot.get() === {comparison};",
+                "{ const saved = host.slot.get(); " f"var {observation} = {expression}; }}",
+            )
+        add("returned_fields_" + name, source, 16, functions=5, admitted=True)
+        row = rows["nested_map_returned_fields_" + name]
+        row.update(
+            mixed_child=True,
+            mixed_child_kind="returned",
+            entry_fields=3,
+            expected_trace=True,
+            observations={"traceMissing": 0, "traceNumber": 0, "traceObject": 64},
+            entry_field_mutations=[
+                (f"var traceObject = {expression};", "var traceObject = 0;"),
+                (f"var traceNumber = {expression};", "var traceNumber = saved.value;"),
+                (
+                    f"var traceMissing = {expression};",
+                    "var traceMissing = saved.value;",
+                ),
+            ],
+        )
+    source = rows["nested_map_returned_fields_same"]["source"]
+    object_read = "var traceObject = saved === key ? saved.value : 0;"
+    for name, changed, calls, observations in (
+        (
+            "truthy",
+            source.replace("saved === key ? saved.value : 0", "saved ? saved.value : 0"),
+            16,
+            {"traceMissing": 0, "traceNumber": "undefined", "traceObject": 64},
+        ),
+        (
+            "other_lookup",
+            source.replace(
+                object_read,
+                "var traceObject = host.slot.get() === key ? saved.value : 0;",
+            ),
+            17,
+            {"traceMissing": 0, "traceNumber": 0, "traceObject": 64},
+        ),
+        (
+            "other_receiver",
+            source.replace(
+                object_read,
+                "const other = host.slot.get(); "
+                "var traceObject = saved === key ? other.value : 0;",
+            ),
+            17,
+            {"traceMissing": 0, "traceNumber": 0, "traceObject": 64},
+        ),
+        (
+            "missing_field",
+            source.replace(object_read, "var traceObject = saved === key ? saved.missing : 0;"),
+            16,
+            {"traceMissing": 0, "traceNumber": 0, "traceObject": "undefined"},
+        ),
+        (
+            "scalar_guard",
+            source.replace(object_read, "var traceObject = saved === 64 ? saved.value : 0;"),
+            16,
+            {"traceMissing": 0, "traceNumber": 0, "traceObject": 0},
+        ),
+    ):
+        add("returned_fields_" + name, changed, calls, functions=5)
+        rows["nested_map_returned_fields_" + name].update(
+            expected_trace=True,
+            observations=observations,
+        )
     return rows
 
 
@@ -852,6 +933,11 @@ def mixed_child_observer(source, row):
     trace = ok ? 1 : 0;
 })();
 """
+    if row.get("entry_fields"):
+        observed = observed.replace(
+            "let ok = set(64)",
+            "let ok = traceMissing === 0 && traceNumber === 0 && traceObject === 64 && set(64)",
+        )
     if kind == "returned":
         observed = observed.replace(
             "const saved = child.get('value');", "const saved = get();"
@@ -1759,6 +1845,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 )
             if row.get("mixed_child_kind") == "returned":
                 replacements.append((" || null;", ";"))
+        replacements.extend(row.get("entry_field_mutations", ()))
         for index, (old, replacement) in enumerate(replacements):
             assert row["source"].count(old) == 1, (name, old)
             blinded = args.work / f"{name}-blinded-{index}.js"
@@ -1869,6 +1956,12 @@ def check_nested_maps(args, node, reference, compilers, nm):
             )
             if owned.VM.search(cpp) or signature not in cpp:
                 raise RuntimeError(f"{name}/{mode}: lost typed standalone nested Map output")
+            if (
+                row.get("entry_fields")
+                and len(re.findall(r"\bctnative::object_get_field_76616c7565\(", cpp))
+                != row["entry_fields"]
+            ):
+                raise RuntimeError(f"{name}/{mode}: lost an evaluated guarded field read")
             generated = args.work / f"{name}.{mode}.cpp"
             generated.write_text(cpp)
             source = args.work / f"{name}.{mode}.lifetime.cpp"
@@ -1928,6 +2021,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
             "nested_map_mixed_child_identity",
             "nested_map_mixed_child_replace",
             "nested_map_mixed_child_returned_identity",
+            "nested_map_returned_fields_same",
         }:
             check_budgets(args, ir, config, name, functions=functions)
 
