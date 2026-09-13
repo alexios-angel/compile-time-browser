@@ -317,7 +317,17 @@ void append_compound(std::string & out, const style::compound & part, const atom
     // §6.7 serialises `:before` as `::before`.
     if (part.pseudo_element) {
         out += "::";
-        out += ident(atoms.text(part.pseudo_element));
+        // `highlight(name)` is stored as one atom (selector.cpp): the function
+        // name and its identifier argument serialise as two identifiers.
+        const std::string_view text = atoms.text(part.pseudo_element);
+        if (const std::size_t paren = text.find('('); paren != std::string_view::npos) {
+            out += ident(text.substr(0, paren));
+            out += '(';
+            out += ident(text.substr(paren + 1, text.size() - paren - 2));
+            out += ')';
+        } else {
+            out += ident(text);
+        }
     }
 }
 

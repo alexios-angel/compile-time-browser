@@ -211,9 +211,21 @@ void test_flat_tree_and_pseudo_arguments() {
                     ['::highlight()', '::highlight(1)', '::highlight(name)a', ':highlight(name)',
                      '::picker(div)', '::before(x)', '::highlight (name)']
                         .map(parses).join());
+        // getComputedStyle-pseudo: a rule for `::highlight(name)` IS the
+        // answer for that pseudo-element, and not for another argument.
+        const sheet = document.createElement('style');
+        sheet.textContent = '#host::highlight(name) { color: rgb(0, 128, 0) }'
+            + ' #host::view-transition-old(x) { color: rgb(0, 0, 128) }';
+        document.head.appendChild(sheet);
+        console.log('hl=' + getComputedStyle(host, '::highlight(name)').color + '|' +
+                    getComputedStyle(host, '::highlight(other)').color + '|' +
+                    getComputedStyle(host, '::view-transition-old(x)').color + '|' +
+                    document.styleSheets[0].cssRules[0].selectorText);
         </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "flat="), std::string{"flat=true,false,true,false,true"});
+    CHECK_EQ(logged(page, "hl="),
+             std::string{"hl=rgb(0, 128, 0)|rgb(0, 0, 0)|rgb(0, 0, 128)|#host::highlight(name)"});
     CHECK_EQ(logged(page, "fn="),
              std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
