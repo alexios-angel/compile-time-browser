@@ -6,6 +6,54 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Monorepo review fixes and shared browser cores, 2026-09-13 UTC
+
+Continued clean **ec5b3060**, resuming review **c0259f2a** at the user's request to
+implement its findings. Sixteen focused implementation commits on
+`codex-review-fixes-20260913` finish the eight correctness/tooling fixes, three
+architecture follow-ups and five small simplifications. The [review resolution](reviews/2026-09-13-monorepo.md) maps every finding to its commit and validation.
+No push. No native admission increase is claimed.
+
+Core shutdown/capacity **e74f3d5a**, Canvas/Raster arithmetic **8ffe12b4**, HTTP
+cap failures **b5e52c2d**, opened-stream asset reads **3198903b**, packaging close
+failures **2d891f7b**, remote baseline identity **3935aac0** and comparison deadlines
+**6d9fe47b** have regressions. **87a73e75** registers the Python checks in CTest.
+The five equivalent cleanups remove 46 source lines; capture removal still uses
+absolute target nesting, and Brew's GLM dependency remains.
+
+**da27a512** moves shadow identity, attachment and composed root queries into
+`document` / `read_txn`; bindings are adapters. **275642d0** moves easing and
+interpolation into public Style; Promise/VM state stays in the adapter.
+**d499b068** uses the existing CSS integer tokenizer and clamps large positive
+step counts before narrowing, after Chromium caught an incorrect proposed rejection.
+**06bff4cf** shares positional/flex shorthand assignment and names in Style core;
+CSSOM/cascade ownership, validation timing, aliases and other differing policies
+remain intact. These APIs are available to native callers without Script.
+
+Measured gate: **1088-step build / 24/24 focused CTests in 1.56s**; full standard
+**548/548 CTests in 1164.19s**, including **167/167 lit in 827.68s**. After the
+Chromium-driven easing correction: **201-step rebuild / 176/176 browser tests in
+66.00s**, packaging **1/1 in 0.31s**; ASan/UBSan **3/3 in 0.67s** for Core/shadow/
+easing and TSan **1/1 in 2.17s** for Core. All 1408 final inputs match isolated
+and devbox; final Core/DOM/Style client binaries contain no Script symbols.
+Stable format **820 C++ / 88 Python / 33 web PASS**; bundled retains the same
+9 baseline files / 26 diagnostics. Live Chromium startup/evaluation/timeout cleanup
+and the real remote baseline collector also pass. Full WPT/test262 scores were not
+remeasured; the review records the extreme Canvas rectangle's Chrome difference.
+Evidence: `/tmp/ctcompile-review-fixes/`.
+
+Fresh full Bootstrap remains **19/574, zero of 43 globals resolved**, both policies,
+no skipped/pruned functions. Native DOM remains **10 sources / 28 refusals**.
+Escape remains **895 observed sites / zero violations / 39 of 172 precision**.
+
+**Exact next native boundary:** nonmovable generated atoms/document/Data ownership,
+with member/direct session calls that cannot escape independently. Retained DOM
+keys must preserve document plus node identity, detachment and equal-bit foreign
+nodes. Then original Button/BaseComponent/Config construction and disposal.
+**Next escape boundary:** original zero/+1 induction under a strict same-stable-array
+length guard before bounded repeated-block execution; generic facts still need a
+current-IR native consumer. This review maintenance does not complete those steps.
+
 ## Native attribute operations and bounded Number indices, 2026-09-13 UTC
 
 Continued clean **03fa27f6**, resuming the native browser boundary in its latest
