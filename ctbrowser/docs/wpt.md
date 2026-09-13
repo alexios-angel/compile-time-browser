@@ -741,7 +741,7 @@ Fetched by `tools/wpt/fetch-wpt.sh` into `~/.cache/wpt` (`$WPT_DIR` overrides),
 |---|---|
 | pin | `3f6b09ae3ed55280074645ce38e9002f52fc60a8` |
 | where | `~/.cache/wpt`, outside the source tree |
-| size | ~47 MB, 2,465 files on disk out of WPT's 162,834 |
+| size | ~71 MB, 10,601 files on disk out of WPT's 162,834 (2,465 and 13 MB before the widening of 2026-09-13) |
 | verify | `tools/wpt/fetch-wpt.sh --verify` — checks the SHA *and* that the sparse patterns matched something |
 
 Vendoring it was never on the table: WPT is ~1.5 million files, it changes every
@@ -749,6 +749,27 @@ day, and what has to be reproducible is the **commit**, not a copy of the bytes.
 `~/.cache` rather than `build/` because a reconfigure wipes the build tree and
 re-downloading a corpus because somebody deleted a `CMakeCache.txt` is a bad
 trade.
+
+**THE WIDENING OF 2026-09-13.** Five suites at 69% with a long tail of features
+said less and less about the engine, so the list grew in two ways. Every CSS
+module's `parsing/` directory, its `inheritance.html` and its `animation/`
+tests are in - the sparse patterns `/css/*/parsing/`, `/css/*/inheritance.html`,
+`/css/*/animation/` are what `--no-cone` is for - which is 1,747 testharness
+files over 60 modules that all go through `css/support/`: the CSS front end
+measured property by property (`test_valid_value`, `test_invalid_value`,
+`test_computed_value` over 415 properties), and every interpolation test that
+drives CSS Transitions, CSS Animations and Web Animations. And twenty more
+whole suites that are mostly testharness and mostly implemented: `css-syntax`,
+`css-variables`, `css-cascade`, `css-conditional`, `css-nesting`, `css-color`,
+`cssom-view`, `selectors`, `mediaqueries`, `html/syntax` (the html5lib
+tree-construction fixtures against the DOM's own tree builder),
+`html/semantics/forms`, `html/webappapis`, `dom/ranges`, `dom/traversal`,
+`dom/lists`, `dom/collections`, `dom/abort`, `shadow-dom`, `custom-elements`,
+`domparsing`, `selection`, `url`, `encoding`. `run-wpt.py`'s own planner
+counts 5,099 runnable tests in the widened checkout against 1,090 before,
+2,593 skipped (reftests, mostly). A module directory taken whole would be
+reftests; a suite for a feature the engine has never heard of would be NOTRUN
+noise - both are still the rule for what is NOT in the list.
 
 **THE CHECKOUT IS SHARED, on the devbox.** One `~/.cache/wpt` serves every agent
 and every worktree on that machine, and it is not covered by the per-directory
