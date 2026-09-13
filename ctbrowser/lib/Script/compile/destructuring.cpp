@@ -127,7 +127,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
                 proto().emit(
                     instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
                 taken.emplace_back(e.text);
-                if (literal && e.c == 2) {
+                if (literal && e.c == 2 && e.b < 0) {
                     emit_write(e.text, item); // shorthand `{a}` binds its own name
                 } else {
                     compile_pattern(e.b, item);

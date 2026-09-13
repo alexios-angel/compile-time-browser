@@ -173,6 +173,16 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t spec = alloc_reg();
         compile_expr(n.a, spec);
+        // `import.source(x)` (c == 1): the source phase, answered by a
+        // hidden native - see import_source_name. `import.defer(x)` (c == 2)
+        // loads like `import(x)` does: the deferral is not observable until
+        // a module graph with side effects asks for it, which is a loader
+        // concern (docs/plans/modules.md), not a compiler one.
+        if (n.c == 1) {
+            emit_iterator_native(import_source_name, dst, spec);
+            release_to(mark);
+            break;
+        }
         // The options argument (13.3.10.1 step 4) is evaluated for its
         // effects and its throw; import attributes themselves are not read.
         if (n.b >= 0) {
@@ -1234,6 +1244,13 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             continue;
         }
         const std::uint16_t v = alloc_reg();
+        if (prop.c == 2 && prop.b >= 0) {
+            // `{ a = 1 }` outside a pattern: the early-error pass refuses it
+            // (13.2.5.1), so this is unreachable from a checked program.
+            fail("`" + std::string{prop.text} + " = ...` in an object literal is only a pattern");
+            release_to(mark);
+            return;
+        }
         if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
         } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {

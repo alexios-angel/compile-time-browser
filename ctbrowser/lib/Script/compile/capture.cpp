@@ -51,7 +51,10 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // mentions is captured exactly as if it had been written inside one.
     // Without this the initialiser reads an unboxed enclosing local and
     // finds undefined. Slot 1 is `b`, which for a field is the initialiser.
-    const bool field_init = n.kind == vp::nk::class_member && n.c == 0 && (n.d & 1) == 0;
+    // A STATIC field or a `static { }` block compiles into the class's
+    // `<static>` function for the same reason (its `this` is the class), so
+    // slot 1 opens a boundary for those too.
+    const bool field_init = n.kind == vp::nk::class_member && (n.c == 0 || n.c == 3);
     const std::array<std::int32_t, 4> slots = child_slots(n);
     for (std::size_t i = 0; i < slots.size(); ++i) {
         tour(slots[i], inner, tick, field_init && i == 1);

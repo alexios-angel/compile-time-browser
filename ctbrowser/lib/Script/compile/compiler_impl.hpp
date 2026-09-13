@@ -942,7 +942,14 @@ public:
     //
     // It is compiled as an ordinary nested function, so an initialiser that
     // mentions an enclosing local captures it as an upvalue like anything else.
-    [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields);
+    // `is_static` is the class's OTHER initialiser, `<static>`: the static
+    // fields and the `static { }` blocks in source order, run once against
+    // the class itself (ClassDefinitionEvaluation step 31). A static field's
+    // `this` is the class and a static block is a function body of its own -
+    // neither is true of code emitted inline in the enclosing frame, which is
+    // where static fields were evaluated before.
+    [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields,
+                                                          bool is_static = false);
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the

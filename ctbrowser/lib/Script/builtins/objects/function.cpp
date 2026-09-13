@@ -294,6 +294,18 @@ void install_dynamic_function(context & cx) {
         const program & kept = c.own_program(std::move(compiled));
         return c.run_nested(kept);
     });
+    // `import.source(x)` - see import_source_name. Nothing here loads: a
+    // source text module has no module source to hand out, so the answer is
+    // a rejection either way, and never a throw (the promise is what the
+    // caller holds).
+    cx.define_native(std::string{import_source_name}, [](context & c, std::span<value> a) {
+        (void)c.to_string(a.empty() ? value::undefined() : a[0]);
+        if (c.failed()) { return value::undefined(); }
+        if (c.throw_pending()) { return c.make_promise(c.take_pending_throw(), true); }
+        return c.make_promise(
+            c.make_error("SyntaxError", "a source text module has no module source to import"),
+            true);
+    });
     // `Function.prototype`, reachable from script rather than only consulted by
     // lookup. `Function.prototype.call.bind(...)` and
     // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the

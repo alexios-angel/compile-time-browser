@@ -296,6 +296,15 @@ struct run_result {
     std::string error;
 };
 
+// `import.source(x)` (13.3.10.1.1 EvaluateImportCall, phase source), as a
+// hidden native the compiler calls: ToString the specifier, then answer a
+// promise REJECTED with the SyntaxError GetModuleSource of a source text
+// module always is (16.2.1.7.2) - or with what the ToString threw. A name a
+// page cannot shadow, like the ones in builtins.hpp; declared here because
+// the compiler and the VM's own builtins share it and this is the header
+// both include.
+inline constexpr std::string_view import_source_name = "__ctbrowser_import_source";
+
 class context {
 public:
     context();
@@ -591,6 +600,17 @@ public:
         if (has_pending_throw_) { return; }
         thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+    // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
+    // that has to CONVERT a throw crossing one of its `call`s - into a rejected
+    // promise, as EvaluateImportCall does with a specifier whose toString
+    // threw. Undefined when nothing is parked.
+    [[nodiscard]] value take_pending_throw() {
+        if (!has_pending_throw_) { return value::undefined(); }
+        has_pending_throw_ = false;
+        const value taken = pending_throw_;
+        pending_throw_ = value::undefined();
+        return taken;
     }
     // The throw `call` parked, thrown again from the native's call site.
     // Answers whether there was one; the caller then continues as after any

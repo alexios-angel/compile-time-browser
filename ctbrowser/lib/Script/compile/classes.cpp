@@ -47,13 +47,24 @@ void compiler_impl::emit_define_own(std::uint16_t target, std::string_view key, 
     release_to(mark);
 }
 
-std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields) {
+std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields,
+                                                       bool is_static) {
     const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
-    out_.functions[index].name = "<fields>";
+    out_.functions[index].name = is_static ? "<static>" : "<fields>";
+    out_.functions[index].is_strict = true; // 15.7.1: all of a class body is strict
 
     frames_.emplace_back();
     frames_.back().proto = index;
+    frames_.back().is_strict = true;
     push_scope();
+    // A static block's `break`, `continue`, `return` and `try` stop at this
+    // boundary exactly as a function body's do - see compile_function_body.
+    std::vector<finally_context> saved_finallies;
+    saved_finallies.swap(finallies_);
+    std::vector<loop_context> saved_loops;
+    saved_loops.swap(loops_);
+    const std::size_t saved_handler_depth = handler_depth_;
+    handler_depth_ = 0;
     // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
     //
     // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open,
@@ -66,6 +77,24 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     in_chain_ = false;
     for (const std::int32_t member : fields) {
         const vp::node & m = at(member);
+        if (m.c == 3) {
+            // `static { ... }`: a body of its own, with its own lexical scope
+            // and its function declarations hoisted to its top (15.7.11
+            // ClassStaticBlockDefinitionEvaluation - the block is a function
+            // body, not a Block).
+            fn().captures = range_of(m.b);
+            push_scope();
+            predeclare_locals(m.b);
+            for (const std::int32_t st : kids(at(m.b))) {
+                if (at(st).kind == vp::nk::func_decl) { compile_stmt(st); }
+            }
+            for (const std::int32_t st : kids(at(m.b))) {
+                if (at(st).kind != vp::nk::func_decl) { compile_stmt(st); }
+            }
+            pop_scope();
+            continue;
+        }
+        fn().captures = range_of(m.b);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t self = alloc_reg();
         proto().emit(instruction{op::load_this, self});
@@ -86,6 +115,11 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             // set_prop would be the brand check store_property makes, on an
             // instance that does not carry the element yet.
             emit_define_own(self, member_key(m.text), v, false);
+        } else if (is_static && (m.text == "name" || m.text == "length")) {
+            // A static `name`/`length` shadows the constructor's own
+            // read-only one: DEFINED, not set (see define_own_name), and
+            // enumerable because it is a field.
+            emit_define_own(self, m.text, v, true);
         } else {
             proto().emit(instruction{op::set_prop, self, member_operand(m.text), v});
         }
@@ -97,6 +131,9 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     frames_.pop_back();
     in_chain_ = saved_in_chain;
     optional_exits_.swap(saved_exits);
+    finallies_.swap(saved_finallies);
+    loops_.swap(saved_loops);
+    handler_depth_ = saved_handler_depth;
     return index;
 }
 
@@ -246,7 +283,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.text == "constructor" && m.c == 1) { continue; }
-        if (m.c == 0) { continue; } // fields: instance ones above, static ones below
+        if (m.c == 0 || m.c == 3) { continue; } // fields and static blocks: below
         const bool computed = (m.d & 2) != 0 && m.a >= 0;
         if (m.c == 2) {
             // An accessor. It goes on the prototype like a method - or on
@@ -329,27 +366,21 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         proto().emit(instruction{op::move, klass, dst});
         proto().emit(instruction{op::call, callee, 1});
     }
+    // THE STATIC FIELDS AND STATIC BLOCKS, in source order, as one `<static>`
+    // function called once with the class as `this` - which is what makes
+    // `static x = this.y` read the class and `static { }` a body of its own.
+    // Its home object is the class, so `super.m()` in a static block finds
+    // the parent constructor's methods, as it does from a static method.
+    std::vector<std::int32_t> static_members;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.c != 0 || (m.d & 1) == 0) { continue; } // a static field
-        if (m.b >= 0) {
-            compile_named_expr(m.b, slot, (m.d & 2) != 0 ? "" : m.text);
-        } else {
-            proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
-        }
-        if ((m.d & 2) != 0 && m.a >= 0) { // `static [key] = init`
-            const std::uint32_t inner = reg_mark();
-            const std::uint16_t key = alloc_reg();
-            compile_expr(m.a, key);
-            proto().emit(instruction{op::set_index, dst, key, slot});
-            release_to(inner);
-        } else if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
-            emit_define_own(dst, m.text, slot, true); // as above, enumerable: a field
-        } else if (m.text.starts_with('#')) {
-            emit_define_own(dst, member_key(m.text), slot, false); // see the instance path
-        } else {
-            proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
-        }
+        if (m.c == 3 || (m.c == 0 && (m.d & 1) != 0)) { static_members.push_back(member); }
+    }
+    if (!static_members.empty()) {
+        const std::uint32_t init = compile_field_initialiser(static_members, true);
+        proto().emit(instruction::with_bx(op::closure, slot, init));
+        proto().emit(instruction{op::set_prop, slot, name_operand("__home"), dst});
+        proto().emit(instruction{op::call_receiver, slot, 0, dst});
     }
     release_to(mark);
     --class_body_depth_;
