@@ -28,6 +28,7 @@ struct analyzer {
     llvm::DenseMap<mlir::Operation *, HostCallableEdge> capturedCalls;
     llvm::DenseSet<mlir::Operation *> capturedOperations;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> capturedResults;
+    llvm::DenseSet<mlir::Operation *> mutableScalarReads;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
@@ -49,6 +50,7 @@ struct analyzer {
         mlir::Operation * consumer = nullptr, unsigned depth = 0,
         std::vector<mlir::Value> * dependencies = nullptr);
     std::optional<HostScalarGlobalRead> scalarGlobalRead(ctjs::LoadGlobalOp read);
+    bool scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family, HostCapturedMap & result);
     std::optional<HostObjectGlobalRead> objectGlobalRead(ctjs::LoadGlobalOp read);
     std::optional<std::vector<HostObjectGlobalRead>> objectGlobalReads(ctjs::CreateObjectOp made);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,

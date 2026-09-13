@@ -24,8 +24,12 @@ bool admission::ownedGlobalOperation(mlir::Operation * operation) {
     auto table = llvm::dyn_cast_or_null<MethodTableType>(field);
     const bool ownedTable =
         root->methodTable && table && table.getSite() == methodTableName(root->methodTable->table);
+    const auto closure = llvm::dyn_cast_or_null<ClosureType>(field);
+    auto callbackFunction = root->scalarCallback;
+    const bool callback =
+        callbackFunction && closure && closure.getTarget() == callbackFunction.getSymName();
     if (!ownedGlobalValue(made.getResult()) ||
-        !(root->methodTable ? ownedTable : carrierOf(field) == carrier::number)) {
+        !(root->methodTable ? ownedTable : (callback || carrierOf(field) == carrier::number))) {
         return refuse(
             root->methodTable
                 ? "owned global method field needs its proved owning table schema"

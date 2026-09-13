@@ -532,6 +532,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         result.parameters.push_back({member, {}});
     }
+    if (!scalarCallbacks(result.parameters, result)) { return {}; }
     // Once any sibling can store a local or caller-owned object, unknown Map
     // reads cannot inherit the primitive-only contents guarantee. Inspect the
     // complete family before proving even one invocation result. This only
@@ -773,6 +774,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 scratch.childLeafContents = result.childLeafContents;
                 scratch.outerStringKeys = result.outerStringKeys;
                 scratch.childStringKeys = result.childStringKeys;
+                scratch.scalarCallbacks = result.scalarCallbacks;
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives)) {
@@ -949,6 +951,9 @@ PrimitiveAlternatives analyzer::entryCategories(
         return known->second.categories();
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(definition)) {
+        if (mutableScalarReads.contains(load)) {
+            return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
+        }
         const auto & stores = globals[load.getName()];
         if (stores.empty() && llvm::is_contained(contract.undefinedBindings, load.getName())) {
             return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>());

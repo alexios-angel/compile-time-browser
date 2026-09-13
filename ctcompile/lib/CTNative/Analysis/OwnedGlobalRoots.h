@@ -39,6 +39,7 @@ struct OwnedGlobalRoot {
     std::string binding;
     std::string property;
     std::optional<OwnedGlobalMethodTable> methodTable;
+    ctjs::FuncOp scalarCallback{};
 };
 
 // Borrows the current IR and validates the driver's exact fingerprint. Rebuild
@@ -62,6 +63,7 @@ public:
         return checkedScalarReads;
     }
     [[nodiscard]] const HostScalarGlobalRead * scalarRead(ctjs::LoadGlobalOp read) const;
+    [[nodiscard]] bool mutableScalarRead(ctjs::LoadGlobalOp read) const;
     // Empty keys keep their original global store/load operations. Only the
     // complete Map-family proof supplies these independent identity edges.
     [[nodiscard]] llvm::ArrayRef<HostObjectGlobalRead> objectReads() const {

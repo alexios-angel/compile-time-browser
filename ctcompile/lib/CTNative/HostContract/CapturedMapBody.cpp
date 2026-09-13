@@ -33,6 +33,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     llvm::DenseSet<mlir::Value> stringSnapshotElements;
     llvm::DenseSet<mlir::Operation *> concatenations;
     llvm::DenseSet<mlir::Operation *> snapshotReads;
+    llvm::DenseSet<mlir::Operation *> callbackReads, callbackCalls;
+    for (const auto & callback : result.scalarCallbacks) {
+        for (ctjs::LoadGlobalOp load : callback.loads) {
+            if (!step()) { return false; }
+            callbackReads.insert(load);
+        }
+        for (ctjs::GetPropertyOp read : callback.reads) {
+            if (!step()) { return false; }
+            callbackReads.insert(read);
+        }
+        for (mlir::Operation * call : callback.calls) {
+            if (!step()) { return false; }
+            callbackCalls.insert(call);
+        }
+    }
     std::optional<map_detail::snapshotCopies> copies;
     const auto prepareSnapshots = [&] {
         if (copies) { return true; }
@@ -430,6 +445,27 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             // joins. No later operation may use it or perform another effect.
             if (frameExited && !llvm::isa<ctjs::ReturnOp, mlir::scf::YieldOp>(operation)) {
                 return false;
+            }
+            if (callbackReads.contains(&operation) || callbackCalls.contains(&operation)) {
+                for (mlir::Value operand : operation.getOperands()) {
+                    if (!step() || !dominance.dominates(operand, &operation)) { return false; }
+                }
+                if (callbackCalls.contains(&operation)) {
+                    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                    auto args =
+                        direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
+                    if (args.size() != 1 || alternatives.lookup(args.front()).tag() !=
+                                                mlir::TypeID::get<ctjs::StringAttr>()) {
+                        return false;
+                    }
+                    // The separate complete scalar effect proof excludes Map
+                    // access/reentry, so this call preserves current Map facts.
+                    primitives.insert(operation.getResult(0));
+                    alternatives.try_emplace(
+                        operation.getResult(0),
+                        PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>()));
+                }
+                continue;
             }
             if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
                 if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,

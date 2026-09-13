@@ -109,7 +109,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         liftReport lifted;
         if (hostContract) {
             const OwnedGlobalRoots original(module, *hostContract, hostMaxSteps);
-            if (original.proved() && original.roots().size() == 1) {
+            if (original.proved() && !original.roots().empty()) {
                 // Prepare only the checked table and environment, speculatively.
                 // A stale input never reaches this rewrite. Its internally
                 // derived contract is usable only if the complete live owner

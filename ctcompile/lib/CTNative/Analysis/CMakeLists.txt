@@ -16,6 +16,7 @@ add_mlir_library(CTNativeAnalysis
   ../HostContract/Contract.cpp
   ../HostContract/Values.cpp
   ../HostContract/CapturedMapBody.cpp
+  ../HostContract/ScalarCallbacks.cpp
   ../HostContract/Slots.cpp
   ../HostContract/Analysis.cpp
   ../HostContract/PrefixAnalysis.cpp

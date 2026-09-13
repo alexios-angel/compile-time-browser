@@ -27,8 +27,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     auto * factoryCall = field.getValue().getDefiningOp();
     auto directFactory = llvm::dyn_cast<ctjs::CallDirectOp>(factoryCall);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    const auto capture = host.callables().empty() ? std::optional<HostCapturedMap>{}
-                                                  : host.callables().front().capturedMap;
+    auto capture = host.callables().empty() ? std::optional<HostCapturedMap>{}
+                                            : host.callables().front().capturedMap;
     // An indirect factory has already passed the complete live host proof:
     // its unique wrapper callback produces this exact captured allocation.
     auto factory = directFactory ? directFactory.getTarget()
@@ -90,6 +90,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->snapshotOperations != capture->snapshotOperations ||
+                         edge.capturedMap->scalarCallbacks != capture->scalarCallbacks ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
@@ -149,6 +150,48 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             if (!methodIndices.contains(closure)) {
                 reject("owned global Map family has another captured closure");
                 return;
+            }
+        }
+    }
+
+    llvm::DenseSet<mlir::Operation *> callbackFunctions, callbackOperations;
+    if (capture) {
+        for (auto & callback : capture->scalarCallbacks) {
+            if (!spend()) { return; }
+            if (callback.function == entry || callback.function == factory ||
+                callback.function == wrapper || methodFunctions.contains(callback.function) ||
+                !callbackFunctions.insert(callback.function).second ||
+                callback.owner->getParentOp() != entry ||
+                callback.initialization->getParentOp() != entry ||
+                callback.write->getParentOp() != entry ||
+                callback.closure->getParentOp() != entry ||
+                callback.initialization.getValue() != callback.owner.getResult() ||
+                callback.write.getObject() != callback.owner.getResult() ||
+                callback.write.getValue() != callback.closure.getResult()) {
+                reject("scalar callback disagrees with its complete source ownership proof");
+                return;
+            }
+            for (mlir::Operation * operation : callback.operations) {
+                if (!spend()) { return; }
+                callbackOperations.insert(operation);
+            }
+            for (mlir::Operation * operation :
+                 {callback.owner.getOperation(), callback.initialization.getOperation(),
+                  callback.write.getOperation(), callback.closure.getOperation()}) {
+                if (!spend()) { return; }
+                callbackOperations.insert(operation);
+            }
+            for (ctjs::LoadGlobalOp load : callback.loads) {
+                if (!spend()) { return; }
+                callbackOperations.insert(load);
+            }
+            for (ctjs::GetPropertyOp read : callback.reads) {
+                if (!spend()) { return; }
+                callbackOperations.insert(read);
+            }
+            for (mlir::Operation * call : callback.calls) {
+                if (!spend()) { return; }
+                callbackOperations.insert(call);
             }
         }
     }
@@ -446,7 +489,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             ++functions;
             if ((function != entry && function != factory && !methodFunctions.contains(function) &&
-                 function != wrapper) ||
+                 function != wrapper && !callbackFunctions.contains(function)) ||
                 function->getParentOp() != module || !llvm::hasSingleElement(function.getBody()) ||
                 function->hasAttr("ctjs.skipped")) {
                 reject("owned global method table requires its exact straight-line source "
@@ -457,7 +500,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             // inside a method. Allocation, publication and entry calls retain
             // their unconditional source-order requirements below.
             const bool capturedBody =
-                capture && methodFunctions.contains(operation->getParentOfType<ctjs::FuncOp>());
+                capture && (methodFunctions.contains(operation->getParentOfType<ctjs::FuncOp>()) ||
+                            callbackFunctions.contains(operation->getParentOfType<ctjs::FuncOp>()));
             // Only pure observation regions around checked owning field reads
             // are admitted at entry. Calls, allocation and publication still
             // require their unconditional source positions.
@@ -487,7 +531,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         return refusal.empty() ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (!refusal.empty()) { return; }
-    if (functions != methods.size() + (wrapper ? 3u : 2u)) {
+    if (functions != methods.size() + callbackFunctions.size() + (wrapper ? 3u : 2u)) {
         reject("owned global method table requires its exact source function chain");
         return;
     }
@@ -499,6 +543,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     ctjs::ReturnOp wrapperReturn;
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
+        if (callbackOperations.contains(operation)) { continue; }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation);
             made && (!capture || (made != capture->allocation && !childMaps.contains(made)))) {
             reject("owned global method table has another constructor");
@@ -820,7 +865,41 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     committed[owner] = 0;
     committed[initialization] = 0;
     committed[field] = 0;
-    checked.push_back(std::move(result));
+    llvm::SmallVector<OwnedGlobalRoot, 1> roots;
+    roots.push_back(std::move(result));
+    if (capture) {
+        for (auto & callback : capture->scalarCallbacks) {
+            if (!spend()) { return; }
+            const auto index = static_cast<unsigned>(roots.size());
+            OwnedGlobalRoot root{callback.owner,
+                                 callback.initialization,
+                                 {},
+                                 callback.write,
+                                 {},
+                                 callback.initialization.getName().str(),
+                                 ctjs::constantKey(callback.write.getKey()).str(),
+                                 std::nullopt,
+                                 callback.function};
+            root.loads.append(callback.loads.begin(), callback.loads.end());
+            root.reads.append(callback.reads.begin(), callback.reads.end());
+            for (mlir::Operation * operation :
+                 {callback.owner.getOperation(), callback.initialization.getOperation(),
+                  callback.write.getOperation()}) {
+                if (!spend()) { return; }
+                committed[operation] = index;
+            }
+            for (ctjs::LoadGlobalOp load : callback.loads) {
+                if (!spend()) { return; }
+                committed[load] = index;
+            }
+            for (ctjs::GetPropertyOp read : callback.reads) {
+                if (!spend()) { return; }
+                committed[read] = index;
+            }
+            roots.push_back(std::move(root));
+        }
+    }
+    checked = std::move(roots);
     edges = std::move(committed);
     checkedScalarReads = std::move(scalarReads);
     scalarEdges = std::move(scalarIndex);

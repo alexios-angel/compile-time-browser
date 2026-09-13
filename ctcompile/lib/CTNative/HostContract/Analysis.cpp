@@ -318,6 +318,25 @@ std::string analyzer::environmentProblem() {
             for (mlir::Operation * snapshot : capture.snapshotOperations) {
                 if (step()) { capturedOperations.insert(snapshot); }
             }
+            for (const auto & callback : capture.scalarCallbacks) {
+                for (mlir::Operation * allowed : callback.operations) {
+                    if (step()) { capturedOperations.insert(allowed); }
+                }
+                for (ctjs::LoadGlobalOp load : callback.loads) {
+                    if (step()) { capturedOperations.insert(load); }
+                }
+                for (ctjs::GetPropertyOp read : callback.reads) {
+                    if (step()) { capturedOperations.insert(read); }
+                }
+                for (mlir::Operation * call : callback.calls) {
+                    if (step()) { capturedOperations.insert(call); }
+                }
+                for (const auto & global : callback.globals) {
+                    for (ctjs::LoadGlobalOp read : global.reads) {
+                        if (step()) { mutableScalarReads.insert(read); }
+                    }
+                }
+            }
             for (ctjs::ConstructOp child : capture.childMaps) {
                 if (step()) { capturedOperations.insert(child); }
                 if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }

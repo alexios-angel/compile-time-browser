@@ -201,6 +201,19 @@ const HostScalarGlobalRead * OwnedGlobalRoots::scalarRead(ctjs::LoadGlobalOp rea
     return found == scalarEdges.end() ? nullptr : &checkedScalarReads[found->second];
 }
 
+bool OwnedGlobalRoots::mutableScalarRead(ctjs::LoadGlobalOp read) const {
+    if (!proved()) { return false; }
+    for (const auto & root : checked) {
+        if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+        for (const auto & callback : root.methodTable->capturedMap->scalarCallbacks) {
+            for (const auto & global : callback.globals) {
+                if (llvm::is_contained(global.reads, read)) { return true; }
+            }
+        }
+    }
+    return false;
+}
+
 const HostObjectGlobalRead * OwnedGlobalRoots::objectGlobal(mlir::Operation * operation) const {
     const auto found = objectEdges.find(operation);
     return found == objectEdges.end() ? nullptr : &checkedObjectReads[found->second];

@@ -83,6 +83,40 @@ struct HostChildMapEntry {
     }
 };
 
+// A Number category invariant over one initialized source global and every
+// subsequent write. Values and effects remain live across future invocations.
+struct HostMutableScalarGlobal {
+    ctjs::StoreGlobalOp initialization;
+    std::vector<ctjs::StoreGlobalOp> writes;
+    std::vector<ctjs::LoadGlobalOp> reads;
+    bool operator==(const HostMutableScalarGlobal & other) const {
+        return initialization == other.initialization && writes == other.writes &&
+               reads == other.reads;
+    }
+};
+
+// A fixed own callable slot, with a complete scalar-only body/effect census.
+// This source callback cannot reach the captured Map or its caller's objects.
+// Its calls are distinct from exported methods and pure snapshot operations.
+struct HostScalarCallback {
+    ctjs::CreateObjectOp owner;
+    ctjs::StoreGlobalOp initialization;
+    ctjs::SetPropertyOp write;
+    ctjs::CreateClosureOp closure;
+    ctjs::FuncOp function;
+    std::vector<ctjs::LoadGlobalOp> loads;
+    std::vector<ctjs::GetPropertyOp> reads;
+    std::vector<mlir::Operation *> calls;
+    std::vector<mlir::Operation *> operations;
+    std::vector<HostMutableScalarGlobal> globals;
+    bool operator==(const HostScalarCallback & other) const {
+        return owner == other.owner && initialization == other.initialization &&
+               write == other.write && closure == other.closure && function == other.function &&
+               loads == other.loads && reads == other.reads && calls == other.calls &&
+               operations == other.operations && globals == other.globals;
+    }
+};
+
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
@@ -130,6 +164,7 @@ struct HostCapturedMap {
     // Confined immediate key copies and read-only length/index observations.
     // Element reads permit equality; String-key facts also permit checked Concat.
     std::vector<mlir::Operation *> snapshotOperations{};
+    std::vector<HostScalarCallback> scalarCallbacks{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

@@ -250,7 +250,7 @@ void closureLifter::discardNativeSourceFacts() {
 
 std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const OwnedGlobalRoots & globals, const HostContract & contract, unsigned maxSteps) {
-    if (!globals.proved() || globals.roots().size() != 1 || !globals.roots().front().methodTable) {
+    if (!globals.proved() || globals.roots().empty() || !globals.roots().front().methodTable) {
         return std::nullopt;
     }
     discardNativeSourceFacts();
@@ -281,7 +281,7 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
         HostContract transformed = contract;
         transformed.moduleSha256 = hostContractFingerprint(module);
         prepared.emplace(module, transformed, maxSteps);
-        if (!prepared->proved() || prepared->roots().size() != 1 ||
+        if (!prepared->proved() || prepared->roots().empty() ||
             !prepared->roots().front().methodTable) {
             return std::nullopt;
         }
@@ -289,6 +289,14 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const auto & current = prepared ? *prepared : globals;
     returnedMethodTableCensus(&current);
     const auto table = *current.roots().front().methodTable;
+    if (table.capturedMap) {
+        for (const auto & callback : table.capturedMap->scalarCallbacks) {
+            auto & plan = returnedClosures[callback.closure];
+            plan.calls.assign(callback.calls.begin(), callback.calls.end());
+            plan.stored = true;
+            if (whyNotReturnedClosure(callback.closure)) { return std::nullopt; }
+        }
+    }
     for (const auto & method : table.methods) {
         auto made = method.closure;
         const auto plan = returnedClosures.find(made);
@@ -306,6 +314,11 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
             lift(method.function, {method.closure}, out, true);
         } else {
             liftReturnedClosure(method.closure, method.function, 0, 0, out, true);
+        }
+    }
+    if (table.capturedMap) {
+        for (const auto & callback : table.capturedMap->scalarCallbacks) {
+            liftReturnedClosure(callback.closure, callback.function, 0, 1, out, true);
         }
     }
     if (table.capturedMap) {
