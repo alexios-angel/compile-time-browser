@@ -316,10 +316,38 @@ void test_a_page_without_an_observer_is_untouched() {
              "x,1;function,function");
 }
 
+// A node of ANOTHER document in the realm - a DOMParser's here - is observed
+// by that document's bindings and delivered through the page's: the records
+// name that document's nodes, takeRecords works, and disconnect stops it
+// (MutationObserver-textContent.html's CDATASection case).
+void test_a_second_documents_node_is_observable() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var xml = new DOMParser().parseFromString('<root></root>', 'text/xml');"
+                  "var el = xml.createElement('e');"
+                  "el.appendChild(xml.createCDATASection('foo'));"
+                  "var m = new MutationObserver(function (records) {"
+                  "  alert('n=' + records.length + ' ' + records[0].removedNodes[0].nodeType +"
+                  "        '>' + records[0].addedNodes[0].nodeType + ' ' +"
+                  "        (records[0].target === el) + ' ' +"
+                  "        (records[0].addedNodes[0].ownerDocument === xml));"
+                  "});"
+                  "m.observe(el, {childList: true});"
+                  "el.textContent = 'foo';"
+                  "</script><script>"
+                  "el.setAttribute('a', '1');"
+                  "alert('taken=' + m.takeRecords().length);"
+                  "m.disconnect();"
+                  "el.textContent = 'bar';"
+                  "alert('after=' + m.takeRecords().length);"
+                  "</script></body></html>"),
+             "n=1 4>3 true true;taken=0;after=0");
+}
+
 } // namespace
 
 int main() {
     test_observe_validates_its_options();
+    test_a_second_documents_node_is_observable();
     test_one_child_list_record();
     test_a_record_names_the_siblings_of_what_changed();
     test_two_attribute_writes_batch_into_one_callback();
