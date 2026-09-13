@@ -1,8 +1,9 @@
-"""Preserved Data recorder refusals and captured Map snapshot execution."""
+"""Preserved Data sources, recorder effects and captured Map snapshot execution."""
 
 import hashlib
 import json
 import os
+import re
 import subprocess
 
 from .driver_common import (
@@ -152,7 +153,74 @@ def recorder_cases():
         source = row["source"].encode()
         assert (len(source), hashlib.sha256(source).hexdigest()) == pins[name], name
         assert row["source"].startswith(DATA_PREFIX), name
-        row.update(functions=7, admitted=False)
+        row.update(functions=7, admitted=name != "recorder_exact_data", recorder=True)
+        if name != "recorder_single":
+            row["max_steps"] = 1_000_000
+    return cases
+
+
+def recorder_refusals():
+    original = recorder_cases()["recorder_single"]
+    callback = "    traceErrorCount = traceErrorCount + 1;"
+    replacement = "function(message) { traceErrorCount = 99; }"
+    cases = {}
+    for name, source, functions in (
+        ("slot_replaced", SINGLE_CONFLICT + f"console.error = {replacement};\n", 8),
+        ("global_replaced", SINGLE_CONFLICT + f"console = {{error: {replacement}}};\n", 8),
+        (
+            "alias_replaced",
+            SINGLE_CONFLICT + f"var alias = console; alias.error = {replacement};\n",
+            8,
+        ),
+        ("detached_callback", SINGLE_CONFLICT + "var detached = console.error;\n", 7),
+        (
+            "entry_conditional_call",
+            SINGLE_CONFLICT
+            + 'if (traceErrorCount === 0) { host.slot.remove(element, "bs.alert"); }\n',
+            7,
+        ),
+        (
+            "entry_conditional_store",
+            SINGLE_CONFLICT + "if (traceErrorCount === 0) { traceExtra = 1; }\n",
+            7,
+        ),
+        (
+            "unsafe_sibling",
+            SINGLE_CONFLICT.replace(
+                "        e = {\n",
+                "        e = {\n" f"            poison() {{ console.error = {replacement}; }},\n",
+            ),
+            9,
+        ),
+        (
+            "inactive_message",
+            SINGLE_CONFLICT.replace('bs.alert." ? 1 : 0;', 'bs.alert." ? 1 : "poison";'),
+            7,
+        ),
+        (
+            "before_initialization",
+            "var traceBefore = traceErrorCount === undefined ? 1 : 0;\n" + SINGLE_CONFLICT,
+            7,
+        ),
+    ):
+        assert source != SINGLE_CONFLICT, name
+        cases["recorder_" + name] = dict(original, source=source, functions=functions)
+    for name, effect in (
+        ("reentry", 'host.slot.remove(element, "bs.alert");'),
+        ("inactive_count", 'traceErrorCount = "poison";'),
+        ("inactive_unknown", "unknown(message);"),
+        ("intrinsic_write", "Map = 0;"),
+    ):
+        cases["recorder_" + name] = dict(
+            original,
+            source=SINGLE_CONFLICT.replace(
+                callback, f'    if (message === "never") {{ {effect} }}\n' + callback
+            ),
+        )
+    cases["recorder_before_initialization"]["values"] = dict(original["values"], traceBefore=1)
+    for row in cases.values():
+        # A completed source rejection must not be disguised as a budget cutoff.
+        row.update(admitted=False, max_steps=1_000_000)
     return cases
 
 
@@ -618,9 +686,157 @@ int main() {{
 """
 
 
-def template_lifetime(args, cpp, name, mode, expected, compilers, nm, child):
+def recorder_future_body():
+    return """    remove(element, "bs.alert");
+    remove(element, "bs.collapse");
+    const before = traceErrorCount;
+    let key = "bs.alert";
+    set(element, key, 42);
+    key = "changed caller storage";
+    set(element, "bs.alert", 43);
+    if (get(element, "bs.alert") !== 43 || traceErrorCount !== before) { traceFuture = 0; }
+    set(element, "bs.collapse", 99);
+    if (get(element, "bs.alert") !== 43 || get(element, "bs.collapse") !== null ||
+        traceErrorCount !== before + 1 || traceErrorMessage !== 1) { traceFuture = 0; }
+    remove(element, "bs.alert");
+    if (get(element, "bs.alert") !== null) { traceFuture = 0; }
+    key = "future-" + i + "-long-owned-recorder-key";
+    const original = key;
+    set(element, key, 21);
+    key = "";
+    set(element, "bs.alert", 64);
+    if (get(element, original) !== 21 || get(element, "bs.alert") !== null ||
+        traceErrorCount !== before + 2 || traceErrorMessage !== 0) { traceFuture = 0; }
+    remove(element, original);
+    if (get(element, original) !== null) { traceFuture = 0; }
+"""
+
+
+def recorder_future_source():
+    return (
+        "var traceFuture = 1;\n(function(element) {\n"
+        "const set = host.slot.set, get = host.slot.get, remove = host.slot.remove;\n"
+        "host = {};\nfor (let i = 0; i < 1024; ++i) {\n"
+        + recorder_future_body()
+        + "}\n})(element);\n"
+    )
+
+
+def recorder_lifetime_cpp(cpp, values):
+    changed = instrument_leaf_objects(cpp)
+    body = re.sub(
+        r"(get\(element, [^)]+\)) !== (null|[0-9]+)",
+        lambda match: "!ctnative::scalar_strict_equal("
+        + match[1]
+        + ", "
+        + ("ctnative::nullable_scalar::null()" if match[2] == "null" else match[2] + ".0")
+        + ")",
+        recorder_future_body(),
+    )
+    body = (
+        body.replace("!==", "!=")
+        .replace("traceFuture = 0;", "return 124;")
+        .replace("const before =", "const auto before =")
+        .replace("let key =", "std::string key =")
+        .replace("const original =", "const std::string original =")
+        .replace('"future-" + i', '"future-" + std::to_string(i)')
+    )
+    for binding in ("traceErrorCount", "traceErrorMessage"):
+        body = body.replace(binding, f"ctnative::global_number(g_{binding})")
+    changed += (
+        """
+int main() {
+    if (ctnative_test_entry() != 0 || ctn_test_maps.empty()) { return 120; }
+    static_assert(std::is_same_v<decltype(g_traceErrorCount), ctnative::nullable_scalar>);
+    static_assert(std::is_same_v<decltype(g_traceErrorMessage), ctnative::nullable_scalar>);
+    std::weak_ptr recorder_owner_lifetime = g_console;
+    auto error = g_console->error;
+    auto first = g_host;
+    auto table = first->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    auto remove = table->m_remove;
+    auto element = g_element;
+    std::weak_ptr first_lifetime = first;
+    std::weak_ptr table_lifetime = table;
+    std::weak_ptr element_lifetime = element;
+    const auto initial_count = ctnative::global_number(g_traceErrorCount);
+    g_host.reset(); g_element.reset();
+    first.reset();
+    if (!first_lifetime.expired() || table_lifetime.expired()) { return 121; }
+    table.reset();
+    if (!table_lifetime.expired() || ctn_test_maps[0].expired()) { return 122; }
+    for (int i = 0; i < 1024; ++i) {
+"""
+        + body
+        + """    }
+    if (ctnative::global_number(g_traceErrorCount) != initial_count + 2048 ||
+        ctnative::global_number(g_traceErrorMessage) != 0) { return 125; }
+"""
+    )
+    for binding, value in sorted(values.items()):
+        if binding not in {"traceErrorCount", "traceErrorMessage"}:
+            changed += (
+                f"    if (ctnative::global_number(g_{binding}) != {value}) {{ return 126; }}\n"
+            )
+    return changed + """    set(element, "bs.alert", 42);
+    const auto next = ctn_test_maps.size();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() <= next || element == g_element ||
+        !recorder_owner_lifetime.expired() ||
+        ctn_test_maps[0].lock() == ctn_test_maps[next].lock() ||
+        ctnative::global_number(get(element, "bs.alert")) != 42 ||
+        !ctnative::scalar_strict_equal(get(g_element, "bs.alert"), ctnative::nullable_scalar::null()) ||
+        !ctnative::scalar_strict_equal(g_host->slot->m_get(element, "bs.alert"),
+                                      ctnative::nullable_scalar::null())) { return 127; }
+    // Old and new callable families must both use the current scalar globals.
+    set(element, "bs.collapse", 99);
+    if (ctnative::global_number(g_traceErrorCount) != initial_count + 1 ||
+        ctnative::global_number(g_traceErrorMessage) != 1) { return 128; }
+    g_host->slot->m_remove(g_element, "bs.collapse");
+    g_host->slot->m_set(g_element, "bs.alert", 7);
+    g_host->slot->m_set(g_element, "bs.collapse", 9);
+    if (ctnative::global_number(g_traceErrorCount) != initial_count + 2 ||
+        ctnative::global_number(g_traceErrorMessage) != 1) { return 129; }
+    element.reset();
+    get = {};
+    if (ctn_test_maps[0].expired() || element_lifetime.expired()) { return 130; }
+    set = {};
+    if (ctn_test_maps[0].expired() || element_lifetime.expired()) { return 131; }
+    remove = {};
+    if (!ctn_test_maps[0].expired() || !element_lifetime.expired() ||
+        ctn_test_maps[next].expired()) { return 132; }
+    g_host.reset(); g_element.reset();
+    for (const auto & map : ctn_test_maps) {
+        if (!map.expired()) { return 133; }
+    }
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 134; }
+    }
+    std::weak_ptr current_recorder_owner = g_console;
+    auto current_error = g_console->error;
+    g_console.reset();
+    if (!current_recorder_owner.expired()) { return 135; }
+    // Both detached closures outlive their owners and update the current globals.
+    error("Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert.");
+    if (ctnative::global_number(g_traceErrorCount) != initial_count + 3 ||
+        ctnative::global_number(g_traceErrorMessage) != 1) { return 136; }
+    error = {};
+    current_error("a different future message");
+    if (ctnative::global_number(g_traceErrorCount) != initial_count + 4 ||
+        ctnative::global_number(g_traceErrorMessage) != 0) { return 137; }
+    current_error = {};
+    return 0;
+}
+"""
+
+
+def template_lifetime(args, cpp, name, mode, expected, compilers, nm, child, recorder_values=None):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(template_lifetime_cpp(cpp, child))
+    source.write_text(
+        recorder_lifetime_cpp(cpp, recorder_values)
+        if recorder_values is not None
+        else template_lifetime_cpp(cpp, child)
+    )
     for index, compiler in enumerate(compilers):
         binary = source.with_suffix(f".{index}").resolve()
         host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
@@ -661,7 +877,7 @@ def template_lifetime(args, cpp, name, mode, expected, compilers, nm, child):
 
 
 def check_recorders(args, node, reference, compilers, nm):
-    cases = {**recorder_cases(), **snapshot_cases(), **template_cases()}
+    cases = {**recorder_cases(), **recorder_refusals(), **snapshot_cases(), **template_cases()}
     observations = 0
 
     def observe(name, source, values):
@@ -681,16 +897,23 @@ def check_recorders(args, node, reference, compilers, nm):
         observe(name, row["source"], row["values"])
         observations += len(row["values"])
         if row["admitted"]:
+            values = dict(row["values"], traceFuture=1)
             future = row["source"] + (
-                template_future_source(row["child"])
-                if "child" in row
-                else """var traceFuture = 1;
+                recorder_future_source()
+                if row.get("recorder")
+                else (
+                    template_future_source(row["child"])
+                    if "child" in row
+                    else """var traceFuture = 1;
 for (let i = 0; i < 1024; ++i) {
     if (host.slot.get() !== 42) { traceFuture = 0; }
 }
 """
+                )
             )
-            observe(name + "-future", future, dict(row["values"], traceFuture=1))
+            if row.get("recorder"):
+                values.update(traceErrorCount=values["traceErrorCount"] + 2048, traceErrorMessage=0)
+            observe(name + "-future", future, values)
             observations += len(row["values"]) + 1
     mutations = [*recorder_mutations(), *template_mutations()]
     for name, source, values in mutations:
@@ -713,6 +936,18 @@ for (let i = 0; i < 1024; ++i) {
         config = observed_contract(ir, name)
         for policy, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + policy
+            if row.get("recorder") and row["admitted"]:
+                for steps in (0, 32):
+                    refused = methods.refused(
+                        args,
+                        ir,
+                        label + f"-budget-{steps}",
+                        config,
+                        options=options + f" host-max-steps={steps}",
+                        reason="budget",
+                        admitted=0,
+                    )
+                    check_call_preservation(ir.read_text(), refused.read_text(), label)
             # Keep exact sources; the longer outer probe needs this budget,
             # and unsafe-key controls must finish their semantic refusal.
             if "max_steps" in row:
@@ -721,8 +956,10 @@ for (let i = 0; i < 1024; ++i) {
             methods.census(output, functions, label, admitted=functions if row["admitted"] else 0)
             if not row["admitted"]:
                 check_call_preservation(ir.read_text(), output.read_text(), label)
-                if "child" in row and "budget exhausted" in output.read_text():
-                    raise RuntimeError(f"{label}: key-category refusal exhausted its proof budget")
+                if (
+                    "child" in row or row.get("recorder")
+                ) and "budget exhausted" in output.read_text():
+                    raise RuntimeError(f"{label}: source refusal exhausted its proof budget")
             elif policy == "default":
                 default = output
             elif output.read_text() != default.read_text():
@@ -762,12 +999,22 @@ for (let i = 0; i < 1024; ++i) {
             owned.standalone(args, default, name, expected, compilers, nm)
             for mode in ("explicit", "deduced"):
                 cpp = (args.work / f"{name}.{mode}.cpp").read_text()
-                if "child" in row:
-                    template_lifetime(args, cpp, name, mode, expected, compilers, nm, row["child"])
+                if "child" in row or row.get("recorder"):
+                    template_lifetime(
+                        args,
+                        cpp,
+                        name,
+                        mode,
+                        expected,
+                        compilers,
+                        nm,
+                        row.get("child", False),
+                        recorder_values=row["values"] if row.get("recorder") else None,
+                    )
                 else:
                     methods.lifetime(args, cpp, name, mode, expected, compilers[1])
     native = sum(row["admitted"] for row in cases.values())
     print(
-        f"recorder boundary: {native} native snapshots, {len(cases) - native} refusals, "
+        f"recorder boundary: {native} native programs, {len(cases) - native} refusals, "
         f"{observations} typed observations, {len(mutations)} distinguishing mutations"
     )
