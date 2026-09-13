@@ -47,6 +47,13 @@ show only each function's first failure; fixing one exposes its downstream failu
    contract with the existing source-owned Data provider. The next proof must
    establish that each owning document outlives the stored keys and every future
    Data invocation, using ordinary C++ ownership.
+   The current Data probe permits extracted callables to outlive their owner;
+   borrowing an element into that carrier would dangle. Also, `document` borrows
+   its atom table. Prove a nonmovable session owning atoms, document, then Data
+   state in that declaration order, with direct/member calls that cannot escape
+   independently. Keep this distinct from the existing owning Data-callable
+   contract, and give DOM keys their own provenance instead of treating them as
+   source-created ordinary objects.
    Reuse `ctbrowser::document` and `node_id` from the public DOM API. Bind their
    identity, ownership and permitted calls through the existing HostContract,
    inference/admission and emission machinery. A host declaration must prove which
