@@ -641,10 +641,7 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
 }
 
 std::string_view engine::unquoted(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
-        text.remove_prefix(1);
-    }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) { text.remove_suffix(1); }
+    text = trim(text, " \t");
     if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') &&
         text.back() == text.front()) {
         text = text.substr(1, text.size() - 2);

@@ -40,14 +40,6 @@ constexpr char32_t max_code_point = 0x10FFFF;
 [[nodiscard]] constexpr bool is_digit(char c) noexcept {
     return c >= '0' && c <= '9';
 }
-[[nodiscard]] constexpr bool is_hex(char c) noexcept {
-    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-[[nodiscard]] constexpr int hex_of(char c) noexcept {
-    if (is_digit(c)) { return c - '0'; }
-    if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-    return c - 'A' + 10;
-}
 [[nodiscard]] constexpr bool is_letter(char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
@@ -240,7 +232,7 @@ private:
         ++at_; // the backslash
         if (at_ >= s_.size()) { return replacement_character; }
         const char c = s_[at_];
-        if (!is_hex(c)) {
+        if (hex_value(c) < 0) {
             // One code point, taken verbatim. This is the `\:` in `.foo\:bar`,
             // which is how a framework puts a colon in a class name.
             const std::size_t start = at_;
@@ -258,8 +250,8 @@ private:
         }
         char32_t value = 0;
         int digits = 0;
-        while (digits < 6 && at_ < s_.size() && is_hex(s_[at_])) {
-            value = value * 16 + static_cast<char32_t>(hex_of(s_[at_]));
+        while (digits < 6 && at_ < s_.size() && hex_value(s_[at_]) >= 0) {
+            value = value * 16 + static_cast<char32_t>(hex_value(s_[at_]));
             ++at_;
             ++digits;
         }
@@ -539,13 +531,7 @@ private:
             : name.text >= s_.size()
                 ? std::string_view{decoded_}.substr(name.text - s_.size(), name.length)
                 : s_.substr(name.text, name.length);
-        bool is_url = text.size() == 3;
-        if (is_url) {
-            const auto lower = [](char c) {
-                return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-            };
-            is_url = lower(text[0]) == 'u' && lower(text[1]) == 'r' && lower(text[2]) == 'l';
-        }
+        const bool is_url = ascii_iequals(text, "url");
         ++at_; // the '('
         if (is_url) {
             std::size_t look = at_;

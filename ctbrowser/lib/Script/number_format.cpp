@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -106,13 +107,9 @@ void append_exponent(std::string & text, int exponent) {
     if (magnitude == 0 || !std::isfinite(magnitude)) { return false; }
     int exponent = 0;
     const double fraction = std::frexp(magnitude, &exponent); // magnitude = fraction * 2^exponent
-    auto mantissa = static_cast<std::uint64_t>(std::ldexp(fraction, 53));
+    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(fraction, 53));
     if (mantissa == 0) { return false; }
-    int e = exponent - 53;
-    while ((mantissa & 1U) == 0) { // reduce until the mantissa is odd
-        mantissa >>= 1U;
-        ++e;
-    }
+    const int e = exponent - 53 + std::countr_zero(mantissa);
     return e + places == -1;
 }
 
