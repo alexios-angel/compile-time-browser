@@ -608,7 +608,8 @@ void set_state(object_object * state, gen_state s) {
 // Number or not integral is a TypeError, outside [1, 2^32-1] a RangeError -
 // and every refusal closes the receiver.
 [[nodiscard]] bool size_arg(context & cx, value self, value raw, double & out) {
-    if (!raw.is_number() || std::trunc(raw.as_number()) != raw.as_number()) {
+    if (!raw.is_number() || !std::isfinite(raw.as_number()) ||
+        std::trunc(raw.as_number()) != raw.as_number()) {
         detail::iterator_close_quietly(cx, self);
         cx.throw_error("TypeError", "size must be an integral Number");
         return false;
