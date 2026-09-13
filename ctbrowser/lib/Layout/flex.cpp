@@ -95,7 +95,9 @@ struct flex_item {
                                       float content_width, const measure_text_fn & measure_text) {
     const box_node & child = *it.box;
     float size = 0;
-    if (!child.width.is_auto()) {
+    if (child.width.is_intrinsic()) {
+        size = intrinsic_border_width(child, it.c, it.edges, measure_text, child.width);
+    } else if (!child.width.is_auto()) {
         size = child.width.resolve(content_width, child.font_size);
     } else if (container.flex.wrap == flex_wrap::nowrap &&
                resolved_align(container, child) == flex_align::stretch && !it.cross_start_auto &&
@@ -119,10 +121,9 @@ struct flex_item {
                it.edges.horizontal_inner();
     }
     const float min =
-        child.min_width.is_auto() ? 0.0f : child.min_width.resolve(content_width, child.font_size);
-    const float max = child.max_width.is_auto()
-                          ? indefinite
-                          : child.max_width.resolve(content_width, child.font_size);
+        width_bound(child, it.c, it.edges, measure_text, child.min_width).value_or(0.0f);
+    const float max =
+        width_bound(child, it.c, it.edges, measure_text, child.max_width).value_or(indefinite);
     return std::max(0.0f, clamp_extent(size, min, max));
 }
 
@@ -391,7 +392,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         // to one question, and the block one is the same code.
         outer_width = shrink_to_fit_width(b, c, edges, measure_text);
     } else {
-        outer_width = outer_width_of(b, c, edges);
+        outer_width = outer_width_of(b, c, edges, measure_text);
     }
     const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
     // A STATED HEIGHT IS THE BORDER BOX, the same as a stated width - which is
@@ -509,9 +510,26 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             min_content_main = content_main;
         }
 
+        // AN INTRINSIC KEYWORD ON THE MAIN AXIS (CSS Sizing 3 §5, Flexbox
+        // §9.2.3): across a row it is the content size it names; down a
+        // column a keyword height behaves as `auto`, which is the content
+        // size too. fit-content is the clamp within the definite main size.
+        const auto keyword_main = [&](const length & want) {
+            if (!horizontal || want.u == unit::fit_content) {
+                const float room =
+                    is_definite(inner_main) ? inner_main - it.main_margin : content_main;
+                return horizontal ? std::max(min_content_main, std::min(room, content_main))
+                                  : content_main;
+            }
+            return want.u == unit::min_content ? min_content_main : content_main;
+        };
         const length & basis = child.flex.basis;
-        if (!basis.is_auto() && (basis.u != unit::percent || main_percent_resolves)) {
+        if (basis.is_intrinsic()) {
+            it.base = keyword_main(basis);
+        } else if (!basis.is_auto() && (basis.u != unit::percent || main_percent_resolves)) {
             it.base = basis.resolve(main_basis, child.font_size);
+        } else if (preferred.is_intrinsic()) {
+            it.base = keyword_main(preferred);
         } else if (!preferred.is_auto() &&
                    (preferred.u != unit::percent || main_percent_resolves)) {
             it.base = preferred.resolve(main_basis, child.font_size);
@@ -527,15 +545,21 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         // `max-height: 100%` in a column with no stated height gave height 0.
         it.max_main = max_len.is_auto() || (max_len.u == unit::percent && !main_percent_resolves)
                           ? indefinite
-                          : max_len.resolve(main_basis, child.font_size);
-        if (min_len.is_auto() || (min_len.u == unit::percent && !main_percent_resolves)) {
+                      : max_len.is_intrinsic() ? keyword_main(max_len)
+                                               : max_len.resolve(main_basis, child.font_size);
+        if (min_len.is_intrinsic()) {
+            it.min_main = std::max(0.0f, keyword_main(min_len));
+        } else if (min_len.is_auto() || (min_len.u == unit::percent && !main_percent_resolves)) {
             // THE AUTOMATIC MINIMUM SIZE (§4.5). `min-width: auto` on a flex item
             // is NOT zero: it is min(the specified size suggestion, the content
             // size suggestion), which is what stops a long unbreakable token being
             // squeezed to nothing. Bootstrap's `.card { min-width: 0 }` exists
             // precisely to defeat it, which is the evidence that it matters.
             float suggestion = min_content_main;
-            if (!preferred.is_auto() && (preferred.u != unit::percent || main_percent_resolves)) {
+            if (preferred.is_intrinsic()) {
+                suggestion = std::min(suggestion, keyword_main(preferred));
+            } else if (!preferred.is_auto() &&
+                       (preferred.u != unit::percent || main_percent_resolves)) {
                 suggestion = std::min(suggestion, preferred.resolve(main_basis, child.font_size));
             }
             if (is_definite(it.max_main)) { suggestion = std::min(suggestion, it.max_main); }
@@ -744,6 +768,24 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                                           : cross_position;
             it.placed.bounds.x = edges.content_left() + (horizontal ? main_final : cross_final);
             it.placed.bounds.y = edges.content_top() + (horizontal ? cross_final : main_final);
+            // The used margins: the resolved ones, plus the free space an auto
+            // margin on the main axis absorbed (§8.1 - a positive share only).
+            it.placed.margin_top = it.edges.margin_top;
+            it.placed.margin_right = it.edges.margin_right;
+            it.placed.margin_bottom = it.edges.margin_bottom;
+            it.placed.margin_left = it.edges.margin_left;
+            {
+                float & start =
+                    horizontal
+                        ? (b.flex.reversed() ? it.placed.margin_right : it.placed.margin_left)
+                        : (b.flex.reversed() ? it.placed.margin_bottom : it.placed.margin_top);
+                float & end =
+                    horizontal
+                        ? (b.flex.reversed() ? it.placed.margin_left : it.placed.margin_right)
+                        : (b.flex.reversed() ? it.placed.margin_top : it.placed.margin_bottom);
+                if (it.main_start_auto) { start += auto_share; }
+                if (it.main_end_auto) { end += auto_share; }
+            }
 
             main_at += it.target + it.main_margin;
             if (it.main_end_auto) { main_at += auto_share; }

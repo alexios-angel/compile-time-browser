@@ -359,10 +359,25 @@ void dom_bindings::install_computed_style(context & cx) {
         const node_id id = args.empty() ? node_id{} : handle_of(args[0]);
         if (!id) {
             // A NODE OF ANOTHER DOCUMENT - a frame's, which `handle_of` refuses
-            // because its handle names a different slab - is an element this
-            // document does not render, and gets the empty declaration an
-            // unrendered element gets (getComputedStyle-detached-subtree asks
-            // it of a `display: none` frame's root, through both windows).
+            // because its handle names a different slab - is answered by THAT
+            // document's bindings, whose styles and boxes the browser's
+            // layout_frames observed at the frame's size (`frame.contentWindow
+            // .getComputedStyle(div)` reaches the page's global: the window
+            // proxy falls back to it). A document with no frame - a
+            // `display: none` frame's, createHTMLDocument's - has no layout
+            // observed and answers the empty declaration an unrendered element
+            // gets, which getComputedStyle-detached-subtree asks for through
+            // both windows.
+            if (!args.empty()) {
+                if (dom_bindings * owner = owner_of(args[0]); owner != nullptr && owner != this) {
+                    // Only a document the browser has laid out has styles to
+                    // observe; one it has not - a `display: none` frame's, a
+                    // createHTMLDocument's - is unrendered and answers empty
+                    // (getComputedStyle-detached-subtree, through both windows).
+                    if (owner->styles_ == nullptr) { return computed_style_object(c, node_id{}); }
+                    return owner->computed_style_object(c, owner->handle_of(args[0]));
+                }
+            }
             if (!args.empty() && args[0].is_object() &&
                 static_cast<script::object_object *>(args[0].as_heap())
                         ->find(std::string{handle_property}) != nullptr) {

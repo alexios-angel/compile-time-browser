@@ -134,6 +134,23 @@ public:
     void observe_styles(const style::style_map * styles) { styles_ = styles; }
     void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
     void observe_viewport(int width, int height);
+    // THE FRAMES THIS DOCUMENT HAS LOADED, each with the bindings over its
+    // document, so the browser can run a frame's document through the same
+    // stages as the page at the size its <iframe> box got (browser::
+    // layout_frames). The bindings deliberately know nothing of that pipeline;
+    // this is the list it walks.
+    struct loaded_frame {
+        node_id element;
+        dom_bindings * bindings;
+    };
+    [[nodiscard]] std::vector<loaded_frame> loaded_frames() const {
+        std::vector<loaded_frame> out;
+        for (const frame_entry & entry : frames_) {
+            if (entry.bindings != nullptr) { out.push_back({unpack(entry.key), entry.bindings}); }
+        }
+        return out;
+    }
+    [[nodiscard]] document & owned_document() noexcept { return *doc_; }
     // Milliseconds since the page loaded, for performance.now and the timers.
     void advance_clock(double ms) { now_ms_ += ms; }
     [[nodiscard]] double now_ms() const noexcept { return now_ms_; }
@@ -1274,12 +1291,18 @@ private:
     // rather than resolved, because that is the string the next reconcile
     // compares against - a page that assigns the same src twice must not
     // reload, and one that assigns a different one must.
-    std::vector<std::pair<std::uint64_t, std::string>> frames_;
+    struct frame_entry {
+        std::uint64_t key; // pack(id) of the <iframe>
+        std::string src;
+        dom_bindings * bindings; // over the frame's document
+    };
+    std::vector<frame_entry> frames_;
     // Set by `mutated()` and by the first tick after a parse. Without it the
     // reconcile walks the whole tree on every frame of an idle page, which is
     // exactly what "a frame runs only what changed" forbids.
     bool frames_dirty_ = true;
-    void load_frame(context & cx, node_id id, const std::string & src);
+    // Returns the bindings over the frame's document (null when no wrapper).
+    dom_bindings * load_frame(context & cx, node_id id, const std::string & src);
     void settle_frame(context & cx, const pending_frame & waiting);
     // The content type a path implies, since there is no server here to send
     // one. Empty for a name this engine has no type for.

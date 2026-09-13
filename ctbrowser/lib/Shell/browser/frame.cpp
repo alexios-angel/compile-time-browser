@@ -170,7 +170,11 @@ void browser::frame(scheduler * pool) {
     // The four stages the dirty level chooses between. What each costs is
     // benchmarks/' job; that a scroll skips three of them is layout_count()'s.
     if (dirty_ >= dirty::styles) { resolve_styles(); }
-    if (dirty_ >= dirty::layout) { run_layout(); }
+    if (dirty_ >= dirty::layout) {
+        run_layout();
+    } else if (frames_stale()) {
+        layout_frames();
+    }
     if (dirty_ >= dirty::paint) { record(); }
     dirty_ = dirty::nothing;
     ++frames_;
@@ -186,6 +190,20 @@ void browser::resolve_styles() {
     refresh_author_styles();
     const auto txn = doc_->read();
     resolved_ = styles_->resolve_all(txn);
+    // A ROOT WITH `overflow: scroll` always has its scrollbars, and the
+    // viewport units exclude them (viewport_less_scroll_root); the cascade is
+    // re-run at that size when it differs from the window's, which is the
+    // one extra pass a page that asked for scrollbars pays.
+    const auto [width, height] =
+        viewport_less_scroll_root(atoms_, resolved_, txn.root(), static_cast<float>(options_.width),
+                                  static_cast<float>(options_.height), options_.scrollbar_width);
+    ctbrowser::style::css::media_environment env = styles_->environment();
+    if (env.viewport_width != width || env.viewport_height != height) {
+        env.viewport_width = width;
+        env.viewport_height = height;
+        (void)styles_->set_environment(env);
+        resolved_ = styles_->resolve_all(txn);
+    }
 }
 
 void browser::run_layout() {
@@ -259,6 +277,8 @@ void browser::run_layout() {
         // stale, so the two go together.
         (void)bindings_->refresh_wrappers();
     }
+    // The frames inside, at the sizes this layout just gave them.
+    layout_frames();
 }
 
 void browser::record() {

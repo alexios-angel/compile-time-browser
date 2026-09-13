@@ -55,12 +55,29 @@ void save(script::object_object & held, context & cx, const declaration_block & 
 namespace detail {
 
 // Whether a key on the declaration store is a DECLARATION rather than one of
-// the methods sharing the object with them. A method is a callable and is
-// skipped on that ground alone; `length`, `cssText` and the indexed properties
-// are answered by the proxy and never stored, which is what keeps this test to
-// one condition.
+// the methods sharing the object with them, or the expando table. A
+// declaration is stored as a STRING (save() above); a method is a callable and
+// the expandos live under one object key, so both fail the one test. `length`,
+// `cssText` and the indexed properties are answered by the proxy and never
+// stored.
 [[nodiscard]] bool is_declaration(const value & v) {
-    return !v.is_nullish() && !v.is_callable();
+    return v.is_string();
+}
+
+// CSSOM 6.7.2 gives `el.style` an IDL attribute for every SUPPORTED property
+// and nothing else, so `el.style.unknown = x` and `el.style.COLOR = 'red'`
+// (`-c-o-l-o-r`, an unsupported name) create ORDINARY properties on the object
+// that never reach cssText - cssstyledeclaration-csstext.html's "uppercase
+// property" and "invalid property does not appear". They are kept on one
+// object beside the declarations rather than among them, because among them a
+// string could not be told from a declaration.
+script::object_object & expandos_of(script::object_object & held, context & cx) {
+    if (const value * found = held.find(std::string{expando_key}); found && found->is_object()) {
+        return *static_cast<script::object_object *>(found->as_heap());
+    }
+    auto * made = cx.allocate<script::object_object>();
+    held.set(std::string{expando_key}, value::object(made));
+    return *made;
 }
 
 // The declarations an object holds, as a `style` attribute. CSSOM's "update

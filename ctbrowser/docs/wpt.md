@@ -14,6 +14,226 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-13, the widened corpus
+
+**1,799 of the 5,099 tests that ran, which is 35.3%**, and not one crash.
+The first measurement of the corpus widened on 2026-09-13 (`c643cba8`,
+`24b9b9c6`; the corpus section below says what came in and why): every CSS
+module's parsing, inheritance and animation tests, and twenty more suites.
+Engine at `7f9211d0` on `ctbrowser-wpt` — `b346dc0b` plus the morning's
+commits (the frame layout, `ch`, the expando rule, used margins, the
+`::highlight()` cascade, media-query units); one run per top-level directory
+on the devbox, 4 workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, the
+same instrument as every row below. A suite's row is the tests under its
+path; the five suites of the earlier rows are in here unchanged and
+comparable (`css/css-values` 158, `css/cssom` 147, `dom/nodes` 253,
+`dom/events` 81, `html/dom` 149 - **788 of 1,090, 72.3%**).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **3** | 8 | 0 | 0 | 0 | 0 | 11 | 7 / 85 |
+| `css/css-align` | **21** | 36 | 0 | 0 | 0 | 0 | 57 | 593 / 728 |
+| `css/css-anchor-position` | **0** | 10 | 0 | 0 | 0 | 0 | 10 | 41 / 179 |
+| `css/css-animations` | **10** | 32 | 0 | 0 | 0 | 1 | 43 | 212 / 378 |
+| `css/css-backgrounds` | **32** | 71 | 4 | 0 | 0 | 45 | 152 | 1,411 / 2,876 |
+| `css/css-box` | **25** | 15 | 0 | 0 | 0 | 0 | 40 | 300 / 627 |
+| `css/css-break` | **8** | 14 | 0 | 0 | 0 | 0 | 22 | 91 / 449 |
+| `css/css-cascade` | **25** | 52 | 1 | 0 | 0 | 62 | 140 | 400 / 325 |
+| `css/css-color` | **11** | 51 | 2 | 0 | 0 | 257 | 321 | 1,996 / 5,702 |
+| `css/css-color-adjust` | **1** | 6 | 0 | 0 | 0 | 0 | 7 | 16 / 131 |
+| `css/css-color-hdr` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-conditional` | **5** | 35 | 1 | 0 | 172 | 204 | 417 | 1,295 / 501 |
+| `css/css-contain` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 14 / 31 |
+| `css/css-content` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 91 / 117 |
+| `css/css-display` | **1** | 7 | 0 | 0 | 0 | 0 | 8 | 142 / 218 |
+| `css/css-exclusions` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-flexbox` | **23** | 11 | 0 | 0 | 0 | 1 | 35 | 422 / 567 |
+| `css/css-fonts` | **24** | 73 | 3 | 0 | 0 | 0 | 100 | 1,423 / 2,446 |
+| `css/css-forced-color-adjust` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 6 / 8 |
+| `css/css-forms` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 1 / 51 |
+| `css/css-gaps` | **18** | 54 | 2 | 0 | 0 | 2 | 76 | 325 / 2,477 |
+| `css/css-grid` | **13** | 57 | 2 | 0 | 2 | 3 | 77 | 362 / 1,951 |
+| `css/css-images` | **8** | 23 | 0 | 0 | 0 | 0 | 31 | 744 / 2,472 |
+| `css/css-inline` | **6** | 14 | 0 | 0 | 0 | 0 | 20 | 78 / 255 |
+| `css/css-link-params` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-lists` | **8** | 17 | 0 | 0 | 0 | 0 | 25 | 248 / 250 |
+| `css/css-logical` | **29** | 33 | 0 | 0 | 0 | 0 | 62 | 520 / 246 |
+| `css/css-masking` | **10** | 32 | 6 | 0 | 0 | 1 | 49 | 126 / 2,821 |
+| `css/css-multicol` | **11** | 28 | 0 | 0 | 0 | 0 | 39 | 78 / 1,392 |
+| `css/css-nesting` | **1** | 21 | 0 | 0 | 0 | 23 | 45 | 9 / 108 |
+| `css/css-overflow` | **12** | 24 | 0 | 0 | 0 | 0 | 36 | 165 / 214 |
+| `css/css-overscroll-behavior` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 15 / 52 |
+| `css/css-page` | **4** | 8 | 0 | 0 | 0 | 0 | 12 | 31 / 42 |
+| `css/css-paint-api` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** | 11 | 0 | 0 | 0 | 0 | 32 | 545 / 516 |
+| `css/css-properties-values-api` | **0** | 9 | 0 | 0 | 60 | 0 | 69 | 0 / 9 |
+| `css/css-pseudo` | **0** | 4 | 0 | 0 | 1 | 0 | 5 | 57 / 226 |
+| `css/css-rhythm` | **5** | 10 | 0 | 0 | 0 | 0 | 15 | 55 / 100 |
+| `css/css-ruby` | **4** | 5 | 0 | 0 | 0 | 0 | 9 | 26 / 21 |
+| `css/css-scroll-anchoring` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 2 / 6 |
+| `css/css-scroll-snap` | **7** | 19 | 0 | 0 | 0 | 0 | 26 | 183 / 290 |
+| `css/css-scrollbars` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-shapes` | **7** | 11 | 3 | 0 | 0 | 0 | 21 | 66 / 481 |
+| `css/css-size-adjust` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 4 / 211 |
+| `css/css-sizing` | **11** | 23 | 3 | 0 | 0 | 0 | 37 | 1,033 / 941 |
+| `css/css-syntax` | **15** | 24 | 0 | 0 | 1 | 8 | 48 | 291 / 138 |
+| `css/css-tables` | **14** | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **36** | 61 | 0 | 0 | 0 | 0 | 97 | 556 / 1,376 |
+| `css/css-text-decor` | **12** | 23 | 0 | 0 | 0 | 0 | 35 | 185 / 1,007 |
+| `css/css-transforms` | **7** | 55 | 4 | 0 | 0 | 27 | 93 | 336 / 3,396 |
+| `css/css-transitions` | **9** | 21 | 0 | 0 | 0 | 0 | 30 | 299 / 610 |
+| `css/css-ui` | **21** | 31 | 0 | 0 | 0 | 0 | 52 | 558 / 836 |
+| `css/css-values` | **158** | 100 | 8 | 0 | 5 | 237 | 508 | 6,274 / 1,704 |
+| `css/css-variables` | **20** | 28 | 12 | 0 | 1 | 186 | 247 | 392 / 176 |
+| `css/css-view-transitions` | **3** | 9 | 0 | 0 | 0 | 0 | 12 | 80 / 944 |
+| `css/css-viewport` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 127 / 45 |
+| `css/css-writing-modes` | **10** | 6 | 0 | 0 | 0 | 0 | 16 | 36 / 16 |
+| `css/cssom` | **147** | 35 | 0 | 0 | 10 | 29 | 221 | 1,618 / 81 |
+| `css/cssom-view` | **44** | 157 | 3 | 0 | 13 | 22 | 239 | 485 / 1,489 |
+| `css/fill-stroke` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **4** | 24 | 0 | 0 | 0 | 0 | 28 | 143 / 2,267 |
+| `css/mediaqueries` | **5** | 25 | 0 | 0 | 0 | 63 | 93 | 834 / 864 |
+| `css/motion` | **7** | 33 | 3 | 0 | 0 | 4 | 47 | 172 / 3,120 |
+| `css/selectors` | **105** | 95 | 1 | 0 | 10 | 313 | 524 | 4,095 / 1,363 |
+| `custom-elements` | **37** | 127 | 0 | 0 | 16 | 13 | 193 | 2,717 / 1,236 |
+| `dom/abort` | **0** | 5 | 0 | 0 | 1 | 3 | 9 | 5 / 18 |
+| `dom/collections` | **6** | 4 | 0 | 0 | 0 | 1 | 11 | 42 / 11 |
+| `dom/events` | **81** | 7 | 1 | 0 | 2 | 85 | 176 | 676 / 13 |
+| `dom/lists` | **2** | 3 | 0 | 0 | 0 | 0 | 5 | 172 / 17 |
+| `dom/nodes` | **253** | 44 | 10 | 0 | 2 | 53 | 362 | 12,062 / 739 |
+| `dom/ranges` | **16** | 37 | 7 | 0 | 3 | 9 | 72 | 1,418 / 9,294 |
+| `dom/traversal` | **8** | 10 | 0 | 0 | 0 | 0 | 18 | 728 / 880 |
+| `domparsing` | **27** | 30 | 0 | 0 | 12 | 3 | 72 | 943 / 625 |
+| `encoding` | **12** | 40 | 1 | 0 | 1 | 136 | 190 | 371 / 1,616 |
+| `html/dom` | **149** | 67 | 3 | 0 | 8 | 138 | 365 | 49,363 / 147 |
+| `html/semantics/forms` | **58** | 236 | 10 | 0 | 27 | 316 | 647 | 1,297 / 2,949 |
+| `html/syntax` | **22** | 63 | 133 | 0 | 3 | 47 | 268 | 2,325 / 573 |
+| `html/webappapis` | **47** | 198 | 52 | 0 | 12 | 40 | 349 | 479 / 405 |
+| `selection` | **8** | 32 | 0 | 0 | 46 | 91 | 177 | 76 / 199 |
+| `shadow-dom` | **74** | 82 | 6 | 0 | 20 | 163 | 345 | 380 / 1,456 |
+| `url` | **11** | 16 | 1 | 0 | 1 | 5 | 34 | 31 / 461 |
+| **total** | **1799** | 2589 | 282 | 0 | 429 | 2593 | 7692 | 102,739 / 71,078 |
+
+Subtests: **102,739 PASS, 71,078 FAIL, 908 NOTRUN, 139 TIMEOUT.**
+
+**What the number says.** The five old suites measure what the last two
+weeks worked on and stand at 72%; the new ones measure what nobody has
+touched, and the whole is 35%. By what stands in front of the most tests:
+
+- **The CSS value grammar** — the `parsing/` and `inheritance.html` files
+  over 60 modules are 24,411 subtests, 8,460 PASS. By property, the failing
+  subtests are `color` 5,271 (CSS Color 4/5: the modern syntax, `color()`,
+  `color-mix()`, `lab`/`lch`/`oklab`/`oklch`, relative colours - the
+  cascade's `properties/color.cpp` is a syntax check and `paint::parse_color`
+  means a colour), `background-image` 2,160 (gradients), `font` 318, the
+  grid track lists 209+203+112+89+81+68, `display` 186, `offset-path` 139,
+  `content` 135, `filter` 116, `clip-path` 99, `mask` 87 ... 211 of the
+  415 properties the sweep tests are not in the property table at all,
+  and since `f08483ca` an unsupported name on `el.style` is an expando, so
+  every one of their `test_valid_value`s fails honestly instead of by echo.
+- **CSS Animations and CSS Transitions do not exist** - only Web Animations
+  does. `css/support/interpolation-testcommon.js` drives every `animation/`
+  file four ways and the "CSS Transitions" and "CSS Animations" rows all fail:
+  `css-transforms` 3,396 failing subtests, `motion` 3,120, `masking` 2,821,
+  `backgrounds` 2,876, `filter-effects` 2,267, `images` 2,472, `gaps` 2,477,
+  `transitions` 610, `animations` 378, and `css-values/animations/
+  calc-interpolation` 103 - the largest subtest cluster in the corpus, and
+  one feature.
+- **Container queries** - 171 of `css-conditional`'s 417 files are
+  `assert_implements` HARNESS_ERRORs on `@container` (size 110, scroll-state
+  41, style 20); `css-nesting` is 1 of 22 files; `css-cascade` 25 of 78
+  (`@layer`, `@scope`, `revert-layer`).
+- **`css/cssom-view`** 44 of 204: `getBoundingClientRect`, `scrollIntoView`,
+  `elementFromPoint`, `scroll*` on the element and the window, `matchMedia`
+  events.
+- **`html/syntax`** 22 of 221, with **133 TIMEOUTs** - and the TIMEOUTs are
+  not the parser: 126 of them are `speculative-parsing/`, which needs a WPT
+  server (`stash.py`) and can never finish here; the next row of this file
+  drops that directory from the checkout. The html5lib tree-construction
+  fixtures (`parsing/html5lib_write.html` and its siblings, one `.dat` per
+  `<meta name=variant>`) were SKIPPED by the runner at this row, which opened
+  a file and had no query string to hand a variant - so the DOM's own tree
+  builder was not measured here. The runner runs variants since `ctdrive
+  --query` (the row above this one is the first with them).
+- **`html/webappapis`** 47 of 309 (52 TIMEOUTs), **`html/semantics/forms`**
+  58 of 331, **`dom/ranges`** 16 of 63 (9,294 failing subtests: `Range`
+  mutations, `extractContents`/`cloneContents`/`deleteContents`),
+  **`custom-elements`** 37 of 180, **`shadow-dom`** 74 of 182,
+  **`selection`** 8 of 86 (46 HARNESS_ERRORs), **`encoding`** 12 of 54
+  (TextDecoder for anything but UTF-8), **`url`** 11 of 29 (the WHATWG
+  parser over `urltestdata.json`; `docs/plans/ada-url.md`).
+
+Against `b346dc0b` on the five old suites: +10 files
+(`line-break-ch-unit`, `viewport-units-invalidation`,
+`viewport-units-scrollbars-mq-001`, `random-in-container-query`,
+`random-item-in-container-query`, `computed-style-005`,
+`cssstyledeclaration-csstext`, `getComputedStyle-pseudo`,
+`getComputedStyle-pseudo-with-argument`, `Element-children`), -6:
+`calc-size-parsing` and `signs-abs-computed` (the logical `*-block-size` /
+`*-inline-size` and `image-resolution` / `grid-template-rows` were
+unsupported names passing by echo - now expandos, and the honest answer
+until the table has them), `viewport-units-gutter-003`/`-004`
+(`width: 100vw` on a page whose root is `overflow-y: scroll`: the page's `vw`
+now excludes the 15px scrollbar, `resolve_styles`, which is the rule - but
+the test measures the scrollbar's width off an `overflow: scroll` element as
+`offsetWidth - clientWidth`, which is 0 here because an element's scrollbar
+reserves no space in this layout, so it expects the full 1024 and gets 1009:
+element scrollbar gutters are the layout question), `getComputedStyle-detached-subtree` (a
+`display: none` frame's document answers initial values instead of the empty
+declaration since `getComputedStyle` routes to the frame's bindings - being
+fixed), `serialize-values` (`baseline-shift: .5%` is an unsupported name
+now: an expando keeps the author's `.5%`). `reflection-text.html` is still
+the TIMEOUT named in the row below.
+
+test262 at the same commit: unchanged from `b346dc0b`, **32,295 of 48,624**.
+
+## The baseline — 2026-09-13, small hours
+
+**784 of the 1,090 tests that ran, which is 71.9%**, and still not one crash.
+Same instrument, engine at commit `b346dc0b` on `ctbrowser-wpt` - the merge of
+Codex's `ctcompile-v1` `3e803401` into the evening's 88 audit commits (about
+-8,000 lines) and agents J/V/D/M; five suites one after another on the devbox,
+4 workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 252 | 45 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 149 | 67 | 3 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 145 | 37 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 157 | 97 | 8 | 0 | 9 | 237 | 508 |
+| **total** | **784** | **253** | **22** | **0** | **31** | **542** | **1,632** |
+
+Subtests: **69,851 PASS, 2,805 FAIL, 67 NOTRUN, 15 TIMEOUT.**
+
+Against `00b5ab38` (the row below): **+32 files, 3 lost.** `css/css-values`
+144 -> 157 (agent V: `attr-css-wide-keywords`, `attr-cycle`, the four
+`calc-*-serialize` and `calc-nesting-002`, `calc-rounds-to-integer`,
+`ident-function-computed`, `inherit-function-basic`, the three
+`minmax-*-serialize`, `random-in-custom-function`, `random-in-if`),
+`css/cssom` 140 -> 145 (agent M: `getComputedStyle-detached-subtree`,
+`-resolved-colors`, `-sticky-pos-percent`, `mediaquery-sort-dedup`,
+`ttwf-cssom-doc-ext-load-count`), `dom/nodes` 244 -> 252 (agent D: the
+`node-realm-*` and `node-creation-realm` files, `Element-matches`,
+`Node-isConnected`, `NodeList-live-mutations`), `html/dom` 146 -> 149
+(`document.forms`, `nameditem-names`, `document.title-not-in-html-svg`,
+`lang-attribute-document-element-replacement`).
+
+**The three lost are all the audit's, and named so they are fixed rather
+than re-baselined:** `html/dom/reflection-text.html` is a TIMEOUT - "the
+page never yielded", an infinite loop during load in a file that completed
+in under a second the evening before - which is the **-10,138 subtests** in
+the row (79,714 -> 69,851 is that one file); `dom/nodes/Element-children.html`
+reads `length`, `item` and `namedItem` as OWN enumerable properties of an
+HTMLCollection (the `Object.keys` edge case) since the collection's methods
+moved; `dom/nodes/MutationObserver-characterData.html` reports a processing
+instruction's `oldValue` as its data without the `<?target ...?>` wrapper.
+
+test262 at the same commit, and for the first time the WHOLE corpus:
+**32,295 of 48,624 (66.4%)**; the ten areas the old table had are 28,397 of
+32,927 (86.2%), from 81.5% - `docs/test262.md`, the `b346dc0b` row.
+
 ## The baseline — 2026-09-12, night
 
 **755 of the 1,090 tests that ran, which is 69.3%**, and still not one crash.
@@ -695,7 +915,7 @@ Fetched by `tools/wpt/fetch-wpt.sh` into `~/.cache/wpt` (`$WPT_DIR` overrides),
 |---|---|
 | pin | `3f6b09ae3ed55280074645ce38e9002f52fc60a8` |
 | where | `~/.cache/wpt`, outside the source tree |
-| size | ~47 MB, 2,465 files on disk out of WPT's 162,834 |
+| size | ~71 MB, 10,601 files on disk out of WPT's 162,834 (2,465 and 13 MB before the widening of 2026-09-13) |
 | verify | `tools/wpt/fetch-wpt.sh --verify` — checks the SHA *and* that the sparse patterns matched something |
 
 Vendoring it was never on the table: WPT is ~1.5 million files, it changes every
@@ -703,6 +923,27 @@ day, and what has to be reproducible is the **commit**, not a copy of the bytes.
 `~/.cache` rather than `build/` because a reconfigure wipes the build tree and
 re-downloading a corpus because somebody deleted a `CMakeCache.txt` is a bad
 trade.
+
+**THE WIDENING OF 2026-09-13.** Five suites at 69% with a long tail of features
+said less and less about the engine, so the list grew in two ways. Every CSS
+module's `parsing/` directory, its `inheritance.html` and its `animation/`
+tests are in - the sparse patterns `/css/*/parsing/`, `/css/*/inheritance.html`,
+`/css/*/animation/` are what `--no-cone` is for - which is 1,747 testharness
+files over 60 modules that all go through `css/support/`: the CSS front end
+measured property by property (`test_valid_value`, `test_invalid_value`,
+`test_computed_value` over 415 properties), and every interpolation test that
+drives CSS Transitions, CSS Animations and Web Animations. And twenty more
+whole suites that are mostly testharness and mostly implemented: `css-syntax`,
+`css-variables`, `css-cascade`, `css-conditional`, `css-nesting`, `css-color`,
+`cssom-view`, `selectors`, `mediaqueries`, `html/syntax` (the html5lib
+tree-construction fixtures against the DOM's own tree builder),
+`html/semantics/forms`, `html/webappapis`, `dom/ranges`, `dom/traversal`,
+`dom/lists`, `dom/collections`, `dom/abort`, `shadow-dom`, `custom-elements`,
+`domparsing`, `selection`, `url`, `encoding`. `run-wpt.py`'s own planner
+counts 5,099 runnable tests in the widened checkout against 1,090 before,
+2,593 skipped (reftests, mostly). A module directory taken whole would be
+reftests; a suite for a feature the engine has never heard of would be NOTRUN
+noise - both are still the rule for what is NOT in the list.
 
 **THE CHECKOUT IS SHARED, on the devbox.** One `~/.cache/wpt` serves every agent
 and every worktree on that machine, and it is not covered by the per-directory
@@ -910,7 +1151,7 @@ The counts are in the baseline table above; the reasons are these and only these
 | `reftest: needs a reference render, not a harness result` | `<link rel=match>`. A different instrument — `tools/check/check-render.cmake` |
 | `not a testharness test` | the file never loads `testharness.js`; usually a fixture or a helper page |
 | `testdriver: needs WebDriver input injection` | `test_driver.click()` and friends. `ctdrive` can synthesise input, but not through testdriver's protocol |
-| `variant: the driver opens a file and has no query string` | `<meta name="variant" content="?1-10">`. The driver takes a path, not a URL |
+| ~~`variant: the driver opens a file and has no query string`~~ | gone on 2026-09-13: a `<meta name="variant" content="?file=x">` is one run per variant, `ctdrive --query` giving the page its `location.search`, keyed `path?query` in the expectations as WPT's manifest keys it |
 | `global=…: no Worker/ServiceWorker in this engine` | a `.any.js` whose declared scopes exclude `window` |
 | `Worker:` / `SharedWorker:` / `ServiceWorker: not implemented` | the `.worker.` / `.sharedworker.` / `.serviceworker.` filename spellings |
 | `https: needs a TLS origin` / `h2: needs an HTTP/2 server` | WPT encodes its server requirements in the filename, and there is no server here |

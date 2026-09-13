@@ -113,6 +113,11 @@ void test_declaration_blocks() {
         st.setProperty('color', 'green', undefined);
         st.setProperty('width', 'undefined');
         console.log('undef=' + st.color + '|' + st.width);
+        // cssstyledeclaration-csstext: a name that is not a supported property
+        // has no IDL setter - the write is an ordinary property, never a declaration.
+        const el = document.body.style;
+        el.COLOR = 'red'; el.unknown = 'unknown'; el.color = 'red'; el.fontSize = '10pt';
+        console.log('expando=' + el.cssText + '|' + el.unknown + '|' + el.COLOR + '|' + el.length);
     </script></body></html>)");
     CHECK(page.script_error().empty());
     // `transform` is not a page-context property; `cssFloat` is not a page
@@ -126,6 +131,8 @@ void test_declaration_blocks() {
     CHECK_EQ(logged(page, "dup="), std::string{"dup=color: blue; padding: 1px !important;"});
     CHECK_EQ(logged(page, "nulled="), std::string{"nulled=|4"});
     CHECK_EQ(logged(page, "undef="), std::string{"undef=green|"});
+    CHECK_EQ(logged(page, "expando="),
+             std::string{"expando=color: red; font-size: 10pt;|unknown|red|2"});
 }
 
 // style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the
@@ -204,9 +211,21 @@ void test_flat_tree_and_pseudo_arguments() {
                     ['::highlight()', '::highlight(1)', '::highlight(name)a', ':highlight(name)',
                      '::picker(div)', '::before(x)', '::highlight (name)']
                         .map(parses).join());
+        // getComputedStyle-pseudo: a rule for `::highlight(name)` IS the
+        // answer for that pseudo-element, and not for another argument.
+        const sheet = document.createElement('style');
+        sheet.textContent = '#host::highlight(name) { color: rgb(0, 128, 0) }'
+            + ' #host::view-transition-old(x) { color: rgb(0, 0, 128) }';
+        document.head.appendChild(sheet);
+        console.log('hl=' + getComputedStyle(host, '::highlight(name)').color + '|' +
+                    getComputedStyle(host, '::highlight(other)').color + '|' +
+                    getComputedStyle(host, '::view-transition-old(x)').color + '|' +
+                    document.styleSheets[0].cssRules[0].selectorText);
         </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "flat="), std::string{"flat=true,false,true,false,true"});
+    CHECK_EQ(logged(page, "hl="),
+             std::string{"hl=rgb(0, 128, 0)|rgb(0, 0, 0)|rgb(0, 0, 128)|#host::highlight(name)"});
     CHECK_EQ(logged(page, "fn="),
              std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
@@ -243,11 +262,22 @@ void test_match_media() {
                     matchMedia('(min-width: 500px)').matches + ',' +
                     matchMedia('screen').matches + ',' + matchMedia('print').matches + '|' +
                     Object.prototype.toString.call(matchMedia('all')));
+        // Media Queries 4: a length may be any unit (em is the initial 16px,
+        // the viewport units are the viewport's) or a math function of them.
+        console.log('units=' + [matchMedia('(width: 100vw)').matches,
+                                matchMedia('(height: 100vh)').matches,
+                                matchMedia('(width: calc(50vw + 200px))').matches,
+                                matchMedia('(width: calc(200vh + 5em))').matches,
+                                matchMedia('(min-width: 25em)').matches,
+                                matchMedia('(min-width: 26em)').matches,
+                                matchMedia('(width >= calc(100vh * 2))').matches].join());
         </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "mm="),
              std::string{"mm=(min-width: 10px) and (min-height: 10px)|(color) and (color)|"
                          "true,false,true,false|[object MediaQueryList]"});
+    // 400 x 200: 200vh + 5em is 480 (false), 100vh * 2 is 400.
+    CHECK_EQ(logged(page, "units="), std::string{"units=true,true,true,false,true,false,true"});
 }
 
 // ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -

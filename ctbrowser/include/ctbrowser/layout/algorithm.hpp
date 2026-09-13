@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,11 +66,26 @@ struct resolved_edges {
 
 [[nodiscard]] resolved_edges resolve_edges(const box_node & b, const constraints & c);
 
-// How wide a block-level box gets, and how much of that its content sees.
+// How wide a block-level box gets, and how much of that its content sees. The
+// measure function is for a `width`, `min-width` or `max-width` spelled as an
+// intrinsic sizing keyword, which only the box's content can answer.
 [[nodiscard]] float outer_width_of(const box_node & b, const constraints & c,
-                                   const resolved_edges & e);
+                                   const resolved_edges & e, const measure_text_fn & measure);
 [[nodiscard]] float content_width_of(const box_node & b, const constraints & c,
-                                     const resolved_edges & e);
+                                     const resolved_edges & e, const measure_text_fn & measure);
+// A `min-content`, `max-content` or `fit-content` width AS A BORDER BOX (CSS
+// Sizing 3 §5), from measure_box's content sizes: fit-content is the
+// shrink-to-fit clamp between the other two within the available space. Every
+// site that resolves a width asks this for a keyword and resolve() otherwise.
+[[nodiscard]] float intrinsic_border_width(const box_node & b, const constraints & c,
+                                           const resolved_edges & e,
+                                           const measure_text_fn & measure, const length & want);
+// A min-width / max-width bound, or nullopt for `auto`/`none`: resolve() for a
+// number, intrinsic_border_width for a keyword.
+[[nodiscard]] std::optional<float> width_bound(const box_node & b, const constraints & c,
+                                               const resolved_edges & e,
+                                               const measure_text_fn & measure,
+                                               const length & want);
 // The left offset an `auto` margin contributes. Beside the other two rather than
 // inside block_flow because flex will want the same arithmetic, and two copies of
 // it would be two things to keep in agreement forever.
@@ -553,7 +569,7 @@ struct block_flow {
         // line, and an inline-block that is also a flex item is blockified anyway.
         const float outer_width = b.inline_level && b.width.is_auto() && c.forced_width < 0
                                       ? shrink_to_fit_width(b, c, edges, measure_text)
-                                      : outer_width_of(b, c, edges);
+                                      : outer_width_of(b, c, edges, measure_text);
         const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
 
         // THE BOX'S OWN HEIGHT, resolved BEFORE its children are laid out, because
@@ -660,8 +676,16 @@ struct block_flow {
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
                 // centres a box with a definite width, and that is the whole of how
                 // a page is centred.
-                f.bounds.x = edges.content_left() +
-                             auto_margin_left(child, child_c, child_edges, f.bounds.width);
+                f.margin_left = auto_margin_left(child, child_c, child_edges, f.bounds.width);
+                // The right margin is whatever the line has left over once the
+                // box and its left margin are placed, which is the resolved one
+                // unless it was `auto` (or the pair over-constrains the box).
+                f.margin_right = child.margin_right_auto
+                                     ? child_c.available_width - f.margin_left - f.bounds.width
+                                     : child_edges.margin_right;
+                f.margin_top = child_edges.margin_top;
+                f.margin_bottom = child_edges.margin_bottom;
+                f.bounds.x = edges.content_left() + f.margin_left;
                 if (at_collapsible_top) {
                     // The first child's top border edge is the parent's top
                     // border edge. A chain of empty children keeps adjoining and

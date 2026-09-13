@@ -484,6 +484,10 @@ private:
             }
             b.width = parse_length(prop(style, width_));
             b.height = parse_length(prop(style, height_));
+            // The block axis has no intrinsic size to name: a keyword height
+            // behaves as `auto` (CSS Sizing 3 §5.1), which is the content's
+            // height - the same thing.
+            if (b.height.is_intrinsic()) { b.height = length{}; }
             // PRESENTATIONAL ATTRIBUTES. `<table width=400>` and `<td width=50>`
             // are how a great deal of existing HTML sizes a table, and they mean
             // the CSS property - at the bottom of the cascade, so a sheet still
@@ -533,6 +537,8 @@ private:
             b.max_width = parse_length(prop(style, max_width_));
             b.min_height = parse_length(prop(style, min_height_));
             b.max_height = parse_length(prop(style, max_height_));
+            if (b.min_height.is_intrinsic()) { b.min_height = length{}; }
+            if (b.max_height.is_intrinsic()) { b.max_height = length{}; }
             b.flex = flex_of(style);
             b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
             b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";

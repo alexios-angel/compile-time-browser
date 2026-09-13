@@ -55,6 +55,9 @@ void browser::run_scripts() {
     // repaint, it makes the flush a no-op and the read answers from before the
     // write. `styles` is the honest level: the only callers are script mutating
     // the document, and every one of them can change which rules match.
+    // The frames' layouts point into the bindings being replaced; a stale
+    // pointer there would be followed on the next layout_frames.
+    frame_layouts_.clear();
     bindings_ = std::make_unique<dom_bindings>(
         *doc_, atoms_, canvases_, forms_,
         [this] {
@@ -139,9 +142,7 @@ void browser::run_scripts() {
     if (const script::value inner = script_->global("getComputedStyle"); inner.is_callable()) {
         auto * flushing = script_->allocate<script::native_object>(
             "getComputedStyle", [this, inner](script::context & c, std::span<script::value> args) {
-                if (dirty_ >= dirty::styles) { resolve_styles(); }
-                if (dirty_ >= dirty::layout) { run_layout(); }
-                if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
+                flush_for_read();
                 return c.call(inner, args);
             });
         // `inner` LIVES IN A C++ CAPTURE, which the precise collector cannot
@@ -152,11 +153,7 @@ void browser::run_scripts() {
         script_->define_global("getComputedStyle", script::value::object(flushing));
     }
     // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
-    bindings_->set_layout_hook([this] {
-        if (dirty_ >= dirty::styles) { resolve_styles(); }
-        if (dirty_ >= dirty::layout) { run_layout(); }
-        if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
-    });
+    bindings_->set_layout_hook([this] { flush_for_read(); });
     install_embedder_natives();
     script_error_.clear();
 

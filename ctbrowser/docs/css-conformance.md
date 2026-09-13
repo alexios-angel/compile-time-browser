@@ -43,6 +43,119 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
+## 2-wide. Every CSS module, measured — 2026-09-13
+
+The corpus grew on 2026-09-13 to every CSS module's `parsing/` tests,
+`inheritance.html` and `animation/` tests plus nine whole modules
+(`docs/wpt.md`, "the widened corpus"), so for the first time the CSS front
+end is measured property by property across the whole of CSS rather than in
+two suites. Engine at `7f9211d0`, same instrument (devbox, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **3** | 8 | 0 | 0 | 0 | 0 | 11 | 7 / 85 |
+| `css/css-align` | **21** | 36 | 0 | 0 | 0 | 0 | 57 | 593 / 728 |
+| `css/css-anchor-position` | **0** | 10 | 0 | 0 | 0 | 0 | 10 | 41 / 179 |
+| `css/css-animations` | **10** | 32 | 0 | 0 | 0 | 1 | 43 | 212 / 378 |
+| `css/css-backgrounds` | **32** | 71 | 4 | 0 | 0 | 45 | 152 | 1,411 / 2,876 |
+| `css/css-box` | **25** | 15 | 0 | 0 | 0 | 0 | 40 | 300 / 627 |
+| `css/css-break` | **8** | 14 | 0 | 0 | 0 | 0 | 22 | 91 / 449 |
+| `css/css-cascade` | **25** | 52 | 1 | 0 | 0 | 62 | 140 | 400 / 325 |
+| `css/css-color` | **11** | 51 | 2 | 0 | 0 | 257 | 321 | 1,996 / 5,702 |
+| `css/css-color-adjust` | **1** | 6 | 0 | 0 | 0 | 0 | 7 | 16 / 131 |
+| `css/css-color-hdr` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-conditional` | **5** | 35 | 1 | 0 | 172 | 204 | 417 | 1,295 / 501 |
+| `css/css-contain` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 14 / 31 |
+| `css/css-content` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 91 / 117 |
+| `css/css-display` | **1** | 7 | 0 | 0 | 0 | 0 | 8 | 142 / 218 |
+| `css/css-exclusions` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-flexbox` | **23** | 11 | 0 | 0 | 0 | 1 | 35 | 422 / 567 |
+| `css/css-fonts` | **24** | 73 | 3 | 0 | 0 | 0 | 100 | 1,423 / 2,446 |
+| `css/css-forced-color-adjust` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 6 / 8 |
+| `css/css-forms` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 1 / 51 |
+| `css/css-gaps` | **18** | 54 | 2 | 0 | 0 | 2 | 76 | 325 / 2,477 |
+| `css/css-grid` | **13** | 57 | 2 | 0 | 2 | 3 | 77 | 362 / 1,951 |
+| `css/css-images` | **8** | 23 | 0 | 0 | 0 | 0 | 31 | 744 / 2,472 |
+| `css/css-inline` | **6** | 14 | 0 | 0 | 0 | 0 | 20 | 78 / 255 |
+| `css/css-link-params` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-lists` | **8** | 17 | 0 | 0 | 0 | 0 | 25 | 248 / 250 |
+| `css/css-logical` | **29** | 33 | 0 | 0 | 0 | 0 | 62 | 520 / 246 |
+| `css/css-masking` | **10** | 32 | 6 | 0 | 0 | 1 | 49 | 126 / 2,821 |
+| `css/css-multicol` | **11** | 28 | 0 | 0 | 0 | 0 | 39 | 78 / 1,392 |
+| `css/css-nesting` | **1** | 21 | 0 | 0 | 0 | 23 | 45 | 9 / 108 |
+| `css/css-overflow` | **12** | 24 | 0 | 0 | 0 | 0 | 36 | 165 / 214 |
+| `css/css-overscroll-behavior` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 15 / 52 |
+| `css/css-page` | **4** | 8 | 0 | 0 | 0 | 0 | 12 | 31 / 42 |
+| `css/css-paint-api` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** | 11 | 0 | 0 | 0 | 0 | 32 | 545 / 516 |
+| `css/css-properties-values-api` | **0** | 9 | 0 | 0 | 60 | 0 | 69 | 0 / 9 |
+| `css/css-pseudo` | **0** | 4 | 0 | 0 | 1 | 0 | 5 | 57 / 226 |
+| `css/css-rhythm` | **5** | 10 | 0 | 0 | 0 | 0 | 15 | 55 / 100 |
+| `css/css-ruby` | **4** | 5 | 0 | 0 | 0 | 0 | 9 | 26 / 21 |
+| `css/css-scroll-anchoring` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 2 / 6 |
+| `css/css-scroll-snap` | **7** | 19 | 0 | 0 | 0 | 0 | 26 | 183 / 290 |
+| `css/css-scrollbars` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-shapes` | **7** | 11 | 3 | 0 | 0 | 0 | 21 | 66 / 481 |
+| `css/css-size-adjust` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 4 / 211 |
+| `css/css-sizing` | **11** | 23 | 3 | 0 | 0 | 0 | 37 | 1,033 / 941 |
+| `css/css-syntax` | **15** | 24 | 0 | 0 | 1 | 8 | 48 | 291 / 138 |
+| `css/css-tables` | **14** | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **36** | 61 | 0 | 0 | 0 | 0 | 97 | 556 / 1,376 |
+| `css/css-text-decor` | **12** | 23 | 0 | 0 | 0 | 0 | 35 | 185 / 1,007 |
+| `css/css-transforms` | **7** | 55 | 4 | 0 | 0 | 27 | 93 | 336 / 3,396 |
+| `css/css-transitions` | **9** | 21 | 0 | 0 | 0 | 0 | 30 | 299 / 610 |
+| `css/css-ui` | **21** | 31 | 0 | 0 | 0 | 0 | 52 | 558 / 836 |
+| `css/css-values` | **158** | 100 | 8 | 0 | 5 | 237 | 508 | 6,274 / 1,704 |
+| `css/css-variables` | **20** | 28 | 12 | 0 | 1 | 186 | 247 | 392 / 176 |
+| `css/css-view-transitions` | **3** | 9 | 0 | 0 | 0 | 0 | 12 | 80 / 944 |
+| `css/css-viewport` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 127 / 45 |
+| `css/css-writing-modes` | **10** | 6 | 0 | 0 | 0 | 0 | 16 | 36 / 16 |
+| `css/cssom` | **147** | 35 | 0 | 0 | 10 | 29 | 221 | 1,618 / 81 |
+| `css/cssom-view` | **44** | 157 | 3 | 0 | 13 | 22 | 239 | 485 / 1,489 |
+| `css/fill-stroke` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **4** | 24 | 0 | 0 | 0 | 0 | 28 | 143 / 2,267 |
+| `css/mediaqueries` | **5** | 25 | 0 | 0 | 0 | 63 | 93 | 834 / 864 |
+| `css/motion` | **7** | 33 | 3 | 0 | 0 | 4 | 47 | 172 / 3,120 |
+| `css/selectors` | **105** | 95 | 1 | 0 | 10 | 313 | 524 | 4,095 / 1,363 |
+
+**988 of the 2,909 css/* tests that ran (34.0%); 29,654 subtests PASS,
+50,439 FAIL.** The parsing and inheritance files alone are 24,411 subtests,
+8,460 PASS, and by property the failures are:
+
+| failing | passing | property | what it is |
+|---:|---:|---|---|
+| 5,271 | 1,805 | `color` | CSS Color 4/5: the modern space-separated syntax, `lab()`/`lch()`/`oklab()`/`oklch()`/`color()`, `color-mix()`, `light-dark()`, the relative colour syntax `rgb(from red r g b)`, `none`, and the computed serialisation `color(srgb 1 0 0)`. `properties/color.cpp` is a syntax check; `paint::parse_color` is what means a colour |
+| 2,160 | 632 | `background-image` | gradients: `linear-gradient()`/`radial-gradient()`/`conic-gradient()` and the repeating forms, colour stops and hints, canonical serialisation |
+| 318 | 317 | `font` | the shorthand's expansion and reserialisation |
+| 209+203+112+89+81+68 | | `grid-template-columns`/`-rows`, `grid`, `grid-row`, `grid-column`, `grid-template` | track lists: `repeat()`, `minmax()`, line names, `fit-content()` - parse and serialise, no layout |
+| 186 | 100 | `display` | the two-value syntax (`inline flow-root` is `inline-block`) |
+| 150+125+113+102+82+82 | | `rule`, `column-rule`, `rule-inset`, `row-rule`, `*-rule-inset` | css-gaps |
+| 139 | 69 | `offset-path` | basic shapes, `ray()`, `url()`, geometry boxes |
+| 135 | 92 | `content` | `counter()`/`counters()`/`attr()`/strings/`image-set()` |
+| 116 / 67 | 81 / 25 | `filter` / `backdrop-filter` | the filter function list |
+| 99 / 76 / 87 | | `clip-path` / `shape-outside` / `mask` | basic shapes and the mask shorthand |
+| 63 / 69 / 71 | | `text-decoration-line` / `box-shadow` / `font-size-adjust` | |
+
+211 of the 415 properties the sweep tests are absent from the property table
+(`grid-*`, `clip-path`, `mask-*`, `offset-*`, `place-*`, `justify-*`,
+`will-change`, `contain`, `columns`, `counter-*`, `font-variant-*`,
+`text-wrap`, `animation-range`, `backdrop-filter`, `shape-outside`, ...), and
+since `f08483ca` an unsupported name on `el.style` is an expando - CSSOM
+6.7.2 - so every one of their `test_valid_value`s fails honestly where it
+used to pass by echoing the author's bytes.
+
+The other block is not the grammar at all: **CSS Animations and CSS
+Transitions do not exist**, only Web Animations does, and the `animation/`
+files - `css-transforms` 3,396 failing subtests, `motion` 3,120,
+`css-backgrounds` 2,876, `css-masking` 2,821, `css-images` 2,472,
+`css-gaps` 2,477, `filter-effects` 2,267 - fail three of the four ways
+`interpolation-testcommon.js` drives them. Then **container queries**
+(`css-conditional`, 171 `assert_implements` HARNESS_ERRORs), `css-nesting`
+(1 of 22), `css-cascade` (`@layer`, `@scope`, `revert-layer`), and
+`cssom-view` (44 of 204).
+
 ## 2. Where the two suites stand — 2026-09-12
 
 Engine at `b570bd29`, same instrument: `css/cssom` **115** PASS / 67 FAIL / 0

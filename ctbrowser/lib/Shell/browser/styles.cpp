@@ -108,7 +108,11 @@ void browser::announce_resource_loads() {
 }
 
 std::string browser::collect_author_styles() {
-    const auto txn = doc_->read();
+    return collect_author_styles(*doc_, bindings_.get(), true);
+}
+
+std::string browser::collect_author_styles(document & doc, dom_bindings * bindings, bool announce) {
+    const auto txn = doc.read();
     const atom style_tag = atoms_.intern_lower("style");
     const atom link_tag = atoms_.intern_lower("link");
     const atom rel_attribute = atoms_.intern_lower("rel");
@@ -126,8 +130,8 @@ std::string browser::collect_author_styles() {
     const auto applies = [&](node_id at, bool enabled) {
         const std::string_view title = txn.attribute_value(at, title_attribute);
         if (title.empty()) { return true; }
-        if (bindings_) {
-            const std::string_view preferred = bindings_->preferred_sheet_title();
+        if (bindings != nullptr) {
+            const std::string_view preferred = bindings->preferred_sheet_title();
             return enabled || preferred.empty() || title == preferred;
         }
         if (!have_preferred) {
@@ -152,7 +156,7 @@ std::string browser::collect_author_styles() {
             // Which links are stylesheets is the CSSOM's answer too, so the two
             // cannot disagree - dom_bindings::link_sheet_state. An ALTERNATE
             // sheet is fetched for its `load` and applies nothing.
-            const bool enabled = bindings_ && bindings_->link_explicitly_enabled(at);
+            const bool enabled = bindings != nullptr && bindings->link_explicitly_enabled(at);
             const dom_bindings::link_sheet state =
                 tag == link_tag
                     ? dom_bindings::link_sheet_state(txn.attribute_value(at, rel_attribute),
@@ -170,7 +174,7 @@ std::string browser::collect_author_styles() {
                 // HTML "update a style block" ends by firing `load` at the
                 // element; the sheet is applied by the caller straight after
                 // this walk, and the event is queued for the tick after that.
-                note_resource_load(at, true);
+                if (announce) { note_resource_load(at, true); }
             } else if (state != dom_bindings::link_sheet::none) {
                 // Resolved by the asset registry exactly as <script src> is
                 // (see load_page_scripts): registry, then data:, then the
@@ -181,7 +185,7 @@ std::string browser::collect_author_styles() {
                 const std::string href{txn.attribute_value(at, href_attribute)};
                 const std::vector<std::byte> bytes = assets_.load(href);
                 if (bytes.empty()) {
-                    if (style_error_.empty()) {
+                    if (announce && style_error_.empty()) {
                         style_error_ = "<link rel=stylesheet href=\"" + href + "\"> not found";
                     }
                 } else if (state == dom_bindings::link_sheet::active && applies(at, enabled)) {
@@ -192,7 +196,7 @@ std::string browser::collect_author_styles() {
                 }
                 // `load` once the sheet applies, `error` when there is nothing
                 // to apply - the page's LoadObserver is written for both.
-                note_resource_load(at, !bytes.empty());
+                if (announce) { note_resource_load(at, !bytes.empty()); }
             }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }

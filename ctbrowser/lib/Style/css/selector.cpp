@@ -176,6 +176,13 @@ bool known_pseudo_element(std::string_view name) {
 
 namespace {
 
+// The functional pseudo-elements whose one <ident> argument names a distinct
+// pseudo-element with a cascade of its own (CSS Pseudo 4 §3.3, View
+// Transitions 1 §4.6). The rest take a selector or a keyword.
+constexpr std::string_view functional_pseudo_elements_named[] = {
+    "highlight", "view-transition-group", "view-transition-image-pair", "view-transition-old",
+    "view-transition-new"};
+
 [[nodiscard]] bool known_functional_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"part",
                                                  "slotted",
@@ -515,6 +522,19 @@ private:
             spaced = false;
         }
         return !want_argument && !(single && out.size() != 1);
+    }
+
+    // Exactly one identifier between the parentheses, whitespace aside; its
+    // text case-folded, as the pseudo-element's name is interned.
+    [[nodiscard]] bool single_ident_argument(const component_value & fn, std::string & out) const {
+        for (const component_value & v : sheet_->children_of(fn)) {
+            if (v.kind != cv_kind::token) { return false; }
+            const css_token & t = token(v);
+            if (t.type == token_type::whitespace) { continue; }
+            if (t.type != token_type::ident || !out.empty()) { return false; }
+            out = ascii_lower_copy(text(v));
+        }
+        return !out.empty();
     }
 
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
@@ -870,13 +890,29 @@ private:
                     std::string_view name = text(next);
                     if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
                     if (doubled) {
-                        // `::part(x)`, `::slotted(y)`: real, and nothing here holds
-                        // the argument, so the author's bytes are the only record.
                         if (!known_functional_pseudo_element(name)) {
                             dead = invalid_ = true;
                             continue;
                         }
                         i = name_at;
+                        // `::highlight(x)` and the four `::view-transition-*(x)`
+                        // take one identifier and NAME a pseudo-element the
+                        // cascade can run: the compound carries it as
+                        // `name(argument)`, which is the spelling
+                        // getComputedStyle(el, "::highlight(x)") asks for
+                        // (bindings/computed_style, resolvable_pseudo), so
+                        // `::highlight(name) { color: green }` is that read's
+                        // answer. `::part(x)`, `::slotted(y)`, `::picker(select)`:
+                        // real, and nothing here holds the argument, so the
+                        // author's bytes are the only record.
+                        std::string argument;
+                        if (ascii_iequals_any(name, functional_pseudo_elements_named) &&
+                            single_ident_argument(next, argument)) {
+                            b.part.pseudo_element =
+                                atoms_->intern_lower(ascii_lower_copy(name) + "(" + argument + ")");
+                            ++b.tags;
+                            continue;
+                        }
                         dead = lossy = true;
                         continue;
                     }

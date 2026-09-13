@@ -886,3 +886,34 @@ nearest-neighbour (see CLAUDE.md), and a browser interpolates - so a fractional
 scale disagrees along an edge. `p5-image.html` calls `noSmooth()` on its
 offscreen buffer as well as the sketch, because a corpus page exists to be
 comparable and asking for what the engine does is the honest way to get there.
+
+## NESTED BROWSING CONTEXTS: a frame is laid out, not painted (2026-09-13)
+
+An `<iframe>` is a second `dom_bindings` over its own document, sharing the
+realm (bindings/frames.cpp says what that costs: one `Element`, no script in
+the frame, no navigation). Until now that was the whole of it — "a frame lays
+out as an empty box" — and every read inside a frame stopped there: `100vw` in
+a 200px frame computed against the window, a `@media` in the frame's sheet
+answered for the page, and `frame.contentWindow.getComputedStyle(div).height`
+was the empty declaration an unrendered element gets. `css/css-values`'
+`viewport-units-*` are 142 subtests over five files that all measure inside
+one.
+
+`browser/nested.cpp` runs each loaded frame through the four stages the page
+runs through, at the size its `<iframe>` box got: a `style::engine` over the
+frame's own sheets with the media environment of ITS viewport (less the
+scrollbars when its root is `overflow: scroll`, CSS Values 4 §6.1.2 — the page
+does the same in `resolve_styles`), the cascade, the box tree and layout; the
+frame's bindings observe the result exactly as the page's do. Recursively, so
+a frame's frame is laid out inside it. It runs after every page layout, since
+the frame's size comes from it, and on any read when a frame document moved:
+a secondary document has no mutation hook, so `flush_for_read` compares the
+document's version and the CSSOM's edit stamp with what the layout was made
+from. `getComputedStyle` on a node of another document answers from that
+document's bindings (`owner_of`), which is how the page's global — the one a
+frame's window proxy falls back to — answers about the frame.
+
+**Nothing is painted.** The box on screen stays empty; the painting half is a
+display list nested in the page's and is not written. A `display: none` frame
+has no box, gets no layout, and reads as unrendered — which is what
+`getComputedStyle-detached-subtree` asserts through both windows.

@@ -172,6 +172,38 @@ void test_both_offsets_stretch_and_one_shrink_wraps() {
     }
 }
 
+void test_auto_margins_between_two_offsets_are_solved() {
+    // CSS 2.1 §10.3.7 rule 6 and §10.6.4: both offsets and a size given, the
+    // auto margins take what is left - equally for a pair, which is how an
+    // absolutely positioned box is centred - and the used margins are what the
+    // fragment carries for CSSOM (computed-style-005 reads them as 10px).
+    const std::string html = "<html><body><div id=anchor><div id=a></div></div></body></html>";
+    placed f;
+    f.load(html, std::string{reset}
+                     .append("#anchor { position: relative; width: 300px; height: 100px } "
+                             "#a { position: absolute; left: 0; right: 0; top: 0; bottom: 0; "
+                             "     width: 100px; height: 40px; margin: auto }")
+                     .c_str());
+    expect_near(f.at("a").x, 100, "centred: (300 - 100) / 2 from the left");
+    expect_near(f.at("a").y, 30, "and (100 - 40) / 2 from the top");
+    const fragment * frag = f.out.find(f.page.find_id("a"));
+    CHECK(frag != nullptr);
+    if (frag != nullptr) {
+        expect_near(frag->margin_left, 100, "the used left margin is the solved one");
+        expect_near(frag->margin_right, 100, "and the right");
+        expect_near(frag->margin_top, 30, "and the top");
+    }
+    // One auto margin takes the whole remainder; a negative one falls on the
+    // right (ltr).
+    placed g;
+    g.load(html, std::string{reset}
+                     .append("#anchor { position: relative; width: 300px; height: 100px } "
+                             "#a { position: absolute; left: 0; right: 0; width: 100px; "
+                             "     margin-left: auto; margin-right: 20px }")
+                     .c_str());
+    expect_near(g.at("a").x, 180, "one auto margin takes the remainder");
+}
+
 void test_right_and_bottom_measure_from_the_far_edge() {
     placed f;
     f.load("<html><body><div id=anchor><div id=a>hi</div></div></body></html>",
@@ -303,6 +335,7 @@ int main() {
     test_an_auto_offset_is_the_static_position();
     test_a_static_position_collapses_hypothetical_margins();
     test_both_offsets_stretch_and_one_shrink_wraps();
+    test_auto_margins_between_two_offsets_are_solved();
     test_right_and_bottom_measure_from_the_far_edge();
     test_the_containing_block_is_the_PADDING_box();
     test_with_no_positioned_ancestor_it_uses_the_page();

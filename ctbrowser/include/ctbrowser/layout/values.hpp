@@ -86,7 +86,17 @@ enum class unit : std::uint8_t {
     em,
     rem,
     auto_,
-    none
+    none,
+    // THE INTRINSIC SIZING KEYWORDS, CSS Sizing 3 §5. A width in one of these
+    // has no number to resolve: it is the box's own min-content or max-content
+    // size, or the fit-content clamp between them, which only the formatting
+    // context that measures the box can answer - algorithm.cpp's
+    // intrinsic_border_width. `stretch` (and its `-webkit-fill-available`
+    // spelling) is the available space less the margins, which is what `auto`
+    // already means for a block's width, and parses as auto.
+    min_content,
+    max_content,
+    fit_content
 };
 
 // The `+ 12px` half of a `calc(50% + 12px)`, read on its own so parse_length stays
@@ -117,6 +127,10 @@ struct length {
     // "is_definite" predicate here - one existed, and every call site used it
     // to mean "not auto", which silently dropped percentages and em.
     [[nodiscard]] constexpr bool is_auto() const noexcept { return u == unit::auto_; }
+    // One of the three keywords above: a size the box's content decides.
+    [[nodiscard]] constexpr bool is_intrinsic() const noexcept {
+        return u == unit::min_content || u == unit::max_content || u == unit::fit_content;
+    }
     // Resolve against a containing-block basis. `auto` has no answer here -
     // the caller decides what auto means for the property it is resolving,
     // which differs between width (fill) and height (fit content).
@@ -127,7 +141,10 @@ struct length {
         case unit::percent: return value / 100.0f * basis + offset_px;
         case unit::em: return value * font_size;
         case unit::rem: return value * 16.0f;
-        case unit::auto_: return 0;
+        case unit::auto_:
+        case unit::min_content:
+        case unit::max_content:
+        case unit::fit_content: return 0; // a caller asks is_intrinsic() first
         }
         return 0;
     }
@@ -137,6 +154,12 @@ struct length {
     text = trim(text, " \t");
     if (text.empty()) { return length{}; }
     if (text == "auto") { return length{0, unit::auto_}; }
+    if (text == "min-content") { return length{0, unit::min_content}; }
+    if (text == "max-content") { return length{0, unit::max_content}; }
+    if (text == "fit-content") { return length{0, unit::fit_content}; }
+    if (text == "stretch" || text == "-webkit-fill-available" || text == "-moz-available") {
+        return length{0, unit::auto_};
+    }
     // `calc(50% + 12px)` - THE ONE CALC FORM THAT REACHES LAYOUT. The cascade folds
     // every calc it can into a single px value, so anything still spelled calc()
     // here carries a percentage: it had no answer at computed-value time because it

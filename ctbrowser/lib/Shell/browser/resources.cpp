@@ -22,6 +22,21 @@ void browser::load_page_fonts() {
         if (!bytes.empty()) { (void)ttf_->add_face(face.family, face.bold, face.italic, bytes); }
     }
 #endif
+    // The faces may have changed, so the `0` advances measured before are
+    // stale: hand the measurement over again, which drops the engine's cache.
+    install_text_measure();
+}
+
+// CSS Values 4 §6.1.1: `ch` is the advance of `0` in the element's font, and
+// only a font backend knows it. The engine measures through this; without it
+// `ch` folds to half an em and `width: 3ch` in a 10px monospace is 15px for
+// three 6px zeros - 97 of line-break-ch-unit's 194 subtests (5af74d62 landed
+// the engine half and named this line as the missing shell half).
+void browser::install_text_measure() {
+    styles_->set_text_measure(
+        [this](std::string_view text, float size, std::string_view family, bool bold, bool italic) {
+            return fonts().advance(text, size, family, bold, italic);
+        });
 }
 
 // Whether these bytes are SVG. Content first, name second, because a file

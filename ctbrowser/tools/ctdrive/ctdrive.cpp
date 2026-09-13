@@ -396,6 +396,7 @@ private:
 
 int main(int argc, char ** argv) {
     std::string path;
+    std::string query; // `?file=x` or `#frag`, appended to the page's address
     unsigned short port = 0;
     ctbrowser::app_options options;
     options.title = "ctdrive";
@@ -412,6 +413,12 @@ int main(int argc, char ** argv) {
             options.height = std::atoi(argv[++i]);
         } else if (arg == "--port" && i + 1 < argc) {
             port = static_cast<unsigned short>(std::atoi(argv[++i]));
+        } else if (arg == "--query" && i + 1 < argc) {
+            // THE QUERY STRING A VARIANT IS: WPT runs `html5lib_write.html?file=
+            // adoption01` as one test per `<meta name=variant>`, and the page
+            // reads which through `location.search`. A file has no query, so
+            // the address gets one here.
+            query = argv[++i];
         } else if (arg == "--fixed-dt" && i + 1 < argc) {
             // For a replay that has to come out the same every time. A live
             // session wants real time and leaves this alone.
@@ -422,7 +429,8 @@ int main(int argc, char ** argv) {
     }
 
     if (path.empty()) {
-        std::printf("usage: ctdrive <page.html> --port N [--size W H] [--fixed-dt SECONDS]\n"
+        std::printf("usage: ctdrive <page.html> --port N [--size W H] [--fixed-dt SECONDS] "
+                    "[--query ?x=y]\n"
                     "\n"
                     "Speaks one JSON object per line on 127.0.0.1:N:\n"
                     "  {\"cmd\":\"click\",\"x\":120,\"y\":200}   move/down/up/click\n"
@@ -456,7 +464,7 @@ int main(int argc, char ** argv) {
     const std::filesystem::path file{path};
     const std::string absolute =
         std::filesystem::absolute(file).lexically_normal().generic_string();
-    const std::string url = (absolute.starts_with('/') ? "file://" : "file:///") + absolute;
+    const std::string url = (absolute.starts_with('/') ? "file://" : "file:///") + absolute + query;
     const auto kind = ctbrowser::is_xml_extension(file.filename().string())
                           ? ctbrowser::browser::source_kind::xml
                           : ctbrowser::browser::source_kind::html;

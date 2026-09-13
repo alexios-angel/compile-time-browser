@@ -79,6 +79,12 @@ struct fragment {
     // Inline-flow result metadata. A real line box may have zero geometric
     // height, but it still prevents its block container collapsing through.
     bool has_line_box = false;
+    // THE USED MARGINS, which differ from the computed ones exactly where a
+    // margin was `auto`: a centred block's, an absolutely positioned box's
+    // between two offsets. CSSOM reports margins as used values for an element
+    // with a box (computed-style-005), and this is the only place that knows
+    // what a flow made of `auto`. Written by the flow that placed the box.
+    float margin_top = 0, margin_right = 0, margin_bottom = 0, margin_left = 0;
 
     [[nodiscard]] std::size_t count() const noexcept {
         std::size_t n = 1;

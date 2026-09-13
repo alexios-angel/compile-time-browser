@@ -68,6 +68,58 @@ SPARSE_PATHS=(
   # The same shape under html/: `name-content-attribute-and-property.html`
   # loads the element tables from here and was HARNESS_ERROR without them.
   /html/resources/common.js
+  # THE WIDENING OF 2026-09-13. Five suites at 69% with a long tail said less
+  # and less about the engine; these say where the next thousand tests are.
+  # THE CSS FRONT END, MEASURED ACROSS EVERY MODULE: `<module>/parsing/` holds
+  # the *-valid / *-invalid / *-computed files, `inheritance.html` the initial
+  # and inherited values, `animation/` the interpolation tests - 1,747 files
+  # over 60 modules, all testharness, all through css/support/. The patterns
+  # are what --no-cone is for; a module directory whole would be reftests.
+  /css/*/parsing/
+  /css/*/inheritance.html
+  /css/*/animation/
+  /css/*/animations/
+  # ...AND THE HELPERS THOSE IMPORT, which a pattern on the test directories
+  # alone leaves out: css-properties-values-api/animation/ loads
+  # ../resources/utils.js, every animation/ test loads
+  # /web-animations/testcommon.js, and a module's support/ holds its own
+  # fixtures. SKIP_DIR_PARTS in run-wpt.py keeps resources/ and support/ from
+  # ever being collected as tests. (60 HARNESS_ERRORs in
+  # css-properties-values-api on the first wide run were the missing utils.js.)
+  /css/*/resources/
+  /css/*/support/
+  /web-animations/testcommon.js
+  # WHOLE MODULES THAT ARE MOSTLY testharness AND MOSTLY IMPLEMENTED.
+  /css/css-syntax/         # the tokenizer and grammar (style/css/)
+  /css/css-variables/      # custom properties and var()
+  /css/css-cascade/        # @layer, !important, revert, scope
+  /css/css-conditional/    # @supports, @media, CSS.supports
+  /css/css-nesting/        # nested rules
+  /css/css-color/          # colour parsing and serialisation
+  /css/cssom-view/         # getBoundingClientRect, scroll*, matchMedia, elementFromPoint
+  /css/selectors/          # matches/closest/querySelector over every selector
+  /css/mediaqueries/       # the media query grammar and evaluation
+  # THE HTML PARSER, BY THE html5lib TREE-CONSTRUCTION TESTS: html/syntax/parsing
+  # runs every html5lib .dat fixture through the tree builder and compares the
+  # tree - the DOM's own tokenizer and tree builder, measured at last.
+  /html/syntax/
+  # ...LESS speculative-parsing/, which needs the WPT server (stash.py) and
+  # can only TIMEOUT here: 126 of the first wide run's 133 html/syntax
+  # TIMEOUTs were these. A negated pattern is what --no-cone allows.
+  !/html/syntax/speculative-parsing/
+  /html/semantics/forms/   # form controls, constraint validation, submission
+  /html/webappapis/        # timers, structured clone, atob, scripting, events
+  /dom/ranges/             # Range and StaticRange
+  /dom/traversal/          # TreeWalker, NodeIterator
+  /dom/lists/              # DOMTokenList
+  /dom/collections/        # HTMLCollection
+  /dom/abort/              # AbortController and AbortSignal
+  /shadow-dom/             # attachShadow, slots, event retargeting
+  /custom-elements/        # define, reactions, form-associated
+  /domparsing/             # DOMParser, innerHTML/outerHTML, XMLSerializer
+  /selection/              # getSelection and its ranges
+  /url/                    # the URL constructor over urltestdata.json
+  /encoding/               # TextEncoder/TextDecoder and the label table
 )
 
 verify_only=0

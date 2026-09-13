@@ -262,9 +262,48 @@ void test_a_frame_loaded_at_a_fragment_has_a_target() {
        "greeting,true,0,true");
 }
 
+// THE RENDERING HALF: a frame's document is laid out at the size its box got
+// (browser/nested.cpp), so what a script measures inside it is about the
+// frame. `100vw` in a 200px-wide frame is 200px, a media query in the frame's
+// own sheet is evaluated against the frame's viewport, and the two reads that
+// reach that layout - getComputedStyle through the frame's window, offsetWidth
+// on the frame's element - see a write to the frame's document at once.
+void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
+    constexpr const char * sized_frame =
+        "<style>iframe { width: 200px; height: 100px; border: 0 }</style>"
+        "<iframe id=f src=inner.html></iframe>";
+    is(sized_frame,
+       R"JS((function () {
+        var f = document.getElementById('f'), d = f.contentDocument, w = f.contentWindow;
+        d.body.innerHTML = '<style>* { margin: 0 } div { height: 100vw; width: 50vh }'
+            + ' @media (width: 200px) { div { color: rgb(1, 2, 3) } }</style><div></div>';
+        var div = d.querySelector('div'), cs = w.getComputedStyle(div);
+        return [cs.height, cs.width, cs.color, div.offsetWidth].join();
+    })())JS",
+       "200px,50px,rgb(1, 2, 3),50");
+    // A SECOND WRITE IS SEEN BY THE NEXT READ: the frame has no mutation hook,
+    // so the flush compares the document's version with the one laid out.
+    is(sized_frame,
+       R"JS((function () {
+        var f = document.getElementById('f'), d = f.contentDocument, w = f.contentWindow;
+        d.body.innerHTML = '<div style="height: 10vh"></div>';
+        var first = w.getComputedStyle(d.querySelector('div')).height;
+        d.body.innerHTML = '<div style="height: 20vh"></div>';
+        return first + ',' + w.getComputedStyle(d.querySelector('div')).height;
+    })())JS",
+       "10px,20px");
+    // A frame with no box - display: none - renders nothing, and its document
+    // reads as unrendered: the empty declaration, as through the page's window.
+    is("<iframe id=f src=inner.html style='display: none'></iframe>",
+       "document.getElementById('f').contentWindow.getComputedStyle("
+       "document.getElementById('f').contentDocument.body).height === ''",
+       "true");
+}
+
 } // namespace
 
 int main() {
+    test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
     test_a_frame_loaded_at_a_fragment_has_a_target();
     test_an_inserted_frame_has_its_window_at_once();

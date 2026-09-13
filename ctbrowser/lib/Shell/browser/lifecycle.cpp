@@ -103,6 +103,7 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
 void browser::reset_document() {
     doc_ = std::make_unique<document>(atoms_);
     styles_ = std::make_unique<ctbrowser::style::engine>(atoms_);
+    install_text_measure();
     // BEFORE the first sheet, so its conditions are evaluated against the real
     // viewport rather than against the 1024x768 default and then corrected.
     (void)media_environment_changed();
