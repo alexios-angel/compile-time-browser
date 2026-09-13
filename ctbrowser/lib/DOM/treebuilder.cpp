@@ -5,7 +5,7 @@
 
 namespace ctbrowser::html {
 
-node_id tree_builder::parse(std::string_view input) {
+node_id tree_builder::parse(std::string_view input, bool body_fragment) {
     document::builder builder = doc_->build();
     builder_ = &builder;
     input_ = input;
@@ -15,6 +15,8 @@ node_id tree_builder::parse(std::string_view input) {
     root_ = doc_->create_element(atoms_->intern_lower("html"));
     doc_->set_document_element(root_);
     open_.push_back(entry{root_, "html"});
+    body_fragment_ = body_fragment;
+    if (body_fragment_) { ensure_body(); }
 
     tokenizer lexer{input};
     while (true) {
@@ -28,7 +30,7 @@ node_id tree_builder::parse(std::string_view input) {
     // missing a close tag.
     close_foreign(input.size());
     builder_ = nullptr;
-    return root_;
+    return body_fragment_ ? body_ : root_;
 }
 
 void tree_builder::open_foreign(const token & t) {
@@ -229,6 +231,9 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
             builder_->set_attribute(target, atoms_->intern_lower(a.name), a.value);
         }
     };
+    // A body fragment cannot reopen the document's shell or move its content
+    // into a head. Its leading style/title, comments and whitespace stay here.
+    if (body_fragment_ && (tag == "html" || tag == "head" || tag == "body")) { return; }
     if (tag == "html") {
         merge_attributes(root_, html_attributes_seen_);
         return;

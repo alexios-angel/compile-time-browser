@@ -168,6 +168,33 @@ void test_outer_html_both_ways() {
        "null,<b id=\"b1\">x</b><i></i>");
 }
 
+void test_markup_fragments_keep_leading_metadata_and_node_order() {
+    // All three fragment consumers used to parse a document and discard its
+    // head. This lost styles before they could reach layout, including frames.
+    for (const char * write : {
+             "host.innerHTML = markup;",
+             "anchor.outerHTML = markup;",
+             "anchor.insertAdjacentHTML('beforebegin', markup); anchor.remove();",
+             "anchor.insertAdjacentHTML('afterend', markup); anchor.remove();",
+             "anchor.remove(); host.insertAdjacentHTML('afterbegin', markup);",
+             "anchor.remove(); host.insertAdjacentHTML('beforeend', markup);",
+         }) {
+        const std::string before = "(function () { var host = document.getElementById('outer');"
+                                   " var anchor = host.firstChild; var markup = ";
+        const std::string after = std::string{write} + " return host.innerHTML; })()";
+        is(before +
+               "' \\n<!--before--><style>p{color:red}</style><title>x</title>'"
+               " + '<div>y</div><!--after-->';" +
+               after,
+           " \n<!--before--><style>p{color:red}</style><title>x</title><div>y</div><!--after-->");
+        // Document shell tags are ignored in a body fragment, even when its
+        // only content is metadata. A synthetic <body> prefix alone fails this.
+        is(before + "'<html><head><style>p{color:red}</style></head><body></body></html>';" + after,
+           "<style>p{color:red}</style>");
+        is(before + "'';" + after, "");
+    }
+}
+
 } // namespace
 
 // DOM 5's Range, the shape MutationObserver-childList.html uses it in:
@@ -229,5 +256,6 @@ int main() {
     test_a_collection_owns_its_indices_and_names();
     test_a_colon_is_a_prefix_only_when_it_was_made_as_one();
     test_outer_html_both_ways();
+    test_markup_fragments_keep_leading_metadata_and_node_order();
     REPORT("dom_nodes_wpt");
 }

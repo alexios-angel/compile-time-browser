@@ -224,32 +224,9 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
     document scratch{*atoms_};
-    (void)parse_html(scratch, markup);
+    const node_id body = parse_html_body_fragment(scratch, markup);
     const auto from = scratch.read();
-    // The builder always makes html/body; the fragment's nodes are body's
-    // children. Anything that landed in head - a <style>, a <title> - is not
-    // what `el.innerHTML = ...` means and is left behind.
-    node_id body{};
-    const auto find_body = [&](auto && self, node_id at) -> void {
-        if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) { body = at; }
-        for (const node_id child : from.children(at)) { self(self, child); }
-    };
-    find_body(find_body, from.root());
-    // A COMMENT OR PROCESSING INSTRUCTION AHEAD OF ANY CONTENT lands on the
-    // scratch document's own node - the "before html" rule - and it is part
-    // of the fragment all the same: `div.innerHTML = '<?t a="b"?>'` and
-    // `= '<!--x-->'` both name one child, and with nothing else there is no
-    // body at all. The Document node's children come first because that is
-    // where they were.
-    for (const node_id child : from.children(from.document_node())) {
-        const node_kind kind = from.kind(child).value_or(node_kind::element);
-        if (kind == node_kind::comment || kind == node_kind::processing_instruction) {
-            copy_subtree(from, child, target);
-        }
-    }
-    if (body) {
-        for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
-    }
+    for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
     mutated();
 }
 
@@ -319,18 +296,10 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
         }
     }
     document scratch{*atoms_};
-    (void)parse_html(scratch, markup);
+    const node_id body = parse_html_body_fragment(scratch, markup);
     const auto from = scratch.read();
     const node_id fragment = doc_->create_fragment();
-    node_id body{};
-    const auto find_body = [&](auto && self, node_id at) -> void {
-        if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) { body = at; }
-        for (const node_id child : from.children(at)) { self(self, child); }
-    };
-    find_body(find_body, from.root());
-    if (body) {
-        for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
-    }
+    for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
     std::vector<node_id> moving;
     {
         const auto txn = doc_->read();

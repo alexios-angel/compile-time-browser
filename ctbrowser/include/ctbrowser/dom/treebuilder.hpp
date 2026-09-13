@@ -132,7 +132,8 @@ class tree_builder {
 public:
     tree_builder(document & doc, atom_table & atoms) : doc_(&doc), atoms_(&atoms) {}
 
-    [[nodiscard]] node_id parse(std::string_view input);
+    [[nodiscard]] node_id parse(std::string_view input) { return parse(input, false); }
+    [[nodiscard]] node_id parse_body_fragment(std::string_view input) { return parse(input, true); }
 
     // The verbatim source of each <svg> in the document, by the element it
     // belongs to. Populated during parse and read straight after; see the
@@ -143,6 +144,8 @@ public:
     }
 
 private:
+    [[nodiscard]] node_id parse(std::string_view input, bool body_fragment);
+
     struct entry {
         node_id id;
         std::string tag;
@@ -284,6 +287,7 @@ private:
     node_id head_;
     node_id body_;
     bool in_body_ = false;
+    bool body_fragment_ = false;
     std::vector<entry> open_;
     std::vector<formatting> active_;
 
