@@ -17,14 +17,6 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry) {
             needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
             needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
             needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
-            if ((edge->kind == HostDOMMethod::toggleClass ||
-                 edge->kind == HostDOMMethod::toggleAttribute) &&
-                call.getArgs().size() == 2) {
-                if (auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                    constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
-                    domUndefinedForces.insert(call);
-                }
-            }
         }
     });
 }
@@ -38,10 +30,6 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     mlir::OpBuilder at(call);
     llvm::SmallVector<mlir::Value> arguments{edge.element};
     llvm::append_range(arguments, call.getArgs());
-    if (edge.kind == HostDOMMethod::toggleAttribute && domUndefinedForces.contains(call)) {
-        arguments.push_back(
-            ec::ConstantOp::create(at, call.getLoc(), at.getI1Type(), at.getBoolAttr(false)));
-    }
     llvm::StringRef callee;
     switch (edge.kind) {
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;

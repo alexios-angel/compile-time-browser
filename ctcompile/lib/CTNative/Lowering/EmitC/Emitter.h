@@ -53,7 +53,6 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
     llvm::DenseSet<mlir::Value> domParameters;
-    llvm::DenseSet<mlir::Operation *> domUndefinedForces;
     bool needsDOM = false;
     bool needsDOMToggle = false;
     bool needsDOMAttributes = false;
