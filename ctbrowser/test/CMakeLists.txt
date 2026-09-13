@@ -11,6 +11,16 @@
 # that is not on its allow-list.
 ctbrowser_test(lint/api_surface)
 
+# The comparison/provenance tools must fail promptly and label measured artifacts.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  foreach(check review_tools baseline)
+    add_test(NAME tool_${check}
+             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/../tools/check/test_${check}.py")
+    set_tests_properties(tool_${check} PROPERTIES TIMEOUT 30)
+  endforeach()
+endif()
+
 # p5.js - how FAR the bundle gets, and how WIDE the surface is.
 ctbrowser_test(corpus/p5/p5_ratchet)
 # This ratchet calls ctjs's lexer and parser directly so it can report which
