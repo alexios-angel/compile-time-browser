@@ -30,6 +30,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // an own-field receiver or a primitive category without separate evidence.
     llvm::DenseSet<mlir::Value> leafValues;
     llvm::DenseSet<mlir::Value> snapshotElements;
+    llvm::DenseSet<mlir::Value> stringSnapshotElements;
+    llvm::DenseSet<mlir::Operation *> concatenations;
     llvm::DenseSet<mlir::Operation *> snapshotReads;
     std::optional<map_detail::snapshotCopies> copies;
     const auto prepareSnapshots = [&] {
@@ -493,6 +495,23 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     }
                 }
                 if (!found) { fields.push_back({origin, key, payload}); }
+            } else if (auto concat = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+                const auto string = [&](mlir::Value value) {
+                    return primitives.contains(value) && alternatives.lookup(value).tag() ==
+                                                             mlir::TypeID::get<ctjs::StringAttr>();
+                };
+                const bool left = string(concat.getLhs()), right = string(concat.getRhs());
+                if (concat.getKind() != ctjs::BinaryKind::Concat ||
+                    !((left && (right || stringSnapshotElements.contains(concat.getRhs()))) ||
+                      (right && stringSnapshotElements.contains(concat.getLhs())))) {
+                    return false;
+                }
+                concatenations.insert(concat);
+                result.snapshotOperations.push_back(concat);
+                primitives.insert(concat.getResult());
+                alternatives.try_emplace(
+                    concat.getResult(),
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::StringAttr>()));
             } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                 if (compare.getKind() != ctjs::CompareKind::StrictEq ||
                     (!primitives.contains(compare.getLhs()) &&
@@ -743,6 +762,13 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                             return false;
                         }
                         snapshotElements.insert(read.getResult());
+                        auto copy = read.getObject().getDefiningOp<ctjs::CallOp>();
+                        auto iterator = copy.getArgs().front().getDefiningOp<ctjs::CallOp>();
+                        const auto origin = maps.lookup(iterator.getReceiver());
+                        if (origin && (origin == capturedOrigin ? result.outerStringKeys
+                                                                : result.childStringKeys)) {
+                            stringSnapshotElements.insert(read.getResult());
+                        }
                     }
                     snapshotReads.insert(read);
                     result.snapshotOperations.push_back(read);
@@ -1133,11 +1159,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     }
     // A key may itself be a caller object. Equality observes identity without
     // granting a primitive category, field receiver, return or storage edge.
+    // Independently closed String keys additionally permit checked Concat only;
+    // nullable reads still format Undefined through the existing string lowering.
     for (mlir::Value element : snapshotElements) {
         for (mlir::OpOperand & use : element.getUses()) {
             if (!step() || !dominance.dominates(element, use.getOwner())) { return false; }
             if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
-                !(identities.contains(use.getOwner()) && use.getOperandNumber() < 2)) {
+                !(identities.contains(use.getOwner()) && use.getOperandNumber() < 2) &&
+                !(stringSnapshotElements.contains(element) &&
+                  concatenations.contains(use.getOwner()) && use.getOperandNumber() < 2)) {
                 return false;
             }
         }

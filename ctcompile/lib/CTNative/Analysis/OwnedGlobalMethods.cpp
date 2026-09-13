@@ -94,6 +94,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
                          edge.capturedMap->childLeafContents != capture->childLeafContents ||
+                         edge.capturedMap->outerStringKeys != capture->outerStringKeys ||
+                         edge.capturedMap->childStringKeys != capture->childStringKeys ||
                          edge.capturedMap->childEntries != capture->childEntries ||
                          edge.capturedMap->returnedChildMaps != capture->returnedChildMaps ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
@@ -154,7 +156,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     llvm::DenseSet<mlir::Operation *> childMaps;
     if (capture && (!capture->childMaps.empty() || !capture->returnedChildMaps.empty() ||
                     !capture->childEntries.empty() || capture->childMapContents ||
-                    capture->childScalarContents.known || capture->childLeafContents)) {
+                    capture->childScalarContents.known || capture->childLeafContents ||
+                    capture->outerStringKeys || capture->childStringKeys)) {
         mlir::DominanceInfo dominance(module);
         llvm::DenseSet<mlir::Value> outers, children, constructedChildren, returnedChildren;
         llvm::DenseMap<mlir::Value, ctjs::ConstructOp> childOrigins;
@@ -235,6 +238,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             reject("owned child leaf contents lack their complete outer Map census");
             return;
         }
+        if (capture->childStringKeys && !capture->childMapContents) {
+            reject("owned child String keys lack their complete outer Map census");
+            return;
+        }
         if (capture->childScalarContents.known &&
             (!capture->childMapContents || !capture->childScalarContents.tag() ||
              !(capture->childScalarContents == capture->childScalarContents.categories()))) {
@@ -266,6 +273,12 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             if (action == "set") {
+                if ((outers.contains(call.getReceiver()) ? capture->outerStringKeys
+                                                         : capture->childStringKeys) &&
+                    scalar(call.getArgs()[0]).tag() != mlir::TypeID::get<ctjs::StringAttr>()) {
+                    reject("owned Map String keys have an unproved insertion");
+                    return;
+                }
                 if (outers.contains(call.getArgs()[1]) || (children.contains(call.getArgs()[1]) &&
                                                            !outers.contains(call.getReceiver()))) {
                     reject("owned child Map payload would add an unchecked ownership edge");

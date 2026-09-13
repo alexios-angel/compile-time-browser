@@ -3,6 +3,261 @@
 namespace ctcompile::test::owned_global_shared_map {
 namespace {
 
+void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string & source,
+                                  bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map", "Array"};
+        return contract;
+    };
+    const auto subject = [&](const std::string & body) {
+        return replaced(source,
+                        "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                        "    %size = ctjs.get_property %state[%key]\n"
+                        "    ctjs.return %size",
+                        body);
+    };
+    const std::string head = R"MLIR(
+    %frame = ctjs.frame_enter 1
+    %zero = ctjs.constant #ctjs.number<0>
+    %prefix = ctjs.constant #ctjs.string<"<">
+    %suffix = ctjs.constant #ctjs.string<">">
+    %expected = ctjs.constant #ctjs.string<"<x>">
+)MLIR";
+    const std::string conversion = R"MLIR(    %text = ctjs.binary concat %prefix, %element
+    %message = ctjs.binary concat %text, %suffix
+    %matched = ctjs.compare strict_eq %message, %expected
+)MLIR";
+    const std::string snapshot = R"MLIR(
+    %array = ctjs.load_global "Array"
+    %fromKey = ctjs.constant #ctjs.string<"from">
+    %from = ctjs.get_property %array[%fromKey]
+    %keysKey = ctjs.constant #ctjs.string<"keys">
+    %keys = ctjs.get_property %state[%keysKey]
+    %iterator = ctjs.call %keys(%state)
+    ctjs.root %iterator in %frame
+    %copy = ctjs.call %from(%array, %iterator)
+    %element = ctjs.get_property %copy[%zero]
+    ctjs.root %element in %frame
+)MLIR" + conversion;
+    const auto normal = subject(head + snapshot +
+                                "    ctjs.frame_exit %frame\n"
+                                "    ctjs.return %matched\n");
+    const auto equality = [&](const std::string & program) {
+        return replaced(program, conversion,
+                        "    %matched = ctjs.compare strict_eq %element, %expected\n");
+    };
+    auto nested = subject(head + R"MLIR(
+    %outerKey = ctjs.constant #ctjs.number<0>
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %outerKey)
+    %condition = ctjs.truthy %found
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %readKey = ctjs.constant #ctjs.string<"get">
+      %reader = ctjs.get_property %state[%readKey]
+      %child = ctjs.call %reader(%state, %outerKey)
+)MLIR" +
+                          replaced(replaced(snapshot, "%keys = ctjs.get_property %state[%keysKey]",
+                                            "%keys = ctjs.get_property %child[%keysKey]"),
+                                   "%keys(%state)", "%keys(%child)") +
+                          R"MLIR(
+      scf.yield %matched : !ctjs.value
+    } else {
+      %missing = ctjs.constant #ctjs.boolean<false>
+      scf.yield %missing : !ctjs.value
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %answer
+)MLIR");
+    nested = replaced(nested, "    %value = ctjs.constant #ctjs.number<4607182418800017408>",
+                      R"MLIR(
+    %childConstructor = ctjs.load_global "Map"
+    %value = ctjs.construct %childConstructor(%childConstructor)
+    %childSetter = ctjs.get_property %value[%setKey]
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+    %seeded = ctjs.call %childSetter(%value, %entryKey, %payload)
+    %outerKey = ctjs.constant #ctjs.number<0>
+)MLIR");
+    nested = replaced(nested, "%setter(%state, %entryKey, %value)",
+                      "%setter(%state, %outerKey, %value)");
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & program, bool expected, bool outer = false,
+                             bool child = false, bool budgets = false) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured String snapshot fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (query.proved() != expected || query.exhausted()) {
+            std::fprintf(stderr, "String snapshot %s row %u expected %d: %s\n",
+                         prepared ? "prepared" : "source", rows, expected,
+                         query.reason().str().c_str());
+        }
+        check(query.proved() == expected && !query.exhausted(),
+              "only complete String insertion families authorize template snapshots");
+        if (!expected) {
+            check(empty(*module, query), "refused templates expose no partial ownership");
+        } else if (query.proved()) {
+            const auto & table = *query.roots().front().methodTable;
+            const auto & capture = *table.capturedMap;
+            check(capture.outerStringKeys == outer && capture.childStringKeys == child &&
+                      !capture.snapshotOperations.empty(),
+                  "outer and child key roles remain independent of snapshot equality");
+            for (const auto & edge : table.calls) {
+                check(edge.capturedMap && edge.capturedMap->outerStringKeys == outer &&
+                          edge.capturedMap->childStringKeys == child &&
+                          edge.capturedMap->snapshotOperations == capture.snapshotOperations,
+                      "every live call carries the complete independent String key census");
+            }
+            if (budgets) {
+                const unsigned completion = query.steps();
+                for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+                    OwnedGlobalRoots limited(*module, contract, budget);
+                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                              empty(*module, limited),
+                          "incomplete String key budgets expose no partial family");
+                }
+                OwnedGlobalRoots exact(*module, contract, completion);
+                check(exact.proved() && exact.steps() == completion,
+                      "the exact String key budget rederives the whole family");
+            }
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "String snapshot proofs preserve the original source");
+    };
+    variant(normal, true, true, false, true);
+    variant(nested, true, false, true, true);
+    variant(replaced(normal, "concat %prefix, %element", "concat %element, %prefix"), true, true);
+    variant(replaced(normal, "    %keysKey =", R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %zero)
+    %keysKey =)MLIR"),
+            true, true);
+    for (const auto & definition :
+         {"ctjs.constant #ctjs.number<0>", "ctjs.constant #ctjs.boolean<false>",
+          "ctjs.constant #ctjs.null", "ctjs.constant #ctjs.undefined", "ctjs.create_object"}) {
+        const auto unsafe = replaced(normal, "ctjs.constant #ctjs.string<\"x\">", definition);
+        variant(unsafe, false);
+        variant(equality(unsafe), true);
+    }
+    const auto numericChild = replaced(nested, "%actual = ctjs.constant #ctjs.string<\"x\">",
+                                       "%actual = ctjs.constant #ctjs.number<0>");
+    variant(numericChild, false);
+    variant(equality(numericChild), true);
+    auto wrongRole = replaced(nested, "%keys = ctjs.get_property %child[%keysKey]",
+                              "%keys = ctjs.get_property %state[%keysKey]");
+    wrongRole = replaced(wrongRole, "%keys(%child)", "%keys(%state)");
+    variant(wrongRole, false);
+    const auto later = [&](const std::string & definition) {
+        return replaced(normal, "    ctjs.store_global \"trace\", %answer",
+                        "    %later = ctjs.get_property %owned[%putKey]\n"
+                        "    %lateKey = " +
+                            definition + "\n" +
+                            (prepared ? "    %lateEnv = ctjs.load_upvalue %later[0]\n"
+                                        "    %lateCall = ctjs.call_direct @put$4(%owned, %u, "
+                                        "%later, %lateEnv, %lateKey)\n"
+                                      : "    %lateCall = ctjs.call %later(%owned, %lateKey)\n") +
+                            "    ctjs.store_global \"trace\", %answer");
+    };
+    variant(later("ctjs.constant #ctjs.string<\"\">"), true, true);
+    for (const char * definition : {"ctjs.constant #ctjs.null", "ctjs.create_object"}) {
+        const auto unsafe = later(definition);
+        variant(unsafe, false);
+        variant(equality(unsafe), true);
+    }
+    variant(later("ctjs.binary concat %actual, %actual"), false);
+    const auto poisoned = replaced(normal, "    %written = ctjs.call", R"MLIR(
+    %poisonKey = ctjs.constant #ctjs.number<0>
+    %never = ctjs.truthy %poisonKey
+    scf.if %never {
+      %poisoned = ctjs.call %setter(%state, %poisonKey, %value)
+    }
+    %written = ctjs.call)MLIR");
+    variant(poisoned, false);
+    variant(equality(poisoned), true);
+    variant(replaced(normal, "ctjs.binary concat %prefix", "ctjs.binary add %prefix"), false);
+    variant(replaced(normal, "ctjs.return %matched", "ctjs.return %element"), false);
+
+    const auto branch = subject(head +
+                                "    %condition = ctjs.truthy %zero\n"
+                                "    scf.if %condition {\n" +
+                                snapshot + R"MLIR(
+    } else {
+      %other = ctjs.binary concat %prefix, %suffix
+      ctjs.root %prefix in %frame
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %zero
+)MLIR");
+    const auto foreign = replaced(normal, "    %setKey =",
+                                  "    %foreign = ctjs.constant #ctjs.string<\"foreign\">\n"
+                                  "    %setKey =");
+    unsigned mutations = 0;
+    for (const auto & program : {branch, foreign}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "String snapshot scope controls parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "complete inactive arms and sibling constants keep the String proof");
+        ctjs::BinaryOp first, other;
+        ctjs::RootOp root;
+        mlir::Value element, foreignValue;
+        module->walk([&](ctjs::BinaryOp binary) {
+            if (!first) { first = binary; }
+            other = binary;
+        });
+        module->walk([&](ctjs::RootOp candidate) {
+            if (candidate.getValue().getDefiningOp<ctjs::GetPropertyOp>()) {
+                element = candidate.getValue();
+            } else if (ctjs::constantKey(candidate.getValue()) == "<") {
+                root = candidate;
+            }
+        });
+        module->walk([&](ctjs::ConstantOp constant) {
+            if (ctjs::constantKey(constant.getResult()) == "foreign") {
+                foreignValue = constant.getResult();
+            }
+        });
+        check(first && element && (foreignValue || root), "scope operands remain identifiable");
+        if (!first || !element || (!foreignValue && !root)) { continue; }
+        const auto mutate = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
+            ++mutations;
+            const auto saved = operation->getOperand(operand);
+            operation->setOperand(operand, value);
+            mlir::Builder attributes(&context);
+            (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.map_snapshot_string", attributes.getUnitAttr());
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "changed Concat or Root operands invalidate the old source report");
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+                  "fresh fingerprints and forged String facts cannot cross source scopes");
+            operation->setOperand(operand, saved);
+            check(OwnedGlobalRoots(*module, requested(*module)).proved(),
+                  "restored operands rederive ownership despite forged String reports");
+            operation->removeAttr("ctnative.map_snapshot_string");
+            check(hostContractFingerprint(*module) == contract.moduleSha256 &&
+                      OwnedGlobalRoots(*module, contract).proved(),
+                  "removing the forged marker restores the exact original proof");
+        };
+        if (foreignValue) {
+            mutate(first, 0, foreignValue);
+        } else {
+            mutate(other, 1, element);
+            mutate(first, 1, other.getResult());
+            mutate(root, 1, element);
+        }
+    }
+    std::printf("captured String snapshots %s: %u rows, %u scope mutations and budget controls\n",
+                prepared ? "prepared" : "source", rows, mutations);
+}
+
 void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & source,
                             bool prepared) {
     const auto requested = [](mlir::ModuleOp module) {
@@ -461,6 +716,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
     parameterized = replaced(parameterized, "    %putResult = ctjs.call %putter(%owned)",
                              "    %actual = ctjs.constant #ctjs.string<\"x\">\n"
                              "    %putResult = ctjs.call %putter(%owned, %actual)");
+    for (const bool lifted : {false, true}) {
+        checkCapturedStringSnapshots(context, lifted ? prepare(parameterized) : parameterized,
+                                     lifted);
+    }
     auto leaf = replaced(parameterized, "%value = ctjs.constant #ctjs.number<4607182418800017408>",
                          "%value = ctjs.create_object");
     leaf = replaced(leaf,

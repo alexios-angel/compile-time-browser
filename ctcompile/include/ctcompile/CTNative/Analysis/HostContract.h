@@ -123,8 +123,12 @@ struct HostCapturedMap {
     // Every child write is a supported scalar or a checked scalar-field leaf.
     // Reads may be Undefined; this gives no primitive, field or identity facts.
     bool childLeafContents = false;
+    // Independent complete insertion censuses, including all sibling methods.
+    // Neither fact implies nonempty snapshots or permits object-key coercion.
+    bool outerStringKeys = false;
+    bool childStringKeys = false;
     // Confined immediate key copies and read-only length/index observations.
-    // Element reads carry no scalar or object category authority.
+    // Element reads permit equality; String-key facts also permit checked Concat.
     std::vector<mlir::Operation *> snapshotOperations{};
 };
 
