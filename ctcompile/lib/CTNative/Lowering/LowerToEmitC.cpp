@@ -565,7 +565,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 fn->setAttr("ctjs.not_structured", marker);
             }
         }
-        lower.censusScalars(accepted);
+        lower.censusScalars(accepted, admittedGlobals.get());
         lower.censusShapes(accepted);
         if (admittedGlobals) { lower.censusOwnedGlobals(*admittedGlobals, accepted); }
         lower.censusIdentityFields(accepted);

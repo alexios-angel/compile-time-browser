@@ -573,12 +573,21 @@ bool admission::op(mlir::Operation * o) {
         // One carrier must preserve every source store, including writes in
         // callees and on other paths. A narrowed read cannot select storage.
         const std::string where = ("store to global `" + store.getName() + "`").str();
-        if (!printable(store.getValue(), where)) { return false; }
-        mlir::Type joined = typeOf(store.getValue());
+        const auto storeType = [&](StoreGlobalOp write) -> mlir::Type {
+            if (ownedGlobals && ownedGlobals->returnedScalar(write.getValue()).tag() ==
+                                    mlir::TypeID::get<NumberAttr>()) {
+                return NumType::get(o->getContext(), NumKind::F64);
+            }
+            return typeOf(write.getValue());
+        };
+        mlir::Type joined = storeType(store);
+        if (joined == typeOf(store.getValue()) && !printable(store.getValue(), where)) {
+            return false;
+        }
         bool consistent = true;
         store->getParentOfType<mlir::ModuleOp>().walk([&](StoreGlobalOp other) {
             if (other.getName() != store.getName()) { return; }
-            const auto type = typeOf(other.getValue());
+            const auto type = storeType(other);
             if (!type) {
                 consistent = false;
             } else {

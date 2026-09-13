@@ -491,9 +491,15 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
-        ec::AssignOp::create(
-            b, where, lvalueOfGlobal(b, where, store.getName()),
-            convertScalar(b, where, store.getValue(), globalStorageType(store.getName())));
+        mlir::Value value = store.getValue();
+        if (numberStores.erase(o) && value.getType() != f64) {
+            value = callWithConstValueOperands(b, where, mlir::TypeRange{f64},
+                                               b.getStringAttr("ctnative::global_number"),
+                                               mlir::ValueRange{value})
+                        .getResult(0);
+        }
+        ec::AssignOp::create(b, where, lvalueOfGlobal(b, where, store.getName()),
+                             convertScalar(b, where, value, globalStorageType(store.getName())));
         eraseIfUnused(o);
         return;
     }

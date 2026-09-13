@@ -30,6 +30,7 @@ struct lowering {
     // Actual source-store lattices, joined before any source value is retyped.
     // Observation requests and host categories never choose an output type.
     llvm::StringMap<mlir::Type> globalTypes;
+    llvm::DenseSet<mlir::Operation *> numberStores;
     llvm::StringSet<> observations;
     bool explicitObservations = false;
     // Committed after whole-function admission while source operations still
@@ -175,7 +176,7 @@ struct lowering {
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(mlir::Value object);
 
     void censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted);
-    void censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    void censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted, const OwnedGlobalRoots * roots);
     mlir::Type joinedReturnType(ctjs::FuncOp fn) const;
     void convertBoundaries(ctjs::FuncOp fn);
 

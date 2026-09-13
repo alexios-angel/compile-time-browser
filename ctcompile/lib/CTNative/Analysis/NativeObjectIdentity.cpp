@@ -312,6 +312,10 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                 }
                 if (mapKeyUse(use)) { continue; }
                 if (keyInitializations.lookup(use.getOwner()) == value) { continue; }
+                if (llvm::isa<ctjs::StoreGlobalOp>(use.getOwner()) && globals &&
+                    globals->returnedScalar(value).tag() == mlir::TypeID::get<ctjs::NumberAttr>()) {
+                    continue;
+                }
                 if ((comparisonOnly ? comparisonFieldsSafe : fieldsSafe) &&
                     object_detail::scalarFieldUse(use)) {
                     fields.insert(use.getOwner());

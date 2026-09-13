@@ -1,3 +1,4 @@
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -66,7 +67,8 @@ mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {
     return result;
 }
 
-void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
+                             const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
         if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c)) { return {}; }
@@ -78,9 +80,16 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
             if (!globals.contains(store.getName())) { return; }
-            auto [position, inserted] =
-                globalTypes.try_emplace(store.getName(), typeOf(store.getValue()));
-            if (!inserted) { position->second = meet(position->second, typeOf(store.getValue())); }
+            auto type = typeOf(store.getValue());
+            if (roots && roots->returnedScalar(store.getValue()).tag() ==
+                             mlir::TypeID::get<ctjs::NumberAttr>()) {
+                type = NumType::get(context, NumKind::F64);
+                // Keep the exact store after source calls are erased. The
+                // callee/result census below deliberately retains its broad ABI.
+                numberStores.insert(store);
+            }
+            auto [position, inserted] = globalTypes.try_emplace(store.getName(), type);
+            if (!inserted) { position->second = meet(position->second, type); }
         });
         resultTypes[fn.getSymName()] = scalarType(joinedReturnType(fn));
         auto & params = parameterTypes[fn.getSymName()];

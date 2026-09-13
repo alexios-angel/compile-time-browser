@@ -89,7 +89,7 @@ host.slot.set(element, "bs.alert", 64);
 var traceSecondKept = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
 var traceSecondRejected = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
-# Separate invocation-proof probe; EXACT_DATA still has host/carrier boundaries.
+# Separate invocation-proof probe; EXACT_DATA keeps its original source and host contract.
 ENTRY_OBJECTS = (
     DATA_PREFIX + """var element = {}; var other = {}; var absent = {}; var alias = element;
 var instance = {value: 64};
@@ -174,10 +174,9 @@ def recorder_cases():
         ),
     }
     # Keep the original empty-manifest refusal and measure the same bytes with
-    # the existing fixed-undefined host contract. Ownership now completes;
-    # native Map recognition still needs that fact at its own environment check.
+    # the existing fixed-undefined host contract and exact Number-store proof.
     cases["recorder_exact_data_undefined"] = dict(
-        cases["recorder_exact_data"], fixed_undefined=True
+        cases["recorder_exact_data"], fixed_undefined=True, entry_objects=True, field_reads=1
     )
     pins = {
         "recorder_single": (
@@ -207,7 +206,7 @@ def recorder_cases():
         assert row["source"].startswith(DATA_PREFIX), name
         row.update(
             functions=7,
-            admitted=name not in ("recorder_exact_data", "recorder_exact_data_undefined"),
+            admitted=name != "recorder_exact_data",
             recorder=True,
         )
         if name != "recorder_single":
@@ -286,9 +285,25 @@ def recorder_refusals():
     ):
         assert source != ENTRY_OBJECTS, name
         cases["recorder_entry_" + name] = dict(entry, source=source)
+    exact = recorder_cases()["recorder_exact_data_undefined"]
+    for name, appended in (
+        ("object", 'traceGet = host.slot.get(element, "bs.collapse");\n'),
+        ("missing", 'traceGet = host.slot.get(absent, "bs.alert");\n'),
+        (
+            "zero",
+            'host.slot.set(element, "bs.collapse", 0);\n'
+            'traceGet = host.slot.get(element, "bs.collapse");\n',
+        ),
+    ):
+        # The final observation is unchanged. Every source store must still be
+        # proved independently; an earlier Number result cannot authorize it.
+        cases["recorder_exact_later_" + name] = dict(
+            exact, source=EXACT_DATA + appended + "traceGet = 42;\n"
+        )
     for row in cases.values():
         # A completed source rejection must not be disguised as a budget cutoff.
         row.update(admitted=False, max_steps=1_000_000)
+    cases["recorder_exact_later_zero"]["max_steps"] = 2_000_000
     return cases
 
 
@@ -793,7 +808,10 @@ def recorder_future_body(entry_objects=False):
     if (get(element, original) !== null) { traceFuture = 0; }
 """
     if entry_objects:
-        body += """    const payload = {value: i + 0.5};
+        body += """    set(element, "bs.alert", 0);
+    if (get(element, "bs.alert") !== null) { traceFuture = 0; }
+    remove(element, "bs.alert");
+    const payload = {value: i + 0.5};
     const alias = payload;
     const other = {}, absent = {};
     set(element, "bs.alert", payload);
@@ -966,11 +984,12 @@ int main() {
 }
 """
     if entry_objects:
+        alias_reset = " g_alias.reset();" if re.search(r"\bg_alias\b", cpp) else ""
         changed = (
             changed.replace(
                 "g_host.reset(); g_element.reset();",
                 "g_host.reset(); g_element.reset(); g_other.reset(); g_absent.reset();\n"
-                "    g_alias.reset(); g_instance.reset();",
+                "    g_instance.reset();" + alias_reset,
             )
             .replace("ctnative::scalar_strict_equal(get(", "ctnative::object_strict_equal(get(")
             .replace(
@@ -1112,14 +1131,14 @@ for (let i = 0; i < 1024; ++i) {
         for policy, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + policy
             if row.get("recorder") and row["admitted"]:
-                for steps in (0, 32):
+                for steps in ((0, 32, 100_000) if row.get("fixed_undefined") else (0, 32)):
                     refused = methods.refused(
                         args,
                         ir,
                         label + f"-budget-{steps}",
                         config,
                         options=options + f" host-max-steps={steps}",
-                        reason="budget",
+                        reason="budget" if steps < 100_000 else None,
                         admitted=0,
                     )
                     check_call_preservation(ir.read_text(), refused.read_text(), label)
@@ -1162,7 +1181,7 @@ for (let i = 0; i < 1024; ++i) {
                 cleanup=row["admitted"],
             )
             methods.census(checked, functions, label, admitted=functions if row["admitted"] else 0)
-            if row.get("fixed_undefined"):
+            if row.get("fixed_undefined") and not row["admitted"]:
                 # Successful ownership prepares calls even when native emission
                 # refuses. Preserve every call and the exact entry method order.
                 targets = {"set": "fn$4", "get": "fn$5", "remove": "fn$6"}
@@ -1212,9 +1231,12 @@ for (let i = 0; i < 1024; ++i) {
                         for callee, _ in calls
                         if callee in methods_by_value
                     ]
-                    if (
-                        sequence != re.findall(r"host\.slot\.(set|get|remove)\(", row["source"])
-                        or len(re.findall(r"ctnative::object_get_field_76616c7565\(", cpp)) != 5
+                    if sequence != re.findall(
+                        r"host\.slot\.(set|get|remove)\(", row["source"]
+                    ) or len(
+                        re.findall(r"ctnative::object_get_field_76616c7565\(", cpp)
+                    ) != row.get(
+                        "field_reads", 5
                     ):
                         raise RuntimeError(
                             f"{name}/{mode}: changed live entry calls or field reads"
