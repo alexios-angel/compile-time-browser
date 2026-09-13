@@ -151,6 +151,47 @@ struct CTNativePruneDeadStoresPass
 
     void runOnOperation() override {
         mlir::Operation * root = getOperation();
+        unsigned prunedVariableCount = 0;
+        unsigned prunedOpCount = 0;
+        for (bool changed = true; changed;) {
+            changed = false;
+            // THE VARIABLES, collected first: erasing inside a walk is UB.
+            llvm::SmallVector<ec::VariableOp> dead;
+            root->walk([&](ec::VariableOp var) {
+                if (isWriteOnly(var)) { dead.push_back(var); }
+            });
+            for (ec::VariableOp var : dead) {
+                for (mlir::Operation * user :
+                     llvm::make_early_inc_range(var.getResult().getUsers())) {
+                    user->erase();
+                }
+                var.erase();
+                ++prunedVariables;
+                ++prunedVariableCount;
+                changed = true;
+            }
+            // WHAT THAT LEFT DEAD: the assigned values' producers, if pure and
+            // now unused. Post-order so a user goes before its producer; to a
+            // fixpoint through the outer loop.
+            llvm::SmallVector<mlir::Operation *> trivially;
+            root->walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * o) {
+                if (o == root) { return; }
+                if (mlir::isOpTriviallyDead(o) || (isPureExpression(o) && o->use_empty())) {
+                    trivially.push_back(o);
+                }
+            });
+            for (mlir::Operation * o : trivially) {
+                // A later entry may already have been erased through a parent
+                // region; PostOrder lists children first, so no: children are
+                // erased before their parent is considered. Erase directly.
+                o->erase();
+                ++prunedOps;
+                ++prunedOpCount;
+                changed = true;
+            }
+        }
+        // Cleanup can erase a call's final use. Mark after its fixpoint so
+        // the effect survives without declaring an unused result variable.
         // A CALL WHOSE RESULT NOTHING READS IS A STATEMENT, and only this tier
         // may say so - upstream's emitter declares a variable for it, and its
         // tests are kept verbatim here. The emitter honours the attribute; the
@@ -199,45 +240,8 @@ struct CTNativePruneDeadStoresPass
         });
         prunedVariables += erased.variables;
         prunedOps += erased.operations;
-        unsigned prunedVariableCount = erased.variables;
-        unsigned prunedOpCount = erased.operations;
-        for (bool changed = true; changed;) {
-            changed = false;
-            // THE VARIABLES, collected first: erasing inside a walk is UB.
-            llvm::SmallVector<ec::VariableOp> dead;
-            root->walk([&](ec::VariableOp var) {
-                if (isWriteOnly(var)) { dead.push_back(var); }
-            });
-            for (ec::VariableOp var : dead) {
-                for (mlir::Operation * user :
-                     llvm::make_early_inc_range(var.getResult().getUsers())) {
-                    user->erase();
-                }
-                var.erase();
-                ++prunedVariables;
-                ++prunedVariableCount;
-                changed = true;
-            }
-            // WHAT THAT LEFT DEAD: the assigned values' producers, if pure and
-            // now unused. Post-order so a user goes before its producer; to a
-            // fixpoint through the outer loop.
-            llvm::SmallVector<mlir::Operation *> trivially;
-            root->walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * o) {
-                if (o == root) { return; }
-                if (mlir::isOpTriviallyDead(o) || (isPureExpression(o) && o->use_empty())) {
-                    trivially.push_back(o);
-                }
-            });
-            for (mlir::Operation * o : trivially) {
-                // A later entry may already have been erased through a parent
-                // region; PostOrder lists children first, so no: children are
-                // erased before their parent is considered. Erase directly.
-                o->erase();
-                ++prunedOps;
-                ++prunedOpCount;
-                changed = true;
-            }
-        }
+        prunedVariableCount += erased.variables;
+        prunedOpCount += erased.operations;
         // Homebrew's release LLVM 23 accepts --mlir-pass-statistics but prints
         // no custom counters (the same is true of ResolveGlobals' statistics).
         // Keep the ODS statistics for builds that enable them, and give tests

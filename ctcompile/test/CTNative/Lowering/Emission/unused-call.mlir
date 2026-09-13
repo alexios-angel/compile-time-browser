@@ -21,6 +21,9 @@
 // RUN: ctjs-translate --mlir-to-cpp %s | FileCheck --check-prefix=UNMARKED %s
 // RUN: ctjs-opt --ctnative-prune-dead-stores --ctnative-print-deduced %s | ctjs-translate --mlir-to-cpp | FileCheck --check-prefix=DEDUCED %s
 // RUN: ctjs-opt "--ctnative-prune-dead-stores=report=true" %s 2>&1 >/dev/null | FileCheck --check-prefix=REPORT %s
+// RUN: ctjs-opt --ctnative-prune-dead-stores %s | ctjs-opt "--ctnative-prune-dead-stores=report=true" 2>&1 >/dev/null | FileCheck --check-prefix=AGAIN %s
+// RUN: ctjs-opt --ctnative-prune-dead-stores %s | ctjs-translate --mlir-to-cpp > %t.cpp
+// RUN: %cxx_exe -Wall -Wextra -Werror -Wconversion -pedantic %t.cpp -o %t.exe && %t.exe
 
 emitc.func private @effect(%x: f64) -> f64
 
@@ -32,6 +35,19 @@ emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function 
   emitc.return %kept : f64
 }
 
+// Neither result starts unused. Erasing the write-only slot and the pure add
+// must expose both calls to statement marking during this same pass run.
+emitc.func @after_cleanup(%a: f64) -> f64 {
+  %written = emitc.call @effect(%a) : (f64) -> f64
+  %dead = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
+  emitc.assign %written : f64 to %dead : <f64>
+  %opaque = emitc.call_opaque "effect"(%a) : (f64) -> f64
+  %sum = emitc.add %opaque, %a : (f64, f64) -> f64
+  emitc.return %a : f64
+}
+
+emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effect_count; return x + 1.0; }\0Aint main() { return dropped(40.0) == 41.0 && after_cleanup(7.0) == 7.0 && effect_count == 4 ? 0 : 1; }"
+
 // --- the pass marks exactly the dead one -----------------------------------
 //
 // CHECK-LABEL: emitc.func @dropped
@@ -39,6 +55,12 @@ emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function 
 // CHECK-NOT: ctnative.statement
 // CHECK: call @effect(%[[K]])
 // CHECK-SAME: ctnative.statement
+// CHECK-LABEL: emitc.func @after_cleanup
+// CHECK: call @effect(%arg0)
+// CHECK-SAME: ctnative.statement
+// CHECK-NEXT: {{.*}}call_opaque "effect"(%arg0)
+// CHECK-SAME: ctnative.statement
+// CHECK-NEXT: {{(emitc\.)?}}return %arg0
 
 // --- and the emitter prints it as a statement ------------------------------
 //
@@ -46,6 +68,11 @@ emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function 
 // CPP-NEXT: double [[K:v[0-9]+]] = effect([[A]]);
 // CPP-NEXT: effect([[K]]);
 // CPP-NEXT: return [[K]];
+// CPP-LABEL: double after_cleanup(
+// CPP-SAME: double [[A:v[0-9]+]]) {
+// CPP-NEXT: effect([[A]]);
+// CPP-NEXT: effect([[A]]);
+// CPP-NEXT: return [[A]];
 
 // --- WITHOUT the mark, upstream's behaviour is unchanged --------------------
 //
@@ -64,11 +91,17 @@ emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function 
 // DEDUCED-NEXT: CTCOMPILE_PIN([[K]],
 // DEDUCED-NEXT: effect([[K]]);
 // DEDUCED-NOT: CTCOMPILE_PIN
+// DEDUCED-LABEL: double after_cleanup(
+// DEDUCED-SAME: double [[A:v[0-9]+]]) {
+// DEDUCED-NEXT: effect([[A]]);
+// DEDUCED-NEXT: effect([[A]]);
+// DEDUCED-NEXT: return [[A]];
 
 // --- the count is asserted, not read ---------------------------------------
 //
 // Statistics are inert in the release LLVM this box installs, so the pass
-// carries an explicit report and the test pins its number: exactly one call
-// marked, which is the dead one and not the live one.
+// carries an explicit report and the test pins its number: the initially
+// unused call and the two whose last users were erased, never the live call.
 //
-// REPORT: marked 1 call(s) as statements
+// REPORT: pruned 1 variable(s) and 1 operation(s), marked 3 call(s) as statements
+// AGAIN: pruned 0 variable(s) and 0 operation(s), marked 0 call(s) as statements
