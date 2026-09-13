@@ -9,6 +9,11 @@ foreach(test IN LISTS tests)
   ctbrowser_test(${test})
 endforeach()
 
+# Core lifetime/storage tests also run without the browser or interpreter.
+get_target_property(_core_libs ctbrowser-test-core_basics LINK_LIBRARIES)
+list(FILTER _core_libs EXCLUDE REGEX "^ctbrowser::(dom|script|style|layout|paint|raster|shell|ctbrowser)$")
+set_property(TARGET ctbrowser-test-core_basics PROPERTY LINK_LIBRARIES "${_core_libs}")
+
 # The native DOM clients must link without the interpreter or Shell.
 # Keep the test helper's configured trace libraries and DOM/Core dependencies.
 foreach(client dom_token_list dom_element)

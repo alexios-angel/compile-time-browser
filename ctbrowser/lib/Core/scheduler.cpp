@@ -16,11 +16,6 @@ scheduler::scheduler(std::size_t worker_count) {
 
 scheduler::~scheduler() {
     for (std::jthread & w : workers_) { w.request_stop(); }
-    {
-        const std::lock_guard lock{idle_mutex_};
-        stopping_ = true;
-    }
-    idle_.notify_all();
 }
 
 void scheduler::submit(task t) {
@@ -78,10 +73,7 @@ void scheduler::run(std::size_t i, const std::stop_token & stop) {
     while (!stop.stop_requested()) {
         if (run_one(i)) { continue; }
         std::unique_lock lock{idle_mutex_};
-        idle_.wait(lock, [&] {
-            return pending_.load(std::memory_order_relaxed) > 0 || stopping_ ||
-                   stop.stop_requested();
-        });
+        idle_.wait(lock, stop, [&] { return pending_.load(std::memory_order_relaxed) > 0; });
     }
 }
 

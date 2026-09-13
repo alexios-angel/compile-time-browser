@@ -8,6 +8,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <latch>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -118,6 +121,67 @@ void test_slab_grows_past_a_chunk() {
     }
 }
 
+void test_slab_capacity_and_reuse() {
+    slab<std::uint8_t, thing_tag> s;
+    constexpr std::size_t limit = decltype(s)::max_chunks * decltype(s)::chunk_size;
+    const thing_id first = s.insert(std::uint8_t{7});
+    thing_id last = first;
+    for (std::size_t i = 1; i < limit; ++i) { last = s.insert(std::uint8_t{9}); }
+    CHECK_EQ(s.size(), limit);
+    CHECK_EQ(last.slot, limit - 1);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        bool refused = false;
+        try {
+            (void)s.insert(std::uint8_t{11});
+        } catch (const std::length_error &) { refused = true; }
+        CHECK(refused);
+        CHECK_EQ(s.size(), limit);
+        CHECK_EQ(*s.get(last), 9u);
+    }
+    CHECK(s.erase(first));
+    const thing_id reused = s.insert(std::uint8_t{13});
+    CHECK_EQ(reused.slot, first.slot);
+    CHECK(reused.generation != first.generation);
+    CHECK(s.get(first) == nullptr);
+    CHECK_EQ(*s.get(reused), 13u);
+    CHECK_EQ(s.size(), limit);
+}
+
+void test_slab_construction_failure_reuses_slot() {
+    struct counted {
+        int & live;
+        counted(int & count, bool fail) : live(count) {
+            if (fail) { throw std::runtime_error("construction failed"); }
+            ++live;
+        }
+        ~counted() { --live; }
+    };
+    int live = 0;
+    {
+        slab<counted, thing_tag> s;
+        thing_id previous;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            bool failed = false;
+            try {
+                (void)s.insert(live, true);
+            } catch (const std::runtime_error &) { failed = true; }
+            CHECK(failed);
+            CHECK_EQ(s.size(), 0u);
+            CHECK_EQ(live, 0);
+            CHECK(s.get(previous) == nullptr);
+            const thing_id current = s.insert(live, false);
+            CHECK_EQ(current.slot, 0u); // fresh and recycled failures keep their slot
+            CHECK(s.get(previous) == nullptr);
+            CHECK_EQ(live, 1);
+            if (attempt == 0) {
+                CHECK(s.erase(current));
+                previous = current;
+            }
+        }
+    }
+    CHECK_EQ(live, 0);
+}
+
 void test_atoms() {
     atom_table atoms;
     const atom div = atoms.intern("div");
@@ -224,6 +288,31 @@ void test_scheduler() {
     pool.parallel_for(0, [](std::size_t) { CHECK(false); }); // n == 0 runs nothing
 }
 
+void test_scheduler_teardown() {
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        { const scheduler idle{2}; }
+
+        std::atomic<int> finished{0};
+        std::latch started{2};
+        std::latch resume{1};
+        auto pool = std::make_unique<scheduler>(2);
+        scheduler * running = pool.get();
+        for (int i = 0; i < 2; ++i) {
+            pool->submit([&] {
+                started.count_down();
+                resume.wait();
+                // Already-running work may finish nested work during shutdown.
+                running->parallel_for(4, [&](std::size_t) { finished.fetch_add(1); });
+            });
+        }
+        started.wait();
+        std::jthread teardown([&] { pool.reset(); });
+        resume.count_down();
+        teardown.join();
+        CHECK_EQ(finished.load(), 8);
+    }
+}
+
 } // namespace
 
 // THE ALLOCATOR IS ACTUALLY mimalloc, and this is not a formality.
@@ -303,9 +392,12 @@ int main() {
     test_slab_basics();
     test_stale_handle_does_not_resolve();
     test_slab_grows_past_a_chunk();
+    test_slab_capacity_and_reuse();
+    test_slab_construction_failure_reuses_slot();
     test_atoms();
     test_geometry();
     test_scheduler();
+    test_scheduler_teardown();
     test_an_idle_pool_sleeps();
     REPORT("core_basics");
 }

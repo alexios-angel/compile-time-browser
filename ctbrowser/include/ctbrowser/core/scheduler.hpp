@@ -95,14 +95,15 @@ private:
     void run(std::size_t i, const std::stop_token & stop);
 
     std::vector<queue> queues_;
-    std::vector<std::jthread> workers_;
     std::atomic<std::size_t> next_{0};
     // Tasks queued and not yet taken, anywhere. The predicate every idle
     // worker waits on, so work in ANY queue wakes whoever can steal it.
     std::atomic<std::size_t> pending_{0};
     std::mutex idle_mutex_;
-    std::condition_variable idle_;
-    bool stopping_ = false;
+    std::condition_variable_any idle_;
+    // Destroyed first: workers join before the state they use, including
+    // when starting a later worker throws during construction.
+    std::vector<std::jthread> workers_;
 };
 
 } // namespace ctbrowser
