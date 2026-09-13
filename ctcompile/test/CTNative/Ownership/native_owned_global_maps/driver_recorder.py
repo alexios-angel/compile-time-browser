@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import os
+import subprocess
 
 from .driver_common import (
     CONSTANT_GLOBAL_NODE,
@@ -14,6 +16,8 @@ from .driver_common import (
     methods,
     owned,
 )
+
+from .harness_objects import instrument_leaf_objects
 
 # Keep the measured full Data subject, recorder and factory byte-for-byte.
 EXACT_DATA = """var traceErrorCount = 0; var traceErrorMessage = 0;
@@ -318,8 +322,346 @@ def recorder_mutations():
         yield name, source.replace(old, replacement), values
 
 
+# Separate measured template probes; the original recorder bodies above stay unchanged.
+TEMPLATE_OUTER = """var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map;
+    return {
+        set(key) { state.set(key, 1); },
+        get() {
+            const message = `Bootstrap doesn't allow more than one instance per element. Bound instance: ${Array.from(state.keys())[0]}.`;
+            return message === "Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert." ? 42 :
+                message === "Bootstrap doesn't allow more than one instance per element. Bound instance: undefined." ? 43 :
+                message === "Bootstrap doesn't allow more than one instance per element. Bound instance: ." ? 47 : 0;
+        },
+        clear() { state.clear(); }
+    };
+});
+var traceEmpty = host.slot.get();
+host.slot.set("");
+var traceEmptyKey = host.slot.get();
+host.slot.clear();
+host.slot.set("bs.alert");
+host.slot.set("bs.collapse");
+var traceInsertionOrder = host.slot.get();
+host.slot.clear();
+host.slot.set("bs.collapse");
+var traceReinserted = host.slot.get();
+host.slot.clear();
+host.slot.set("bs.alert");
+var trace = host.slot.get();
+"""
+TEMPLATE_CHILD = """var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map;
+    return {
+        set(element, key) {
+            state.has(element) || state.set(element, new Map);
+            const child = state.get(element);
+            child.set(key, 1);
+        },
+        get(element) {
+            if (!state.has(element)) return 0;
+            const child = state.get(element);
+            const message = `Bootstrap doesn't allow more than one instance per element. Bound instance: ${Array.from(child.keys())[0]}.`;
+            return message === "Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert." ? 42 : 0;
+        },
+        remove(element, key) {
+            if (!state.has(element)) return;
+            const child = state.get(element);
+            child.delete(key);
+            if (child.size === 0) state.delete(element);
+        }
+    };
+});
+var element = {};
+host.slot.set(element, "bs.alert");
+host.slot.set(element, "bs.collapse");
+var traceInsertionOrder = host.slot.get(element);
+host.slot.remove(element, "bs.alert");
+var traceReordered = host.slot.get(element);
+host.slot.remove(element, "bs.collapse");
+var traceAbsent = host.slot.get(element);
+host.slot.set(element, "bs.alert");
+var trace = host.slot.get(element);
+"""
+
+
+def template_cases():
+    cases = {
+        "captured_template_outer": dict(
+            source=TEMPLATE_OUTER,
+            values=dict(
+                traceEmpty=43, traceEmptyKey=47, traceInsertionOrder=42, traceReinserted=0, trace=42
+            ),
+            child=False,
+            max_steps=1_000_000,
+        ),
+        "captured_template_child": dict(
+            source=TEMPLATE_CHILD,
+            values=dict(traceInsertionOrder=42, traceReordered=0, traceAbsent=0, trace=42),
+            child=True,
+        ),
+    }
+    for name, size, digest in (
+        (
+            "captured_template_outer",
+            1108,
+            "db9730efbaeb237a8a123801cb40ed79288162c99a39369b21a3fe4ecd14a81e",
+        ),
+        (
+            "captured_template_child",
+            1303,
+            "e39ea88765761d962f82aefa4b100ef5f6b508ef7f45cfe7a32fc31c0a36bc86",
+        ),
+    ):
+        source = cases[name]["source"].encode()
+        assert (len(source), hashlib.sha256(source).hexdigest()) == (size, digest), name
+        cases[name].update(functions=6, admitted=True)
+    # Late calls poison the complete formal category; sibling stores separately
+    # poison the Map family even when every observed setter actual is a String.
+    for role, category, key in (
+        ("outer", "number", "7"),
+        ("outer", "object", "{}"),
+        ("child", "null", "null"),
+        ("child", "undefined", "void 0"),
+    ):
+        original = cases["captured_template_" + role]
+        child = original["child"]
+        prefix = "element, " if child else ""
+        cases[f"captured_template_{role}_late_{category}"] = dict(
+            original,
+            source=original["source"] + f"host.slot.set({prefix}{key});\n",
+            admitted=False,
+            max_steps=1_000_000,
+        )
+        insertion = (
+            f"        poison(element) {{ if (state.has(element)) state.get(element).set({key}, 1); }},\n"
+            if child
+            else f"        poison() {{ state.set({key}, 1); }},\n"
+        )
+        assert original["source"].count("    return {\n") == 1
+        cases[f"captured_template_{role}_sibling_{category}"] = dict(
+            original,
+            source=original["source"].replace("    return {\n", "    return {\n" + insertion)
+            + f"host.slot.poison({'element' if child else ''});\n",
+            functions=7,
+            admitted=False,
+            max_steps=1_000_000,
+        )
+    return cases
+
+
+def template_mutations():
+    cases = template_cases()
+    for name, role, old, replacement, values in (
+        (
+            "template_outer_stale_key",
+            "outer",
+            "Array.from(state.keys())[0]",
+            '"bs.alert"',
+            dict(
+                traceEmpty=42,
+                traceEmptyKey=42,
+                traceInsertionOrder=42,
+                traceReinserted=42,
+                trace=42,
+            ),
+        ),
+        (
+            "template_outer_absent_is_null",
+            "outer",
+            "Bound instance: undefined.",
+            "Bound instance: null.",
+            dict(cases["captured_template_outer"]["values"], traceEmpty=0),
+        ),
+        (
+            "template_child_stale_key",
+            "child",
+            "Array.from(child.keys())[0]",
+            '"bs.alert"',
+            dict(cases["captured_template_child"]["values"], traceReordered=42),
+        ),
+    ):
+        source = cases["captured_template_" + role]["source"]
+        assert source.count(old) == 1, (name, old)
+        yield name, source.replace(old, replacement), values
+
+
+def template_future_body(child):
+    if child:
+        return """    remove(element, "bs.alert");
+    if (get(element) !== 0) { traceFuture = 0; }
+    set(element, "");
+    set(element, "bs.alert");
+    if (get(element) !== 0) { traceFuture = 0; }
+    remove(element, "");
+    if (get(element) !== 42) { traceFuture = 0; }
+    let key = "future-" + i + "-long-owned-template-key";
+    const original = key;
+    set(element, key);
+    key = "";
+    remove(element, "bs.alert");
+    if (get(element) !== 0) { traceFuture = 0; }
+    set(element, "bs.alert");
+    if (get(element) !== 0) { traceFuture = 0; }
+    remove(element, original);
+    if (get(element) !== 42) { traceFuture = 0; }
+    remove(element, "bs.alert");
+    if (get(element) !== 0) { traceFuture = 0; }
+    key = "bs.alert";
+    set(element, key);
+    key = "changed caller storage";
+    if (get(element) !== 42) { traceFuture = 0; }
+"""
+    return """    clear();
+    if (get() !== 43) { traceFuture = 0; }
+    set("");
+    if (get() !== 47) { traceFuture = 0; }
+    clear();
+    let key = "bs.alert";
+    set(key);
+    key = "changed caller storage";
+    set("bs.collapse");
+    if (get() !== 42) { traceFuture = 0; }
+    clear();
+    key = "future-" + i + "-long-owned-template-key";
+    set(key);
+    key = "";
+    set("bs.alert");
+    if (get() !== 0) { traceFuture = 0; }
+    clear();
+    set("bs.alert");
+    if (get() !== 42) { traceFuture = 0; }
+"""
+
+
+def template_future_source(child):
+    method = "remove" if child else "clear"
+    return (
+        "var traceFuture = 1;\n(function() {\n"
+        "const set = host.slot.set, get = host.slot.get;\n"
+        f"const {method} = host.slot.{method};\n"
+        "for (let i = 0; i < 1024; ++i) {\n" + template_future_body(child) + "}\n})();\n"
+    )
+
+
+def template_lifetime_cpp(cpp, child):
+    # The existing observer records weak allocation witnesses without changing
+    # the generated Map implementation or its ownership.
+    changed = instrument_leaf_objects(cpp, allocations=1 if child else 0)
+    argument = "element" if child else ""
+    method = "remove" if child else "clear"
+    changed += f"""
+int main() {{
+    if (ctnative_test_entry() != 0 || ctn_test_maps.empty()) {{ return 100; }}
+    auto first = g_host;
+    auto table = first->slot;
+    auto get = table->m_get;
+    auto set = table->m_set;
+    auto {method} = table->m_{method};
+    std::weak_ptr first_lifetime = first;
+    std::weak_ptr table_lifetime = table;
+"""
+    if child:
+        changed += "    auto element = g_element;\n    g_element.reset();\n"
+    changed += f"""    g_host.reset();
+    if (first->slot->m_get({argument}) != 42 || table->m_get({argument}) != 42 ||
+        get({argument}) != 42) {{ return 101; }}
+    first.reset();
+    if (!first_lifetime.expired() || table_lifetime.expired() ||
+        table->m_get({argument}) != 42) {{ return 102; }}
+    table.reset();
+    if (!table_lifetime.expired() || ctn_test_maps[0].expired()) {{ return 103; }}
+    for (int i = 0; i < 1024; ++i) {{
+"""
+    changed += (
+        template_future_body(child)
+        .replace("!==", "!=")
+        .replace("traceFuture = 0;", "return 104;")
+        .replace("let key =", "std::string key =")
+        .replace("const original =", "const std::string original =")
+        .replace('"future-" + i', '"future-" + std::to_string(i)')
+    )
+    changed += f"""    }}
+    const auto next = ctn_test_maps.size();
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() <= next ||
+        ctn_test_maps[0].lock() == ctn_test_maps[next].lock() ||
+        get({argument}) != 42) {{ return 105; }}
+"""
+    if child:
+        changed += """    if (element == g_element || get(g_element) != 0 ||
+        g_host->slot->m_get(g_element) != 42 || g_host->slot->m_get(element) != 0) {
+        return 106;
+    }
+"""
+    else:
+        changed += "    if (g_host->slot->m_get() != 42) { return 106; }\n"
+    changed += f"""    get = {{}};
+    if (ctn_test_maps[0].expired()) {{ return 107; }}
+    set = {{}};
+    if (ctn_test_maps[0].expired()) {{ return 108; }}
+    {method} = {{}};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[next].expired()) {{ return 109; }}
+    g_host.reset();
+"""
+    if child:
+        changed += "    element.reset();\n    g_element.reset();\n"
+    return changed + """    for (const auto & map : ctn_test_maps) {
+        if (!map.expired()) { return 110; }
+    }
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 111; }
+    }
+    return 0;
+}
+"""
+
+
+def template_lifetime(args, cpp, name, mode, expected, compilers, nm, child):
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(template_lifetime_cpp(cpp, child))
+    for index, compiler in enumerate(compilers):
+        binary = source.with_suffix(f".{index}").resolve()
+        host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
+        if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
+            raise RuntimeError(f"{name}/{mode}: linked VM symbols in template lifetime")
+        if host.run([str(binary)]).stdout != expected * 2:
+            raise RuntimeError(f"{name}/{mode}: future template lifetime mismatch")
+    binary = source.with_suffix(".sanitized").resolve()
+    host.run(
+        [
+            compilers[1],
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    result = subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
+    if result.returncode or result.stdout != expected * 2 or result.stderr:
+        raise RuntimeError(
+            f"{name}/{mode}: sanitized template lifetime failed\n{result.stdout}{result.stderr}"
+        )
+
+
 def check_recorders(args, node, reference, compilers, nm):
-    cases = {**recorder_cases(), **snapshot_cases()}
+    cases = {**recorder_cases(), **snapshot_cases(), **template_cases()}
     observations = 0
 
     def observe(name, source, values):
@@ -339,14 +681,18 @@ def check_recorders(args, node, reference, compilers, nm):
         observe(name, row["source"], row["values"])
         observations += len(row["values"])
         if row["admitted"]:
-            future = row["source"] + """var traceFuture = 1;
+            future = row["source"] + (
+                template_future_source(row["child"])
+                if "child" in row
+                else """var traceFuture = 1;
 for (let i = 0; i < 1024; ++i) {
     if (host.slot.get() !== 42) { traceFuture = 0; }
 }
 """
+            )
             observe(name + "-future", future, dict(row["values"], traceFuture=1))
             observations += len(row["values"]) + 1
-    mutations = list(recorder_mutations())
+    mutations = [*recorder_mutations(), *template_mutations()]
     for name, source, values in mutations:
         observe(name, source, values)
         observations += len(values)
@@ -367,10 +713,16 @@ for (let i = 0; i < 1024; ++i) {
         config = observed_contract(ir, name)
         for policy, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + policy
+            # Keep exact sources; the longer outer probe needs this budget,
+            # and unsafe-key controls must finish their semantic refusal.
+            if "max_steps" in row:
+                options += f" host-max-steps={row['max_steps']}"
             output = owned.lower(args, ir, label, config, options=options, cleanup=row["admitted"])
             methods.census(output, functions, label, admitted=functions if row["admitted"] else 0)
             if not row["admitted"]:
                 check_call_preservation(ir.read_text(), output.read_text(), label)
+                if "child" in row and "budget exhausted" in output.read_text():
+                    raise RuntimeError(f"{label}: key-category refusal exhausted its proof budget")
             elif policy == "default":
                 default = output
             elif output.read_text() != default.read_text():
@@ -410,7 +762,10 @@ for (let i = 0; i < 1024; ++i) {
             owned.standalone(args, default, name, expected, compilers, nm)
             for mode in ("explicit", "deduced"):
                 cpp = (args.work / f"{name}.{mode}.cpp").read_text()
-                methods.lifetime(args, cpp, name, mode, expected, compilers[1])
+                if "child" in row:
+                    template_lifetime(args, cpp, name, mode, expected, compilers, nm, row["child"])
+                else:
+                    methods.lifetime(args, cpp, name, mode, expected, compilers[1])
     native = sum(row["admitted"] for row in cases.values())
     print(
         f"recorder boundary: {native} native snapshots, {len(cases) - native} refusals, "
