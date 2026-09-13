@@ -150,6 +150,37 @@ void test_chunked() {
     CHECK(body_text(response) == "hello world");
 }
 
+void test_body_limit() {
+    test_server server{{canned("AB"), canned("AB"), canned(""), canned("A"),
+                        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        "2\r\nAB\r\n2\r\nCD\r\n0\r\n\r\n"}};
+    const auto exact = ctbrowser::shell::http_get(server.url("/exact"), {.max_bytes = 2});
+    CHECK(exact.completed());
+    CHECK(exact.ok());
+    CHECK(body_text(exact) == "AB");
+
+    const auto exceeded = ctbrowser::shell::http_get(server.url("/exceeded"), {.max_bytes = 1});
+    CHECK(!exceeded.completed());
+    CHECK(exceeded.error == "response body exceeds max_bytes");
+    CHECK(exceeded.body.empty());
+
+    const auto empty = ctbrowser::shell::http_get(server.url("/empty"), {.max_bytes = 0});
+    CHECK(empty.completed());
+    CHECK(empty.ok());
+    CHECK(empty.body.empty());
+
+    const auto zero = ctbrowser::shell::http_get(server.url("/zero"), {.max_bytes = 0});
+    CHECK(!zero.completed());
+    CHECK(zero.error == exceeded.error);
+    CHECK(zero.body.empty());
+
+    // A later chunk exceeding the cap also discards the already accepted bytes.
+    const auto chunked = ctbrowser::shell::http_get(server.url("/chunked"), {.max_bytes = 3});
+    CHECK(!chunked.completed());
+    CHECK(chunked.error == exceeded.error);
+    CHECK(chunked.body.empty());
+}
+
 void test_status_and_body() {
     // A 404 COMPLETED - it is not a network failure, and fetch only rejects on
     // the latter. Getting this wrong turns every missing page into an exception.
@@ -246,6 +277,7 @@ void test_tls_is_honest() {
 int main() {
     test_get();
     test_chunked();
+    test_body_limit();
     test_status_and_body();
     test_redirect();
     test_relative_redirect();

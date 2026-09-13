@@ -64,20 +64,20 @@ private:
 struct sink {
     std::vector<std::byte> body;
     std::size_t max_bytes = 0;
+    bool limit_exceeded = false;
 };
 
 std::size_t on_body(char * data, std::size_t size, std::size_t count, void * opaque) {
     auto & into = *static_cast<sink *>(opaque);
+    // Reject before multiplying or copying: a prefix is not a completed body.
+    const std::size_t room = into.max_bytes - into.body.size();
+    if (size != 0 && count > room / size) {
+        into.limit_exceeded = true;
+        return 0;
+    }
     const std::size_t offered = size * count;
-    // CAPPED, AND STILL CLAIMING TO HAVE TAKEN IT ALL. Returning less than
-    // offered is how a libcurl callback signals failure, which would turn a
-    // body that is merely too long into a transport error - and the contract
-    // here is that max_bytes TRUNCATES.
-    const std::size_t room =
-        into.max_bytes > into.body.size() ? into.max_bytes - into.body.size() : 0;
-    const std::size_t taking = offered < room ? offered : room;
     const auto * bytes = reinterpret_cast<const std::byte *>(data);
-    into.body.insert(into.body.end(), bytes, bytes + taking);
+    into.body.insert(into.body.end(), bytes, bytes + offered);
     return offered;
 }
 
@@ -163,6 +163,11 @@ http_response http_get(std::string_view url_text, http_options options) {
     if (content_type != nullptr) { out.content_type = content_type; }
     out.body = std::move(into.body);
 
+    if (into.limit_exceeded) {
+        out.body.clear();
+        out.error = "response body exceeds max_bytes";
+        return out;
+    }
     if (result != CURLE_OK) {
         out.error = curl_easy_strerror(result);
         return out;
