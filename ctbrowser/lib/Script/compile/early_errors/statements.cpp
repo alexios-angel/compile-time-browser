@@ -275,6 +275,17 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
                    names.empty() ? d : names.front().node);
         }
         if (is_var) { bound_names(d, binding_kind::var, vars); }
+        // 14.3.1.1: `let` is not a name a lexical declaration may bind - in
+        // sloppy code too, where `let let = 1` would otherwise parse.
+        if (!is_var) {
+            std::vector<binding> names;
+            bound_names(d, binding_kind::let_, names);
+            for (const binding & b : names) {
+                if (b.name == "let") {
+                    report("`let` cannot be the name of a lexically declared binding", b.node);
+                }
+            }
+        }
         if (decl.b >= 0) { walk_pattern(decl.b); }
         walk_expression(decl.a);
     }
