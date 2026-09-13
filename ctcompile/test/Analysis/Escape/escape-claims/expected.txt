@@ -6,7 +6,7 @@
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
 # Measured baseline: 222 functions, 895 observed sites, 35 unclaimed, zero violations;
-# precision 25/172. Original source SHA pins remain in Initialize.cmake.
+# precision 27/172. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
 program 4a20324d7d3db801
@@ -1159,7 +1159,7 @@ alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 
 # A length read returns an independent Number, never the child in slot zero.
-# Bounded length subtraction proves exact indices; writes to length stay conservative.
+# Bounded length subtraction and shrink preserve original Number snapshots.
 fn 205 denseLengthReleased
 alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
@@ -1211,8 +1211,8 @@ alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 
 # Exact length-derived Numbers retain saved values and independent path snapshots.
-# A saved child and the longer branch still retain the original child. String
-# offsets and a packing array's Passed witness remain conservative.
+# A saved child and the longer branch still retain the original child. Canonical
+# String offsets select exact elements; packing arrays remain Passed.
 fn 216 denseIndexSaved
 alloc 5 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
@@ -1228,7 +1228,7 @@ alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 12 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 27 arr 2 0 2 0 0 temporaries:2 escapes:returned
 fn 219 denseIndexStringOffset
-alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 220 denseIndexChain
 alloc 4 obj 1 1 0 0 0 - confined

@@ -168,6 +168,59 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[zero]",
         .exit = "a -> {a}"};
     run(originalIndex);
+    const std::string stringOne = "  %one = ctjs.constant #ctjs.string<\"1\">\n";
+    // Preserve the exact formerly refused String-offset body.
+    run({.what = "the original denseIndexStringOffset releases its overwritten child",
+         .body = values + stringOne + read + subtract + indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    run({.what = "a canonical String offset two selects an earlier dense element",
+         .body = values +
+                 "  %one = ctjs.constant #ctjs.string<\"2\">\n"
+                 "  ctjs.append %zero to %a\n" +
+                 read + subtract + indexed,
+         .arrays = "a:[zero,zero]",
+         .exit = "a -> {a}"});
+    run({.what = "String zero preserves the saved length after append",
+         .body = values + "  %one = ctjs.constant #ctjs.string<\"0\">\n" + read +
+                 "  ctjs.append %zero to %a\n" + subtract + indexed,
+         .arrays = "a:[x,zero]",
+         .exit = "a -> {a,x}"},
+        "");
+    run({.what = "a String-offset read still retains the original child after overwrite",
+         .body = values + stringOne + read + subtract +
+                 "  %saved = ctjs.get_property %a[%index]\n" + overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "a loaded original String offset survives replacement of its source slot",
+         .body = values + stringOne + read +
+                 "  %offsets = ctjs.create_array [%one] {storage_test_id = \"offsets\"}\n"
+                 "  %saved = ctjs.get_property %offsets[%zero]\n"
+                 "  ctjs.set_property %offsets[%zero], %x\n"
+                 "  %index = ctjs.binary sub %length, %saved\n" +
+                 indexed,
+         .arrays = "a:[zero]; offsets:[x]",
+         .reads = "offsets[0]=ctjs.constant",
+         .exit = "a -> {a}"});
+    for (const std::string literal : {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
+        run({.what = "a valid forwarded String offset cannot authorize an untaken unsafe arm",
+             .body = values + stringOne + read + "  %bad = ctjs.constant " + literal +
+                     "\n  %flag = ctjs.truthy %zero\n"
+                     "  cf.cond_br %flag, ^join(%bad : !ctjs.value), ^join(%one : !ctjs.value)\n"
+                     "^join(%offset: !ctjs.value):\n"
+                     "  %index = ctjs.binary sub %length, %offset\n" +
+                     indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "a computed String offset has no original literal index authority",
+         .body = values + stringOne + read +
+                 "  %empty = ctjs.constant #ctjs.string<\"\">\n"
+                 "  %offset = ctjs.binary concat %one, %empty\n"
+                 "  %index = ctjs.binary sub %length, %offset\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
     run({.what = "a second bounded subtraction uses the original exact Number result",
          .body = values + one + "  ctjs.append %zero to %a\n" + read + subtract +
                  "  %first = ctjs.binary sub %index, %one\n"
@@ -236,9 +289,26 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.number<9218868437227405312>",  // infinity
                                       "#ctjs.number<18442240474082181120>", // -infinity
                                       "#ctjs.number<9221120237041090560>",  // NaN
-                                      "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
-                                      "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
-        run({.what = "subtraction requires a bounded original integral Number offset",
+                                      "#ctjs.string<\"2\">",
+                                      "#ctjs.string<\"4294967294\">",
+                                      "#ctjs.string<\"4294967295\">",
+                                      "#ctjs.string<\"4294967296\">",
+                                      "#ctjs.string<\"9007199254740993\">",
+                                      "#ctjs.string<\"\">",
+                                      "#ctjs.string<\" \">",
+                                      "#ctjs.string<\"01\">",
+                                      "#ctjs.string<\"+1\">",
+                                      "#ctjs.string<\"-0\">",
+                                      "#ctjs.string<\"1.0\">",
+                                      "#ctjs.string<\"1e0\">",
+                                      "#ctjs.string<\"0x1\">",
+                                      "#ctjs.string<\"Infinity\">",
+                                      "#ctjs.string<\"NaN\">",
+                                      "#ctjs.bigint<\"1\">",
+                                      "#ctjs.boolean<true>",
+                                      "#ctjs.null",
+                                      "#ctjs.undefined"}) {
+        run({.what = "subtraction requires a bounded Number or canonical String offset",
              .body =
                  values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed,
              .failure = ArrayContentsFailure::UnknownIndex});
@@ -569,7 +639,15 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::BigIntAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
         inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "2"));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "0"));
+        inspect(ArrayContentsFailure::MissingElement);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
+        inspect(ArrayContentsFailure::None);
         literal.setValueAttr(offset);
         inspect(ArrayContentsFailure::None);
         binary->setOperand(0, binary.getRhs());

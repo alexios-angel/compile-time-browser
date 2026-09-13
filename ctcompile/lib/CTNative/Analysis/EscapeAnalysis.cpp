@@ -921,8 +921,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // always yield String once their original result is proved.
         llvm::DenseSet<mlir::Value> stringAddOrigins;
         // Original Number snapshots, not the current length of their source array.
-        // ponytail: only length minus nonnegative integral Number literals; extend
-        // other arithmetic only with a separate bounded exact-value proof.
+        // ponytail: only length minus bounded Number/canonical String literals;
+        // other arithmetic needs a separate bounded exact-value proof.
         llvm::DenseMap<mlir::Value, std::size_t> lengthNumbers;
         // Imported successors forward every raw register, including unused
         // receiver/parameter values. Keep their exact entry identity separate:
@@ -1296,8 +1296,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
                     auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
                                           : ctjs::NumberAttr{};
-                    if (length != state.lengthNumbers.end() && number) {
-                        const double offset = number.getDouble();
+                    const auto stringOffset =
+                        literal && llvm::isa<ctjs::StringAttr>(literal.getValue())
+                            ? ownArrayIndex(rhs)
+                            : std::nullopt;
+                    if (length != state.lengthNumbers.end() && (number || stringOffset)) {
+                        const double offset =
+                            number ? number.getDouble() : static_cast<double>(*stringOffset);
+                        // Canonical decimal Strings convert exactly without object hooks.
                         // Both operands and the result are exact integers in [0, 2^32-1].
                         // Guard before conversion/subtraction: no NaN, rounding or wrap.
                         if (std::isfinite(offset) && offset >= 0 &&
