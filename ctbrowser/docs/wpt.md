@@ -14,6 +14,172 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-13, the widened corpus
+
+**1,799 of the 5,099 tests that ran, which is 35.3%**, and not one crash.
+The first measurement of the corpus widened on 2026-09-13 (`c643cba8`,
+`24b9b9c6`; the corpus section below says what came in and why): every CSS
+module's parsing, inheritance and animation tests, and twenty more suites.
+Engine at `7f9211d0` on `ctbrowser-wpt` — `b346dc0b` plus the morning's
+commits (the frame layout, `ch`, the expando rule, used margins, the
+`::highlight()` cascade, media-query units); one run per top-level directory
+on the devbox, 4 workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, the
+same instrument as every row below. A suite's row is the tests under its
+path; the five suites of the earlier rows are in here unchanged and
+comparable (`css/css-values` 158, `css/cssom` 147, `dom/nodes` 253,
+`dom/events` 81, `html/dom` 149 - **788 of 1,090, 72.3%**).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **3** | 8 | 0 | 0 | 0 | 0 | 11 | 7 / 85 |
+| `css/css-align` | **21** | 36 | 0 | 0 | 0 | 0 | 57 | 593 / 728 |
+| `css/css-anchor-position` | **0** | 10 | 0 | 0 | 0 | 0 | 10 | 41 / 179 |
+| `css/css-animations` | **10** | 32 | 0 | 0 | 0 | 1 | 43 | 212 / 378 |
+| `css/css-backgrounds` | **32** | 71 | 4 | 0 | 0 | 45 | 152 | 1,411 / 2,876 |
+| `css/css-box` | **25** | 15 | 0 | 0 | 0 | 0 | 40 | 300 / 627 |
+| `css/css-break` | **8** | 14 | 0 | 0 | 0 | 0 | 22 | 91 / 449 |
+| `css/css-cascade` | **25** | 52 | 1 | 0 | 0 | 62 | 140 | 400 / 325 |
+| `css/css-color` | **11** | 51 | 2 | 0 | 0 | 257 | 321 | 1,996 / 5,702 |
+| `css/css-color-adjust` | **1** | 6 | 0 | 0 | 0 | 0 | 7 | 16 / 131 |
+| `css/css-color-hdr` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-conditional` | **5** | 35 | 1 | 0 | 172 | 204 | 417 | 1,295 / 501 |
+| `css/css-contain` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 14 / 31 |
+| `css/css-content` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 91 / 117 |
+| `css/css-display` | **1** | 7 | 0 | 0 | 0 | 0 | 8 | 142 / 218 |
+| `css/css-exclusions` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-flexbox` | **23** | 11 | 0 | 0 | 0 | 1 | 35 | 422 / 567 |
+| `css/css-fonts` | **24** | 73 | 3 | 0 | 0 | 0 | 100 | 1,423 / 2,446 |
+| `css/css-forced-color-adjust` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 6 / 8 |
+| `css/css-forms` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 1 / 51 |
+| `css/css-gaps` | **18** | 54 | 2 | 0 | 0 | 2 | 76 | 325 / 2,477 |
+| `css/css-grid` | **13** | 57 | 2 | 0 | 2 | 3 | 77 | 362 / 1,951 |
+| `css/css-images` | **8** | 23 | 0 | 0 | 0 | 0 | 31 | 744 / 2,472 |
+| `css/css-inline` | **6** | 14 | 0 | 0 | 0 | 0 | 20 | 78 / 255 |
+| `css/css-link-params` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-lists` | **8** | 17 | 0 | 0 | 0 | 0 | 25 | 248 / 250 |
+| `css/css-logical` | **29** | 33 | 0 | 0 | 0 | 0 | 62 | 520 / 246 |
+| `css/css-masking` | **10** | 32 | 6 | 0 | 0 | 1 | 49 | 126 / 2,821 |
+| `css/css-multicol` | **11** | 28 | 0 | 0 | 0 | 0 | 39 | 78 / 1,392 |
+| `css/css-nesting` | **1** | 21 | 0 | 0 | 0 | 23 | 45 | 9 / 108 |
+| `css/css-overflow` | **12** | 24 | 0 | 0 | 0 | 0 | 36 | 165 / 214 |
+| `css/css-overscroll-behavior` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 15 / 52 |
+| `css/css-page` | **4** | 8 | 0 | 0 | 0 | 0 | 12 | 31 / 42 |
+| `css/css-paint-api` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** | 11 | 0 | 0 | 0 | 0 | 32 | 545 / 516 |
+| `css/css-properties-values-api` | **0** | 9 | 0 | 0 | 60 | 0 | 69 | 0 / 9 |
+| `css/css-pseudo` | **0** | 4 | 0 | 0 | 1 | 0 | 5 | 57 / 226 |
+| `css/css-rhythm` | **5** | 10 | 0 | 0 | 0 | 0 | 15 | 55 / 100 |
+| `css/css-ruby` | **4** | 5 | 0 | 0 | 0 | 0 | 9 | 26 / 21 |
+| `css/css-scroll-anchoring` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 2 / 6 |
+| `css/css-scroll-snap` | **7** | 19 | 0 | 0 | 0 | 0 | 26 | 183 / 290 |
+| `css/css-scrollbars` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-shapes` | **7** | 11 | 3 | 0 | 0 | 0 | 21 | 66 / 481 |
+| `css/css-size-adjust` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 4 / 211 |
+| `css/css-sizing` | **11** | 23 | 3 | 0 | 0 | 0 | 37 | 1,033 / 941 |
+| `css/css-syntax` | **15** | 24 | 0 | 0 | 1 | 8 | 48 | 291 / 138 |
+| `css/css-tables` | **14** | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **36** | 61 | 0 | 0 | 0 | 0 | 97 | 556 / 1,376 |
+| `css/css-text-decor` | **12** | 23 | 0 | 0 | 0 | 0 | 35 | 185 / 1,007 |
+| `css/css-transforms` | **7** | 55 | 4 | 0 | 0 | 27 | 93 | 336 / 3,396 |
+| `css/css-transitions` | **9** | 21 | 0 | 0 | 0 | 0 | 30 | 299 / 610 |
+| `css/css-ui` | **21** | 31 | 0 | 0 | 0 | 0 | 52 | 558 / 836 |
+| `css/css-values` | **158** | 100 | 8 | 0 | 5 | 237 | 508 | 6,274 / 1,704 |
+| `css/css-variables` | **20** | 28 | 12 | 0 | 1 | 186 | 247 | 392 / 176 |
+| `css/css-view-transitions` | **3** | 9 | 0 | 0 | 0 | 0 | 12 | 80 / 944 |
+| `css/css-viewport` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 127 / 45 |
+| `css/css-writing-modes` | **10** | 6 | 0 | 0 | 0 | 0 | 16 | 36 / 16 |
+| `css/cssom` | **147** | 35 | 0 | 0 | 10 | 29 | 221 | 1,618 / 81 |
+| `css/cssom-view` | **44** | 157 | 3 | 0 | 13 | 22 | 239 | 485 / 1,489 |
+| `css/fill-stroke` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **4** | 24 | 0 | 0 | 0 | 0 | 28 | 143 / 2,267 |
+| `css/mediaqueries` | **5** | 25 | 0 | 0 | 0 | 63 | 93 | 834 / 864 |
+| `css/motion` | **7** | 33 | 3 | 0 | 0 | 4 | 47 | 172 / 3,120 |
+| `css/selectors` | **105** | 95 | 1 | 0 | 10 | 313 | 524 | 4,095 / 1,363 |
+| `custom-elements` | **37** | 127 | 0 | 0 | 16 | 13 | 193 | 2,717 / 1,236 |
+| `dom/abort` | **0** | 5 | 0 | 0 | 1 | 3 | 9 | 5 / 18 |
+| `dom/collections` | **6** | 4 | 0 | 0 | 0 | 1 | 11 | 42 / 11 |
+| `dom/events` | **81** | 7 | 1 | 0 | 2 | 85 | 176 | 676 / 13 |
+| `dom/lists` | **2** | 3 | 0 | 0 | 0 | 0 | 5 | 172 / 17 |
+| `dom/nodes` | **253** | 44 | 10 | 0 | 2 | 53 | 362 | 12,062 / 739 |
+| `dom/ranges` | **16** | 37 | 7 | 0 | 3 | 9 | 72 | 1,418 / 9,294 |
+| `dom/traversal` | **8** | 10 | 0 | 0 | 0 | 0 | 18 | 728 / 880 |
+| `domparsing` | **27** | 30 | 0 | 0 | 12 | 3 | 72 | 943 / 625 |
+| `encoding` | **12** | 40 | 1 | 0 | 1 | 136 | 190 | 371 / 1,616 |
+| `html/dom` | **149** | 67 | 3 | 0 | 8 | 138 | 365 | 49,363 / 147 |
+| `html/semantics/forms` | **58** | 236 | 10 | 0 | 27 | 316 | 647 | 1,297 / 2,949 |
+| `html/syntax` | **22** | 63 | 133 | 0 | 3 | 47 | 268 | 2,325 / 573 |
+| `html/webappapis` | **47** | 198 | 52 | 0 | 12 | 40 | 349 | 479 / 405 |
+| `selection` | **8** | 32 | 0 | 0 | 46 | 91 | 177 | 76 / 199 |
+| `shadow-dom` | **74** | 82 | 6 | 0 | 20 | 163 | 345 | 380 / 1,456 |
+| `url` | **11** | 16 | 1 | 0 | 1 | 5 | 34 | 31 / 461 |
+| **total** | **1799** | 2589 | 282 | 0 | 429 | 2593 | 7692 | 102,739 / 71,078 |
+
+Subtests: **102,739 PASS, 71,078 FAIL, 908 NOTRUN, 139 TIMEOUT.**
+
+**What the number says.** The five old suites measure what the last two
+weeks worked on and stand at 72%; the new ones measure what nobody has
+touched, and the whole is 35%. By what stands in front of the most tests:
+
+- **The CSS value grammar** — the `parsing/` and `inheritance.html` files
+  over 60 modules are 24,411 subtests, 8,460 PASS. By property, the failing
+  subtests are `color` 5,271 (CSS Color 4/5: the modern syntax, `color()`,
+  `color-mix()`, `lab`/`lch`/`oklab`/`oklch`, relative colours - the
+  cascade's `properties/color.cpp` is a syntax check and `paint::parse_color`
+  means a colour), `background-image` 2,160 (gradients), `font` 318, the
+  grid track lists 209+203+112+89+81+68, `display` 186, `offset-path` 139,
+  `content` 135, `filter` 116, `clip-path` 99, `mask` 87 ... 211 of the
+  415 properties the sweep tests are not in the property table at all,
+  and since `f08483ca` an unsupported name on `el.style` is an expando, so
+  every one of their `test_valid_value`s fails honestly instead of by echo.
+- **CSS Animations and CSS Transitions do not exist** - only Web Animations
+  does. `css/support/interpolation-testcommon.js` drives every `animation/`
+  file four ways and the "CSS Transitions" and "CSS Animations" rows all fail:
+  `css-transforms` 3,396 failing subtests, `motion` 3,120, `masking` 2,821,
+  `backgrounds` 2,876, `filter-effects` 2,267, `images` 2,472, `gaps` 2,477,
+  `transitions` 610, `animations` 378, and `css-values/animations/
+  calc-interpolation` 103 - the largest subtest cluster in the corpus, and
+  one feature.
+- **Container queries** - 171 of `css-conditional`'s 417 files are
+  `assert_implements` HARNESS_ERRORs on `@container` (size 110, scroll-state
+  41, style 20); `css-nesting` is 1 of 22 files; `css-cascade` 25 of 78
+  (`@layer`, `@scope`, `revert-layer`).
+- **`css/cssom-view`** 44 of 204: `getBoundingClientRect`, `scrollIntoView`,
+  `elementFromPoint`, `scroll*` on the element and the window, `matchMedia`
+  events.
+- **`html/syntax`** 22 of 221, with **133 TIMEOUTs**: the html5lib
+  tree-construction fixtures (`parsing/html5lib_*.html`) run the DOM's own
+  tree builder over thousands of inputs and most files do not finish in 10 s
+  - a performance question first, then a conformance one.
+- **`html/webappapis`** 47 of 309 (52 TIMEOUTs), **`html/semantics/forms`**
+  58 of 331, **`dom/ranges`** 16 of 63 (9,294 failing subtests: `Range`
+  mutations, `extractContents`/`cloneContents`/`deleteContents`),
+  **`custom-elements`** 37 of 180, **`shadow-dom`** 74 of 182,
+  **`selection`** 8 of 86 (46 HARNESS_ERRORs), **`encoding`** 12 of 54
+  (TextDecoder for anything but UTF-8), **`url`** 11 of 29 (the WHATWG
+  parser over `urltestdata.json`; `docs/plans/ada-url.md`).
+
+Against `b346dc0b` on the five old suites: +10 files
+(`line-break-ch-unit`, `viewport-units-invalidation`,
+`viewport-units-scrollbars-mq-001`, `random-in-container-query`,
+`random-item-in-container-query`, `computed-style-005`,
+`cssstyledeclaration-csstext`, `getComputedStyle-pseudo`,
+`getComputedStyle-pseudo-with-argument`, `Element-children`), -6:
+`calc-size-parsing` and `signs-abs-computed` (the logical `*-block-size` /
+`*-inline-size` and `image-resolution` / `grid-template-rows` were
+unsupported names passing by echo - now expandos, and the honest answer
+until the table has them), `viewport-units-gutter-003`/`-004`
+(`width: 100vw` on a page whose root scrolls: the page's `vw` now excludes
+the scrollbar, `resolve_styles`, and these two want the layout viewport
+width too - a layout question), `getComputedStyle-detached-subtree` (a
+`display: none` frame's document answers initial values instead of the empty
+declaration since `getComputedStyle` routes to the frame's bindings - being
+fixed), `serialize-values` (`baseline-shift: .5%` is an unsupported name
+now: an expando keeps the author's `.5%`). `reflection-text.html` is still
+the TIMEOUT named in the row below.
+
+test262 at the same commit: unchanged from `b346dc0b`, **32,295 of 48,624**.
+
 ## The baseline — 2026-09-13, small hours
 
 **784 of the 1,090 tests that ran, which is 71.9%**, and still not one crash.
