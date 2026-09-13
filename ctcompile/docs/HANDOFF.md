@@ -6,6 +6,63 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed native DOM entries and shared attributes, 2026-09-13 UTC
+
+Continued clean **f7966251**, resuming the typed document/node entry promised by
+its latest HANDOFF and the plan's current journal. Both commit histories showed
+the token extraction complete; the September 7 WIP was already an ancestor.
+Three agents split the public DOM extraction, strict contract proof and native
+execution regression; root integrated and gated the isolated branch. No push in
+this session; the current user instruction supersedes the historical push note below.
+
+**e9d6a462** adds public `dom/element.hpp`: a borrowed document/node identity,
+handle validation, and the attribute name/folding/setter behavior lifted from
+Shell bindings. The binding is now a thin adapter over that core, retaining
+conversion order, JavaScript errors and mutation notifications. DOM/Core-only
+unit coverage checks document domains, detached nodes, stale handles, naming,
+namespace behavior and same-value writes; the VM regression checks invalid-name
+validation before value conversion. No Script types enter the public core.
+
+**6b45ca17** proves a strict fingerprint-bound `ctbrowser-dom-v1` contract for
+one synchronous entry and all its explicit element parameters. It accepts only
+proved source receivers and a checked inert declaration wrapper; missing/stale
+contracts, forged reports, skipped source, captures, prototype/method writes,
+source calls and retention refuse. **ed184301** carries that live proof through
+type inference and final admission to ordinary `ctbrowser::element_ref` C++.
+The selected function exports without a launcher, validates incoming handles
+before mutation, compares document-aware identities and calls the shared token
+and attribute APIs. Boolean actions contain no boxed scalar helper or Script/AOT
+symbol. [native-dom-entry.md](native-dom-entry.md) gives the contract and scope.
+
+Validation: standard devbox **697-step build**, **542/543 CTests in 1183.20s**,
+including **167/167 lit cases in 850.72s**. The sole failure is byte-identical
+existing browser `frames.cpp:70`; no expectation moved. The new five-source DOM
+matrix passes with GCC13.3 and configured Clang24, both optimization policies
+and printing layouts, in **49.82s** under the full gate (**34.33s** focused).
+It checks 16 document lifetime rounds, alias/cross-document identity, detachment,
+ordered mutations, String/Boolean conversion, errors and ten refusal controls.
+All **1398 final source/test/config inputs** match isolated and devbox trees.
+Whole stable formatting passes **812 C++ / 86 Python / 33 web files**; the
+required bundled formatter retains the same **nine baseline files / 26
+diagnostics**, with changed C++ passing. Full WPT/test262 scores were not
+remeasured. Evidence: `/tmp/ctcompile-native-dom-entry/`, including the emitted
+`toggle.generated.cpp`, full gate, input hashes and fresh bundle census.
+
+Fresh full Bootstrap **5.3.8 / 133701 bytes / SHA5b29f169** still admits **19/574**,
+both policies, zero skipped/pruned and **0/43 globals resolved**. This standalone
+action probe does not compile original Button construction or change the prior
+ordinary-object Data probe into DOM-backed Data. Generic escape precision is
+unchanged; no plan25 refinement gained a native consumer here.
+
+**Exact next boundary:** retain actual DOM keys in the existing Data owner while
+proving that each document outlives every key and future invocation. The current
+DOM entry borrows only for one call and cannot combine with a closed-source
+Data owner contract. Preserve both document and node identity with ordinary C++
+ownership. Then admit original Button's `this._element`, BaseComponent/Config
+construction, prototype/static getters and disposal. Shell observers/custom
+reactions, retained events, DOMContentLoaded, timers, layout and the native
+application driver remain outside this synchronous action milestone.
+
 ## Native Bootstrap survey and shared DOM token API, 2026-09-13 UTC
 
 Continued clean **a4458ae1**. The lookup-mode thread was already committed and merged;
