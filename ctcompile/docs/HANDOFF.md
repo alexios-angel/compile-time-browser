@@ -6,6 +6,118 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Per-invocation Data returns and private arrays, 2026-09-13 UTC
+
+Resumed the interrupted **07:40:50 UTC** thread, explicitly abandoned at
+**07:43:17 UTC**, from **a8f7f722**, one dirty `EscapeAnalysis.cpp`, and the
+synchronization journal. Saved predecessor bytes before editing. The old
+`codex-wip-20260907` is already an ancestor. Three agents split array completion,
+return execution and proof review; root recovered the rate-limited execution
+work, integrated the results and ran every devbox gate. The interrupted array
+change was committed first. This entry supersedes the earlier pending private
+array and 595-byte returned-field instructions.
+
+**97e8620c** extends the completed array retention consumer to private fresh
+GetProperty/SetProperty receivers. It retains generic sink roles, complete
+contents/effect/exit-reachability proofs, all-write cycle rejection, transactional
+budgets and the Stored-only counter. No Stored child is needed to start the query.
+The **257-step build**, arrays **122 rows / 33 live states / 3801 retention
+cutoffs**, and all three vendor escape gates pass. The fixture rerun passes in
+**1.13s**, including **13 evidence mutations / eight malformed controls**.
+
+All **112,001 fixture JavaScript bytes** and old pins remain unchanged. Exactly
+**12 of 1123 complete snapshot rows** change from Passed to Confined, all private
+arrays: fn/pc **8/8, 187/8, 191/8, 194/8, 197/5, 199/11, 201/5, 203/11, 207/11,
+208/6, 213/10, 217/14**. All other coordinates, claims, counts and runtime routes
+match. Oracle: **222 functions / 861 claims / 895 observed sites / 35 unclaimed /
+zero violations / precision 39/172**. Returned containers and children retain
+their escape verdicts.
+
+**556494ad** proves exact caller leaves returned by individual entry calls.
+It reuses `capturedMapBody` transfers after the independent complete family proof,
+in entry execution order rather than the category worklist's method order.
+Child identity includes the constructor and invocation; stored keys resolve to
+literal or canonical entry actuals, and `has` observations expire between calls.
+Persistent-state copies are charged before copying. Unknown branches and local
+leaf constructors discard optional invocation evidence. Complete family checks
+still cover every arm and future supported arguments. Nothing is published from
+an incomplete prefix or exhausted budget.
+
+`HostReturnedLeaf` carries live source edges through complete ownership validation
+into field admission. The getter's broad mixed return ABI, emitted source calls,
+mutations and field reads remain intact; no runtime helper or VM dependency was
+added. **573a254e** preserves all **79 old source bodies and SHA pins**, adds four
+scalar-overwrite/child-recreation/inactive-effect controls, and executes the new
+boundary. Three older safe field probes now admit because their actual receivers
+are objects; missing-field and scalar-receiver probes still refuse. Source/prepared
+ownership tests retain every original fixture literal and unsafe scope mutation.
+
+Final focused gate: **255-step rebuild / 3 of 3 CTests in 245.37s**. The original
+`nested_map_mixed_child_returned_field` remains **595 bytes / five functions /
+16 calls / SHA256
+9d4c8b9c5e52297f6dd7f37f2a3a8c1a955f0d8348912cf35365de1ec00f57a0** and is now
+**5/5 native under both optimization policies at the unchanged 100k default**.
+Its first complete budget is **34,903 steps**, with **31 cutoffs**, exact completion,
+stale/forged evidence, both C++ layouts, GCC/Clang, no-Script and sanitizers checked.
+The complete nested group passes **46 native programs / 37 refusals / 311 typed
+observations / 208 distinguishing mutations**; its existing **128 future-call**
+witnesses cover mixed results, copied/detached leaves, deletes, replacement,
+entry reruns, independent owners and final destruction.
+
+Fresh full Bootstrap remains **19/574 native**, both optimization policies.
+Exact-source census, also measured under both policies:
+
+| Source (SHA256 prefix) | Bytes | Default 100k steps | Explicit 1m steps |
+|---|---:|---:|---:|
+| Original single recorder (`4ebf1cd4`) | 1327 | 7/7 | — |
+| Original repeated recorder (`45d621b3`) | 1733 | 0/7 | 7/7 |
+| Exact full Data (`8359592c`) | 2522 | 0/7 | 0/7 |
+| Captured child template (`e39ea887`) | 1303 | 6/6 | — |
+| Captured outer template (`db9730ef`) | 1108 | 0/6 | 6/6 |
+| Original returned field (`9d4c8b9c`) | 595 | 5/5 | — |
+| Recreated object control (`3385321d`) | 660 | 6/6 | — |
+
+The compiler default stays at 100,000 steps. Full Data retains
+`property receiver lacks a fresh own-data object proof`; its SHA256 remains
+`8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3`.
+
+Final standard full gate at **573a254e**: **539/540 CTests in 1031.06s**;
+all compiler tests pass, including **166/166 lit cases in 720.11s** (CTest
+**720.42s**) and the complete `global-maps.test`. The sole failure is the existing
+browser `frames` test, with unchanged actual/expected output. All **1285 frozen
+inputs** match locally and on the devbox. The required bundled formatter
+**23.0.0git** retains the same **nine baseline files / 26 diagnostics**; changed
+files pass. The whole check with Homebrew **23.1.1** passes **804 C++ / 84 Python /
+33 web files**.
+
+The browser failure still observes `0px,184px,rgb(0, 0, 0),184,0,8px` instead of
+`200px,50px,rgb(1, 2, 3),50,1,0px`, with zero frame style elements.
+
+Next native boundary: preserve the exact full Data source and extend optional
+actual-call facts to prove distinct caller object keys and size/equality branches. Then supply proved Number extraction at scalar uses of
+the broad mixed getter carrier; do not narrow just a CallDirect result or the
+reusable getter signature. Full Data still requires its recorder, wrong-key,
+conflicting-set, remove/reinsert and independent-owner behavior. Browser APIs
+continue through public ctbrowser RAII subsystem APIs; this source-owned Data
+increment required no browser extraction.
+
+Next source-sound escape prerequisite is original `objectFrameDeletedChild`,
+**fn 15 / pc 2**, **138 bytes / SHA256
+886446734779abe3b1a5ca6a0ef74012f24f8ca9aed5cb272b642a400d0c0616**. Its child is
+observed confined but Stored; its returned container remains escaping. Literal
+own-property definition semantics/provenance are currently erased into generic
+SetPropertyOp, so the existing refusal is correct. Coordinate that semantic seam
+with Claude before reusing object contents/deletion/reachability. Do not exempt
+opaque unsigned shifts using the current VM's static coercion: JavaScript object
+operands can execute user conversion, which requires independent operand proof.
+
+Evidence: `/tmp/ctcompile-data-return-finish/` contains saved predecessor bytes,
+frozen manifests, source pins, complete array delta, focused/full logs, generated
+C++, fresh census and the `next-data.md`, `next-escape.md` and
+`return-proof-review.md` audits.
+No browser/runtime/parser files changed; no push. Full native Bootstrap and the
+application driver remain unfinished.
+
 ## Original recorder callbacks and String offsets, 2026-09-13 UTC
 
 Resumed the interrupted **05:44:18 UTC** recorder thread, explicitly abandoned
