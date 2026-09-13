@@ -66,8 +66,8 @@ from dataclasses import dataclass, field
 # definitions out of the thing it is checking cannot fail for the one reason
 # that matters.  The recording's header carries the opcode and writer counts so
 # a drift shows up as a mismatch rather than as a quietly different answer.
-OPCODES = 93
-WRITERS = 68
+OPCODES = 94
+WRITERS = 69
 
 KINDS = ["obj", "arr", "fn", "cell"]
 
