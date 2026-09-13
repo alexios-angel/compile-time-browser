@@ -28,17 +28,17 @@ before removing `-1`.
 
 ## 2. Open at the tip (`d05c82ad`)
 
-- The browser gate at `24b9b9c6` was 536/540: `bootstrap_layout` (six
-  baselines want a REGOLDEN - `margin: auto` now reports its used pixels,
-  `24.5px`, which is what CSSOM says and Chrome does; read the diff, it must
-  be those lines only), `layout_blocks` (a wrong expectation, fixed in
-  `d05c82ad`), `cssom_wpt` and `frames` (a frame document's own `<style>`
-  is not applied by `browser/nested.cpp`'s layout: the frame lays out at its
-  200px box - a div reads `184px` wide, the UA sheet's body margin - but the
-  author sheet collected from the frame document does not reach the cascade.
-  `d05c82ad` instruments the frames test to print the frame's sheet count;
-  gate-5 (`/tmp/wpt11/gate-5.*`) was running it when the session ended).
-  `ctcompile-v1` `834bda1e` carries this state.
+- The browser gate at `d05c82ad` was 537/540. `bootstrap_layout` is
+  regoldened in `bb32f1a4` (fourteen `margin: auto` lines now read the used
+  pixels, as CSSOM says and Chrome does) and `layout_blocks` was a wrong
+  expectation. Still red, UNVERIFIED after `bb32f1a4`: `cssom_wpt`'s pseudo
+  check (its own script error, fixed there) and `frames` - the real bug: a
+  frame document's own `<style>` is not applied by `browser/nested.cpp`'s
+  layout. The frame lays out at its 200px box (a div reads `184px` wide, the
+  UA sheet's body margin) but the author sheet collected from the frame
+  document does not reach the cascade; `viewport-units-compute` reads `0px`
+  for the same reason. `bb32f1a4`'s frames check prints the frame's
+  `<style>` count beside the values, so the next gate says which half.
 - `html/dom/reflection-text.html` TIMEOUT since the audit: NOT an infinite
   loop - gdb at 25 s shows the main thread idle in `SDL_WaitEventTimeout`;
   the page never publishes its results (an exception in the harness's async
