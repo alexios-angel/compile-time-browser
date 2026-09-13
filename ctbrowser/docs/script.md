@@ -44,6 +44,50 @@ is written over it. `async function` returns a promise through `op::wrap_promise
 via a factory hook the standard library installs — the VM cannot build a
 promise by itself.
 
+Later on 2026-09-12 `builtins/async.cpp` was rewritten to the whole of 27.2:
+`resolve` is a real promise resolve function (CreateResolvingFunctions, with
+`[[AlreadyResolved]]` shared by the pair), a thenable is adopted by a SEPARATE
+NewPromiseResolveThenableJob - so `Promise.resolve(thenable)` takes two ticks
+and a handler returning a promise takes three, as in every other engine -
+`then` goes through SpeciesConstructor and NewPromiseCapability (so
+`class P extends Promise` works, and `p.then()` on one is a `P`), `finally`
+is ThenFinally/CatchFinally over the species constructor, `Promise.try` and
+`Promise.withResolvers` exist, and `all`/`allSettled`/`any`/`race` walk the
+ITERATOR PROTOCOL (any iterable, `resolve` read once per call, IteratorClose
+on an abrupt step, each element function called once). The VM's settler hook
+now RESOLVES rather than fulfils, so an async body returning a thenable
+adopts it. What the VM still does by itself: `resume()` reads a returned
+promise's `__value` directly, so an async body that returns a PENDING promise
+after an await settles with `undefined` (the fix is one line in
+`vm/call/coroutines.cpp`: hand `returned` to the settler unwrapped).
+`%AsyncFromSyncIteratorPrototype%` and `%AsyncIteratorPrototype%` are real
+prototype objects now, and `%AsyncGeneratorPrototype%` inherits the latter.
+
+**`Iterator` and the iterator helpers** (`builtins/collections/iterator.cpp`,
+2026-09-12): the abstract `Iterator` constructor (subclassable, `new
+Iterator()` is a TypeError), `Iterator.from`, `Iterator.concat`,
+`Iterator.zip`/`zipKeyed`, `%Iterator.prototype%` with `map`, `filter`,
+`take`, `drop`, `flatMap`, `reduce`, `toArray`, `forEach`, `some`, `every`,
+`find`, `includes`, `join`, `chunks`, `windows`, `@@dispose`, and the two
+accessor properties (`constructor`, `@@toStringTag`) whose setters define an
+own property on the receiver. A helper is an object on
+`%IteratorHelperPrototype%` with a private state slot and the generator state
+machine of 27.1.2.1 (`next` while running is a TypeError; `return` closes the
+underlying iterator, inner one first for `flatMap`). `%GeneratorPrototype%`
+is re-parented onto `%Iterator.prototype%`, so a generator object has the
+helpers; the library's own array/map/set iterators (`list_iterator`) do NOT
+yet, because their prototype is per-instance. `DisposableStack`,
+`AsyncDisposableStack` and `SuppressedError` (`collections/disposable.cpp`)
+are installed beside them, and `Promise.allKeyed`/`allSettledKeyed` and
+`Iterator.zip`/`zipKeyed` (2026 proposals the corpus carries) with them. All
+of these installers are called from `install_promise` because `builtins.cpp`
+was not this change's to edit. `WeakRef` and `FinalizationRegistry`
+(`collections/weak.cpp` - strong references, no finalisation, the WeakMap
+deviation) are written and compiled but NOT installed: ctcompile's
+escape-cycle test pins `typeof WeakRef === "undefined"` as the documented
+divergence ND-2 (`ctcompile/docs/native-divergences.md`), and that call is
+one commented-out line in `install_promise` once the pin is lifted.
+
 **`===` compares STRINGS BY CONTENT** — it compared the NaN-boxed words, which
 is right for objects (identity) and singletons and wrong for strings, since two
 strings with the same characters are almost never the same allocation. So
@@ -955,8 +999,15 @@ Six defects across four areas. Each planted back individually and caught.
   specified to throw TypeError, and that is the feature - it is what stops a
   symbol reaching page output by accident. Fixing it needs ToPropertyKey split
   from ToString, because `o[sym]` goes through the latter today.
-* **`Symbol().description` is `""`, not `undefined`** - an absent description
-  and an empty one are the same `std::string` here.
+* **`Symbol().description` is `""` through property access, `undefined`
+  through the getter** - the key tells the two apart since 2026-09-12
+  (`@@sym:<n>` carries no description, `@@sym:<n>:` an empty one) and
+  `Symbol.prototype.description`'s getter answers right, but
+  `vm/objects/lookup.cpp` synthesises `description` for a symbol receiver
+  before consulting the prototype's accessors. `new Symbol()` is a TypeError,
+  `Symbol.keyFor` refuses a non-symbol, well-known symbols describe themselves
+  as `Symbol.iterator`, and `Symbol.unscopables`/`dispose`/`asyncDispose`
+  exist.
 * **Array holes are materialised**: `0 in [,1]` is true and `Object.keys([,1])`
   is empty. Arrays are dense vectors, so a hole needs a representation.
 * **No boxing**: `new Boolean(false)` is the primitive, so it stays falsy where

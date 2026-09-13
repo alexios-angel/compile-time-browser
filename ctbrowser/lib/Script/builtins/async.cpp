@@ -3,10 +3,26 @@
 // One of five files carved out of a 4,118-line builtins.cpp on 2026-08-09.
 // Everything shared - the argument helpers, namespace detail, and these
 // functions' declarations - is in internal.hpp. The promise machinery itself
-// - deliver, settle, settle_with, the shared prototype - is this file's alone
-// (JSON, which shared the file, is json.cpp since 2026-09-12).
+// - the resolving functions, the two jobs, PerformPromiseThen, the shared
+// prototype - is this file's alone (JSON, which shared the file, is json.cpp
+// since 2026-09-12).
+//
+// REWRITTEN TO 27.2 ON 2026-09-12. The first version fulfilled a promise with
+// whatever `resolve` was handed - a promise, a thenable, anything - adopted a
+// handler's returned promise inline, read its input list as an Array rather
+// than an iterable, and knew nothing of species or subclassing; test262's
+// built-ins/Promise measured 34% on it. What is here now is the
+// specification's algorithm: CreateResolvingFunctions with [[AlreadyResolved]],
+// NewPromiseResolveThenableJob as a SEPARATE job (so `Promise.resolve(thenable)`
+// takes two ticks and a handler returning a promise takes three),
+// NewPromiseCapability over any constructor, SpeciesConstructor in `then` and
+// `finally`, and the four combinators through the iterator protocol with
+// IteratorClose on an abrupt step. The object SHAPE is unchanged - the VM
+// reads it by name - and is described below.
 
+#include "collections/iterator_internal.hpp"
 #include "internal.hpp"
+#include "objects/internal.hpp" // key_value, for Promise.allKeyed
 
 namespace ctbrowser::script::detail {
 
@@ -14,445 +30,1059 @@ namespace {
 
 // --- promises ---------------------------------------------------------------
 //
-// A promise is an ordinary object carrying `__value`, `__rejected`, `__settled`
-// and `__handlers`, with then/catch/finally on one shared prototype. A handler
-// never runs the moment a promise settles: `settle` and `settle_with` QUEUE a
-// delivery (enqueue_delivery -> context::queue_microtask) and the event loop
+// A promise is an ordinary object carrying four own, non-enumerable slots:
+// `__settled`, `__value`, `__rejected` and `__handlers`. The VM READS THEM BY
+// NAME - context::is_pending_promise, wrap_in_promise, attach_resume and the
+// await opcode - so the shape is fixed here and only the algorithms are this
+// file's to choose. `__handlers` is the list of PromiseReaction records
+// (27.2.1.1), each an object {ok, err, next, resolve, reject} - or {co}, the
+// VM's own record for a suspended `await`, which `deliver` resumes instead of
+// calling anything.
+//
+// A handler never runs the moment a promise settles: `settle` QUEUES a
+// reaction job per record (context::queue_microtask) and the event loop
 // drains it at the end of the turn, so `p.then(f); after();` runs `after`
 // first, the way a real job queue orders them.
 
-[[nodiscard]] value make_promise(context & cx, value v, bool rejected);
-void settle(context & cx, value promise, value with, bool rejected);
+constexpr std::string_view settled_slot = "__settled";
+constexpr std::string_view value_slot = "__value";
+constexpr std::string_view rejected_slot = "__rejected";
+constexpr std::string_view handlers_slot = "__handlers";
+// PRIVATE keys on Promise.prototype (value.hpp: no source text can spell one
+// and OwnPropertyKeys never reports one): the %Promise% intrinsic itself, the
+// two job natives, and the one native that reads `then` under a fence. They
+// live on the prototype table so the collector traces them like any property.
+constexpr std::string_view intrinsic_key = "@#Promise";
+constexpr std::string_view reaction_job_key = "@#PromiseReactionJob";
+constexpr std::string_view thenable_job_key = "@#PromiseResolveThenableJob";
+constexpr std::string_view get_then_key = "@#GetThen";
+constexpr std::string_view async_from_sync_key = "@#AsyncFromSyncIteratorPrototype";
 
-// A PROMISE THAT HAS NOT SETTLED: what `then` hands back, what `await`
-// suspends on, what `new Promise` and the combinators settle later.
-[[nodiscard]] value pending_promise(context & cx) {
-    const value made = make_promise(cx, value::undefined(), false);
-    static_cast<object_object *>(made.as_heap())
-        ->define("__settled", value::boolean(false), attr_builtin);
-    return made;
+[[nodiscard]] object_object * promise_prototype(context & cx);
+
+[[nodiscard]] value slot(object_object * o, std::string_view name) {
+    const value * held = o->find(name);
+    return held == nullptr ? value::undefined() : *held;
 }
 
-// RESOLVE AND REJECT FOR ONE PROMISE, as `new Promise(executor)` hands them to
-// the executor and `Promise.withResolvers` hands them back.
+// IsPromise, 27.2.1.6: an object with the [[PromiseState]] slot.
+[[nodiscard]] bool is_promise(value v) {
+    return v.is_object() &&
+           static_cast<object_object *>(v.as_heap())->find(settled_slot) != nullptr;
+}
+
+// The four slots, PENDING, on a fresh object - or on the instance `new` handed
+// a subclass (`class P extends Promise` reaches the constructor through
+// `super()`, with `this` already made on P.prototype).
+[[nodiscard]] value init_promise(context & cx, value self) {
+    if (!self.is_object()) { self = cx.make_object(); }
+    auto * p = static_cast<object_object *>(self.as_heap());
+    if (!p->prototype.is_object_like()) { p->prototype = value::object(promise_prototype(cx)); }
+    p->define(value_slot, value::undefined(), attr_builtin);
+    p->define(rejected_slot, value::boolean(false), attr_builtin);
+    p->define(settled_slot, value::boolean(false), attr_builtin);
+    p->define(handlers_slot, cx.make_array(), attr_builtin);
+    return self;
+}
+[[nodiscard]] value pending_promise(context & cx) {
+    return init_promise(cx, value::undefined());
+}
+
+// A PromiseCapability record (27.2.1.1). For %Promise% itself `resolve` and
+// `reject` are left undefined and the promise is resolved directly - the
+// functions exist only when something hands them to JavaScript, see
+// `materialise`.
+struct capability {
+    value promise = value::undefined();
+    value resolve = value::undefined();
+    value reject = value::undefined();
+};
+
+void settle(context & cx, value promise, value with, bool rejected);
+void resolve_promise(context & cx, value promise, value resolution);
+[[nodiscard]] value reaction_job(context & cx);
+[[nodiscard]] value thenable_job(context & cx);
+
+// CreateResolvingFunctions, 27.2.1.3. The pair shares ONE [[AlreadyResolved]]
+// record, and a second pair for the same promise (NewPromiseResolveThenableJob
+// makes one) has its own - which is why the flag is in a shared cell rather
+// than on the promise.
 //
 // RETAINED, not merely captured: a `value` captured by a C++ lambda is
 // invisible to the collector, and these two hold the only reference to the
 // promise that outlives the call - a page keeps `resolve`, not the promise -
-// so it was collected out from under them and a later resolve() settled
-// freed memory, SILENTLY, because settle() checks is_object() and a recycled
-// cell is usually not one. The cost was an async function that could suspend
-// exactly ONCE. `native_object::retained` is a traced list that is not a
+// so it was collected out from under them and a later resolve() settled freed
+// memory, SILENTLY. `native_object::retained` is a traced list that is not a
 // property, so it costs no name and is not visible to
-// Object.getOwnPropertyNames(resolve), which the `__promise` property that
-// first fixed this was.
-[[nodiscard]] std::pair<native_object *, native_object *> resolvers_for(context & cx,
-                                                                        value promise) {
-    auto * resolve_fn =
-        cx.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
-            settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
-            return value::undefined();
-        });
-    auto * reject_fn =
-        cx.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
-            settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
-            return value::undefined();
-        });
-    resolve_fn->retained.push_back(promise);
-    reject_fn->retained.push_back(promise);
-    return {resolve_fn, reject_fn};
+// Object.getOwnPropertyNames(resolve).
+[[nodiscard]] std::pair<value, value> resolvers_for(context & cx, value promise) {
+    object_object * shared = new_table(cx);
+    shared->set("promise", promise);
+    shared->set("done", value::boolean(false));
+    const value state = value::object(shared);
+    const auto make = [&](bool rejecting) {
+        auto * fn =
+            cx.allocate<native_object>("", [state, rejecting](context & c, std::span<value> a) {
+                auto * s = static_cast<object_object *>(state.as_heap());
+                if (context::truthy(slot(s, "done"))) { return value::undefined(); }
+                s->set("done", value::boolean(true));
+                const value promise = slot(s, "promise");
+                if (rejecting) {
+                    settle(c, promise, arg_at(a, 0), true);
+                } else {
+                    resolve_promise(c, promise, arg_at(a, 0));
+                }
+                return value::undefined();
+            });
+        fn->is_constructor = false;
+        install_arity(cx, fn, 1); // 27.2.1.3.1-2: length 1, name ""
+        fn->retained.push_back(state);
+        return value::object(fn);
+    };
+    const value resolve = make(false);
+    const value reject = make(true);
+    return {resolve, reject};
 }
 
-// Run one registered handler and settle the promise it produced.
-void deliver(context & cx, value handler_record, value settled, bool rejected) {
+// The capability's functions, made on first need: a native capability is
+// resolved directly until something has to HAND `resolve`/`reject` to
+// JavaScript (`then` on a combinator's element promise, `withResolvers`).
+void materialise(context & cx, capability & cap) {
+    if (cap.resolve.is_callable() && cap.reject.is_callable()) { return; }
+    const auto [resolve, reject] = resolvers_for(cx, cap.promise);
+    cap.resolve = resolve;
+    cap.reject = reject;
+}
+
+// Resolve or reject the capability with a value: through its functions when
+// it has them, directly otherwise. A throw out of a subclass's `resolve` is
+// left parked for the caller's fence.
+void settle_capability(context & cx, const capability & cap, value with, bool rejected) {
+    const value fn = rejected ? cap.reject : cap.resolve;
+    if (fn.is_callable()) {
+        const value args[1] = {with};
+        (void)cx.call(fn, args);
+        return;
+    }
+    if (rejected) {
+        settle(cx, cap.promise, with, true);
+    } else {
+        resolve_promise(cx, cap.promise, with);
+    }
+}
+
+// TriggerPromiseReactions' job, 27.2.2.1 NewPromiseReactionJob: run the
+// handler for how the promise settled and pass its outcome to the capability.
+void deliver(context & cx, value handler_record, value argument, bool rejected) {
     auto * record = static_cast<object_object *>(handler_record.as_heap());
-    value * on_ok = record->find("ok");
-    value * on_err = record->find("err");
-    value * next = record->find("next");
-    const value handler = rejected ? (on_err == nullptr ? value::undefined() : *on_err)
-                                   : (on_ok == nullptr ? value::undefined() : *on_ok);
     // A RESUMPTION IS A PROMISE HANDLER. `await` registers the suspended frame
     // on the awaited promise's own handler list, so it queues and orders with
     // every `then` rather than being a second mechanism that races them.
     if (value * waiting = record->find("co"); waiting != nullptr) {
-        cx.resume(*waiting, settled, rejected);
+        cx.resume(*waiting, argument, rejected);
         return;
     }
-    if (next == nullptr) { return; }
-    // `finally` RUNS EITHER WAY AND CHANGES NOTHING. Its callback takes no
-    // argument, its return value is ignored, and the outcome - value or
-    // rejection - passes straight through to the next promise. It used to call
-    // its callback the moment it was registered and hand back the SAME promise,
-    // so it ran before the rejection it was supposed to follow and a chain
-    // after it saw the wrong link.
-    // A HANDLER THAT THROWS REJECTS THE NEXT PROMISE (27.2.5.4.1 step 9.a):
-    // the call is fenced so the throw stops here instead of unwinding to
-    // whatever page `try` happens to be below the microtask - or to nothing,
-    // which was an engine fault. `finally`'s callback throwing overrides the
-    // outcome the same way.
-    bool threw = false;
-    value thrown = value::undefined();
-    if (value * on_finally = record->find("fin"); on_finally != nullptr) {
-        if (on_finally->is_callable()) {
-            (void)cx.call_fenced(*on_finally, std::span<const value>{}, value::undefined(), threw,
-                                 thrown);
-        }
-        if (threw) {
-            settle(cx, *next, thrown, true);
-        } else {
-            settle(cx, *next, settled, rejected);
-        }
-        return;
+    const value handler = slot(record, rejected ? "err" : "ok");
+    bool threw = rejected;
+    value result = argument;
+    if (handler.is_callable()) {
+        // A HANDLER THAT THROWS REJECTS THE NEXT PROMISE (step 1.e): the call
+        // is fenced so the throw stops here instead of unwinding to whatever
+        // page `try` happens to be below the microtask - or to nothing, which
+        // was an engine fault.
+        const value args[1] = {argument};
+        value thrown = value::undefined();
+        result = cx.call_fenced(handler, args, value::undefined(), threw, thrown);
+        if (threw) { result = thrown; }
     }
-    if (!handler.is_callable()) {
-        // No handler for how this settled: it passes straight through, so a
-        // rejection survives a bare `.then(f)` and a later `.catch` sees it.
-        settle(cx, *next, settled, rejected);
-        return;
+    capability cap;
+    cap.promise = slot(record, "next");
+    cap.resolve = slot(record, "resolve");
+    cap.reject = slot(record, "reject");
+    if (!cap.promise.is_undefined() || cap.resolve.is_callable()) {
+        settle_capability(cx, cap, result, threw);
     }
-    const value args[1] = {settled};
-    const value produced = cx.call_fenced(handler, args, value::undefined(), threw, thrown);
-    if (threw) {
-        settle(cx, *next, thrown, true);
-        return;
-    }
-    // A handler returning a promise ADOPTS it, which is what makes a chain of
-    // `then`s that each do async work run in order rather than all at once.
-    if (produced.is_object()) {
-        auto * inner = static_cast<object_object *>(produced.as_heap());
-        if (inner->find("__settled") != nullptr) {
-            value * inner_settled = inner->find("__settled");
-            value * inner_value = inner->find("__value");
-            value * inner_rejected = inner->find("__rejected");
-            if (context::truthy(*inner_settled)) {
-                settle(cx, *next, inner_value == nullptr ? value::undefined() : *inner_value,
-                       inner_rejected != nullptr && context::truthy(*inner_rejected));
-            } else {
-                // still pending: chain onto it
-                value * handlers = inner->find("__handlers");
-                if (handlers != nullptr && handlers->is_array()) {
-                    object_object * record2 = new_table(cx);
-                    record2->set("next", *next);
-                    static_cast<array_object *>(handlers->as_heap())
-                        ->items.push_back(value::object(record2));
-                }
-            }
-            return;
-        }
-    }
-    settle(cx, *next, produced, false);
 }
 
-// THE JOB. Delivery is queued rather than run, and a job is a callable plus
-// values so the collector traces it - so the C++ work has to be reachable
-// through a value, which is what this native is. One per context, made on
-// demand and remembered.
-[[nodiscard]] value delivery_job(context & cx) {
-    static const std::string slot = "__deliverJob";
-    if (const value existing = cx.global(slot); existing.is_callable()) { return existing; }
-    value made =
-        value::object(cx.allocate<native_object>(slot, [](context & c, std::span<value> a) {
-            if (a.size() >= 3 && a[0].is_object()) {
-                deliver(c, a[0], a[1], context::truthy(a[2]));
-            }
-            return value::undefined();
-        }));
-    cx.define_global(slot, made);
+// THE TWO JOBS. A job is a callable plus values so the collector traces it,
+// so the C++ work has to be reachable through a value - which is what these
+// natives are. One each per context, made on demand and kept on the prototype
+// table under a private key.
+[[nodiscard]] value job_native(context & cx, std::string_view key, native_fn fn) {
+    object_object * table = promise_prototype(cx);
+    if (const value * existing = table->find(key); existing != nullptr) { return *existing; }
+    const value made = value::object(cx.allocate<native_object>(std::string{key}, std::move(fn)));
+    table->define(key, made, attr_none);
     return made;
 }
-
-// Queue one delivery for the end of the turn.
-void enqueue_delivery(context & cx, value record, value settled, bool rejected) {
-    cx.queue_microtask(delivery_job(cx), {record, settled, value::boolean(rejected)});
+[[nodiscard]] value reaction_job(context & cx) {
+    return job_native(cx, reaction_job_key, [](context & c, std::span<value> a) {
+        if (a.size() >= 3 && a[0].is_object()) { deliver(c, a[0], a[1], context::truthy(a[2])); }
+        return value::undefined();
+    });
+}
+// 27.2.2.2 NewPromiseResolveThenableJob: (promise, thenable, then) -> a FRESH
+// pair of resolving functions, `then` called with them on the thenable, and a
+// throw out of it rejects - through the pair, so a thenable that resolved
+// first and then threw keeps its resolution.
+[[nodiscard]] value thenable_job(context & cx) {
+    return job_native(cx, thenable_job_key, [](context & c, std::span<value> a) {
+        if (a.size() < 3) { return value::undefined(); }
+        const auto [resolve, reject] = resolvers_for(c, a[0]);
+        const value args[2] = {resolve, reject};
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)c.call_fenced(a[2], args, a[1], threw, thrown);
+        if (threw) {
+            const value reason[1] = {thrown};
+            (void)c.call(reject, reason);
+        }
+        return value::undefined();
+    });
 }
 
+void enqueue_reaction(context & cx, value record, value argument, bool rejected) {
+    cx.queue_microtask(reaction_job(cx), {record, argument, value::boolean(rejected)});
+}
+
+// FulfillPromise / RejectPromise (27.2.1.4, 27.2.1.7) and
+// TriggerPromiseReactions (27.2.1.8): settle ONCE, then queue every waiting
+// reaction. The once is defensive - the resolving functions already gate on
+// [[AlreadyResolved]] - and it is what keeps the VM's settler hook
+// (context::settle_promise) harmless on a promise something else settled.
 void settle(context & cx, value promise, value with, bool rejected) {
-    if (!promise.is_object()) { return; }
+    if (!is_promise(promise)) { return; }
     auto * p = static_cast<object_object *>(promise.as_heap());
-    value * already = p->find("__settled");
-    if (already != nullptr && context::truthy(*already)) { return; } // settle once
-    p->define("__value", with, attr_builtin);
-    p->define("__rejected", value::boolean(rejected), attr_builtin);
-    p->define("__settled", value::boolean(true), attr_builtin);
-    value * handlers = p->find("__handlers");
+    if (context::truthy(slot(p, settled_slot))) { return; }
+    p->define(value_slot, with, attr_builtin);
+    p->define(rejected_slot, value::boolean(rejected), attr_builtin);
+    p->define(settled_slot, value::boolean(true), attr_builtin);
+    value * handlers = p->find(handlers_slot);
     if (handlers == nullptr || !handlers->is_array()) { return; }
     // COPIED before draining: a handler may register another on this same
     // promise, and appending to the vector being walked invalidates it.
     const std::vector<value> pending = static_cast<array_object *>(handlers->as_heap())->items;
     static_cast<array_object *>(handlers->as_heap())->items.clear();
-    // QUEUED, not called. `p.then(f); after();` must run `after` first, and a
-    // handler that runs the instant a promise settles can also reenter code
-    // that is halfway through its own work.
-    for (const value & record : pending) { enqueue_delivery(cx, record, with, rejected); }
+    for (const value & record : pending) { enqueue_reaction(cx, record, with, rejected); }
 }
 
-// `then`/`catch`/`finally` all reduce to: remember what to do for each way this
-// can settle, and either do it now or when it settles.
-//
-// `on_finally` is the third form: one callback for BOTH outcomes, with no say
-// in either - its return value is ignored and the outcome passes through. It
-// goes in the same record so it queues and orders like everything else, rather
-// than being a special case at the call site.
-value settle_with(context & cx, value on_ok, value on_err, value on_finally = value::undefined()) {
-    const value self = cx.current_this();
-    if (!self.is_object()) { return self; }
-    auto * promise = static_cast<object_object *>(self.as_heap());
+// Get(resolution, "then") AS ONE COMPLETION RECORD: the getter may throw, and
+// 27.2.1.3.2 step 9 rejects with exactly what it threw. A throw a native's
+// own `lookup_property` parks is rethrown at that native's return, so reading
+// the property inside a native under call_fenced is how the value is had.
+[[nodiscard]] value get_then(context & cx, value resolution, bool & threw, value & thrown) {
+    const value getter = job_native(cx, get_then_key, [](context & c, std::span<value> a) {
+        return c.lookup_property(arg_at(a, 0), "then");
+    });
+    const value args[1] = {resolution};
+    return cx.call_fenced(getter, args, value::undefined(), threw, thrown);
+}
 
-    const value next = pending_promise(cx);
+// The promise resolve function's body, 27.2.1.3.2 steps 7-16 - what
+// `resolve(x)` does once [[AlreadyResolved]] is set. A thenable is NOT
+// adopted here: the job is queued and runs on its own tick.
+void resolve_promise(context & cx, value promise, value resolution) {
+    if (resolution.strict_equals(promise)) {
+        settle(cx, promise, cx.make_error("TypeError", "Chaining cycle detected for promise"),
+               true);
+        return;
+    }
+    if (!resolution.is_object_like()) {
+        settle(cx, promise, resolution, false);
+        return;
+    }
+    bool threw = false;
+    value thrown = value::undefined();
+    const value then = get_then(cx, resolution, threw, thrown);
+    if (threw) {
+        settle(cx, promise, thrown, true);
+        return;
+    }
+    if (!then.is_callable()) {
+        settle(cx, promise, resolution, false);
+        return;
+    }
+    cx.queue_microtask(thenable_job(cx), {promise, resolution, then});
+}
+
+// PerformPromiseThen, 27.2.5.4.1: one reaction record for both outcomes,
+// appended while the promise is pending, queued at once when it is not. The
+// capability may be EMPTY (an `await`, a combinator's element reaction): the
+// record then has no `next` and `deliver` calls nothing after the handler.
+void perform_then(context & cx, value promise, value on_ok, value on_err, const capability & cap) {
     object_object * record = new_table(cx);
-    record->set("ok", on_ok);
-    record->set("err", on_err);
-    record->set("next", next);
-    if (!on_finally.is_undefined()) { record->set("fin", on_finally); }
+    record->set("ok", on_ok.is_callable() ? on_ok : value::undefined());
+    record->set("err", on_err.is_callable() ? on_err : value::undefined());
+    record->set("next", cap.promise);
+    record->set("resolve", cap.resolve);
+    record->set("reject", cap.reject);
+    auto * p = static_cast<object_object *>(promise.as_heap());
+    if (!context::truthy(slot(p, settled_slot))) {
+        if (value * handlers = p->find(handlers_slot);
+            handlers != nullptr && handlers->is_array()) {
+            static_cast<array_object *>(handlers->as_heap())
+                ->items.push_back(value::object(record));
+        }
+        return;
+    }
+    enqueue_reaction(cx, value::object(record), slot(p, value_slot),
+                     context::truthy(slot(p, rejected_slot)));
+}
 
-    value * settled = promise->find("__settled");
-    if (settled != nullptr && context::truthy(*settled)) {
-        value * held = promise->find("__value");
-        value * state = promise->find("__rejected");
-        // Already settled, so there is nothing to wait FOR - but the handler
-        // still runs at the end of the turn rather than here. `Promise
-        // .resolve(1).then(f); after();` orders them the same way as the
-        // pending case, which is the whole point of a queue.
-        enqueue_delivery(cx, value::object(record), held == nullptr ? value::undefined() : *held,
-                         state != nullptr && context::truthy(*state));
-        return next;
+[[nodiscard]] value intrinsic_promise(context & cx) {
+    return slot(promise_prototype(cx), intrinsic_key);
+}
+
+// NewPromiseCapability, 27.2.1.5. %Promise% itself takes the direct form; any
+// other constructor is run with a GetCapabilitiesExecutor and must hand it
+// two callables exactly once. FALSE means a TypeError - or the constructor's
+// own throw - is in flight.
+[[nodiscard]] bool new_capability(context & cx, value ctor, capability & out) {
+    if (ctor.is_heap() && ctor.strict_equals(intrinsic_promise(cx))) {
+        out = capability{};
+        out.promise = pending_promise(cx);
+        return true;
     }
-    value * handlers = promise->find("__handlers");
-    if (handlers != nullptr && handlers->is_array()) {
-        static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+    if (!is_constructor(ctor)) {
+        cx.throw_error("TypeError", "Promise capability constructor is not a constructor");
+        return false;
     }
-    return next;
+    object_object * holder = new_table(cx);
+    const value state = value::object(holder);
+    const context::rooted keep_state{cx, state};
+    auto * executor = cx.allocate<native_object>("", [state](context & c, std::span<value> a) {
+        auto * s = static_cast<object_object *>(state.as_heap());
+        // 27.2.1.5.1 steps 3-4: a second call with anything defined is refused.
+        if (!slot(s, "resolve").is_undefined() || !slot(s, "reject").is_undefined()) {
+            c.throw_error("TypeError", "Promise executor has already been invoked");
+            return value::undefined();
+        }
+        s->set("resolve", arg_at(a, 0));
+        s->set("reject", arg_at(a, 1));
+        return value::undefined();
+    });
+    executor->is_constructor = false;
+    install_arity(cx, executor, 2);
+    executor->retained.push_back(state);
+    // Construct(C, « executor ») under a fence: a throw inside the
+    // constructor is the caller's to see, and a `try` inside it is not.
+    const value executor_value = value::object(executor);
+    const completion built = fenced(cx, [ctor, executor_value](context & c) -> value {
+        const value args[1] = {executor_value};
+        return c.construct(ctor, args);
+    });
+    if (built.threw) {
+        cx.throw_value(built.result);
+        return false;
+    }
+    const value promise = built.result;
+    const value resolve = slot(holder, "resolve");
+    const value reject = slot(holder, "reject");
+    if (!resolve.is_callable()) {
+        cx.throw_error("TypeError", "Promise resolve function is not callable");
+        return false;
+    }
+    if (!reject.is_callable()) {
+        cx.throw_error("TypeError", "Promise reject function is not callable");
+        return false;
+    }
+    out.promise = promise;
+    out.resolve = resolve;
+    out.reject = reject;
+    return true;
+}
+
+// SpeciesConstructor, 7.3.22: `O.constructor[@@species]`, the default when
+// either is absent, a TypeError when either is the wrong kind of thing.
+[[nodiscard]] bool species_constructor(context & cx, value o, value fallback, value & out) {
+    const value ctor = cx.lookup_property(o, "constructor");
+    if (cx.throw_pending()) { return false; }
+    if (ctor.is_undefined()) {
+        out = fallback;
+        return true;
+    }
+    if (!ctor.is_object_like()) {
+        cx.throw_error("TypeError", "The .constructor property is not an object");
+        return false;
+    }
+    const value species = cx.lookup_property(ctor, "@@species");
+    if (cx.throw_pending()) { return false; }
+    if (species.is_nullish()) {
+        out = fallback;
+        return true;
+    }
+    if (is_constructor(species)) {
+        out = species;
+        return true;
+    }
+    cx.throw_error("TypeError", "object.constructor[Symbol.species] is not a constructor");
+    return false;
+}
+
+// PromiseResolve(C, x), 27.2.4.7.1: x itself when it is a promise whose
+// `constructor` is C, else a new C resolved with it.
+[[nodiscard]] bool promise_resolve(context & cx, value ctor, value x, value & out) {
+    if (is_promise(x)) {
+        const value xc = cx.lookup_property(x, "constructor");
+        if (cx.throw_pending()) { return false; }
+        if (xc.strict_equals(ctor)) {
+            out = x;
+            return true;
+        }
+    }
+    capability cap;
+    if (!new_capability(cx, ctor, cap)) { return false; }
+    const context::rooted keep{cx, cap.promise};
+    settle_capability(cx, cap, x, false);
+    if (cx.throw_pending()) { return false; }
+    out = cap.promise;
+    return true;
 }
 
 // then/catch/finally, once for the program rather than three natives per
-// promise. They were already receiver-based - settle_with reads current_this -
-// so nothing about them was per-instance; and having them here is what makes `p
-// instanceof Promise` answerable at all, since a promise then has a prototype to
-// walk. Built lazily so a context with no promise ever made pays nothing.
+// promise. Built lazily so a context with no promise ever made pays nothing;
+// the constructor links to it when install_promise runs.
 [[nodiscard]] object_object * promise_prototype(context & cx) {
     if (object_object * existing = cx.prototype(context::proto_kind::promise)) { return existing; }
     object_object * table = new_table(cx);
-    method(cx, table, "then", [](context & c, std::span<value> a) {
-        return settle_with(c, a.empty() ? value::undefined() : a[0],
-                           a.size() > 1 ? a[1] : value::undefined());
+    cx.set_prototype(context::proto_kind::promise, table);
+    // 27.2.5.4 Promise.prototype.then
+    method(cx, table, "then", 2, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!is_promise(self)) {
+            c.throw_error("TypeError", "Promise.prototype.then called on a non-Promise");
+            return value::undefined();
+        }
+        value ctor = value::undefined();
+        if (!species_constructor(c, self, intrinsic_promise(c), ctor)) {
+            return value::undefined();
+        }
+        capability cap;
+        if (!new_capability(c, ctor, cap)) { return value::undefined(); }
+        const context::rooted keep{c, cap.promise};
+        perform_then(c, self, arg_at(a, 0), arg_at(a, 1), cap);
+        return cap.promise;
     });
-    method(cx, table, "catch", [](context & c, std::span<value> a) {
-        return settle_with(c, value::undefined(), a.empty() ? value::undefined() : a[0]);
+    // 27.2.5.1 Promise.prototype.catch: Invoke(this, "then", undefined, f) -
+    // generic, through the property, so a subclass's `then` is the one called.
+    method(cx, table, "catch", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        // GetV's ToObject: null and undefined are the TypeError right here.
+        if (self.is_nullish()) {
+            c.throw_error("TypeError", "Promise.prototype.catch called on null or undefined");
+            return value::undefined();
+        }
+        const value then = c.lookup_property(self, "then");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (!then.is_callable()) {
+            c.throw_error("TypeError", "Promise.prototype.catch: then is not a function");
+            return value::undefined();
+        }
+        const value args[2] = {value::undefined(), arg_at(a, 0)};
+        return c.call(then, args, self);
     });
-    method(cx, table, "finally", [](context & c, std::span<value> a) {
-        return settle_with(c, value::undefined(), value::undefined(), arg_at(a, 0));
+    // 27.2.5.3 Promise.prototype.finally: ThenFinally and CatchFinally run the
+    // callback, resolve its result through the species constructor, and then
+    // restore the original outcome - value or rejection - once that settles.
+    method(cx, table, "finally", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!self.is_object_like()) {
+            c.throw_error("TypeError", "Promise.prototype.finally called on a non-object");
+            return value::undefined();
+        }
+        value ctor = value::undefined();
+        if (!species_constructor(c, self, intrinsic_promise(c), ctor)) {
+            return value::undefined();
+        }
+        const value on_finally = arg_at(a, 0);
+        value then_finally = on_finally;
+        value catch_finally = on_finally;
+        if (on_finally.is_callable()) {
+            object_object * shared = new_table(c);
+            shared->set("onFinally", on_finally);
+            shared->set("C", ctor);
+            const value state = value::object(shared);
+            const context::rooted keep_state{c, state};
+            const auto make = [&](bool rethrow) {
+                auto * fn = c.allocate<native_object>(
+                    "", [state, rethrow](context & cc, std::span<value> args) {
+                        auto * s = static_cast<object_object *>(state.as_heap());
+                        const value outcome = arg_at(args, 0);
+                        const value result = cc.call(slot(s, "onFinally"), {});
+                        if (cc.throw_pending()) { return value::undefined(); }
+                        value wrapped = value::undefined();
+                        if (!promise_resolve(cc, slot(s, "C"), result, wrapped)) {
+                            return value::undefined();
+                        }
+                        const context::rooted keep_wrapped{cc, wrapped};
+                        // valueThunk / thrower: the original outcome, restored
+                        // after the callback's promise settles.
+                        auto * back = cc.allocate<native_object>(
+                            "", [outcome, rethrow](context & c3, std::span<value>) {
+                                if (rethrow) {
+                                    c3.throw_value(outcome);
+                                    return value::undefined();
+                                }
+                                return outcome;
+                            });
+                        back->is_constructor = false;
+                        install_arity(cc, back, 0);
+                        back->retained.push_back(outcome);
+                        const value then = cc.lookup_property(wrapped, "then");
+                        if (cc.throw_pending()) { return value::undefined(); }
+                        if (!then.is_callable()) {
+                            cc.throw_error("TypeError", "then is not a function");
+                            return value::undefined();
+                        }
+                        const value then_args[1] = {value::object(back)};
+                        return cc.call(then, then_args, wrapped);
+                    });
+                fn->is_constructor = false;
+                install_arity(c, fn, 1);
+                fn->retained.push_back(state);
+                return value::object(fn);
+            };
+            then_finally = make(false);
+            catch_finally = make(true);
+        }
+        const context::rooted keep_a{c, then_finally};
+        const context::rooted keep_b{c, catch_finally};
+        const value then = c.lookup_property(self, "then");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (!then.is_callable()) {
+            c.throw_error("TypeError", "Promise.prototype.finally: then is not a function");
+            return value::undefined();
+        }
+        const value args[2] = {then_finally, catch_finally};
+        return c.call(then, args, self);
     });
     table->define("@@toStringTag", cx.string("Promise"), attr_configurable); // 27.2.5.5
-    cx.set_prototype(context::proto_kind::promise, table);
     return table;
 }
 
-[[nodiscard]] value make_promise(context & cx, value v, bool rejected) {
-    object_object * promise = new_table(cx);
-    promise->prototype = value::object(promise_prototype(cx));
-    promise->define("__value", v, attr_builtin);
-    promise->define("__rejected", value::boolean(rejected), attr_builtin);
-    promise->define("__settled", value::boolean(true), attr_builtin);
-    promise->define("__handlers", cx.make_array(), attr_builtin);
-    return value::object(promise);
-}
-
 } // namespace
+
+// See collections/iterator_internal.hpp.
+void perform_promise_then(context & cx, value promise, value on_ok, value on_err) {
+    if (!is_promise(promise)) { return; }
+    perform_then(cx, promise, on_ok, on_err, capability{});
+}
 
 } // namespace ctbrowser::script::detail
 
 namespace ctbrowser::script::builtins_detail {
 
+using detail::capability;
+using detail::is_promise;
 using detail::pending_promise;
 using detail::resolvers_for;
+using detail::slot;
 
 namespace {
 
-// ATTACH A REACTION THE WAY `then` ATTACHES ONE, and for the same reason it has
-// to be the same way: a combinator is specified over arbitrary values, so all
-// three of "already settled", "still pending" and "not a promise at all" have
-// to reach the same code. `Promise.allSettled([p, 1])` must wait for `p` and
-// must report the 1 as fulfilled.
-//
-// The reaction runs at the END OF THE TURN in every case, because that is what
-// `settle` and `settle_with` do - a handler that runs the instant it is
-// attached would order `Promise.allSettled([1]).then(f); after();` backwards.
-void react(context & cx, value input, native_object * on_ok, native_object * on_err) {
-    object_object * record = detail::new_table(cx);
-    record->set("ok", value::object(on_ok));
-    record->set("err", value::object(on_err));
-    // `deliver` DROPS A RECORD WITH NO `next` before it calls anything: that
-    // slot is the promise a `then` would have returned. Nothing reads this one,
-    // and leaving it out silently loses the reaction.
-    record->set("next", pending_promise(cx));
-
-    if (input.is_object()) {
-        auto * p = static_cast<object_object *>(input.as_heap());
-        if (value * settled = p->find("__settled"); settled != nullptr) {
-            if (context::truthy(*settled)) {
-                const value * held = p->find("__value");
-                const value * state = p->find("__rejected");
-                detail::enqueue_delivery(cx, value::object(record),
-                                         held == nullptr ? value::undefined() : *held,
-                                         state != nullptr && context::truthy(*state));
-                return;
-            }
-            if (value * handlers = p->find("__handlers");
-                handlers != nullptr && handlers->is_array()) {
-                static_cast<array_object *>(handlers->as_heap())
-                    ->items.push_back(value::object(record));
-                return;
-            }
-        }
-    }
-    // Not a promise: 27.2.4.7.1 resolves it with itself.
-    detail::enqueue_delivery(cx, value::object(record), input, false);
-}
-
-// The argument, as the list of things to wait for.
-//
-// AN ARRAY, NOT AN ITERABLE. A general iterable needs Symbol.iterator dispatch,
-// which is the gap `for..of` has here too (docs/script.md), and `Promise.all`
-// has always read its argument this way. A non-array is an empty list rather
-// than the TypeError the specification asks for, which is the same deviation
-// and is named rather than fixed in passing.
-[[nodiscard]] std::vector<value> entries_of(std::span<value> a) {
-    if (!a.empty() && a[0].is_array()) {
-        return static_cast<array_object *>(a[0].as_heap())->items;
-    }
-    return {};
-}
-
-// A COMBINATOR'S SHARED STATE, reachable rather than captured.
-//
-// A `value` held only by a C++ lambda is invisible to the collector - the
-// comment on `new Promise`'s resolve/reject says what that cost - so the
-// result promise, the results array and the counter live in one object that
-// every reaction RETAINS.
-[[nodiscard]] object_object * combinator_state(context & cx, value out, value results,
-                                               std::size_t count) {
-    object_object * state = detail::new_table(cx);
-    state->set("out", out);
-    state->set("results", results);
-    state->set("left", value::number(static_cast<double>(count)));
-    return state;
-}
-
-[[nodiscard]] double count_down(object_object * state) {
-    const value * left = state->find("left");
-    const double remaining = (left == nullptr ? 0.0 : left->as_number()) - 1.0;
-    state->set("left", value::number(remaining));
-    return remaining;
-}
-
-[[nodiscard]] value slot_of(object_object * state, const char * name) {
-    const value * held = state->find(name);
-    return held == nullptr ? value::undefined() : *held;
-}
-
-void put_result(object_object * state, std::size_t index, value entry) {
-    const value * results = state->find("results");
-    if (results == nullptr || !results->is_array()) { return; }
-    auto & items = static_cast<array_object *>(results->as_heap())->items;
-    if (index < items.size()) { items[index] = entry; }
-}
-
-// 27.2.4.1.2: every fulfilment writes its value into its own slot and the last
-// one to arrive resolves the result with the whole array; ONE rejection settles
-// it outright, and the reactions still queued after it find the result already
-// settled - `settle` is settle-once, which is what makes that safe rather than
-// needing a flag of its own.
-[[nodiscard]] native_object * all_reaction(context & cx, value state, std::size_t index,
-                                           bool rejected) {
-    auto * made = cx.allocate<native_object>(
-        rejected ? "rejected" : "fulfilled",
-        [state, index, rejected](context & c, std::span<value> args) {
-            auto * held = static_cast<object_object *>(state.as_heap());
-            const value with = args.empty() ? value::undefined() : args[0];
-            if (rejected) {
-                detail::settle(c, slot_of(held, "out"), with, true);
-                return value::undefined();
-            }
-            put_result(held, index, with);
-            if (count_down(held) <= 0) {
-                detail::settle(c, slot_of(held, "out"), slot_of(held, "results"), false);
-            }
-            return value::undefined();
-        });
-    made->retained.push_back(state);
-    return made;
-}
-
-// 27.2.4.2.2: every reaction writes `{ status, value }` or
-// `{ status, reason }` into its own slot, and the last one to finish resolves.
-[[nodiscard]] native_object * allsettled_reaction(context & cx, value state, std::size_t index,
-                                                  bool rejected) {
-    auto * made = cx.allocate<native_object>(
-        rejected ? "rejected" : "fulfilled",
-        [state, index, rejected](context & c, std::span<value> args) {
-            auto * held = static_cast<object_object *>(state.as_heap());
-            const value entry = c.make_object();
-            auto * record = static_cast<object_object *>(entry.as_heap());
-            record->set("status", c.string(rejected ? "rejected" : "fulfilled"));
-            record->set(rejected ? "reason" : "value", args.empty() ? value::undefined() : args[0]);
-            put_result(held, index, entry);
-            if (count_down(held) <= 0) {
-                detail::settle(c, slot_of(held, "out"), slot_of(held, "results"), false);
-            }
-            return value::undefined();
-        });
-    made->retained.push_back(state);
-    return made;
-}
-
-// THE ERROR `Promise.any` REJECTS WITH when every input rejected.
-//
-// AggregateError is a constructor this engine does not have (docs/test262.md
-// names it as deliberately absent), so `make_error` falls back to
-// Error.prototype plus an own `name` - which keeps `e.name === "AggregateError"`
-// and `e instanceof Error` true. `errors` is the array 27.2.4.3.2 requires, in
-// input order.
+// THE ERROR `Promise.any` REJECTS WITH when every input rejected. context::
+// make_error builds it on the AggregateError prototype install_aggregate_error
+// registers; `errors` is the own data property 20.5.7.1.1 step 5 installs, in
+// input order. No `message`: 27.2.4.3.1 step 8.d.iii.1 makes one with none.
 [[nodiscard]] value aggregate_error(context & cx, value errors) {
-    const value made = cx.make_error("AggregateError", "All promises were rejected");
-    static_cast<object_object *>(made.as_heap())->set("errors", errors);
+    const value made = cx.make_error("AggregateError", "");
+    auto * o = static_cast<object_object *>(made.as_heap());
+    o->erase("message");
+    o->define("errors", errors, attr_builtin);
     return made;
 }
 
-// 27.2.4.3.2, and it is `all` with the two outcomes swapped: the first
-// FULFILMENT wins, and it takes every rejection to fail.
-[[nodiscard]] native_object * any_reaction(context & cx, value state, std::size_t index,
-                                           bool rejected) {
-    auto * made = cx.allocate<native_object>(
-        rejected ? "rejected" : "fulfilled",
-        [state, index, rejected](context & c, std::span<value> args) {
-            auto * held = static_cast<object_object *>(state.as_heap());
-            const value with = args.empty() ? value::undefined() : args[0];
-            if (!rejected) {
-                detail::settle(c, slot_of(held, "out"), with, false);
+// 20.5.7 AggregateError(errors, message, options): a NativeError in shape -
+// [[Prototype]] %Error%, prototype under %Error.prototype% with its own
+// `name` and `message`, callable without `new` - plus the `errors` list,
+// iterated (any iterable) into a fresh array. Installed here rather than in
+// objects/errors.cpp because Promise.any is what needs it; skipped when a
+// global of that name already exists.
+void install_aggregate_error(context & cx) {
+    if (cx.has_global("AggregateError")) { return; }
+    object_object * proto = detail::new_table(cx);
+    if (object_object * error_proto = cx.prototype(context::proto_kind::error)) {
+        proto->prototype = value::object(error_proto);
+    }
+    proto->define("name", cx.string("AggregateError"), attr_builtin);
+    proto->define("message", cx.string(""), attr_builtin);
+    auto * ctor =
+        cx.allocate<native_object>("AggregateError", [proto](context & c, std::span<value> a) {
+            value self = c.current_this();
+            if (!self.is_object()) { self = c.make_object(); }
+            auto * made = static_cast<object_object *>(self.as_heap());
+            if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
+            std::string text;
+            if (!arg_at(a, 1).is_undefined()) {
+                if (!stringable_arg(c, a[1])) { return value::undefined(); }
+                text = c.to_string(a[1]);
+                if (c.throw_pending()) { return value::undefined(); }
+                made->define("message", c.string(text), attr_builtin);
+            }
+            if (const value options = arg_at(a, 2); options.is_object_like()) {
+                const bool has_cause = c.has_property(options, c.string("cause"));
+                if (c.throw_pending()) { return value::undefined(); }
+                if (has_cause) {
+                    const value cause = c.lookup_property(options, "cause");
+                    if (c.throw_pending()) { return value::undefined(); }
+                    made->define("cause", cause, attr_builtin);
+                }
+            }
+            made->define("@#ErrorData",
+                         c.string("AggregateError" + (text.empty() ? std::string{} : ": " + text) +
+                                  c.current_stack()),
+                         attr_none);
+            // Step 5: IteratorToList(GetIterator(errors)) - every value, into a
+            // fresh array, and a non-iterable is the TypeError GetIterator throws.
+            const value iterator = c.get_iterator(arg_at(a, 0));
+            if (c.throw_pending() || !iterator.is_object_like()) { return value::undefined(); }
+            detail::iterator_record rec;
+            if (!detail::iterator_direct(c, iterator, rec)) { return value::undefined(); }
+            const value list = c.make_array();
+            const context::rooted keep{c, list};
+            for (;;) {
+                bool done = false;
+                value item = value::undefined();
+                if (!detail::iterator_step_value(c, rec, done, item)) { return value::undefined(); }
+                if (done) { break; }
+                static_cast<array_object *>(list.as_heap())->items.push_back(item);
+            }
+            made->define("errors", list, attr_builtin);
+            return self;
+        });
+    link_constructor(cx, proto, "AggregateError", 2, value::object(ctor));
+    ctor->define("prototype", value::object(proto), attr_none);
+    if (const value error_ctor = cx.global("Error"); error_ctor.is_callable()) {
+        ctor->proto_link = error_ctor;
+    }
+    cx.register_error_prototype("AggregateError", proto);
+    cx.define_global("AggregateError", value::object(ctor));
+}
+
+enum class combine : std::uint8_t {
+    all,
+    all_settled,
+    any,
+    race,
+    all_keyed,
+    all_settled_keyed
+};
+[[nodiscard]] constexpr bool keyed(combine k) {
+    return k == combine::all_keyed || k == combine::all_settled_keyed;
+}
+[[nodiscard]] constexpr bool settles_each(combine k) {
+    return k == combine::all_settled || k == combine::all_settled_keyed;
+}
+
+// CreateKeyedPromiseCombinatorResultObject (Promise.allKeyed): a
+// null-prototype object, one own data property per key, in key order.
+[[nodiscard]] value keyed_result(context & cx, value keys, value values) {
+    object_object * record = detail::new_table(cx);
+    record->prototype = value::undefined(); // explicit null, see object_object::prototype
+    const auto & names = static_cast<array_object *>(keys.as_heap())->items;
+    const auto & held = static_cast<array_object *>(values.as_heap())->items;
+    for (std::size_t i = 0; i < names.size() && i < held.size(); ++i) {
+        record->define(cx.to_string(names[i]), held[i], attr_default);
+    }
+    return value::object(record);
+}
+
+// The element functions of 27.2.4.1.3 / 27.2.4.2.2-3 / 27.2.4.3.2: each
+// writes its outcome into its own slot ONCE ([[AlreadyCalled]]) and the last
+// to arrive settles the capability. State lives in one object every element
+// function retains - a `value` in a lambda capture is not a root - and so
+// does [[AlreadyCalled]]: allSettled's fulfilled and rejected functions for
+// one index SHARE the record (27.2.4.2.1 step 8.k-t), so it is a per-index
+// slot in the state's `called` list rather than a capture.
+[[nodiscard]] value element_fn(context & cx, combine kind, value state, std::size_t index,
+                               bool rejected) {
+    auto * fn = cx.allocate<native_object>(
+        "", [kind, state, index, rejected](context & c, std::span<value> a) {
+            auto * s = static_cast<object_object *>(state.as_heap());
+            auto & called = static_cast<array_object *>(slot(s, "called").as_heap())->items;
+            if (index >= called.size()) { called.resize(index + 1, value::boolean(false)); }
+            if (context::truthy(called[index])) { return value::undefined(); }
+            called[index] = value::boolean(true);
+            const value with = arg_at(a, 0);
+            value entry = with;
+            if (settles_each(kind)) {
+                entry = c.make_object();
+                auto * record = static_cast<object_object *>(entry.as_heap());
+                record->set("status", c.string(rejected ? "rejected" : "fulfilled"));
+                record->set(rejected ? "reason" : "value", with);
+            }
+            const value values = slot(s, "values");
+            auto & items = static_cast<array_object *>(values.as_heap())->items;
+            if (index < items.size()) { items[index] = entry; }
+            const double left = slot(s, "left").as_number() - 1.0;
+            s->set("left", value::number(left));
+            if (left > 0) { return value::undefined(); }
+            capability cap;
+            cap.promise = slot(s, "promise");
+            cap.resolve = slot(s, "resolve");
+            cap.reject = slot(s, "reject");
+            if (kind == combine::any) {
+                detail::settle_capability(c, cap, aggregate_error(c, values), true);
+            } else if (keyed(kind)) {
+                detail::settle_capability(c, cap, keyed_result(c, slot(s, "keys"), values), false);
+            } else {
+                detail::settle_capability(c, cap, values, false);
+            }
+            return value::undefined();
+        });
+    fn->is_constructor = false;
+    detail::install_arity(cx, fn, 1);
+    fn->retained.push_back(state);
+    return value::object(fn);
+}
+
+// Promise.all / allSettled / any / race, 27.2.4.1-3 and 27.2.4.5: one walk.
+// The capability is made first (its TypeError propagates); everything after
+// it is IfAbruptRejectPromise - run under one fence, and an abrupt step that
+// did not come from the iterator itself closes the iterator before the
+// capability is rejected.
+[[nodiscard]] value combinator(context & cx, combine kind, std::span<value> a) {
+    const value ctor = cx.current_this();
+    if (!ctor.is_object_like()) {
+        cx.throw_error("TypeError", "Promise combinator called on a non-object");
+        return value::undefined();
+    }
+    capability cap;
+    if (!detail::new_capability(cx, ctor, cap)) { return value::undefined(); }
+    detail::materialise(cx, cap);
+    const context::rooted keep_promise{cx, cap.promise};
+    const context::rooted keep_resolve{cx, cap.resolve};
+    const context::rooted keep_reject{cx, cap.reject};
+    const value iterable = arg_at(a, 0);
+    value iterator = value::undefined();
+    bool close = false;
+    const detail::completion run = detail::fenced(cx, [&](context & c) -> value {
+        // GetPromiseResolve, 27.2.4.1.1: read once, checked once.
+        const value promise_resolve = c.lookup_property(ctor, "resolve");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (!promise_resolve.is_callable()) {
+            c.throw_error("TypeError", "Promise resolve is not a function");
+            return value::undefined();
+        }
+        // The items: an iterator's values, or (allKeyed) the own ENUMERABLE
+        // properties of an object, each key's enumerability re-read as it is
+        // reached.
+        std::vector<std::string> own_keys;
+        value next = value::undefined();
+        if (keyed(kind)) {
+            if (!iterable.is_object_like()) {
+                c.throw_error("TypeError", "Promise.allKeyed: argument is not an object");
                 return value::undefined();
             }
-            put_result(held, index, with);
-            if (count_down(held) <= 0) {
-                detail::settle(c, slot_of(held, "out"),
-                               aggregate_error(c, slot_of(held, "results")), true);
+            own_keys = detail::own_property_names(c, iterable, detail::key_filter::all);
+            if (c.throw_pending()) { return value::undefined(); }
+        } else {
+            iterator = c.get_iterator(iterable);
+            if (c.throw_pending() || !iterator.is_object_like()) { return value::undefined(); }
+            next = c.lookup_property(iterator, "next");
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+        object_object * shared = detail::new_table(c);
+        const value state = value::object(shared);
+        const context::rooted keep_state{c, state};
+        const value values = c.make_array();
+        const value keys = c.make_array();
+        shared->set("values", values);
+        shared->set("keys", keys);
+        shared->set("called", c.make_array());
+        shared->set("left", value::number(1));
+        shared->set("promise", cap.promise);
+        shared->set("resolve", cap.resolve);
+        shared->set("reject", cap.reject);
+        std::size_t key_at = 0;
+        for (std::size_t index = 0;; ++index) {
+            close = !keyed(kind);
+            bool done = false;
+            value item = value::undefined();
+            if (keyed(kind)) {
+                done = true;
+                for (; key_at < own_keys.size(); ++key_at) {
+                    context::property_descriptor found;
+                    const bool present = c.own_property(iterable, own_keys[key_at], found);
+                    if (c.throw_pending()) { return value::undefined(); }
+                    if (!present || !found.enumerable) { continue; }
+                    const value key = detail::key_value(c, own_keys[key_at]);
+                    item = c.lookup_index(iterable, key);
+                    if (c.throw_pending()) { return value::undefined(); }
+                    static_cast<array_object *>(keys.as_heap())->items.push_back(key);
+                    ++key_at;
+                    done = false;
+                    break;
+                }
+            } else {
+                detail::iterator_record rec{iterator, next, false};
+                if (!detail::iterator_step_value(c, rec, done, item)) {
+                    close = false; // the iterator record is done: no IteratorClose
+                    return value::undefined();
+                }
             }
-            return value::undefined();
-        });
-    made->retained.push_back(state);
-    return made;
+            if (done) {
+                close = false;
+                if (kind == combine::race) { return value::undefined(); }
+                const double left = slot(shared, "left").as_number() - 1.0;
+                shared->set("left", value::number(left));
+                if (left <= 0) {
+                    if (kind == combine::any) {
+                        detail::settle_capability(c, cap, aggregate_error(c, values), true);
+                    } else if (keyed(kind)) {
+                        detail::settle_capability(c, cap, keyed_result(c, keys, values), false);
+                    } else {
+                        detail::settle_capability(c, cap, values, false);
+                    }
+                }
+                return value::undefined();
+            }
+            const context::rooted keep_item{c, item};
+            if (kind != combine::race) {
+                static_cast<array_object *>(values.as_heap())->items.push_back(value::undefined());
+            }
+            const value resolve_args[1] = {item};
+            const value next_promise = c.call(promise_resolve, resolve_args, ctor);
+            if (c.throw_pending()) { return value::undefined(); }
+            const context::rooted keep_next{c, next_promise};
+            value on_ok = cap.resolve;
+            value on_err = cap.reject;
+            if (kind != combine::any && kind != combine::race) {
+                on_ok = element_fn(c, kind, state, index, false);
+            }
+            if (settles_each(kind) || kind == combine::any) {
+                on_err = element_fn(c, kind, state, index, true);
+            }
+            const context::rooted keep_ok{c, on_ok};
+            const context::rooted keep_err{c, on_err};
+            if (kind != combine::race) {
+                shared->set("left", value::number(slot(shared, "left").as_number() + 1.0));
+            }
+            // Invoke(nextPromise, "then", ...): through the property, so a
+            // subclass's or a thenable's own `then` is the one called.
+            if (next_promise.is_nullish()) {
+                c.throw_error("TypeError", "Cannot read properties of " +
+                                               std::string{context::type_of(next_promise)});
+                return value::undefined();
+            }
+            const value then = c.lookup_property(next_promise, "then");
+            if (c.throw_pending()) { return value::undefined(); }
+            if (!then.is_callable()) {
+                c.throw_error("TypeError", "then is not a function");
+                return value::undefined();
+            }
+            const value then_args[2] = {on_ok, on_err};
+            (void)c.call(then, then_args, next_promise);
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+    });
+    if (run.threw) {
+        if (close) { detail::iterator_close_quietly(cx, iterator); }
+        const value reason[1] = {run.result};
+        (void)cx.call(cap.reject, reason);
+    }
+    return cap.promise;
 }
 
-// 27.2.4.5.2: whichever settles first settles the result, however it settled.
-[[nodiscard]] native_object * race_reaction(context & cx, value state, bool rejected) {
-    auto * made = cx.allocate<native_object>(
-        rejected ? "rejected" : "fulfilled", [state, rejected](context & c, std::span<value> args) {
-            auto * held = static_cast<object_object *>(state.as_heap());
-            detail::settle(c, slot_of(held, "out"), args.empty() ? value::undefined() : args[0],
-                           rejected);
-            return value::undefined();
+// --- CreateAsyncFromSyncIterator, 27.1.6 -----------------------------------
+//
+// What `for await` and `yield*` in an async generator wrap a SYNC iterator in:
+// `next`/`return`/`throw` each answer a promise of the record, and a promise
+// in the record's `value` is awaited before the record is delivered
+// (AsyncFromSyncIteratorContinuation, 27.1.6.4). The three live on ONE
+// prototype table - %AsyncFromSyncIteratorPrototype%, whose own [[Prototype]]
+// is %AsyncIteratorPrototype% - and read the sync iterator off `this`.
+
+constexpr std::string_view sync_iterator_slot = "@#SyncIterator";
+constexpr std::string_view sync_next_slot = "@#SyncNext";
+
+// 27.1.6.4. `close_on_rejection` is the ES2025 addition: a rejected `value`
+// closes the sync iterator before the rejection is reported.
+[[nodiscard]] value continuation(context & cx, value result, const capability & cap,
+                                 value sync_iterator, bool close_on_rejection) {
+    const detail::completion parts = detail::fenced(cx, [&](context & c) -> value {
+        const value done = c.lookup_property(result, "done");
+        if (c.throw_pending()) { return value::undefined(); }
+        const value item = c.lookup_property(result, "value");
+        if (c.throw_pending()) { return value::undefined(); }
+        const value pair = c.make_array();
+        auto * list = static_cast<array_object *>(pair.as_heap());
+        list->items.push_back(value::boolean(context::truthy(done)));
+        list->items.push_back(item);
+        return pair;
+    });
+    if (parts.threw) {
+        detail::settle_capability(cx, cap, parts.result, true);
+        return cap.promise;
+    }
+    const auto & pair = static_cast<array_object *>(parts.result.as_heap())->items;
+    const bool done = pair[0].as_boolean();
+    const value item = pair[1];
+    value wrapper = value::undefined();
+    {
+        const detail::completion wrapped = detail::fenced(cx, [&](context & c) -> value {
+            value out = value::undefined();
+            (void)detail::promise_resolve(c, detail::intrinsic_promise(c), item, out);
+            return out;
         });
-    made->retained.push_back(state);
-    return made;
+        if (wrapped.threw) {
+            if (!done && close_on_rejection) { detail::iterator_close_quietly(cx, sync_iterator); }
+            detail::settle_capability(cx, cap, wrapped.result, true);
+            return cap.promise;
+        }
+        wrapper = wrapped.result;
+    }
+    const context::rooted keep_wrapper{cx, wrapper};
+    auto * unwrap = cx.allocate<native_object>("", [done](context & c, std::span<value> got) {
+        return c.iter_result(arg_at(got, 0), done);
+    });
+    unwrap->is_constructor = false;
+    detail::install_arity(cx, unwrap, 1);
+    value on_rejected = value::undefined();
+    if (!done && close_on_rejection) {
+        auto * closer =
+            cx.allocate<native_object>("", [sync_iterator](context & c, std::span<value> got) {
+                detail::iterator_close_quietly(c, sync_iterator);
+                c.throw_value(arg_at(got, 0));
+                return value::undefined();
+            });
+        closer->is_constructor = false;
+        detail::install_arity(cx, closer, 1);
+        closer->retained.push_back(sync_iterator);
+        on_rejected = value::object(closer);
+    }
+    const context::rooted keep_unwrap{cx, value::object(unwrap)};
+    const context::rooted keep_closer{cx, on_rejected};
+    detail::perform_then(cx, wrapper, value::object(unwrap), on_rejected, cap);
+    return cap.promise;
+}
+
+// %AsyncIteratorPrototype%, 27.1.3: one method, @@asyncIterator answering
+// `this`. %AsyncGeneratorPrototype% and %AsyncFromSyncIteratorPrototype% both
+// inherit from it. Kept on Promise.prototype under a private key.
+constexpr std::string_view async_iterator_key = "@#AsyncIteratorPrototype";
+[[nodiscard]] object_object * async_iterator_prototype(context & cx) {
+    object_object * promise_proto = detail::promise_prototype(cx);
+    if (const value * held = promise_proto->find(async_iterator_key); held != nullptr) {
+        return static_cast<object_object *>(held->as_heap());
+    }
+    object_object * table = detail::new_table(cx);
+    promise_proto->define(async_iterator_key, value::object(table), attr_none);
+    detail::method(cx, table, "@@asyncIterator", 0,
+                   [](context & c, std::span<value>) { return c.current_this(); });
+    return table;
+}
+
+[[nodiscard]] object_object * async_from_sync_prototype(context & cx) {
+    object_object * promise_proto = detail::promise_prototype(cx);
+    if (const value * held = promise_proto->find(detail::async_from_sync_key); held != nullptr) {
+        return static_cast<object_object *>(held->as_heap());
+    }
+    object_object * table = detail::new_table(cx);
+    promise_proto->define(detail::async_from_sync_key, value::object(table), attr_none);
+    table->prototype = value::object(async_iterator_prototype(cx));
+    // The receiver's sync iterator, or the promise rejected with a TypeError.
+    const auto open = [](context & c, capability & cap, value & sync, value & next) {
+        if (!detail::new_capability(c, detail::intrinsic_promise(c), cap)) { return false; }
+        const value self = c.current_this();
+        if (self.is_object()) {
+            auto * o = static_cast<object_object *>(self.as_heap());
+            sync = slot(o, sync_iterator_slot);
+            next = slot(o, sync_next_slot);
+            if (sync.is_object_like()) { return true; }
+        }
+        detail::settle_capability(
+            c, cap, c.make_error("TypeError", "not an async-from-sync iterator"), true);
+        return false;
+    };
+    // 27.1.6.2.1 next
+    detail::method(cx, table, "next", 1, [open](context & c, std::span<value> a) {
+        capability cap;
+        value sync = value::undefined(), next = value::undefined();
+        if (!open(c, cap, sync, next)) { return cap.promise; }
+        const context::rooted keep{c, cap.promise};
+        const bool with_value = !a.empty();
+        const value sent = arg_at(a, 0);
+        const detail::completion result = detail::fenced(c, [&](context & cc) -> value {
+            if (!next.is_callable()) {
+                cc.throw_error("TypeError", "iterator.next is not a function");
+                return value::undefined();
+            }
+            const value args[1] = {sent};
+            const value out = cc.call(
+                next, with_value ? std::span<const value>{args} : std::span<const value>{}, sync);
+            if (cc.throw_pending()) { return value::undefined(); }
+            if (!out.is_object_like()) {
+                cc.throw_error("TypeError", "iterator result is not an object");
+            }
+            return out;
+        });
+        if (result.threw) {
+            detail::settle_capability(c, cap, result.result, true);
+            return cap.promise;
+        }
+        return continuation(c, result.result, cap, sync, true);
+    });
+    // 27.1.6.2.2 return / 27.1.6.2.3 throw
+    const auto forward = [open](const char * name) {
+        return [open, name](context & c, std::span<value> a) {
+            capability cap;
+            value sync = value::undefined(), next = value::undefined();
+            if (!open(c, cap, sync, next)) { return cap.promise; }
+            const context::rooted keep{c, cap.promise};
+            const bool with_value = !a.empty();
+            const value sent = arg_at(a, 0);
+            const bool returning = std::string_view{name} == "return";
+            bool absent = false;
+            const detail::completion result = detail::fenced(c, [&](context & cc) -> value {
+                const value method = cc.lookup_property(sync, name);
+                if (cc.throw_pending()) { return value::undefined(); }
+                if (method.is_nullish()) {
+                    absent = true;
+                    if (!returning) {
+                        // No `throw`: close the sync iterator so it can clean
+                        // up - its own throw rejects - then the TypeError
+                        // below (27.1.6.2.3 step 7).
+                        (void)detail::iterator_close(cc, sync);
+                    }
+                    return value::undefined();
+                }
+                if (!method.is_callable()) {
+                    cc.throw_error("TypeError",
+                                   std::string{"iterator."} + name + " is not a function");
+                    return value::undefined();
+                }
+                const value args[1] = {sent};
+                const value out = cc.call(
+                    method, with_value ? std::span<const value>{args} : std::span<const value>{},
+                    sync);
+                if (cc.throw_pending()) { return value::undefined(); }
+                if (!out.is_object_like()) {
+                    cc.throw_error("TypeError", "iterator result is not an object");
+                }
+                return out;
+            });
+            if (result.threw) {
+                detail::settle_capability(c, cap, result.result, true);
+                return cap.promise;
+            }
+            if (absent) {
+                if (returning) {
+                    detail::settle_capability(c, cap, c.iter_result(sent, true), false);
+                } else {
+                    detail::settle_capability(
+                        c, cap,
+                        c.make_error("TypeError", "The iterator does not provide a 'throw' method"),
+                        true);
+                }
+                return cap.promise;
+            }
+            return continuation(c, result.result, cap, sync, !returning);
+        };
+    };
+    detail::method(cx, table, "return", 1, forward("return"));
+    detail::method(cx, table, "throw", 1, forward("throw"));
+    return table;
 }
 
 } // namespace
@@ -461,19 +1091,42 @@ void put_result(object_object * state, std::size_t index, value entry) {
 void install_promise(context & cx) {
     using detail::method;
     using detail::new_table;
-    cx.set_promise_factory(
-        [](context & c, value v, bool rejected) { return detail::make_promise(c, v, rejected); });
-    // What `await` needs to suspend: a promise that has not settled, and a way
-    // to settle one. The VM can READ a promise - it always could - but making
-    // and settling run this library's own logic, queue included.
+    object_object * proto = detail::promise_prototype(cx);
+    // 27.6.1: %AsyncGeneratorPrototype% inherits from %AsyncIteratorPrototype%
+    // (its table is install_generator's; only the link is set here).
+    if (object_object * async_gen = cx.prototype(context::proto_kind::async_generator)) {
+        async_gen->prototype = value::object(async_iterator_prototype(cx));
+    }
+    // What `await` and an async function's return need: a pending promise, a
+    // way to settle one, and PromiseResolve(%Promise%, v). The VM can READ a
+    // promise - it always could - but making and settling run this library's
+    // own logic, queue included. The settler RESOLVES (27.2.1.3.2) rather
+    // than fulfils, so an async body that returns a thenable adopts it.
+    cx.set_promise_factory([](context & c, value v, bool rejected) {
+        if (rejected) {
+            const value made = pending_promise(c);
+            detail::settle(c, made, v, true);
+            return made;
+        }
+        value out = value::undefined();
+        const context::rooted keep{c, v};
+        if (!detail::promise_resolve(c, detail::intrinsic_promise(c), v, out)) {
+            // The `constructor` read threw: a promise rejected with it is
+            // the only answer a factory with no completion channel can give.
+            out = pending_promise(c);
+        }
+        return out;
+    });
     cx.set_pending_promise_factory(pending_promise);
     cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
-        detail::settle(c, promise, with, rejected);
+        if (rejected) {
+            detail::settle(c, promise, with, true);
+        } else {
+            detail::resolve_promise(c, promise, with);
+        }
     });
     // GetIterator(obj, async) - see async_iterator_name. A sync iterator is
-    // wrapped: its `next` answers a promise, and a promise in `value` is
-    // awaited before the record is delivered (27.1.6.4 step 8-ish, the
-    // AsyncFromSyncIteratorContinuation). `return`/`throw` forward the same way.
+    // wrapped in an %AsyncFromSyncIteratorPrototype% object (27.1.6.1).
     cx.define_native(std::string{async_iterator_name}, [](context & c, std::span<value> a) {
         const value source = a.empty() ? value::undefined() : a[0];
         if (source.is_nullish()) {
@@ -485,88 +1138,41 @@ void install_promise(context & cx) {
         // there, and @@iterator is asked only when the method is ABSENT.
         const value async = c.lookup_property(source, "@@asyncIterator");
         if (c.throw_pending()) { return value::undefined(); }
-        if (async.is_callable()) { return c.call(async, {}, source); }
+        if (async.is_callable()) {
+            const value made = c.call(async, {}, source);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (!made.is_object_like()) {
+                c.throw_error("TypeError",
+                              "Result of the Symbol.asyncIterator method is not an object");
+                return value::undefined();
+            }
+            return made;
+        }
         if (!async.is_nullish()) {
             c.throw_error("TypeError", "[Symbol.asyncIterator] is not a function");
             return value::undefined();
         }
-        const value sync = c.lookup_property(source, "@@iterator");
+        const value inner = c.get_iterator(source);
+        if (c.throw_pending() || !inner.is_object_like()) { return value::undefined(); }
+        const context::rooted keep{c, inner};
+        const value next = c.lookup_property(inner, "next");
         if (c.throw_pending()) { return value::undefined(); }
-        if (!sync.is_callable()) {
-            c.throw_error("TypeError", "the value is not async iterable");
-            return value::undefined();
-        }
-        const value inner = c.call(sync, {}, source);
         auto * wrapper = new_table(c);
-        const auto forward = [&](const char * name) {
-            auto * step = c.allocate<native_object>(name, [inner, name](context & cc,
-                                                                        std::span<value> args) {
-                const value out = pending_promise(cc);
-                const value method = cc.lookup_property(inner, name);
-                if (!method.is_callable()) {
-                    // A sync iterator with no `return`/`throw`: done, or the
-                    // reason rethrown - 27.1.6.2.2 step 7 / 27.1.6.2.3 step 8.
-                    if (std::string_view{name} == "throw") {
-                        detail::settle(cc, out, args.empty() ? value::undefined() : args[0], true);
-                    } else {
-                        auto * record = new_table(cc);
-                        record->set("value", args.empty() ? value::undefined() : args[0]);
-                        record->set("done", value::boolean(true));
-                        detail::settle(cc, out, value::object(record), false);
-                    }
-                    return out;
-                }
-                const value result = cc.call(method, args, inner);
-                if (cc.failed()) { return out; }
-                if (!result.is_object()) {
-                    detail::settle(cc, out,
-                                   cc.make_error("TypeError", "iterator result is not an object"),
-                                   true);
-                    return out;
-                }
-                const value done = cc.lookup_property(result, "done");
-                const value item = cc.lookup_property(result, "value");
-                auto * state = new_table(cc);
-                state->set("out", out);
-                state->set("done", value::boolean(context::truthy(done)));
-                const auto reaction = [&](bool rejected) {
-                    auto * made = cc.allocate<native_object>(
-                        rejected ? "rejected" : "fulfilled",
-                        [state, rejected](context & c3, std::span<value> got) {
-                            const value settled = got.empty() ? value::undefined() : got[0];
-                            if (rejected) {
-                                detail::settle(c3, slot_of(state, "out"), settled, true);
-                                return value::undefined();
-                            }
-                            auto * record = new_table(c3);
-                            record->set("value", settled);
-                            record->set("done", slot_of(state, "done"));
-                            detail::settle(c3, slot_of(state, "out"), value::object(record), false);
-                            return value::undefined();
-                        });
-                    made->retained.push_back(value::object(state));
-                    return made;
-                };
-                react(cc, item, reaction(false), reaction(true));
-                return out;
-            });
-            step->retained.push_back(inner);
-            wrapper->define(name, value::object(step), attr_builtin);
-        };
-        forward("next");
-        forward("return");
-        forward("throw");
+        wrapper->prototype = value::object(async_from_sync_prototype(c));
+        wrapper->define(sync_iterator_slot, inner, attr_none);
+        wrapper->define(sync_next_slot, next, attr_none);
         return value::object(wrapper);
     });
     // `Promise.reject` under the compiler's name for it: what an async body's
     // fence returns for a throw it did not catch. See promise_reject_name.
     cx.define_native(std::string{promise_reject_name}, [](context & c, std::span<value> a) {
-        return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
+        const value made = pending_promise(c);
+        detail::settle(c, made, arg_at(a, 0), true);
+        return made;
     });
-    // `new Promise(executor)`. The executor runs IMMEDIATELY and is handed
+    // 27.2.3.1 Promise(executor). The executor runs IMMEDIATELY and is handed
     // resolve and reject; a promise it does not settle stays pending until
-    // something later calls one of them. That is the whole of what was missing,
-    // and p5.js opens with it:
+    // something later calls one of them. p5.js opens with it:
     //
     //   new Promise((resolve) => {
     //     if (document.readyState === 'complete') { resolve(); }
@@ -575,126 +1181,132 @@ void install_promise(context & cx) {
     //
     // Callable AND a namespace: the statics are installed on it directly with
     // detail::method, so each is { writable, enumerable: FALSE, configurable }
-    // as clause 27.2.4 has them (a copy through `set` made them enumerable).
+    // as clause 27.2.4 has them.
     auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
-        const value promise = pending_promise(c);
-        if (a.empty() || !a[0].is_callable()) { return promise; }
+        // 27.2.3.1 step 1: NewTarget undefined is a TypeError. A native has no
+        // NewTarget; what it has is the instance `new` (or a subclass's
+        // `super()`) made for it. "An object that is not already a promise"
+        // rather than constructing_this's "an EMPTY object", because this
+        // engine runs a derived class's field initialisers BEFORE the body,
+        // so `class P extends Promise { x = 1 }` arrives with `x` set.
+        const value self = c.current_this();
+        if (!self.is_object() || is_promise(self)) {
+            c.throw_error("TypeError", "Promise constructor cannot be invoked without 'new'");
+            return value::undefined();
+        }
+        if (!arg_at(a, 0).is_callable()) {
+            c.throw_error("TypeError", "Promise resolver is not a function");
+            return value::undefined();
+        }
+        const value promise = detail::init_promise(c, self);
         const auto [resolve_fn, reject_fn] = resolvers_for(c, promise);
-        const value args[2] = {value::object(resolve_fn), value::object(reject_fn)};
-        (void)c.call(a[0], args);
+        const value args[2] = {resolve_fn, reject_fn};
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)c.call_fenced(a[0], args, value::undefined(), threw, thrown);
+        if (threw) {
+            // Step 10: an executor that throws rejects - through the reject
+            // function, so an executor that resolved first keeps that.
+            const value reason[1] = {thrown};
+            (void)c.call(reject_fn, reason);
+        }
         return promise;
     });
+    proto->define(detail::intrinsic_key, value::object(promise_new), attr_none);
+    // 27.2.4.7 Promise.resolve / 27.2.4.6 Promise.reject: over `this`, so a
+    // subclass's static makes a subclass instance.
+    install_aggregate_error(cx);
     method(cx, promise_new, "resolve", 1, [](context & c, std::span<value> a) {
-        return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);
+        const value ctor = c.current_this();
+        if (!ctor.is_object_like()) {
+            c.throw_error("TypeError", "Promise.resolve called on a non-object");
+            return value::undefined();
+        }
+        value out = value::undefined();
+        if (!detail::promise_resolve(c, ctor, arg_at(a, 0), out)) { return value::undefined(); }
+        return out;
     });
     method(cx, promise_new, "reject", 1, [](context & c, std::span<value> a) {
-        return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
+        capability cap;
+        if (!detail::new_capability(c, c.current_this(), cap)) { return value::undefined(); }
+        const context::rooted keep{c, cap.promise};
+        detail::settle_capability(c, cap, arg_at(a, 0), true);
+        return cap.promise;
     });
-    // `Promise.all` - 27.2.4.1. The first rejection wins; otherwise the result
-    // is an array of the values in input order.
-    //
-    // IT WAITS, and it did not. This read `__value` off each entry as it walked
-    // the array, which answers immediately - and wrongly - for an input that has
-    // not settled: `Promise.all([d.promise]).then(f)` ran `f` with `[undefined]`
-    // in the same turn and then never ran it again when `d.resolve` arrived. It
-    // goes through `react` now, the same path `then` takes and the one the other
-    // three combinators were rewritten onto, so "already settled", "still
-    // pending" and "not a promise at all" all reach one implementation.
-    //
-    // WHAT THAT CHANGES FOR A PAGE, said plainly: a `Promise.all` over an input
-    // that never settles no longer resolves. p5.js opens with
-    // `Promise.all([waitForDocumentReady(), waitingForTranslator]).then(_globalInit)`
-    // (vendor/p5/p5.js:138934); the first of those resolves at once here because
-    // `document.readyState` is "complete", and the second is i18next's `init`,
-    // whose backend fetches a CDN URL. If that promise never settles headless
-    // then p5 never boots, where before it booted on a wrong answer - so the p5
-    // ratchet is the thing to watch on this change.
-    method(cx, promise_new, "all", 1, [](context & c, std::span<value> a) {
-        const std::vector<value> entries = entries_of(a);
-        const value out = pending_promise(c);
-        const value results = c.make_array();
-        static_cast<array_object *>(results.as_heap())
-            ->items.assign(entries.size(), value::undefined());
-        if (entries.empty()) {
-            detail::settle(c, out, results, false);
-            return out;
+    // 27.2.4.9 Promise.try: the callback runs NOW, and its return or throw
+    // settles the promise.
+    method(cx, promise_new, "try", 1, [](context & c, std::span<value> a) {
+        const value ctor = c.current_this();
+        if (!ctor.is_object_like()) {
+            c.throw_error("TypeError", "Promise.try called on a non-object");
+            return value::undefined();
         }
-        const value state = value::object(combinator_state(c, out, results, entries.size()));
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            react(c, entries[i], all_reaction(c, state, i, false), all_reaction(c, state, i, true));
-        }
-        return out;
+        capability cap;
+        if (!detail::new_capability(c, ctor, cap)) { return value::undefined(); }
+        const context::rooted keep{c, cap.promise};
+        bool threw = false;
+        value thrown = value::undefined();
+        const std::span<const value> rest =
+            a.size() > 1 ? std::span<const value>{a}.subspan(1) : std::span<const value>{};
+        const value produced = c.call_fenced(arg_at(a, 0), rest, value::undefined(), threw, thrown);
+        detail::settle_capability(c, cap, threw ? thrown : produced, threw);
+        return cap.promise;
     });
-    // `Promise.allSettled` - 27.2.4.2. It never rejects: every input's outcome
-    // is reported, in input order, as `{ status: "fulfilled", value }` or
-    // `{ status: "rejected", reason }`.
-    //
-    // LIKE `all` ABOVE, this one waits: all four go through `react`, which is
-    // the same path `then` takes. `all` was the last one that did not.
-    method(cx, promise_new, "allSettled", 1, [](context & c, std::span<value> a) {
-        const std::vector<value> entries = entries_of(a);
-        const value out = pending_promise(c);
-        const value results = c.make_array();
-        static_cast<array_object *>(results.as_heap())
-            ->items.assign(entries.size(), value::undefined());
-        if (entries.empty()) {
-            detail::settle(c, out, results, false);
-            return out;
-        }
-        const value state = value::object(combinator_state(c, out, results, entries.size()));
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            react(c, entries[i], allsettled_reaction(c, state, i, false),
-                  allsettled_reaction(c, state, i, true));
-        }
-        return out;
+    method(cx, promise_new, "all", 1,
+           [](context & c, std::span<value> a) { return combinator(c, combine::all, a); });
+    method(cx, promise_new, "allSettled", 1,
+           [](context & c, std::span<value> a) { return combinator(c, combine::all_settled, a); });
+    method(cx, promise_new, "any", 1,
+           [](context & c, std::span<value> a) { return combinator(c, combine::any, a); });
+    method(cx, promise_new, "race", 1,
+           [](context & c, std::span<value> a) { return combinator(c, combine::race, a); });
+    // Promise.allKeyed / allSettledKeyed (the await-dictionary proposal): the
+    // same walk over an object's own enumerable properties, answering a
+    // null-prototype object keyed like the input.
+    method(cx, promise_new, "allKeyed", 1,
+           [](context & c, std::span<value> a) { return combinator(c, combine::all_keyed, a); });
+    method(cx, promise_new, "allSettledKeyed", 1, [](context & c, std::span<value> a) {
+        return combinator(c, combine::all_settled_keyed, a);
     });
-    // `Promise.any` - 27.2.4.3. The first FULFILMENT wins; if every input
-    // rejects it rejects with an AggregateError carrying `errors` in order.
-    method(cx, promise_new, "any", 1, [](context & c, std::span<value> a) {
-        const std::vector<value> entries = entries_of(a);
-        const value out = pending_promise(c);
-        const value errors = c.make_array();
-        static_cast<array_object *>(errors.as_heap())
-            ->items.assign(entries.size(), value::undefined());
-        if (entries.empty()) {
-            // 27.2.4.3.1 step 5: an empty list is already "all rejected".
-            detail::settle(c, out, aggregate_error(c, errors), true);
-            return out;
-        }
-        const value state = value::object(combinator_state(c, out, errors, entries.size()));
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            react(c, entries[i], any_reaction(c, state, i, false), any_reaction(c, state, i, true));
-        }
-        return out;
-    });
-    // `Promise.race` - 27.2.4.5. An EMPTY list stays pending forever, which is
-    // the specified answer and not an oversight.
-    method(cx, promise_new, "race", 1, [](context & c, std::span<value> a) {
-        const std::vector<value> entries = entries_of(a);
-        const value out = pending_promise(c);
-        const value state = value::object(combinator_state(c, out, value::undefined(), 0));
-        for (const value & entry : entries) {
-            react(c, entry, race_reaction(c, state, false), race_reaction(c, state, true));
-        }
-        return out;
-    });
-    // `Promise.withResolvers` - 27.2.4.8, and the reason this file was opened:
-    // WPT's `url-import-referrer-policy.html` fails on exactly this name. It is
-    // `new Promise(executor)` turned inside out - the same promise and the same
-    // two functions, handed back as an object instead of to a callback, so a
-    // page does not have to smuggle them out of the executor's scope.
+    // 27.2.4.8 Promise.withResolvers: `new Promise(executor)` turned inside
+    // out - the same promise and the same two functions, handed back as an
+    // object instead of to a callback.
     method(cx, promise_new, "withResolvers", 0, [](context & c, std::span<value>) {
-        const value promise = pending_promise(c);
-        const auto [resolve_fn, reject_fn] = resolvers_for(c, promise);
+        capability cap;
+        if (!detail::new_capability(c, c.current_this(), cap)) { return value::undefined(); }
+        const context::rooted keep{c, cap.promise};
+        detail::materialise(c, cap);
         const value out = c.make_object();
         auto * fields = static_cast<object_object *>(out.as_heap());
-        fields->set("promise", promise);
-        fields->set("resolve", value::object(resolve_fn));
-        fields->set("reject", value::object(reject_fn));
+        fields->set("promise", cap.promise);
+        fields->set("resolve", cap.resolve);
+        fields->set("reject", cap.reject);
         return out;
     });
-    detail::constant(promise_new, "prototype", value::object(detail::promise_prototype(cx)));
+    // 27.2.4.10 get Promise[@@species]: `this`.
+    {
+        auto * species =
+            detail::method_native(cx, "get [Symbol.species]",
+                                  [](context & c, std::span<value>) { return c.current_this(); });
+        detail::install_arity(cx, species, 0);
+        promise_new->define_accessor("@@species", value::object(species), value::undefined(),
+                                     attr_configurable);
+    }
+    detail::constant(promise_new, "prototype", value::object(proto));
+    link_constructor(cx, proto, "Promise", 1, value::object(promise_new));
     cx.define_global("Promise", value::object(promise_new));
+    // Iterator and the iterator helpers: after install_generator's tables
+    // exist, which is any point in this function. builtins.cpp is not this
+    // file's to edit; the call belongs there.
+    install_iterator(cx);
+    // WeakRef and FinalizationRegistry (collections/weak.cpp) are written and
+    // compile, but ctcompile's escape-cycle test PINS their absence as the
+    // documented divergence ND-2 (ctcompile/test/Analysis/Escape/Cycle.cpp,
+    // "typeof WeakRef === 'undefined'"; ctcompile/docs/native-divergences.md).
+    // Installing them turns that gate red, and ctcompile/ is not this
+    // change's to edit: drop the three ND-2 probes there and enable this.
+    // install_weak_refs(cx);
+    install_disposable(cx);
 
     // 19.2.2 and 19.2.3, both of arity 1.
     detail::global_fn(cx, "isNaN", 1, [](context &, std::span<value> a) {
