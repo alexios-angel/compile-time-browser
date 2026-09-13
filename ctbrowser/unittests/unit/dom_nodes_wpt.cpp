@@ -193,6 +193,27 @@ void test_a_range_cuts_moves_and_wraps() {
        " r.selectNodeContents(d); r.surroundContents(document.createElement('s'));"
        " return out + '|' + d.innerHTML; })()",
        "ab<br>cd|2|<s>ab<br>cd</s>");
+    // DOM 5.5's four comparisons: a point before, inside and after; a node
+    // that overlaps the range and one that does not; the boundary compare in
+    // each of its four modes; and the errors each names.
+    is("(function () { var d = document.getElementById('outer');"
+       " d.innerHTML = '<b>ab</b><u>cd</u><i>ef</i>'; var r = document.createRange();"
+       " r.setStart(d.childNodes[0].firstChild, 1); r.setEnd(d.childNodes[1].firstChild, 1);"
+       " var o = [r.isPointInRange(d, 0), r.isPointInRange(d, 1), r.isPointInRange(d, 3),"
+       "   r.comparePoint(d, 0), r.comparePoint(d, 1), r.comparePoint(d, 3),"
+       "   r.intersectsNode(d.childNodes[0]), r.intersectsNode(d.childNodes[2]),"
+       "   r.intersectsNode(d), r.isPointInRange(document.createElement('p'), 0)];"
+       " var s = document.createRange(); s.selectNodeContents(d);"
+       " o.push(r.compareBoundaryPoints(Range.START_TO_START, s),"
+       "   r.compareBoundaryPoints(Range.START_TO_END, s),"
+       "   r.compareBoundaryPoints(Range.END_TO_END, s),"
+       "   r.compareBoundaryPoints(Range.END_TO_START, s));"
+       " try { r.comparePoint(document.createElement('p'), 0); } catch (e) { o.push(e.name); }"
+       " try { r.comparePoint(d, 9); } catch (e) { o.push(e.name); }"
+       " try { r.compareBoundaryPoints(7, s); } catch (e) { o.push(e.name); }"
+       " return o.join(); })()",
+       "false,true,false,-1,0,1,true,false,true,false,1,1,-1,-1,WrongDocumentError,"
+       "IndexSizeError,NotSupportedError");
 }
 
 // adoption.window.js and Node-isEqualNode-xhtml.xhtml: a fragment inserted
