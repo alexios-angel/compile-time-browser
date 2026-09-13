@@ -280,6 +280,25 @@ int main() {
             "ReferenceError");
     answers("'use strict'; var r = 'no'; try { zz2 = 1; } catch (e) { r = e.name; } return r;",
             "ReferenceError");
+    answers("class V { values = []; constructor(...args) { this.values = args; } }"
+            " return new V(3, 4).values.length;",
+            "2");
+    answers("class V { f = 1; constructor(a = this.f, ...r) { this.a = a; this.r = r; } }"
+            " const v = new V(undefined, 9); return v.a + ':' + v.r;",
+            "1:9");
+    answers("'use strict'; function g(one) { let y = one + 2; { let z = one + 3;"
+            " function f() { return y + z; } return f(); } } return g(1);",
+            "7");
+    answers("'use strict'; var n = 0; for (var k in { a: 1 }) n++; for (k in { b: 1, c: 1 }) n++;"
+            " for (var [p] of [[1]]) n += p; return n + k;",
+            "4c");
+    answers(
+        "class A extends Array {} const a = new A(); return [a instanceof A, a instanceof Array,"
+        " Object.getPrototypeOf(new (class extends Object {})()) === Object.prototype].join();",
+        "true,true,false");
+    answers("const o = {}; class P { constructor() { return o; } } class D extends P { }"
+            " return new D() === o;",
+            "true");
     answers("qq = 5; return qq;", "5"); // sloppy code still may
     answers(
         "'use strict'; var n = 0; for (const [p, q] = [1, 2]; n < 1; n++) {} for (var [s] = [3];;)"

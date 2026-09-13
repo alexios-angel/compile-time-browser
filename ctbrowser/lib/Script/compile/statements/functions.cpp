@@ -91,6 +91,19 @@ void compiler_impl::emit_implicit_return() {
 
 void compiler_impl::compile_function_decl(std::int32_t idx) {
     const vp::node & n = at(idx);
+    // A function declared in a BLOCK is a binding of that block (14.2.1 -
+    // and the `let`-like half of B.3.2): predeclare_locals hoists only a
+    // body's own statements, so one in a nested block had no local and its
+    // write went to a global - which strict code refuses as an assignment
+    // to an unresolvable name. Declared before its body compiles, so a
+    // recursive call inside resolves to it. Its register survives the
+    // statement because compile_stmt does not release a declaration's.
+    if (!(frames_.size() == 1 && !module_scope_) &&
+        find_local_in_current_scope(n.text) == nullptr) {
+        const std::uint16_t r = declare_local(std::string{n.text});
+        proto().emit(instruction{op::load_undef, r});
+        if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+    }
     const std::uint32_t index = compile_function_body(idx, std::string{n.text});
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
@@ -250,12 +263,6 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fence_reg = alloc_reg();
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;
-    }
-    if (base_fields_pending_) {
-        // A base class constructor: its instance fields, before the
-        // parameter defaults and the body (see base_fields_pending_).
-        base_fields_pending_ = false;
-        emit_init_fields_at_entry();
     }
     {
         // A direct eval in a default may not `var` a parameter's name, nor
