@@ -776,6 +776,75 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             return {};
         }
     }
+    // A strict identity guard can give one returned SSA value the caller's
+    // initialized own fields on that arm. The payload schema and return carrier
+    // alone supply neither identity nor presence; every family effect and caller
+    // leaf write above must have closed before this read is published.
+    const auto guardedLeafRead = [&](ctjs::GetPropertyOp read) {
+        const auto receiver = read.getObject();
+        if (!familyInvocations.contains(receiver.getDefiningOp()) ||
+            !dominance.dominates(receiver, read) || !dominance.dominates(read.getKey(), read) ||
+            !ctjs::ordinaryKey(ctjs::constantKey(read.getKey()))) {
+            return false;
+        }
+        for (auto * child = read.getOperation(); child->getParentOp() != entry;
+             child = child->getParentOp()) {
+            if (!step()) { return false; }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(child->getParentOp());
+            if (!branch) { return false; }
+            bool positive = child->getParentRegion() == &branch.getThenRegion();
+            mlir::Value condition = branch.getCondition();
+            for (unsigned depth = 0; depth < 16; ++depth) {
+                if (!step() || !dominance.dominates(condition, branch)) { return false; }
+                if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+                    condition = truthy.getValue();
+                } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
+                           unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                    positive = !positive;
+                    condition = unary.getOperand();
+                } else {
+                    break;
+                }
+            }
+            auto compare = condition.getDefiningOp<ctjs::CompareOp>();
+            if (!positive || !compare || compare.getKind() != ctjs::CompareKind::StrictEq) {
+                continue;
+            }
+            mlir::Value other;
+            if (compare.getLhs() == receiver) { other = compare.getRhs(); }
+            if (compare.getRhs() == receiver) { other = compare.getLhs(); }
+            if (!other || !dominance.dominates(receiver, compare) ||
+                !dominance.dominates(other, compare)) {
+                continue;
+            }
+            auto made = other.getDefiningOp<ctjs::CreateObjectOp>();
+            if (auto load = other.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                const auto origin = objectGlobalRead(load);
+                if (!origin) { return false; }
+                made = origin->object;
+            }
+            if (!made || made->getParentOp() != entry) { continue; }
+            for (ctjs::SetPropertyOp write : result.leafWrites) {
+                if (!step()) { return false; }
+                if (write->getParentOp() == entry && object(write.getObject()) == made &&
+                    ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
+                    dominance.properlyDominates(write.getOperation(), read)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    if (!result.leafWrites.empty()) {
+        const auto checked = entry.getBody().walk([&](ctjs::GetPropertyOp read) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (read->getParentOp() != entry && guardedLeafRead(read)) {
+                result.leafReads.push_back(read);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (checked.wasInterrupted()) { return {}; }
+    }
     if (exhausted) { return {}; }
     // Only the completed whole-family proof supplies entry expression facts.
     // The invocation worklist above uses its own map, so provisional or cyclic

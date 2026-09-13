@@ -112,7 +112,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                             edge.capturedMap->childEntries.empty() &&
                             edge.capturedMap->childMaps == capture.childMaps &&
                             edge.capturedMap->calls == capture.calls &&
-                            edge.capturedMap->leafWrites == capture.leafWrites;
+                            edge.capturedMap->leafWrites == capture.leafWrites &&
+                            edge.capturedMap->leafReads == capture.leafReads;
                 if (edge.function != setter) { continue; }
                 ++setters;
                 complete &= edge.arguments.size() == 2;
@@ -224,8 +225,49 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             "an owning result cannot provide its own family parameter or child-write proof");
     check(rows == 22, "all returned-child identity and independent refusal controls ran");
 
-    {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(returnedIdentity, &context);
+    const std::string observation = R"MLIR(
+    %guard = ctjs.truthy %entrySame
+    %observed = scf.if %guard -> (!ctjs.value) {
+      %fieldResult = ctjs.get_property %answer[%fieldKey]
+      scf.yield %fieldResult : !ctjs.value
+    } else {
+      scf.yield %fieldValue : !ctjs.value
+    }
+    ctjs.store_global "trace", %observed
+)MLIR";
+    const auto guarded = replaced(
+        replaced(returnedIdentity, "strict_eq %answer, %fieldValue", "strict_eq %answer, %payload"),
+        "    ctjs.store_global \"trace\", %entrySame\n", observation);
+    variant(guarded, true, "a strict caller identity guard establishes the returned own field", 5);
+    variant(replaced(guarded, "strict_eq %answer, %payload", "strict_eq %payload, %answer"), true,
+            "the reversed strict identity guard establishes the same returned "
+            "own field",
+            5);
+    variant(replaced(replaced(guarded, "%guard = ctjs.truthy %entrySame",
+                              "%negated = ctjs.unary not %entrySame\n"
+                              "    %guard = ctjs.truthy %negated"),
+                     "      %fieldResult = ctjs.get_property %answer[%fieldKey]\n"
+                     "      scf.yield %fieldResult : !ctjs.value\n"
+                     "    } else {\n"
+                     "      scf.yield %fieldValue : !ctjs.value",
+                     "      scf.yield %fieldValue : !ctjs.value\n"
+                     "    } else {\n"
+                     "      %fieldResult = ctjs.get_property %answer[%fieldKey]\n"
+                     "      scf.yield %fieldResult : !ctjs.value"),
+            true, "negated strict identity establishes the own field only on the false arm", 5);
+    variant(replaced(guarded, "%guard = ctjs.truthy %entrySame", "%guard = ctjs.truthy %answer"),
+            false, "truthiness alone does not establish the mixed returned receiver");
+    variant(replaced(guarded, "get_property %answer[%fieldKey]",
+                     "get_property %againAnswer[%fieldKey]"),
+            false, "identity of one lookup does not establish another lookup's own field");
+    variant(replaced(guarded, "get_property %answer[%fieldKey]", "get_property %answer[%key]"),
+            false, "an identity guard does not establish an uninitialized own field");
+    variant(replaced(guarded, "strict_eq %answer, %payload", "strict_eq %answer, %fieldValue"),
+            false, "equality with a scalar does not establish an object field receiver");
+    check(rows == 29, "all guarded returned-field source and prepared controls ran");
+
+    for (const auto & liveFixture : {returnedIdentity, guarded}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(liveFixture, &context);
         check(static_cast<bool>(module), "returned-child live source fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
@@ -240,6 +282,13 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         check(host.proved() && owner.proved(),
               "owning return source proof is independent of forged reports");
         if (!host.proved() || !owner.proved()) { return; }
+        auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
+        const auto & capture = *owner.roots().front().methodTable->capturedMap;
+        const auto entryReads = llvm::count_if(capture.leafReads, [&](ctjs::GetPropertyOp read) {
+            return read->getParentOfType<ctjs::FuncOp>() == entry;
+        });
+        check(entryReads == (liveFixture == guarded ? 1 : 0),
+              "only independently guarded entry fields enter the complete family evidence");
         const unsigned completion = owner.steps();
         check(completion > 2 && completion < 100000, "owning return proof has a bounded census");
         if (completion <= 2 || completion >= 100000) { return; }
@@ -252,7 +301,6 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact owning return budget preserves its complete family");
-        auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
         auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
         std::vector<mlir::Value> calls;
         for (const auto & edge : host.callables()) {
@@ -269,28 +317,44 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         if (calls.size() != 2 || !compare || !negate || !truthy) { return; }
         auto scoped = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
         unsigned mutations = 0;
+        const auto mutation = [&](mlir::Operation * operation, mlir::Value invalid) {
+            ++mutations;
+            const auto original = operation->getOperand(0);
+            operation->setOperand(0, invalid);
+            OwnedGlobalRoots stale(*module, contract);
+            HostContractAnalysis freshHost(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale) && !freshHost.proved() && !freshHost.exhausted() &&
+                      freshHost.callables().empty() && !fresh.proved() && !fresh.exhausted() &&
+                      empty(*module, fresh),
+                  "fresh fingerprints cannot authorize wrong guards or out-of-scope values");
+            operation->setOperand(0, original);
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring the in-scope owning result restores its source proof");
+        };
         for (mlir::Operation * operation :
              {compare.getOperation(), negate.getOperation(), truthy.getOperation()}) {
             for (mlir::Value invalid : std::vector<mlir::Value>{calls.back(), scoped.getValue()}) {
-                ++mutations;
-                const auto original = operation->getOperand(0);
-                operation->setOperand(0, invalid);
-                OwnedGlobalRoots stale(*module, contract);
-                HostContractAnalysis freshHost(*module, requested(*module));
-                OwnedGlobalRoots fresh(*module, requested(*module));
-                check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                          empty(*module, stale) && !freshHost.proved() && !freshHost.exhausted() &&
-                          freshHost.callables().empty() && !fresh.proved() && !fresh.exhausted() &&
-                          empty(*module, fresh),
-                      "a fresh fingerprint cannot authorize a later or foreign owning result");
-                operation->setOperand(0, original);
-                check(OwnedGlobalRoots(*module, contract).proved(),
-                      "restoring the in-scope owning result restores its source proof");
+                mutation(operation, invalid);
             }
         }
-        std::printf("mixed child returns %s: 6 rows, %u live mutations, 4 incomplete budgets, "
+        if (liveFixture == guarded) {
+            ctjs::GetPropertyOp field;
+            entry.walk([&](ctjs::GetPropertyOp read) {
+                if (read->getParentOp() != entry) { field = read; }
+            });
+            check(static_cast<bool>(field), "guarded mutation fixture has its nested field read");
+            if (!field) { return; }
+            auto branch = field->getParentOfType<mlir::scf::IfOp>();
+            auto * yielded = branch.getElseRegion().front().getTerminator();
+            mutation(yielded, field.getResult());
+            mutation(yielded, branch.getResult(0));
+        }
+        std::printf("mixed child returns %s (%s): %u live mutations, 4 incomplete budgets, "
                     "%u steps\n",
-                    prepared ? "prepared" : "source", mutations, completion);
+                    prepared ? "prepared" : "source",
+                    liveFixture == guarded ? "guarded" : "identity", mutations, completion);
     }
 
     auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);

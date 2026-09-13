@@ -1,5 +1,6 @@
 #include "OwnedGlobalRoots.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
@@ -406,6 +407,22 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
     }
 
+    llvm::DenseSet<mlir::Operation *> observations;
+    if (capture) {
+        for (ctjs::GetPropertyOp read : capture->leafReads) {
+            if (!spend()) { return; }
+            if (read->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
+            for (auto * parent = read->getParentOp(); parent != entry;
+                 parent = parent->getParentOp()) {
+                if (!spend()) { return; }
+                if (!llvm::isa<mlir::scf::IfOp>(parent)) {
+                    reject("owning entry field read has unsupported control");
+                    return;
+                }
+                observations.insert(parent);
+            }
+        }
+    }
     llvm::SmallVector<mlir::Operation *> operations;
     unsigned functions = 0;
     module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
@@ -426,9 +443,29 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             // their unconditional source-order requirements below.
             const bool capturedBody =
                 capture && methodFunctions.contains(operation->getParentOfType<ctjs::FuncOp>());
-            if (!capturedBody && (!llvm::isa<ctjs::FuncOp>(operation->getParentOp()) ||
-                                  operation->getNumRegions() != 0)) {
-                reject("owned global method table requires unconditional straight-line operations");
+            // Only pure observation regions around checked owning field reads
+            // are admitted at entry. Calls, allocation and publication still
+            // require their unconditional source positions.
+            bool observation = observations.contains(operation);
+            if (observations.contains(operation->getParentOp())) {
+                observation |=
+                    llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, mlir::scf::YieldOp>(
+                        operation);
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    observation |= llvm::is_contained(capture->leafReads, read);
+                }
+                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                    observation |= compare.getKind() == ctjs::CompareKind::StrictEq;
+                }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                    observation |= unary.getKind() == ctjs::UnaryKind::Not;
+                }
+            }
+            if (!capturedBody && !observation &&
+                (!llvm::isa<ctjs::FuncOp>(operation->getParentOp()) ||
+                 operation->getNumRegions() != 0)) {
+                reject("owned global method table requires unconditional straight-line "
+                       "operations");
             }
             operations.push_back(operation);
         }
