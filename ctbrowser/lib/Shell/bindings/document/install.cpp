@@ -78,9 +78,10 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         const bool prefixed = split_qualified(qualified).has_colon;
-        const node_ns kind = ns == xhtml_namespace ? node_ns::html
-                             : ns == svg_namespace ? node_ns::svg
-                                                   : node_ns::other;
+        const node_ns kind = ns == xhtml_namespace    ? node_ns::html
+                             : ns == svg_namespace    ? node_ns::svg
+                             : ns == mathml_namespace ? node_ns::mathml
+                                                      : node_ns::other;
         // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
         // here, and folding it would lose the case an XML document depends on.
         const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);

@@ -114,6 +114,18 @@ namespace ctbrowser::html {
     return tag == "foreignObject" || tag == "desc" || tag == "title";
 }
 
+// MathML's counterpart, HTML 13.2.6.5: the five token elements whose children
+// are HTML again. (`<annotation-xml>` is one too when its encoding names HTML,
+// which needs the attribute and is decided in in_foreign_content.)
+[[nodiscard]] inline bool is_mathml_text_integration_point(std::string_view tag) {
+    return tag == "mi" || tag == "mo" || tag == "mn" || tag == "ms" || tag == "mtext";
+}
+
+// The two vocabularies the parser puts under foreign-content rules.
+[[nodiscard]] inline bool is_foreign(node_ns ns) {
+    return ns == node_ns::svg || ns == node_ns::mathml;
+}
+
 // HTML start tags that BREAK OUT of foreign content: seeing one closes the SVG
 // rather than nesting inside it. The spec's list, and it exists because pages
 // forget `</svg>` - without it, a paragraph after an unclosed graphic would
@@ -207,12 +219,18 @@ private:
         // `gradientUnits` are gone and the graphic is subtly wrong rather than
         // visibly broken. The tokenizer already preserved the case; this is
         // where it would be thrown away again.
-        const bool foreign = ns == node_ns::svg;
+        const bool foreign = is_foreign(ns);
         const node_id element =
             doc_->create_element(foreign ? atoms_->intern(tag) : atoms_->intern_lower(tag), ns);
         for (const token_attribute & a : attributes) {
-            builder_->set_attribute(
-                element, foreign ? atoms_->intern(a.name) : atoms_->intern_lower(a.name), a.value);
+            // "Adjust MathML attributes": the one name MathML spells in mixed
+            // case (the SVG table is the tokenizer's case preservation).
+            const bool definition_url = ns == node_ns::mathml && a.name == "definitionurl";
+            builder_->set_attribute(element,
+                                    definition_url ? atoms_->intern("definitionURL")
+                                    : foreign      ? atoms_->intern(a.name)
+                                                   : atoms_->intern_lower(a.name),
+                                    a.value);
         }
         if (is_table_structure(tag)) {
             builder_->append(current(), element);

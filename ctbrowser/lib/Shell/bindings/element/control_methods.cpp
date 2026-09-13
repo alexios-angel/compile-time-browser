@@ -14,7 +14,8 @@ using namespace detail;
 // chains to, and `step_of` there already resolves a wrapper to its node.
 void dom_bindings::install_control_methods(context & cx) {
     const std::initializer_list<const char *> html = {"HTMLElement"};
-    const std::initializer_list<const char *> focusable = {"HTMLElement", "SVGElement"};
+    const std::initializer_list<const char *> focusable = {"HTMLElement", "SVGElement",
+                                                           "MathMLElement"};
     const std::initializer_list<const char *> canvas = {"HTMLCanvasElement"};
     const auto method = [&](std::initializer_list<const char *> on, const char * name,
                             unsigned length, script::native_fn fn) {

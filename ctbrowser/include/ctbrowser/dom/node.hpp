@@ -87,6 +87,11 @@ enum class node_kind : std::uint8_t {
 enum class node_ns : std::uint8_t {
     html,
     svg,
+    // MathML - the HTML parser's other foreign content (HTML 13.2.6.5): `<math>`
+    // and everything under it keeps its case, gets `xml:lang` and friends
+    // adjusted into their namespaces, and is not an HTML element to anything
+    // that asks - getElementsByName, the script walk, innerText.
+    mathml,
     // NEITHER, which `document.createElementNS` can ask for and the parser
     // never produces. The exact URI is not here - it lives beside the element
     // wrapper, because putting a fourth field on `node` would take it from 40

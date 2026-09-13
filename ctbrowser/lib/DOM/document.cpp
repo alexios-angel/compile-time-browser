@@ -718,7 +718,7 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
 }
 
 atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
-    if (element_ns != node_ns::svg) { return atom{}; }
+    if (element_ns != node_ns::svg && element_ns != node_ns::mathml) { return atom{}; }
     const std::string_view text = atoms_->text(name);
     // `xmlns` ALONE is the one unprefixed name in the table, and the colon test
     // is what keeps every ordinary SVG attribute - `d`, `viewBox`, `fill` - to

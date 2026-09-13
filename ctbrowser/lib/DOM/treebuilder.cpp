@@ -1,3 +1,4 @@
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/dom/treebuilder.hpp>
 
 // treebuilder: the method bodies.
@@ -60,10 +61,20 @@ void tree_builder::close_foreign(std::size_t source_end) {
 }
 
 bool tree_builder::in_foreign_content() const {
-    if (open_.empty() || open_.back().ns != node_ns::svg) { return false; }
-    // An integration point is an SVG element whose CHILDREN are HTML, so the
-    // context inside one is HTML even though the element itself is not.
-    return !is_html_integration_point(open_.back().tag);
+    if (open_.empty() || !is_foreign(open_.back().ns)) { return false; }
+    // An integration point is a foreign element whose CHILDREN are HTML, so the
+    // context inside one is HTML even though the element itself is not: SVG's
+    // three, MathML's text integration points (HTML 13.2.6.5), and an
+    // `<annotation-xml>` whose encoding names HTML.
+    const entry & top = open_.back();
+    if (top.ns == node_ns::svg) { return !is_html_integration_point(top.tag); }
+    if (is_mathml_text_integration_point(top.tag)) { return false; }
+    if (top.tag == "annotation-xml") {
+        const std::string encoding =
+            ascii_lower_copy(doc_->read().attribute_value(top.id, atoms_->intern("encoding")));
+        return !(encoding == "text/html" || encoding == "application/xhtml+xml");
+    }
+    return true;
 }
 
 void tree_builder::sync_foreign(tokenizer & lexer) const {
@@ -188,19 +199,21 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
         // render. The spec's answer is to pop the foreign elements and handle
         // the tag as HTML, which is what falls through below.
         if (breaks_out_of_foreign_content(tag)) {
-            while (!open_.empty() && open_.back().ns == node_ns::svg) {
+            while (!open_.empty() && is_foreign(open_.back().ns)) {
                 close_foreign(t.source_begin);
                 pop();
             }
             sync_foreign(lexer);
         } else {
-            // Ordinary foreign element. None of the HTML repair rules below
-            // apply: <a> is not a formatting element here, <p> closes nothing,
-            // and a heading may absolutely nest.
-            const node_id element = insert_element(tag, t.attributes, node_ns::svg);
+            // Ordinary foreign element, in the adjusted current node's
+            // namespace. None of the HTML repair rules below apply: <a> is not
+            // a formatting element here, <p> closes nothing, and a heading may
+            // absolutely nest.
+            const node_ns ns = open_.back().ns;
+            const node_id element = insert_element(tag, t.attributes, ns);
             if (!t.self_closing) {
-                open_.push_back(entry{element, tag, node_ns::svg});
-                if (tag == "svg") { open_foreign(t); }
+                open_.push_back(entry{element, tag, ns});
+                if (ns == node_ns::svg && tag == "svg") { open_foreign(t); }
             }
             sync_foreign(lexer);
             return;
@@ -271,9 +284,11 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
 
     if (is_formatting_element(tag)) { reconstruct_formatting(); }
 
-    // <svg> ENTERS foreign content: the element itself is SVG, and so is
-    // everything under it until the matching close tag.
-    const node_ns ns = tag == "svg" ? node_ns::svg : node_ns::html;
+    // <svg> AND <math> ENTER foreign content: the element itself is SVG or
+    // MathML, and so is everything under it until the matching close tag.
+    const node_ns ns = tag == "svg"    ? node_ns::svg
+                       : tag == "math" ? node_ns::mathml
+                                       : node_ns::html;
     const node_id element = insert_element(tag, t.attributes, ns);
 
     if (is_void_element(tag) || t.self_closing) { return; } // no children, nothing to push
@@ -290,10 +305,11 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
         return;
     }
     open_.push_back(entry{element, tag, ns});
-    if (ns == node_ns::svg) {
-        open_foreign(t);
+    if (is_foreign(ns)) {
+        // Only an <svg> is captured for the rasteriser; MathML draws nothing.
+        if (ns == node_ns::svg) { open_foreign(t); }
         sync_foreign(lexer);
-        return; // no formatting list, no content model - SVG has neither
+        return; // no formatting list, no content model - foreign content has neither
     }
     if (is_formatting_element(tag)) {
         active_.push_back(formatting{element, tag, t.attributes, false});
@@ -355,9 +371,9 @@ void tree_builder::end(const token & t, tokenizer & lexer) {
     // A close tag anywhere inside foreign content is handled by the foreign
     // rules, not the HTML ones - no adoption agency, no </p> that creates a
     // paragraph. Matched case-sensitively, like everything else in SVG.
-    if (!open_.empty() && open_.back().ns == node_ns::svg) {
+    if (!open_.empty() && is_foreign(open_.back().ns)) {
         for (std::size_t i = open_.size(); i-- > 0;) {
-            if (open_[i].ns != node_ns::svg) { break; }
+            if (!is_foreign(open_[i].ns)) { break; }
             if (open_[i].tag != tag) { continue; }
             // The capture closes BEFORE the pop, and with the end tag's own
             // source_end, so the span covers `</svg>` itself.
