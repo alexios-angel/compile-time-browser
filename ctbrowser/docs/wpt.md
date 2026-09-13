@@ -169,9 +169,12 @@ Against `b346dc0b` on the five old suites: +10 files
 `*-inline-size` and `image-resolution` / `grid-template-rows` were
 unsupported names passing by echo - now expandos, and the honest answer
 until the table has them), `viewport-units-gutter-003`/`-004`
-(`width: 100vw` on a page whose root scrolls: the page's `vw` now excludes
-the scrollbar, `resolve_styles`, and these two want the layout viewport
-width too - a layout question), `getComputedStyle-detached-subtree` (a
+(`width: 100vw` on a page whose root is `overflow-y: scroll`: the page's `vw`
+now excludes the 15px scrollbar, `resolve_styles`, which is the rule - but
+the test measures the scrollbar's width off an `overflow: scroll` element as
+`offsetWidth - clientWidth`, which is 0 here because an element's scrollbar
+reserves no space in this layout, so it expects the full 1024 and gets 1009:
+element scrollbar gutters are the layout question), `getComputedStyle-detached-subtree` (a
 `display: none` frame's document answers initial values instead of the empty
 declaration since `getComputedStyle` routes to the frame's bindings - being
 fixed), `serialize-values` (`baseline-shift: .5%` is an unsupported name
