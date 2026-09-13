@@ -712,3 +712,57 @@ if (radixBigIntNormal[0] !== 7 || radixBigIntNormal[1] !== 8 ||
     radixBigIntNamed["0x0"] !== 9 || radixBigIntNamed.length !== 1 ||
     radixBigIntCalculated[0] !== 9 || radixBigIntCalculated.length !== 1)
     throw "nondecimal BigInt index and saved origin witness";
+
+// --- DENSE LENGTH INDICES: saved Numbers, exact offsets and structural paths ---
+function denseIndexSaved() {
+    var child = {}, items = [child], before = items.length;
+    var index = before - 1, saved = items[index];
+    items[index] = 9;
+    return [items, saved, saved === child];
+}
+function denseIndexLoaded() {
+    var child = {}, items = [child], before = items.length;
+    var keys = [before - 1], index = keys[0];
+    keys[0] = child;
+    items[index] = 9;
+    return [items, index];
+}
+function denseIndexPaths(choice) {
+    var child = {}, items;
+    if (choice) items = [child]; else items = [child, child];
+    var before = items.length;
+    items[before - 1] = 9;
+    return [items, before];
+}
+function denseIndexStringOffset() {
+    var child = {}, items = [child], before = items.length;
+    items[before - "1"] = 9;
+    return items;
+}
+function denseIndexChain() {
+    var child = {}, items = [child, 0], before = items.length;
+    var last = before - 1;
+    items[last - 1] = 9;
+    return [items, last];
+}
+var denseIndexRetained = denseIndexSaved();
+var denseIndexForwarded = denseIndexLoaded();
+var denseIndexSingle = denseIndexPaths(true);
+var denseIndexDouble = denseIndexPaths(false);
+var denseIndexCoerced = denseIndexStringOffset();
+var denseIndexChained = denseIndexChain();
+H.push(denseIndexRetained); H.push(denseIndexForwarded); H.push(denseIndexSingle);
+H.push(denseIndexDouble); H.push(denseIndexCoerced); H.push(denseIndexChained);
+if (denseIndexRetained[0][0] !== 9 ||
+    typeof denseIndexRetained[1] !== "object" || denseIndexRetained[1] === null ||
+    Array.isArray(denseIndexRetained[1]) || denseIndexRetained[2] !== true ||
+    denseIndexForwarded[0][0] !== 9 || denseIndexForwarded[1] !== 0 ||
+    typeof denseIndexForwarded[1] !== "number" ||
+    denseIndexSingle[0].length !== 1 || denseIndexSingle[0][0] !== 9 ||
+    denseIndexSingle[1] !== 1 || denseIndexDouble[0].length !== 2 ||
+    typeof denseIndexDouble[0][0] !== "object" || denseIndexDouble[0][0] === null ||
+    Array.isArray(denseIndexDouble[0][0]) || denseIndexDouble[0][1] !== 9 ||
+    denseIndexDouble[1] !== 2 || denseIndexCoerced[0] !== 9 ||
+    denseIndexChained[0][0] !== 9 || denseIndexChained[0][1] !== 0 ||
+    denseIndexChained[1] !== 1)
+    throw "dense length index and saved Number witness";

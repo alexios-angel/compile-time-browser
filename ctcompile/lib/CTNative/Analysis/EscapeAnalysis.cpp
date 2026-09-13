@@ -906,6 +906,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // Only Add needs a path-dependent String category. TypeOf/Concat
         // always yield String once their original result is proved.
         llvm::DenseSet<mlir::Value> stringAddOrigins;
+        // Original Number snapshots, not the current length of their source array.
+        // ponytail: only length minus nonnegative integral Number literals; extend
+        // other arithmetic only with a separate bounded exact-value proof.
+        llvm::DenseMap<mlir::Value, std::size_t> lengthNumbers;
         // Imported successors forward every raw register, including unused
         // receiver/parameter values. Keep their exact entry identity separate:
         // forwarding or testing one never proves its contents or retention.
@@ -954,7 +958,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // visited block, container and element before allocating the snapshot.
         if (!spend(state.origins.size()) || !spend(state.bigIntOrigins.size()) ||
             !spend(state.stringAddOrigins.size()) || !spend(state.opaqueOrigins.size()) ||
-            !spend(state.visited.size())) {
+            !spend(state.lengthNumbers.size()) || !spend(state.visited.size())) {
             return ArrayContentsFailure::WorkLimit;
         }
         for (const auto & [array, elements] : state.arrays) {
@@ -1264,7 +1268,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // Mod/Pow return Number via to_number_value. Add uses guarded
                 // to_primitive followed by static Number/String operations;
                 // Concat uses primitive to_string. Their result is independent,
-                // without a Number/String tag, value, index or key inference.
+                // without a Number/String tag, value, index or key inference
+                // except for the separately checked length subtraction below.
                 // Add and numeric conversions have a depth guard that may
                 // throw an unrelated RangeError. This whole-frame query refuses
                 // calls, handlers and publication, so it cannot retain fresh
@@ -1272,6 +1277,24 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // a normal-completion or no-throw/effect contract. String
                 // results allocate in the VM and static conversions can allocate
                 // C++ temporaries; absence/success of allocation is unproved.
+                if (binary.getKind() == ctjs::BinaryKind::Sub) {
+                    const auto length = state.lengthNumbers.find(lhs);
+                    auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
+                    auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
+                                          : ctjs::NumberAttr{};
+                    if (length != state.lengthNumbers.end() && number) {
+                        const double offset = number.getDouble();
+                        // Both operands and the result are exact integers in [0, 2^32-1].
+                        // Guard before conversion/subtraction: no NaN, rounding or wrap.
+                        if (std::isfinite(offset) && offset >= 0 &&
+                            offset <= static_cast<double>(length->second) &&
+                            std::floor(offset) == offset) {
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            state.lengthNumbers[binary.getResult()] =
+                                length->second - static_cast<std::size_t>(offset);
+                        }
+                    }
+                }
                 state.origins[binary.getResult()] = binary.getResult();
                 continue;
             }
@@ -1466,13 +1489,22 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (name && name.getValue() == "length") {
                         // lookup_property returns js_length as Number before any
                         // prototype lookup. This exact tracked array admits no
-                        // sparse writes/deletion/accessors. Preserve an independent
-                        // origin, never an element alias or a concrete index/value.
+                        // sparse writes/deletion/accessors. Snapshot this read;
+                        // a saved origin must survive later array appends unchanged.
+                        if (elements.size() > 4294967295ULL) {
+                            return refuse(ArrayContentsFailure::MissingElement, &op);
+                        }
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        state.lengthNumbers[op.getResult(0)] = elements.size();
                         state.origins[op.getResult(0)] = op.getResult(0);
                         continue;
                     }
                 }
-                const auto index = key ? ownArrayIndex(key) : std::nullopt;
+                auto index = key ? ownArrayIndex(key) : std::nullopt;
+                if (const auto exact = state.lengthNumbers.find(key);
+                    exact != state.lengthNumbers.end() && exact->second < 4294967295ULL) {
+                    index = exact->second;
+                }
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or
                 // consult a prototype setter; literal append has neither behavior.

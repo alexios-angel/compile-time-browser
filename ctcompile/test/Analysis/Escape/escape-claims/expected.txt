@@ -5,11 +5,11 @@
 # Unobserved rows replace all six observation fields with unobserved.
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
-# Measured baseline: 217 functions, 874 observed sites, 35 unclaimed, zero violations;
-# precision 21/168. Original source SHA pins remain in Initialize.cmake.
+# Measured baseline: 222 functions, 895 observed sites, 35 unclaimed, zero violations;
+# precision 24/172. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
-program 6853d43115f7a40f
+program 4a20324d7d3db801
 fn 0 <script>
 alloc 0 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 2 fn 1 0 1 0 0 globals:1 escapes:phase59
@@ -222,9 +222,14 @@ alloc 414 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 416 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 418 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 420 fn 1 0 1 0 0 globals:1 escapes:phase59
-alloc 422 arr 1 0 1 0 0 globals:1 escapes:stored_global
-alloc 426 obj 1 0 1 0 0 globals:1 escapes:stored_global
-alloc 3142 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 422 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 424 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 426 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 428 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 430 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 432 arr 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 436 obj 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 3152 fn 1 0 1 0 0 globals:1 escapes:phase59
 fn 1 confinedObject
 alloc 1 obj 1 1 0 0 0 - escapes:passed
 fn 2 confinedArray
@@ -1154,7 +1159,7 @@ alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 
 # A length read returns an independent Number, never the child in slot zero.
-# Computed indices and writes to length retain their conservative claims.
+# Bounded length subtraction proves exact indices; writes to length stay conservative.
 fn 205 denseLengthReleased
 alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
@@ -1174,7 +1179,7 @@ alloc 6 arr 1 1 0 0 0 - escapes:passed
 alloc 8 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 19 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 209 denseLengthIndexed
-alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 18 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 210 denseLengthChanged
@@ -1204,4 +1209,29 @@ alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 215 radixBigIntComputed
 alloc 3 obj 1 1 0 0 0 - escapes:stored
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
-fn 216 -
+
+# Exact length-derived Numbers retain saved values and independent path snapshots.
+# A saved child and the longer branch still retain the original child. String
+# offsets and a packing array's Passed witness remain conservative.
+fn 216 denseIndexSaved
+alloc 5 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 26 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 217 denseIndexLoaded
+alloc 5 obj 1 1 0 0 0 - confined
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 14 arr 1 1 0 0 0 - escapes:passed
+alloc 32 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 218 denseIndexPaths
+alloc 3 obj 2 1 1 0 0 temporaries:1 escapes:stored
+alloc 7 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 12 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 27 arr 2 0 2 0 0 temporaries:2 escapes:returned
+fn 219 denseIndexStringOffset
+alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 220 denseIndexChain
+alloc 4 obj 1 1 0 0 0 - confined
+alloc 6 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 25 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 221 -

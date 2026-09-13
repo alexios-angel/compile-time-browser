@@ -138,7 +138,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
           std::pair{"  %bad = ctjs.get_property %x[%key]\n", ArrayContentsFailure::MissingProperty},
           std::pair{"  %bad = ctjs.get_property %a[%p]\n", ArrayContentsFailure::UnknownIndex},
           std::pair{"  %bad = ctjs.get_property %a[%x]\n", ArrayContentsFailure::UnknownIndex},
-          std::pair{"  %bad = ctjs.get_property %a[%length]\n", ArrayContentsFailure::UnknownIndex},
+          std::pair{"  %bad = ctjs.get_property %a[%length]\n",
+                    ArrayContentsFailure::MissingElement},
           std::pair{"  ctjs.set_property %a[%key], %zero\n", ArrayContentsFailure::UnknownIndex},
           std::pair{"  ctjs.set_property %x[%key], %zero\n",
                     ArrayContentsFailure::UnsupportedOperation},
@@ -158,6 +159,131 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                      "\">\n  %length = ctjs.get_property %a[%other]\n" + done,
              .failure = ArrayContentsFailure::UnknownIndex});
     }
+    const std::string one = "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n";
+    const std::string subtract =
+        "  %index = ctjs.binary sub %length, %one {storage_test_id = \"index\"}\n";
+    const std::string indexed = "  ctjs.set_property %a[%index], %zero\n  ctjs.return %a\n";
+    const contents_row originalIndex{
+        .what = "the original denseLengthIndexed subtraction selects its exact overwritten slot",
+        .body = values + one + read + subtract + indexed,
+        .arrays = "a:[zero]",
+        .exit = "a -> {a}"};
+    run(originalIndex);
+    run({.what = "a second bounded subtraction uses the original exact Number result",
+         .body = values + one + "  ctjs.append %zero to %a\n" + read + subtract +
+                 "  %first = ctjs.binary sub %index, %one\n"
+                 "  ctjs.set_property %a[%first], %zero\n  ctjs.return %a\n",
+         .arrays = "a:[zero,zero]",
+         .exit = "a -> {a}"});
+    run({.what = "a length-derived element read still retains its saved original child",
+         .body = values + one + read + subtract + "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "a saved length uses its original size after a later append",
+         .body = values + one + read + "  ctjs.append %x to %a\n" + subtract + indexed,
+         .arrays = "a:[zero,x]",
+         .exit = "a -> {a,x}"},
+        "");
+    run({.what = "a new length read observes the appended element",
+         .body = values + one + "  ctjs.append %x to %a\n" + read + subtract + indexed,
+         .arrays = "a:[x,zero]",
+         .exit = "a -> {a,x}"},
+        "");
+    run({.what = "a saved length itself is an exact index after append",
+         .body = values + read +
+                 "  ctjs.append %zero to %a\n"
+                 "  %saved = ctjs.get_property %a[%length]\n"
+                 "  ctjs.return %saved\n",
+         .arrays = "a:[x,zero]",
+         .reads = "a[1]=zero",
+         .exit = "zero -> {}"});
+    run({.what = "a saved subtracted index keeps its Number origin after slot replacement",
+         .body = values + one + read + subtract +
+                 "  %keys = ctjs.create_array [%index] {storage_test_id = \"keys\"}\n"
+                 "  %saved = ctjs.get_property %keys[%zero]\n"
+                 "  ctjs.set_property %keys[%zero], %x\n"
+                 "  ctjs.set_property %a[%saved], %zero\n  ctjs.return %a\n",
+         .arrays = "a:[zero]; keys:[x]",
+         .reads = "keys[0]=index",
+         .exit = "a -> {a}"});
+    run({.what = "forwarded length and literal offset keep both original Number identities",
+         .body = "  %frame = ctjs.frame_enter 8\n" + values + one + read +
+                 "  cf.br ^next(%length, %one : !ctjs.value, !ctjs.value)\n"
+                 "^next(%before: !ctjs.value, %offset: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %before, %offset\n"
+                 "  ctjs.root %index in %frame\n"
+                 "  ctjs.set_property %a[%index], %zero\n"
+                 "  ctjs.frame_exit %frame\n  ctjs.return %a\n",
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    const contents_row indexedBranch{
+        .what = "the same length operation has separate exact values on each structural path",
+        .body = values + one +
+                "  %flag = ctjs.truthy %zero\n  cf.cond_br %flag, ^left, ^right\n"
+                "^left:\n  cf.br ^join\n"
+                "^right:\n  ctjs.append %x to %a\n  cf.br ^join\n^join:\n" +
+                read + subtract + indexed,
+        .arrays = "a:[zero] | a:[x,zero]",
+        .exit = "a -> {a}; a -> {a,x}"};
+    run(indexedBranch, "");
+    for (const std::string literal : {"#ctjs.number<4602678819172646912>",  // 0.5
+                                      "#ctjs.number<13830554455654793216>", // -1
+                                      "#ctjs.number<4611686018427387904>",  // 2, underflow
+                                      "#ctjs.number<4751297606875873280>",  // 2^32
+                                      "#ctjs.number<4845873199050653696>",  // 2^53
+                                      "#ctjs.number<9218868437227405312>",  // infinity
+                                      "#ctjs.number<18442240474082181120>", // -infinity
+                                      "#ctjs.number<9221120237041090560>",  // NaN
+                                      "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
+                                      "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
+        run({.what = "subtraction requires a bounded original integral Number offset",
+             .body =
+                 values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "negative zero is an exact zero offset without changing the saved length",
+         .body = values + "  %one = ctjs.constant #ctjs.number<9223372036854775808>\n" + read +
+                 "  ctjs.append %zero to %a\n" + subtract + indexed,
+         .arrays = "a:[x,zero]",
+         .exit = "a -> {a,x}"},
+        "");
+    for (const std::string producer :
+         {"ctjs.binary sub %one, %one", "ctjs.binary sub %zero, %one",
+          "ctjs.binary sub %one, %length", "ctjs.binary add %length, %one",
+          "ctjs.binary mul %length, %zero", "ctjs.binary_static add %length, %zero"}) {
+        run({.what = "other arithmetic does not borrow length-subtraction index authority",
+             .body = values + one + read + "  %index = " + producer + "\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "an independently primitive computed offset supplies no exact Number value",
+         .body = values + one + read +
+                 "  %offset = ctjs.binary sub %one, %zero\n"
+                 "  %index = ctjs.binary sub %length, %offset\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    run({.what = "an opaque subtraction operand cannot gain authority from a known length",
+         .body = values + read + "  %index = ctjs.binary sub %length, %p\n" + indexed,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "a zero length cannot underflow into an array index",
+         .body = values + one +
+                 "  %empty = ctjs.create_array []\n"
+                 "  %length = ctjs.get_property %empty[%key]\n" +
+                 subtract + indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    for (const std::string alternative : {"%one", "%zero", "%key"}) {
+        run({.what = "one length-valued edge cannot authorize another edge's category or value",
+             .body = values + one + read +
+                     "  %flag = ctjs.truthy %zero\n"
+                     "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(" +
+                     alternative +
+                     " : !ctjs.value)\n^join(%before: !ctjs.value):\n"
+                     "  %index = ctjs.binary sub %before, %one\n" +
+                     indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
     contents_row wide = branch;
     std::string extra;
     for (unsigned i = 0; i < 32; ++i) {
@@ -169,11 +295,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     if (narrowModule && wideModule) {
         const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
         const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 128) {
             fail(row{.what = "length snapshots charge every independent result",
                      .body = wide.body,
                      .expected = ""},
-                 "32 extra length results did not cost one producer and one snapshot each");
+                 "32 extra length results did not charge both origin and Number snapshots");
         }
         check(*wideModule, wide, "x");
     } else {
@@ -241,6 +367,68 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     } else {
         fail(row{.what = mutation.what, .body = mutation.body, .expected = ""},
              "the live length fixture did not parse");
+    }
+    if (auto module = parse(originalIndex)) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::BinaryOp binary;
+        ctjs::GetPropertyOp load;
+        module->walk([&](ctjs::BinaryOp op) { binary = op; });
+        module->walk([&](ctjs::GetPropertyOp op) { load = op; });
+        auto literal = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        const mlir::Attribute offset = literal.getValue();
+        const mlir::Value lhs = binary.getLhs();
+        const mlir::Value base = load.getObject();
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        binary->setAttr("ctnative.array_index", builder.getI64IntegerAttr(0));
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*module))) {
+            fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
+                 "the subtracted-index stale solver did not converge");
+        }
+        const auto inspect = [&](ArrayContentsFailure failure) {
+            contents_row current = originalIndex;
+            current.failure = failure;
+            check(*module, current, "x");
+            const bool complete = failure == ArrayContentsFailure::None;
+            const auto verdicts = computeVerdicts(stale, function);
+            if (verdicts.arrayRetentionComplete != complete ||
+                verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                fail(row{.what = current.what, .body = current.body, .expected = ""},
+                     "stale solver or forged marker supplied subtracted-index authority");
+            }
+            ++liveStates;
+        };
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 0));
+        inspect(ArrayContentsFailure::MissingElement);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::BigIntAttr::get(&context, "1"));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(offset);
+        inspect(ArrayContentsFailure::None);
+        binary->setOperand(0, binary.getRhs());
+        inspect(ArrayContentsFailure::UnknownIndex);
+        binary->setOperand(0, lhs);
+        binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Add));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
+        load->setOperand(0, function.getBody().front().getArgument(3));
+        inspect(ArrayContentsFailure::UnknownArray);
+        load->setOperand(0, base);
+        inspect(ArrayContentsFailure::None);
+    } else {
+        fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
+             "the live subtracted-index fixture did not parse");
     }
     std::printf("dense array length: %u rows, %u live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
