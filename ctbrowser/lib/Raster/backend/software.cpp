@@ -82,20 +82,21 @@ constexpr std::uint64_t software_backend::key_of(tile_id id) noexcept {
 }
 
 void software_backend::blit(const surface & from, float at_x, float at_y, const rect & clip) {
-    const int dx = round_to_pixel(at_x);
-    const int dy = round_to_pixel(at_y);
+    if (!std::isfinite(at_x) || !std::isfinite(at_y)) { return; }
+    const std::int64_t dx = round_to_pixel(at_x);
+    const std::int64_t dy = round_to_pixel(at_y);
     pixel_rect window{0, 0, target_.width(), target_.height()};
     if (!clip.empty()) {
         window = intersect(window, to_pixels(clip, target_.width(), target_.height()));
     }
-    for (int y = 0; y < from.height(); ++y) {
-        const int ty = dy + y;
-        if (ty < window.top || ty >= window.bottom) { continue; }
-        const std::span<const std::uint32_t> src = from.row(y);
+    for (auto y = std::max<std::int64_t>(0, window.top - dy);
+         y < std::min<std::int64_t>(from.height(), window.bottom - dy); ++y) {
+        const auto ty = static_cast<int>(dy + y);
+        const std::span<const std::uint32_t> src = from.row(static_cast<int>(y));
         const std::span<std::uint32_t> dst = target_.row(ty);
-        for (int x = 0; x < from.width(); ++x) {
-            const int tx = dx + x;
-            if (tx < window.left || tx >= window.right) { continue; }
+        for (auto x = std::max<std::int64_t>(0, window.left - dx);
+             x < std::min<std::int64_t>(from.width(), window.right - dx); ++x) {
+            const auto tx = static_cast<int>(dx + x);
             const std::uint32_t s = src[static_cast<std::size_t>(x)];
             dst[static_cast<std::size_t>(tx)] =
                 blend_over(dst[static_cast<std::size_t>(tx)], color{s});

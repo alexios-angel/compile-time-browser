@@ -4,6 +4,9 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include "image_data.hpp"
+
+#include <charconv>
 #include <numbers>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
@@ -94,13 +97,10 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     const auto txn = doc_->read();
     const auto attribute = [&](std::string_view name, int fallback) {
         const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-        if (text.empty()) { return fallback; }
+        if (text.empty() || text.front() < '0' || text.front() > '9') { return fallback; }
         int value = 0;
-        for (const char c : text) {
-            if (c < '0' || c > '9') { break; }
-            value = value * 10 + (c - '0');
-        }
-        return value == 0 ? fallback : value;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+        return parsed.ec != std::errc{} || value == 0 ? fallback : value;
     };
     canvas_context * canvas =
         canvases_->context_for(id, attribute("width", 300), attribute("height", 150));
@@ -414,93 +414,109 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // `pixels[]` loop in p5.js. The buffer is RGBA bytes in that order, which
     // is NOT the engine's packed ARGB, so both directions unpack rather than
     // memcpy: getting that wrong swaps red and blue and looks almost right.
-    const auto image_data = [](context & c, int width, int height) {
-        auto * out = c.allocate<script::object_object>();
-        out->set("width", value::number(width));
-        out->set("height", value::number(height));
-        value bytes = c.make_array();
-        auto * store = static_cast<script::array_object *>(bytes.as_heap());
-        // A REAL Uint8ClampedArray, so a page's `data[i] = 300` clamps to 255
-        // the way it does in a browser rather than storing 300.
-        store->elements = script::element_kind::u8_clamped;
-        store->items.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4,
-                            value::number(0));
-        out->set("data", bytes);
-        return std::pair{out, store};
-    };
-    method("createImageData", [image_data](context & c, std::span<value> a) {
-        // `createImageData(other)` takes its SIZE from the other one and is
-        // still blank, which is what makes it the way to get a scratch buffer.
-        int width = static_cast<int>(arg_number(a, 0));
-        int height = static_cast<int>(arg_number(a, 1));
-        if (!a.empty() && a[0].is_object()) {
-            width = static_cast<int>(context::to_number(c.lookup_property(a[0], "width")));
-            height = static_cast<int>(context::to_number(c.lookup_property(a[0], "height")));
+    method("createImageData", [this](context & c, std::span<value> a) {
+        // The one-argument overload takes the other image's size, not its pixels.
+        const bool given = a.size() == 1 && a[0].is_object();
+        const auto width =
+            detail::image_data_long(c, given ? c.lookup_property(a[0], "width") : arg(a, 0));
+        if (!width) { return value::undefined(); }
+        const auto height =
+            detail::image_data_long(c, given ? c.lookup_property(a[0], "height") : arg(a, 1));
+        if (!height) { return value::undefined(); }
+        if (*width == 0 || *height == 0) {
+            throw_dom_exception(c, "IndexSizeError", "ImageData dimensions must be nonzero");
+            return value::undefined();
         }
-        return value::object(image_data(c, std::max(0, width), std::max(0, height)).first);
+        return detail::make_image_data(c,
+                                       static_cast<std::uint64_t>(std::abs(std::int64_t{*width})),
+                                       static_cast<std::uint64_t>(std::abs(std::int64_t{*height})));
     });
-    method("getImageData", [canvas, image_data](context & c, std::span<value> a) {
-        const int x = static_cast<int>(arg_number(a, 0));
-        const int y = static_cast<int>(arg_number(a, 1));
-        const int width = std::max(0, static_cast<int>(arg_number(a, 2)));
-        const int height = std::max(0, static_cast<int>(arg_number(a, 3)));
-        auto [out, store] = image_data(c, width, height);
+    method("getImageData", [this, canvas](context & c, std::span<value> a) {
+        const auto sx = detail::image_data_long(c, arg(a, 0));
+        if (!sx) { return value::undefined(); }
+        const auto sy = detail::image_data_long(c, arg(a, 1));
+        if (!sy) { return value::undefined(); }
+        const auto sw = detail::image_data_long(c, arg(a, 2));
+        if (!sw) { return value::undefined(); }
+        const auto sh = detail::image_data_long(c, arg(a, 3));
+        if (!sh) { return value::undefined(); }
+        if (*sw == 0 || *sh == 0) {
+            throw_dom_exception(c, "IndexSizeError", "ImageData dimensions must be nonzero");
+            return value::undefined();
+        }
+        // Negative extents select left/up from the origin; additions stay wide
+        // until the intersection is known to lie within the actual surface.
+        const std::int64_t x = std::int64_t{*sx} + std::min(0, *sw);
+        const std::int64_t y = std::int64_t{*sy} + std::min(0, *sh);
+        const auto width = std::abs(std::int64_t{*sw});
+        const auto height = std::abs(std::int64_t{*sh});
+        const value out = detail::make_image_data(c, static_cast<std::uint64_t>(width),
+                                                  static_cast<std::uint64_t>(height));
+        if (out.is_undefined()) { return out; }
         const auto & surface = canvas->surface();
-        if (!surface) { return value::object(out); }
-        for (int row = 0; row < height; ++row) {
-            for (int column = 0; column < width; ++column) {
-                const color pixel{surface->at(x + column, y + row)};
-                const auto at = (static_cast<std::size_t>(row) * static_cast<std::size_t>(width) +
-                                 static_cast<std::size_t>(column)) *
-                                4;
+        if (!surface) { return out; }
+        auto * store =
+            static_cast<script::array_object *>(c.lookup_property(out, "data").as_heap());
+        for (auto row = std::max<std::int64_t>(0, y);
+             row < std::min<std::int64_t>(surface->height, y + height); ++row) {
+            for (auto column = std::max<std::int64_t>(0, x);
+                 column < std::min<std::int64_t>(surface->width, x + width); ++column) {
+                const color pixel{surface->at(static_cast<int>(column), static_cast<int>(row))};
+                const auto at = static_cast<std::size_t>((row - y) * width + column - x) * 4;
                 store->items[at] = value::number(pixel.red());
                 store->items[at + 1] = value::number(pixel.green());
                 store->items[at + 2] = value::number(pixel.blue());
                 store->items[at + 3] = value::number(pixel.alpha());
             }
         }
-        return value::object(out);
+        return out;
     });
-    method("putImageData", draws([canvas](context & c, std::span<value> a) {
-               if (a.empty() || !a[0].is_object()) { return; }
-               const value source = c.lookup_property(a[0], "data");
-               if (!source.is_array()) { return; }
-               const auto & bytes = static_cast<script::array_object *>(source.as_heap())->items;
-               const int width =
-                   static_cast<int>(context::to_number(c.lookup_property(a[0], "width")));
-               const int height =
-                   static_cast<int>(context::to_number(c.lookup_property(a[0], "height")));
-               const int dx = static_cast<int>(arg_number(a, 1));
-               const int dy = static_cast<int>(arg_number(a, 2));
-               // Written straight into the surface: putImageData is NOT
-               // affected by the transform, the clip or globalAlpha. That is
-               // the spec and it is the reason it exists - a page computing
-               // pixels wants those pixels, not those pixels composited.
-               const auto & surface = canvas->surface();
-               if (!surface) { return; }
-               for (int row = 0; row < height; ++row) {
-                   for (int column = 0; column < width; ++column) {
-                       const auto at =
-                           (static_cast<std::size_t>(row) * static_cast<std::size_t>(width) +
-                            static_cast<std::size_t>(column)) *
-                           4;
-                       if (at + 3 >= bytes.size()) { continue; }
-                       const auto channel = [&](std::size_t offset) {
-                           return static_cast<std::uint8_t>(
-                               std::clamp(context::to_number(bytes[at + offset]), 0.0, 255.0));
-                       };
-                       const int px = dx + column;
-                       const int py = dy + row;
-                       if (px < 0 || py < 0 || px >= surface->width || py >= surface->height) {
-                           continue;
-                       }
-                       surface->pixels[static_cast<std::size_t>(py) *
-                                           static_cast<std::size_t>(surface->width) +
-                                       static_cast<std::size_t>(px)] =
-                           color::rgba(channel(0), channel(1), channel(2), channel(3)).argb;
-                   }
-               }
-           }));
+    method("putImageData", [this, canvas](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        const value source = c.lookup_property(a[0], "data");
+        if (!source.is_array()) { return value::undefined(); }
+        const auto * bytes = static_cast<script::array_object *>(source.as_heap());
+        const auto width = detail::image_data_long(c, c.lookup_property(a[0], "width"));
+        if (!width) { return value::undefined(); }
+        const auto height = detail::image_data_long(c, c.lookup_property(a[0], "height"));
+        if (!height) { return value::undefined(); }
+        const auto dx = detail::image_data_long(c, arg(a, 1));
+        if (!dx) { return value::undefined(); }
+        const auto dy = detail::image_data_long(c, arg(a, 2));
+        if (!dy) { return value::undefined(); }
+        const auto length =
+            detail::image_data_length(c, static_cast<std::uint64_t>(std::max(0, *width)),
+                                      static_cast<std::uint64_t>(std::max(0, *height)));
+        if (!length) { return value::undefined(); }
+        if (*length == 0 || *length != bytes->length()) {
+            throw_dom_exception(c, "IndexSizeError", "ImageData dimensions do not match its data");
+            return value::undefined();
+        }
+        // A direct write ignores the transform, clip and globalAlpha. Clip
+        // first, so even an off-canvas origin only visits pixels it can change.
+        const auto & surface = canvas->surface();
+        if (!surface) { return value::undefined(); }
+        for (auto row = std::max<std::int64_t>(0, *dy);
+             row < std::min<std::int64_t>(surface->height, std::int64_t{*dy} + *height); ++row) {
+            for (auto column = std::max<std::int64_t>(0, *dx);
+                 column < std::min<std::int64_t>(surface->width, std::int64_t{*dx} + *width);
+                 ++column) {
+                const auto at = static_cast<std::size_t>((row - *dy) * *width + column - *dx) * 4;
+                const auto channel = [&](std::size_t offset) {
+                    const double number = bytes->is_view()
+                                              ? script::view_get(*bytes, at + offset)
+                                              : context::to_number(bytes->items[at + offset]);
+                    return static_cast<std::uint8_t>(
+                        script::coerce_element(script::element_kind::u8_clamped, number));
+                };
+                surface->pixels[static_cast<std::size_t>(row) *
+                                    static_cast<std::size_t>(surface->width) +
+                                static_cast<std::size_t>(column)] =
+                    color::rgba(channel(0), channel(1), channel(2), channel(3)).argb;
+            }
+        }
+        return value::undefined();
+    });
     method("measureText", [canvas, sync](context & c, std::span<value> a) {
         sync(c);
         auto * metrics = c.allocate<script::object_object>();
