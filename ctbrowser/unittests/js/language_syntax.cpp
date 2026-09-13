@@ -170,6 +170,35 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- private brands (7.3.28-30): a method's holder carries the class's
+    // brand, a field is added once, a public field is defined rather than set
+    answers("class C { #m() { return 7; } static call(o) { return o.#m(); } }"
+            " var r; try { C.call(Object.create(C.prototype)); } catch (e) { r = e.name; }"
+            " return r + ':' + C.call(new C());",
+            "TypeError:7");
+    answers("class B { constructor(o) { return o; } } class C extends B { #m() {} }"
+            " var o = {}; new C(o); var r = 'none'; try { new C(o); } catch (e) { r = e.name; }"
+            " return r;",
+            "TypeError");
+    answers("class B { constructor(o) { return o; } } class C extends B { #f = 1; }"
+            " var o = {}; new C(o); var r = 'none'; try { new C(o); } catch (e) { r = e.name; }"
+            " return r;",
+            "TypeError");
+    answers("class B { constructor(seal) { if (seal) Object.preventExtensions(this); } }"
+            " class C extends B { #f = 1; } new C(false); var r = 'none';"
+            " try { new C(true); } catch (e) { r = e.name; } return r;",
+            "TypeError");
+    answers("class S { static #sm() { return 3; } static go() { return this.#sm(); } }"
+            " class T extends S {} var r = 'none'; try { T.go(); } catch (e) { r = e.name; }"
+            " return r + ':' + S.go();",
+            "TypeError:3");
+    answers("var called = false; class C { set x(v) { called = true; } }"
+            " class D extends C { x = 1; } var d = new D(); return called + ':' + d.x;",
+            "false:1");
+    answers("class C { #p = 1; static has(o) { return #p in o; } } return C.has(new C()) + ':' +"
+            " C.has({});",
+            "true:false");
+
     // --- strict code cannot create a global by assignment (6.2.5.6)
     answers("var r; (function () { 'use strict'; try { zz1 = 1; } catch (e) { r = e.name; } })();"
             " return r;",

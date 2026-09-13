@@ -44,6 +44,29 @@ object_object * typed_array_prototype(context & cx, element_kind kind) {
                                                   : nullptr;
 }
 
+bool context::private_element_present(value target, const std::string & key) {
+    property_descriptor found;
+    if (own_property(target, key, found)) { return true; }
+    // A method or accessor: on the prototype chain, or up the constructor's
+    // static chain for a static one - and then only with the brand.
+    bool declared = false;
+    for (value up = get_prototype(target); up.is_object_like() && !declared;
+         up = get_prototype(up)) {
+        declared = own_property(up, key, found);
+    }
+    if (!declared && target.is_callable()) {
+        for (value up = target; up.is_kind(heap_kind::function) && !declared;) {
+            up = static_cast<closure_object *>(up.as_heap())->proto_link;
+            declared = up.is_callable() && own_property(up, key, found);
+        }
+    }
+    if (!declared) { return false; }
+    const std::size_t colon = key.rfind(':');
+    if (colon == std::string::npos) { return true; }
+    const std::string brand = std::string{private_key_prefix} + key.substr(colon);
+    return own_property(target, brand, found);
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -98,7 +121,7 @@ value context::lookup_property(value target, const std::string & name) {
     // on the hot path; the walk only for the `@#` keys the compiler spells.
     if (is_private_key(name)) [[unlikely]] {
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             const std::size_t colon = name.find(':');
             throw_error(
                 "TypeError",

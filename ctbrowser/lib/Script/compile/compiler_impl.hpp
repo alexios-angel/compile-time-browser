@@ -969,8 +969,14 @@ public:
     // `this` is the class and a static block is a function body of its own -
     // neither is true of code emitted inline in the enclosing frame, which is
     // where static fields were evaluated before.
+    // `brand` is the class's brand key (see context::private_element_present)
+    // when the class declares a private method or accessor of that kind, and
+    // the initialiser adds it to every instance first; empty otherwise.
     [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields,
-                                                          bool is_static = false);
+                                                          bool is_static = false,
+                                                          std::string brand = {});
+    // `__ctbrowser_private_add(target, key, v)` - PrivateFieldAdd, or the brand.
+    void emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v);
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the

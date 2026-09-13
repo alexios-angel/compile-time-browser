@@ -50,8 +50,23 @@ void compiler_impl::emit_define_own(std::uint16_t target, std::string_view key, 
     release_to(mark);
 }
 
+void compiler_impl::emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{private_add_name})));
+    const std::uint16_t object = alloc_reg();
+    proto().emit(instruction{op::move, object, target});
+    const std::uint16_t key_reg = alloc_reg();
+    proto().emit(instruction::with_bx(op::load_string, key_reg, intern_string(std::string{key})));
+    const std::uint16_t held = alloc_reg();
+    proto().emit(instruction{op::move, held, v});
+    proto().emit(instruction{op::call, callee, 3});
+    release_to(mark);
+}
+
 std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields,
-                                                       bool is_static) {
+                                                       bool is_static, std::string brand) {
     const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
     out_.functions[index].name = is_static ? "<static>" : "<fields>";
     out_.functions[index].is_strict = true; // 15.7.1: all of a class body is strict
@@ -78,6 +93,19 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     std::vector<std::size_t> saved_exits;
     saved_exits.swap(optional_exits_);
     in_chain_ = false;
+    if (!brand.empty()) {
+        // PrivateMethodOrAccessorAdd (7.3.29) for every private method and
+        // accessor at once: the brand, before any field initialiser runs,
+        // which is where 10.2.1.2 InitializeInstanceElements puts it - and the
+        // TypeError when this object was already branded or is sealed.
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        const std::uint16_t nothing = alloc_reg();
+        proto().emit(instruction{op::load_undef, nothing});
+        emit_private_add(self, brand, nothing);
+        release_to(mark);
+    }
     for (const std::int32_t member : fields) {
         const vp::node & m = at(member);
         if (m.c == 3) {
@@ -112,17 +140,17 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             compile_expr(m.a, key);
             proto().emit(instruction{op::set_index, self, key, v});
         } else if (m.text.starts_with('#')) {
-            // A PRIVATE FIELD IS DEFINED, NOT SET (7.3.33 PrivateFieldAdd): a
+            // A PRIVATE FIELD IS ADDED, NOT SET (7.3.28 PrivateFieldAdd): a
             // set_prop would be the brand check store_property makes, on an
-            // instance that does not carry the element yet.
-            emit_define_own(self, member_key(m.text), v, false);
-        } else if (is_static && (m.text == "name" || m.text == "length")) {
-            // A static `name`/`length` shadows the constructor's own
-            // read-only one: DEFINED, not set (see define_own_name), and
-            // enumerable because it is a field.
-            emit_define_own(self, m.text, v, true);
+            // instance that does not carry the element yet - and adding it
+            // twice, or to a sealed object, is the TypeError.
+            emit_private_add(self, member_key(m.text), v);
         } else {
-            proto().emit(instruction{op::set_prop, self, member_operand(m.text), v});
+            // A public field is DEFINED (7.3.5 CreateDataPropertyOrThrow via
+            // DefineField): a setter of the same name on the prototype is not
+            // called, a frozen `this` is the TypeError, and a static
+            // `name`/`length` shadows the constructor's read-only one.
+            emit_define_own(self, m.text, v, true);
         }
         release_to(mark);
     }
@@ -251,15 +279,32 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // are NOT this - evaluating those once and putting them on the
     // constructor is exactly right, and that is what still happens below.
     std::vector<std::int32_t> instance_fields;
+    bool instance_brand = false;
+    bool static_brand = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.c == 0 && (m.d & 1) == 0) { instance_fields.push_back(member); }
+        // A private method or accessor brands its holder - see
+        // context::private_element_present.
+        if ((m.c == 1 || m.c == 2) && (m.d & 2) == 0 && m.text.starts_with('#')) {
+            ((m.d & 1) != 0 ? static_brand : instance_brand) = true;
+        }
     }
-    if (!instance_fields.empty()) {
-        const std::uint32_t fields = compile_field_initialiser(instance_fields);
+    const std::string brand =
+        std::string{private_key_prefix} + ":" + std::to_string(private_scopes_.back().klass);
+    if (!instance_fields.empty() || instance_brand) {
+        const std::uint32_t fields =
+            compile_field_initialiser(instance_fields, false, instance_brand ? brand : "");
         const std::uint16_t init = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+    }
+    if (static_brand) {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t nothing = alloc_reg();
+        proto().emit(instruction{op::load_undef, nothing});
+        emit_private_add(dst, brand, nothing);
+        release_to(inner);
     }
 
     // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.

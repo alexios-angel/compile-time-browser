@@ -142,7 +142,7 @@ void context::store_property(value target, const std::string & name, value v) {
         const std::string shown =
             name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             throw_error("TypeError", "Cannot write private member " + shown +
                                          " to an object whose class did not declare it");
             return;

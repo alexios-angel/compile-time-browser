@@ -644,6 +644,39 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See private_add_name.
+    cx.define_native(std::string{private_add_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2 || !a[0].is_object_like() || a[0].is_kind(heap_kind::proxy)) {
+            c.throw_error("TypeError", "a private element can only be added to an object");
+            return value::undefined();
+        }
+        const std::string key = c.to_string(a[1]);
+        const std::size_t colon = key.find(':');
+        const std::string shown =
+            key.substr(1, colon == std::string::npos ? key.size() : colon - 1);
+        if (c.has_own_property(a[0], key)) {
+            c.throw_error("TypeError",
+                          shown.size() > 1
+                              ? "Cannot initialize " + shown + " twice on the same object"
+                              : "Cannot initialize private methods of a class twice on "
+                                "the same object");
+            return value::undefined();
+        }
+        if (!c.is_extensible(a[0])) {
+            c.throw_error("TypeError", "Cannot define private elements on a non-extensible object");
+            return value::undefined();
+        }
+        context::property_descriptor wanted;
+        wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
+        wanted.has_configurable = true;
+        wanted.held = a.size() > 2 ? a[2] : value::undefined();
+        wanted.writable = wanted.configurable = true;
+        wanted.enumerable = false;
+        if (!c.define_own_property(a[0], key, wanted)) {
+            c.throw_error("TypeError", "Cannot define private element " + shown);
+        }
+        return value::undefined();
+    });
     // See strict_assign_check_name.
     cx.define_native(std::string{strict_assign_check_name}, [](context & c, std::span<value> a) {
         const std::string name = a.empty() ? std::string{} : c.to_string(a[0]);

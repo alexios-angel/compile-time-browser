@@ -335,6 +335,12 @@ inline constexpr std::string_view template_object_name = "__ctbrowser_template_o
 // A call rather than a check inside op::set_global, whose contract says it
 // cannot throw.
 inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
+// PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29): `(obj, key,
+// v)` defines the private element - a field's value, or the class BRAND (see
+// context::private_element_present) as undefined - and it is the TypeError
+// when the object already carries the key (a constructor that returns the
+// same object twice) or is not extensible.
+inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
@@ -1365,6 +1371,15 @@ public:
     // Does `target` have an own property `name` at all? The question
     // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
     [[nodiscard]] bool has_own_property(value target, const std::string & name);
+    // PrivateElementFind (7.3.30) over this engine's spelling: a private
+    // FIELD is an own property under its `@#name:class` key; a private
+    // METHOD or ACCESSOR lives on the prototype (or the constructor when
+    // static) under its key, and an object carries it only when it carries
+    // the class's BRAND - the own `@#:class` key the class's initialiser
+    // adds to every instance it constructs (and to the constructor itself,
+    // for the statics). So `Object.create(C.prototype)` and a subclass
+    // constructor fail the brand check, as PrivateBrandCheck says.
+    [[nodiscard]] bool private_element_present(value target, const std::string & key);
 
     // [[DefineOwnProperty]], with 10.1.6.3's validation. False means REJECTED -
     // the caller decides whether that is a TypeError (Object.defineProperty) or
