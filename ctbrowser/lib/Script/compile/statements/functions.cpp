@@ -237,7 +237,32 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;
     }
-    compile_parameter_prologue(params);
+    {
+        // A direct eval in a default may not `var` a parameter's name, nor
+        // `arguments` when the function would make one (10.2.11 steps 15-22:
+        // an arrow never does, a function naming a parameter `arguments`
+        // does not) - see param_eval_name.
+        std::vector<std::string> saved_scope;
+        saved_scope.swap(param_scope_names_);
+        bool names_arguments = false;
+        for (const std::int32_t p : params) {
+            std::vector<std::string> names;
+            if (at(p).b >= 0) {
+                pattern_names(at(p).b, names);
+            } else {
+                names.emplace_back(at(p).text);
+            }
+            for (std::string & name : names) {
+                names_arguments = names_arguments || name == "arguments";
+                param_scope_names_.push_back(std::move(name));
+            }
+        }
+        if (!out_.functions[index].is_arrow && !names_arguments) {
+            param_scope_names_.emplace_back("arguments");
+        }
+        compile_parameter_prologue(params);
+        param_scope_names_.swap(saved_scope);
+    }
     if (wants_arguments && arguments_boxed) {
         proto().emit(instruction{op::new_cell, arguments_slot});
     }

@@ -350,6 +350,15 @@ inline constexpr std::string_view class_heritage_name = "__ctbrowser_class_herit
 // Reference): `(base, key, this)` is base.[[Get]](key, this) - a getter on
 // the parent runs with the method's own receiver, not with the parent.
 inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
+// A direct `eval(src)` written in a function's PARAMETER EXPRESSIONS:
+// `(src, name...)` is `eval` (the intrinsic - anything else the name is
+// bound to is simply called) with the one rule of 19.2.1.3
+// EvalDeclarationInstantiation step 3.d this engine can keep without a
+// caller-scoped eval: a `var` the eval'd code declares may not be one of the
+// names bound in that parameter scope - the parameters, and `arguments`
+// unless the function is an arrow or names a parameter so - which is the
+// SyntaxError the eval throws.
+inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";

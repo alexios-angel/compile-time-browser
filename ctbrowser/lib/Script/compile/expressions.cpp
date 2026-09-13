@@ -1129,8 +1129,49 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     release_to(mark);
 }
 
+bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
+    const vp::node & callee = at(n.a);
+    if (param_scope_names_.empty() || callee.kind != vp::nk::ident || callee.text != "eval" ||
+        n.kind != vp::nk::call) {
+        return false;
+    }
+    // `eval` that is a local or an upvalue is somebody else's function.
+    if (find_local_entry(fn(), "eval") != nullptr ||
+        resolve_upvalue(frames_.size() - 1, "eval") >= 0) {
+        return false;
+    }
+    const std::span<const std::int32_t> args = kids(n);
+    if (any_spread(args)) { return false; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t base = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, base, intern_name(std::string{param_eval_name})));
+    const std::uint16_t source = alloc_reg();
+    if (args.empty()) {
+        proto().emit(instruction{op::load_undef, source});
+    } else {
+        compile_expr(args[0], source);
+    }
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        // The other arguments are evaluated for their effects, as eval's are.
+        const std::uint16_t extra = alloc_reg();
+        compile_expr(args[i], extra);
+        release_to(static_cast<std::uint32_t>(extra));
+    }
+    for (const std::string & name : param_scope_names_) {
+        const std::uint16_t r = alloc_reg();
+        emit_string(r, name);
+    }
+    proto().emit(
+        instruction{op::call, base, static_cast<std::uint16_t>(1 + param_scope_names_.size())});
+    proto().emit(instruction{op::move, dst, base});
+    release_to(mark);
+    return true;
+}
+
 void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     const std::span<const std::int32_t> args = kids(n);
+    if (compile_param_eval(n, dst)) { return; }
     if (any_spread(args)) {
         compile_spread_call(n, dst);
         return;

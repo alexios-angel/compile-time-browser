@@ -1078,6 +1078,12 @@ public:
     // ReferenceError - see emit_strict_assign_check.
     bool declaring_ = false;
     void emit_strict_assign_check(std::string_view name);
+    // WHILE A FUNCTION'S PARAMETER EXPRESSIONS ARE BEING COMPILED: the names
+    // bound in that scope, which a direct `eval` written there may not
+    // `var`-declare (see param_eval_name). Empty outside a prologue.
+    std::vector<std::string> param_scope_names_;
+    // `eval(src)` inside parameter expressions, routed through param_eval_name.
+    [[nodiscard]] bool compile_param_eval(const vp::node & n, std::uint16_t dst);
     std::size_t handler_depth_ = 0;
 };
 

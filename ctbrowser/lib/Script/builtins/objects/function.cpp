@@ -306,6 +306,39 @@ void install_dynamic_function(context & cx) {
             c.make_error("SyntaxError", "a source text module has no module source to import"),
             true);
     });
+    // See param_eval_name. The intrinsic eval is remembered so a page that
+    // rebinds the global `eval` gets its own function called instead.
+    {
+        const value intrinsic = cx.global("eval");
+        auto * native = cx.allocate<native_object>(
+            std::string{param_eval_name}, [intrinsic](context & c, std::span<value> a) {
+                const value source = a.empty() ? value::undefined() : a[0];
+                const value current = c.global("eval");
+                if (current.bits() != intrinsic.bits()) { return c.call(current, {&source, 1}); }
+                if (!source.is_string()) { return source; }
+                program compiled = compiler::compile_for_eval(c.to_string(source));
+                if (!compiled.ok) {
+                    c.throw_error("SyntaxError", compiled.error);
+                    return value::undefined();
+                }
+                for (std::size_t i = 1; i < a.size(); ++i) {
+                    const std::string bound = c.to_string(a[i]);
+                    for (const std::string & declared : compiled.hoisted_vars) {
+                        if (declared != bound) { continue; }
+                        c.throw_error("SyntaxError",
+                                      "Identifier '" + bound +
+                                          "' has already been declared: a direct eval in a "
+                                          "parameter expression may not var-declare a name of "
+                                          "that scope");
+                        return value::undefined();
+                    }
+                }
+                const program & kept = c.own_program(std::move(compiled));
+                return c.run_nested(kept);
+            });
+        native->retained.push_back(intrinsic);
+        cx.define_global(std::string{param_eval_name}, value::object(native));
+    }
     // `Function.prototype`, reachable from script rather than only consulted by
     // lookup. `Function.prototype.call.bind(...)` and
     // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the

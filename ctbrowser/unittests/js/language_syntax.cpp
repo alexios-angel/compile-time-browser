@@ -170,6 +170,19 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- a direct eval in a parameter expression may not var-declare that
+    // scope's names (19.2.1.3 step 3.d)
+    answers("var r = 'none'; function f(p = eval('var arguments')) {} try { f(); }"
+            " catch (e) { r = e.name; } return r;",
+            "SyntaxError");
+    answers("var r = 'none'; function h(a, p = eval('var a')) {} try { h(); }"
+            " catch (e) { r = e.name; } return r;",
+            "SyntaxError");
+    answers("function g(p = eval('1 + 1')) { return p; } return g();", "2");
+    answers("var r = 'ok'; var k = (p = eval('var arguments')) => p; try { k(); }"
+            " catch (e) { r = e.name; } return r;",
+            "ok");
+
     // --- `f.length` is ExpectedArgumentCount (15.1.5), not the register count
     answers("function f(a, b = 1, c) {} function g(...r) {} function h(a, b,) {}"
             " return f.length + ':' + g.length + ':' + h.length + ':' + ((x, y) => 0).length;",
