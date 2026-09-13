@@ -19,6 +19,8 @@ void checker::run() {
     const vp::node & root = at(ast_.root);
     if (root.kind != nk::program) { return; }
     frames_.back().strict = strict_root_ || has_use_strict_directive(ast_.root);
+    // A module's top level is [+Await] (16.2.1): `await` is not a name there.
+    frames_.back().is_async = strict_root_;
     (void)check_list(kids(root), list_kind::script, nullptr, "");
     frames_.pop_back();
 }

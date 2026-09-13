@@ -179,7 +179,24 @@ void checker::check_class(std::int32_t idx) {
     }
     walk_expression(n.a); // `extends <expr>`
     const bool derived = n.a >= 0;
-    // 15.7.1: all parts of a class are strict mode code.
+    // 15.7.1: all parts of a class are strict mode code - its NAME included
+    // (`class let {}`, `class yield {}`, `class eval {}` are all errors,
+    // 13.1.1 under strict). strict() reads the frame, which a class body
+    // does not push, so the strict rules are applied here by hand.
+    if (!n.text.empty()) {
+        if (reserved_word(n.text) || n.text == "eval" || n.text == "arguments") {
+            report(quoted(n.text) + " cannot be the name of a class", idx);
+        }
+        for (const std::string_view reserved : {"yield", "let", "static", "implements", "interface",
+                                                "package", "private", "protected", "public"}) {
+            if (n.text == reserved) {
+                report(quoted(n.text) + " is a reserved word in strict mode code and cannot "
+                                        "name a class",
+                       idx);
+            }
+        }
+        check_contextual_name(n.text, idx);
+    }
     ++class_depth_;
     // The body's private names, in scope for every member from here on and
     // for nothing before - the heritage above was walked against the OUTER
@@ -205,6 +222,17 @@ void checker::check_class(std::int32_t idx) {
     std::size_t constructors = 0;
     for (const std::int32_t m : kids(n)) {
         const vp::node & member = at(m);
+        if (member.c == 3) {
+            // A static block: its statement list is checked as a function
+            // body's is (duplicate lexical names, var against let, labels,
+            // break and continue), in a frame of its own.
+            // is_async, so that `await` as a name is refused as it is in an
+            // async body (ClassStaticBlockStatementList is [+Await]).
+            frames_.push_back(frame{frame_kind::static_block, {}, {}, 0, 0, false, true, true});
+            (void)check_list(kids(at(member.b)), list_kind::function_body, nullptr, "");
+            frames_.pop_back();
+            continue;
+        }
         const bool is_static = (member.d & 1) != 0;
         const bool is_method = member.c == 1;
         const bool is_accessor = member.c == 2;

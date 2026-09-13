@@ -63,6 +63,11 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // The honest fix is a script_kind that says "this source is a
         // function body", which every embedder would have to pass; that is
         // a change to callers this file does not own.
+        //
+        // A STATIC BLOCK is [~Return] (15.7.1) and is not the top level.
+        if (frames_.back().what == frame_kind::static_block) {
+            report("`return` is not allowed in a class static block", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -294,6 +299,25 @@ void checker::check_for(std::int32_t idx, list_kind kind, std::vector<binding> &
 void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const vp::node & target = at(n.a);
+    // 14.7.5.1: a head with nothing to declare (d bit1) is a
+    // LeftHandSideExpression whose AssignmentTargetType must be simple, or
+    // an array/object literal re-read as a pattern - `for (f() of xs)` and
+    // `for ((a, b) in o)` are errors.
+    if ((n.d & 2) != 0 && target.b >= 0) {
+        switch (at(target.b).kind) {
+        case nk::ident:
+        case nk::member:
+        case nk::index:
+        case nk::array:
+        case nk::object:
+        case nk::array_pattern:
+        case nk::object_pattern: break;
+        default:
+            report("the head of this `for` loop is not something a value can be assigned to",
+                   target.b);
+            break;
+        }
+    }
     if (target.b >= 0) { walk_pattern(target.b); }
     walk_expression(n.b);
     check_nested_declaration(n.c, false);
@@ -365,6 +389,11 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
 
 void checker::check_labeled(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
+    // A LabelIdentifier follows the identifier rules of 13.1.1: no reserved
+    // word (an escaped spelling is the one way one reaches here), `await`
+    // not in an async body, `yield` not in a generator, the strict set not
+    // in strict code.
+    check_strict_binding(n.text, idx, escaped(idx));
     frame & f = frames_.back();
     // 14.13.1: "It is a Syntax Error if any source text is matched by this
     // production" when a LabelledItem is contained in a LabelledStatement

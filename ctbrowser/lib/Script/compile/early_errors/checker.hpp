@@ -88,6 +88,9 @@ enum class frame_kind : std::uint8_t {
     arrow,      // transparent to `new.target`, `super` and `this`
     method,     // a method, accessor or constructor: has a home object
     field_init, // a class field initialiser - a function of its own
+    // `static { }` (15.7.1 ClassStaticBlockBody): a function body with a home
+    // object, no `arguments`, no `await`, no `return` and no `super()`.
+    static_block,
 };
 
 struct frame {

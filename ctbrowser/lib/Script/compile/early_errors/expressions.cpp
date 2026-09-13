@@ -366,6 +366,12 @@ void checker::walk_expression(std::int32_t idx) {
         if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
             report("`await` is not allowed in the parameters of an async function", idx);
         }
+        // 15.7.1: a static block may not Contain `await` - and Contains
+        // stops at a function boundary, arrows included, so only the
+        // innermost frame is asked.
+        if (n.text == "await" && frames_.back().what == frame_kind::static_block) {
+            report("`await` is not allowed in a class static block", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -455,6 +461,9 @@ void checker::walk_expression(std::int32_t idx) {
         if (n.text == "arguments" && enclosing_non_arrow() == frame_kind::field_init) {
             report("`arguments` in a class field initialiser", idx);
         }
+        if (n.text == "arguments" && enclosing_non_arrow() == frame_kind::static_block) {
+            report("`arguments` in a class static block", idx);
+        }
         return;
 
     case nk::new_target:
@@ -524,6 +533,14 @@ void checker::walk_property(std::int32_t idx) {
     // `{ default }`: a shorthand is an IdentifierReference (13.2.5.1), where
     // a keyword may not stand - unlike `{ default: 1 }`, whose key is a name.
     if (n.c == 2 && (n.d & 1) == 0) { check_identifier_reference(n.text, idx, true); }
+    // `({ a = 1 })`: a CoverInitializedName is only a pattern (13.2.5.1). The
+    // parser keeps it in case an `=` follows the literal; here none did.
+    if (n.c == 2 && n.b >= 0) {
+        report("`" + std::string{n.text} +
+                   " = ...` in an object literal is only allowed in a "
+                   "destructuring pattern",
+               idx);
+    }
     if (n.c == 1 || n.c == 3) {
         if (n.c == 3) { check_accessor_arity(n.b, (n.d & 4) != 0); }
         check_function(n.b, frame_kind::method);
