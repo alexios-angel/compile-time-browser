@@ -18,7 +18,35 @@ resolved_edges resolve_edges(const box_node & b, const constraints & c) {
         b.border.bottom.resolve(basis, b.font_size),  b.border.left.resolve(basis, b.font_size)};
 }
 
-float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
+float intrinsic_border_width(const box_node & b, const constraints & c, const resolved_edges & e,
+                             const measure_text_fn & measure, const length & want) {
+    const intrinsic_sizes wants = measure_box(b, c, measure);
+    float content = 0;
+    switch (want.u) {
+    case unit::min_content: content = wants.min_content; break;
+    case unit::max_content: content = wants.max_content; break;
+    default: {
+        // fit-content: clamp(min-content, stretch, max-content), the same
+        // clamp shrink_to_fit_width makes for an inline-block.
+        const float room =
+            std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_inner());
+        content = std::max(wants.min_content, std::min(room, wants.max_content));
+        break;
+    }
+    }
+    return std::max(0.0f, content) + e.horizontal_inner();
+}
+
+std::optional<float> width_bound(const box_node & b, const constraints & c,
+                                 const resolved_edges & e, const measure_text_fn & measure,
+                                 const length & want) {
+    if (want.is_auto()) { return std::nullopt; }
+    if (want.is_intrinsic()) { return intrinsic_border_width(b, c, e, measure, want); }
+    return want.resolve(c.available_width, b.font_size);
+}
+
+float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e,
+                     const measure_text_fn & measure) {
     // A WIDTH THE PARENT ALREADY DECIDED is used verbatim, and is not re-clamped
     // here: flex applied min/max-width inside its freeze loop, where the clamp
     // interacts with every other item on the line. Clamping a second time would
@@ -26,17 +54,15 @@ float outer_width_of(const box_node & b, const constraints & c, const resolved_e
     // subset for which it does nothing.
     if (c.forced_width >= 0) { return c.forced_width; }
     const float unclamped = b.width.is_auto() ? c.available_width - e.horizontal_margin()
-                                              : b.width.resolve(c.available_width, b.font_size);
+                            : b.width.is_intrinsic()
+                                ? intrinsic_border_width(b, c, e, measure, b.width)
+                                : b.width.resolve(c.available_width, b.font_size);
     // MAX FIRST, THEN MIN, because min wins: a box whose min-width exceeds its
     // max-width takes the min, which is what CSS 2.1 §10.4 says and the order
     // that produces it without a special case.
     float out = unclamped;
-    if (!b.max_width.is_auto()) {
-        out = std::min(out, b.max_width.resolve(c.available_width, b.font_size));
-    }
-    if (!b.min_width.is_auto()) {
-        out = std::max(out, b.min_width.resolve(c.available_width, b.font_size));
-    }
+    if (const auto hi = width_bound(b, c, e, measure, b.max_width)) { out = std::min(out, *hi); }
+    if (const auto lo = width_bound(b, c, e, measure, b.min_width)) { out = std::max(out, *lo); }
     return std::max(0.0f, out);
 }
 
@@ -62,8 +88,9 @@ float auto_margin_left(const box_node & b, const constraints & c, const resolved
     return left_auto ? remainder : e.margin_left;
 }
 
-float content_width_of(const box_node & b, const constraints & c, const resolved_edges & e) {
-    return std::max(0.0f, outer_width_of(b, c, e) - e.horizontal_inner());
+float content_width_of(const box_node & b, const constraints & c, const resolved_edges & e,
+                       const measure_text_fn & measure) {
+    return std::max(0.0f, outer_width_of(b, c, e, measure) - e.horizontal_inner());
 }
 
 intrinsic_sizes measure_box(const box_node & b, const constraints & c,
@@ -94,22 +121,38 @@ intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
     // the containing block's own width is the question being asked, so there the
     // content size stands - which is also why `.row > * { max-width: 100% }` never
     // reaches the clamp below.
-    if (!child.width.is_auto() && child.width.u != unit::percent) {
+    // A KEYWORD WIDTH IS ONE OF THE TWO SIZES BEING CONTRIBUTED: `width:
+    // max-content` contributes its max-content size as both, `min-content` its
+    // min-content size as both, and `fit-content` contributes as `auto` does.
+    const auto keyword_size = [&](const length & want) -> std::optional<float> {
+        if (want.u == unit::min_content) { return out.min_content; }
+        if (want.u == unit::max_content) { return out.max_content; }
+        return std::nullopt;
+    };
+    if (child.width.is_intrinsic()) {
+        if (const auto stated = keyword_size(child.width)) {
+            out.min_content = *stated;
+            out.max_content = *stated;
+        }
+    } else if (!child.width.is_auto() && child.width.u != unit::percent) {
         const float stated =
             std::max(0.0f, child.width.resolve(c.available_width, child.font_size));
         out.min_content = stated;
         out.max_content = stated;
     }
     // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
-    if (!child.max_width.is_auto() && child.max_width.u != unit::percent) {
-        const float hi = child.max_width.resolve(c.available_width, child.font_size);
-        out.min_content = std::min(out.min_content, hi);
-        out.max_content = std::min(out.max_content, hi);
+    const auto bound = [&](const length & want) -> std::optional<float> {
+        if (want.is_intrinsic()) { return keyword_size(want); }
+        if (want.is_auto() || want.u == unit::percent) { return std::nullopt; }
+        return want.resolve(c.available_width, child.font_size);
+    };
+    if (const auto hi = bound(child.max_width)) {
+        out.min_content = std::min(out.min_content, *hi);
+        out.max_content = std::min(out.max_content, *hi);
     }
-    if (!child.min_width.is_auto() && child.min_width.u != unit::percent) {
-        const float lo = child.min_width.resolve(c.available_width, child.font_size);
-        out.min_content = std::max(out.min_content, lo);
-        out.max_content = std::max(out.max_content, lo);
+    if (const auto lo = bound(child.min_width)) {
+        out.min_content = std::max(out.min_content, *lo);
+        out.max_content = std::max(out.max_content, *lo);
     }
     out.min_content = std::max(0.0f, out.min_content) + edges.horizontal_margin();
     out.max_content = std::max(0.0f, out.max_content) + edges.horizontal_margin();
@@ -126,12 +169,8 @@ float shrink_to_fit_width(const box_node & b, const constraints & c, const resol
     float out =
         std::max(wants.min_content, std::min(room, wants.max_content)) + e.horizontal_inner();
     // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
-    if (!b.max_width.is_auto()) {
-        out = std::min(out, b.max_width.resolve(c.available_width, b.font_size));
-    }
-    if (!b.min_width.is_auto()) {
-        out = std::max(out, b.min_width.resolve(c.available_width, b.font_size));
-    }
+    if (const auto hi = width_bound(b, c, e, measure, b.max_width)) { out = std::min(out, *hi); }
+    if (const auto lo = width_bound(b, c, e, measure, b.min_width)) { out = std::max(out, *lo); }
     return std::max(0.0f, out);
 }
 

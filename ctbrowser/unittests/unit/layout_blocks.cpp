@@ -92,6 +92,32 @@ void test_block_fills_width_and_stacks() {
     expect_near(b->bounds.y, 20, "second block stacks below the first");
 }
 
+// CSS Sizing 3 §5: `width: max-content` is as wide as the text on one line,
+// `min-content` as wide as its longest word, `fit-content` the clamp between
+// them within the container - and none of them is `auto`. The monospace
+// measure is 0.6em per character at the default 16px: "aaaa bb" is 7 * 9.6.
+void test_intrinsic_sizing_keywords() {
+    fixture f;
+    f.load(
+        "<html><body><div id=max>aaaa bb</div><div id=min>aaaa bb</div>"
+        "<div id=fit>aaaa bb</div><div id=wide>aaaa bb</div><div id=lo></div></body></html>",
+        "body { margin: 0; padding: 0; font-size: 16px } #max { width: max-content } "
+        "#min { width: min-content } #fit { width: fit-content } "
+        "#wide { width: fit-content; padding: 0 5px } #lo { min-width: max-content; width: 1px }");
+    engine eng;
+    const fragment out = eng.run(f.root, 40);
+    const fragment * max = out.find(f.find_id("max"));
+    const fragment * min = out.find(f.find_id("min"));
+    const fragment * fit = out.find(f.find_id("fit"));
+    const fragment * wide = out.find(f.find_id("wide"));
+    check(max && min && fit && wide, "the four boxes exist");
+    if (!max || !min || !fit || !wide) { return; }
+    expect_near(max->bounds.width, 7 * 9.6f, "max-content is the whole line");
+    expect_near(min->bounds.width, 4 * 9.6f, "min-content is the longest word");
+    expect_near(fit->bounds.width, 40, "fit-content stops at the available width");
+    expect_near(wide->bounds.width, 40, "...and the padding is inside that border box");
+}
+
 void test_padding_and_margin_resolve() {
     fixture f;
     f.load("<html><body><div id=outer><div id=inner></div></div></body></html>",
@@ -407,6 +433,7 @@ int main() {
     test_mixed_content_generates_anonymous_boxes();
     test_homogeneous_content_is_not_wrapped();
     test_block_fills_width_and_stacks();
+    test_intrinsic_sizing_keywords();
     test_padding_and_margin_resolve();
     test_min_and_max_height_clamp_a_block_border_box();
     test_percent_and_em_lengths();

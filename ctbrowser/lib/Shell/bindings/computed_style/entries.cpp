@@ -396,7 +396,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         const layout::length len = layout::parse_length(given);
         // `auto`, `min-content`, a percentage and anything parse_length does not
         // model are all their own computed value.
-        if (len.is_auto() || len.u == layout::unit::percent) { return collapse_keyword(given); }
+        if (len.is_auto() || len.is_intrinsic() || len.u == layout::unit::percent) {
+            return collapse_keyword(given);
+        }
         return px_text(len.resolve(0.0f, at.font_size));
     };
 
@@ -547,7 +549,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "width" || property == "height") {
             if (at.pseudo && at.has_box) {
                 const layout::length len = layout::parse_length(declared(property));
-                if (len.is_auto()) { return "auto"; }
+                if (len.is_auto() || len.is_intrinsic()) {
+                    return computed_length(declared(property));
+                }
                 return used_px_text(
                     len.resolve(property == "width" ? at.basis : at.basis_height, at.font_size));
             }
@@ -839,6 +843,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 }
             }
             const layout::length len = layout::parse_length(text);
+            // A sizing keyword on a min/max property is its own computed value
+            // (min-width: min-content); the used size it clamps to is layout's.
+            if (len.is_intrinsic()) { return std::string{text}; }
             if (len.is_auto()) {
                 // A MARGIN'S USED VALUE IS A NUMBER, and `auto` is a value only
                 // for a box no flow has placed: a centred block's `margin: 0

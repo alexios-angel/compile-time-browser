@@ -138,7 +138,9 @@ struct positioner {
         // is why `.position-absolute.top-0.start-0` is the size of its text and
         // not the size of the page.
         float width = 0;
-        if (!b.width.is_auto()) {
+        if (b.width.is_intrinsic()) {
+            width = intrinsic_border_width(b, outer, edges, measure, b.width);
+        } else if (!b.width.is_auto()) {
             width = std::max(0.0f, b.width.resolve(cb.width, b.font_size));
         } else if (left.given && right.given) {
             width = std::max(0.0f, cb.width - left.value - right.value - edges.horizontal_margin());
