@@ -6,6 +6,91 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured snapshots recovered and dense array shrink proved, 2026-09-13 UTC
+
+Resumed **7adddab2**, its saved nine-path recovery patch and **03:11:11 UTC**
+synchronization journal before starting anything new. The old WIP branch was
+already resolved. Three agents reviewed snapshot safety, traced the recorder
+boundary, and prepared the independent escape increment. This entry supersedes
+the older pending-recovery instructions below.
+
+**cecbd16c / c2036a70** land the captured Map key snapshot proof and its execution
+regressions separately. The saved test-only fingerprint correction is now tested:
+source/prepared restoration rederives with the forged report, removes it, then
+checks the original fingerprint. The recovery patch is retired; **7adddab2**
+retains its history. Existing ordered Map storage, owning vectors and nullable
+read helpers implement the output; no runtime or browser implementation was added.
+Immediate single iterator consumption, exact Array identity, confined read-only
+uses, source scope and bounded traversal remain required. Snapshot elements still
+gain no template, callback, field, return or storage authority from equality alone.
+
+The **331-step build** and focused **3/3 CTests pass in 237.28s**. The recorder
+group passes **four native snapshot programs / eight refusals / 72 typed Node/VM
+observations / eight distinguishing mutations**. Both policies/layouts, GCC/Clang,
+no-Script symbols, sanitizers/leaks and **1024 future iterations** pass. Empty and
+out-of-range reads remain Undefined; saved copies preserve String/numeric insertion
+order across replacement, deletion, reinsertion and clear.
+
+**92feee25** adds bounded original Number-literal writes to a fresh dense array's
+own `length`, reusing `ownArrayIndex`. Shrink and same-length writes preserve saved
+Number/child origins and historical cycle edges; removed entries spend the existing
+proof budget. Growth, coercing categories and computed targets remain conservative.
+The gate passes **95 rows / 29 live states / 3121 retention cutoffs** and all three
+vendor escape corpora. The snapshot rerun passes **1.18s**. All **112,001 JavaScript
+bytes / 69 old pins** remain unchanged; one pin for the existing source was added.
+Exactly one claim changes: `denseLengthChanged`, **function 210 / pc 3**, is now
+confined. Its allocation and runtime observations are unchanged. Oracle:
+**222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 25/172**. Checker: **13 evidence mutations / eight malformed controls**.
+
+Final standard gate at **92feee25**: **539/540 CTests in 1006.90s**; all
+ctcompile tests pass, including **166/166 lit cases in 690.12s** (CTest **690.19s**).
+The sole failure is the pre-existing browser `frames` test. It observes
+`0px,184px,rgb(0, 0, 0),184,0,8px` instead of the expected frame styles; the
+frame document reports zero style elements. This remains Claude's browser boundary.
+
+The required bundled clang-format **23.0.0git** retains the same **nine baseline
+files / 26 diagnostics**. Changed C++ passes; the whole check with Homebrew
+**23.1.1** passes **803 C++ / 84 Python / 33 web files**. No browser/runtime/parser
+files changed. Claude's **cf4fb0e1** test/baseline integration was reviewed before
+these gates. All **1284 frozen compiler/runtime/test inputs** match the devbox after
+the full gate and final measurements.
+
+Fresh full Bootstrap remains **19/574 native**, both policies. Exact Data and
+the original single/repeated numeric recorder probes remain **0/7**, both policies,
+with `property receiver lacks a fresh own-data object proof`.
+The three original Data/recorder sources and their pins remain unchanged in
+`native_owned_global_maps/driver_recorder.py`; the full Data source is **2522 bytes /
+SHA256 8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+
+Next native increment: independently close every outer/child Map insertion over
+String keys, including all sibling methods and future input categories, then admit
+only checked template Concat uses. Existing `Lowering/StringValues` already converts
+nullable String (including Undefined) correctly; no new string runtime or nonempty
+snapshot assumption is needed. Use the independent no-results family census, retain
+separate key roles, and recheck ownership. Direct snapshot return/storage and unsafe
+keys must remain refused.
+
+Two separate template probes (**db9730ef / e39ea887**, outer/child keys) pass **23 typed Node/VM
+observations including three distinguishing mutations**; both are **0/6 native**
+in both policies. Their default proof budget exhausts; at **1,000,000 diagnostic
+steps**, both finish with `property call lacks a current source getter proof`.
+These are measured next-boundary probes, not implemented template support. Exact
+sources and the static caller/effect audit are under `/tmp/ctcompile-next-recorder-audit/`.
+
+Then prove the original recorder's complete callable/global effects: its exact
+`console.error` closure, initialized mutable scalar globals, every callback arm,
+replacement/reentry exclusions and future calls. The current body proof stops at
+`load_global "console"`; a startup prefix report cannot authorize that callback.
+Exact Data's unguarded `.value` and mixed scalar observations still separately need
+per-invocation return identity/content evidence. Future browser APIs call public
+ctbrowser RAII subsystem APIs; its VM-context AOT ABI is not a native boundary.
+
+Evidence: `/tmp/ctcompile-snapshot-resume/` (builds, focused/full logs, generated C++,
+source preservation, frozen inputs and measurements),
+`/tmp/ctcompile-next-escape-audit/`, `/tmp/ctcompile-next-recorder-audit/`.
+No push. The complete native Bootstrap plan remains unfinished.
+
 ## Session close: dense indices landed; captured snapshots saved for recovery, 2026-09-13 UTC
 
 Stopped at the user's bedtime request. Resumed **aa7c6bdb**, its **01:30:07 UTC**
@@ -29,7 +114,7 @@ merge, a **640-step rebuild** and final fixture CTest pass (**1.16s**).
 
 **Not landed as implementation: captured Map key snapshots.** All nine changed
 paths, including the new recorder driver, are preserved in
-[the recovery patch](recovery/2026-09-13-captured-map-snapshots.patch), based on
+the recovery patch retained in **7adddab2** (now landed and retired), based on
 **8349d203**. SHA256:
 `9f368e807d4f5586dc2f492dff95906f359a7df0bd9e94ab770d7455a1fec6d8`.
 Its header records every target hash. Apply/reverse checks and byte-for-byte
