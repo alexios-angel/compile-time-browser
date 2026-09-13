@@ -140,6 +140,35 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract = std::move(*parsed);
         }
 
+        std::unique_ptr<DOMEntryAnalysis> domEntry;
+        if (hostContract && hostContract->provider == HostContract::Provider::ctbrowserDOM) {
+            const DOMEntryAnalysis source(module, *hostContract, hostMaxSteps);
+            if (!source.proved()) {
+                module.emitError() << "native DOM entry: " << source.reason();
+                return signalPassFailure();
+            }
+            // An explicit library entry may replace only its proved inert
+            // declaration wrapper. Prepare privately, discard supplied native
+            // reports, and reprove before publishing the exported function.
+            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
+            if (auto wrapper = source.wrapper()) {
+                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+            }
+            prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+            prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
+            HostContract transformed = *hostContract;
+            transformed.moduleSha256 = hostContractFingerprint(*prepared);
+            const DOMEntryAnalysis checked(*prepared, transformed, hostMaxSteps);
+            if (!checked.proved()) {
+                module.emitError() << "native DOM entry preparation: " << checked.reason();
+                return signalPassFailure();
+            }
+            module->setAttrs((*prepared)->getAttrs());
+            module.getBodyRegion().takeBody(prepared->getBodyRegion());
+            hostContract = std::move(transformed);
+            domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
+        }
+
         // Keep the default policy on the native entry, so clients do not need
         // to reconstruct it in a shell/test pipeline. Run before closure
         // lifting: reachability still sees CTJS's complete reference forms,
@@ -172,7 +201,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // parameter it became. Doing it after the solve would need a second
         // one.
         liftReport lifted;
-        if (hostContract && hostMaxSteps &&
+        if (hostContract && !domEntry && hostMaxSteps &&
             hostContract->moduleSha256 == hostContractFingerprint(module)) {
             // Local cell/unused receiver normalization needs no host assumptions.
             // It is speculative: only a complete fresh owner proof can publish it.
@@ -347,8 +376,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // census both read it, so a field a method touches is the same field
         // the literal has in both.
         auto ownedGlobals =
-            hostContract ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
-                         : nullptr;
+            hostContract && !domEntry
+                ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
+                : nullptr;
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -364,7 +394,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         mlir::DataFlowSolver solver;
         solver.load<mlir::dataflow::DeadCodeAnalysis>();
         solver.load<mlir::dataflow::SparseConstantPropagation>();
-        solver.load<TypeInference>(ownedGlobals.get());
+        solver.load<TypeInference>(ownedGlobals.get(), domEntry.get());
         if (failed(solver.initializeAndRun(module))) {
             module.emitError("the type inference did not converge");
             return signalPassFailure();
@@ -377,8 +407,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Rebuild at the final consumer. The solver did not mutate source IR,
         // and no diagnostic annotation may stand in for this live query.
         auto admittedGlobals =
-            hostContract ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
-                         : nullptr;
+            hostContract && !domEntry
+                ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
+                : nullptr;
+        auto admittedDOM =
+            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps)
+                     : nullptr;
+        if (admittedDOM && !admittedDOM->proved()) {
+            module.emitError() << "native DOM entry admission: " << admittedDOM->reason();
+            return signalPassFailure();
+        }
         if (admittedGlobals) {
             module->setAttr("ctnative.host_owner_proved",
                             mlir::BoolAttr::get(&getContext(), admittedGlobals->proved()));
@@ -391,7 +429,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             mlir::StringAttr::get(&getContext(), "unstructured control flow"));
                 continue;
             }
-            admission check{solver, {}, &groups, &ownedTableSlots, admittedGlobals.get()};
+            admission check{solver,           {}, &groups, &ownedTableSlots, admittedGlobals.get(),
+                            admittedDOM.get()};
             if (check.function(fn)) {
                 accepted.push_back(fn);
             } else {
@@ -484,6 +523,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         llvm::erase_if(accepted,
                        [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
+        if (admittedDOM && !llvm::is_contained(accepted, admittedDOM->entry())) {
+            module.emitError("native DOM entry did not pass complete native admission");
+            return signalPassFailure();
+        }
 
         lowering lower{solver, &getContext(), module};
         lower.groups = &groups;
@@ -495,7 +538,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         for (ctjs::FuncOp fn : accepted) {
             lower.names[fn.getSymName()] =
-                fn.getSymName().starts_with("_script_$") ? "main" : cIdentifier(fn.getSymName());
+                !admittedDOM && isScriptEntry(fn) ? "main" : cIdentifier(fn.getSymName());
         }
 
         // THE GLOBAL CENSUS, over the whole accepted set and BEFORE any
@@ -561,8 +604,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         if (!neverStored.empty()) {
             llvm::sort(neverStored);
-            const auto entry = llvm::find_if(
-                accepted, [](ctjs::FuncOp fn) { return fn.getSymName().starts_with("_script_$"); });
+            const auto entry = llvm::find_if(accepted, isScriptEntry);
             if (entry != accepted.end()) {
                 entry->getOperation()->setAttr(
                     "ctnative.not_native",
@@ -596,6 +638,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusIdentityFields(accepted);
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
+        if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
+            lower.censusDOM(*admittedDOM);
+        }
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }

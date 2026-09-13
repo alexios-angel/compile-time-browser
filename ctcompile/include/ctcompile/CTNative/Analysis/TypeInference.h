@@ -49,6 +49,7 @@
 namespace ctcompile::ctnative {
 
 class OwnedGlobalRoots;
+class DOMEntryAnalysis;
 
 /// PHASE 59 SLICE 2 STEP 3: THE ATTRIBUTE THAT SAYS A CARRIED BINDING'S
 /// HOISTED `undefined` CANNOT BE READ.
@@ -114,8 +115,9 @@ using TypeLattice = mlir::dataflow::Lattice<TypeValue>;
 class TypeInference : public mlir::dataflow::SparseForwardDataFlowAnalysis<TypeLattice> {
 public:
     explicit TypeInference(mlir::DataFlowSolver & solver,
-                           const OwnedGlobalRoots * ownedRoots = nullptr)
-        : SparseForwardDataFlowAnalysis(solver), ownedRoots_(ownedRoots) {}
+                           const OwnedGlobalRoots * ownedRoots = nullptr,
+                           const DOMEntryAnalysis * domEntry = nullptr)
+        : SparseForwardDataFlowAnalysis(solver), ownedRoots_(ownedRoots), domEntry_(domEntry) {}
 
     mlir::LogicalResult visitOperation(mlir::Operation * op,
                                        llvm::ArrayRef<const TypeLattice *> operands,
@@ -244,6 +246,7 @@ private:
     // A live proof supplied by the consumer, never reconstructed from a
     // diagnostic annotation. The module must remain unchanged during solving.
     const OwnedGlobalRoots * ownedRoots_;
+    const DOMEntryAnalysis * domEntry_;
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
     bool globalsAreDynamic_ = false;
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> environmentCaptures_;

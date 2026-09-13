@@ -2,6 +2,7 @@
 #include "../Admission/Admission.h"
 #include "../ObjectValues/RuntimeHelpers.h"
 #include "../StringValues/RuntimeHelpers.h"
+#include "DOMHelpers.h"
 #include "Emitter.h"
 #include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
@@ -110,6 +111,19 @@ void lowering::declareGlobals() {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
     ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
+    if (needsDOM) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("ctbrowser/dom/element.hpp"),
+                              b.getUnitAttr());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMEntryHelpers));
+        if (needsDOMToggle) {
+            ec::IncludeOp::create(b, module.getLoc(),
+                                  b.getStringAttr("ctbrowser/dom/token_list.hpp"), b.getUnitAttr());
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMToggleHelpers));
+        }
+        if (needsDOMAttributes) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
+        }
+    }
     if (!ownedGlobals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kOwnedGlobalHelpers));

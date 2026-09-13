@@ -75,6 +75,16 @@ def CTNative_BoxedType : CTNative_Type<"Boxed", "boxed"> {
 // The scalars
 //===----------------------------------------------------------------------===//
 
+def CTNative_DOMElementType : CTNative_Type<"DOMElement", "dom_element"> {
+  let summary = "A borrowed ctbrowser document and element node handle";
+  let description = [{
+    Introduced only by a live, fingerprint-bound native DOM entry proof.
+    The document owns the node and outlives the call; identity includes both
+    the document address and node_id. This is neither an owning JavaScript
+    object nor a numeric node ID. Retention and borrowed results are refused.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{

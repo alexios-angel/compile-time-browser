@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../LoweringSupport.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative {
 class OwnedGlobalRoots;
@@ -48,6 +49,15 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, unsigned> ownedGlobalOperations;
     void censusOwnedGlobals(const OwnedGlobalRoots & roots, llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceOwnedGlobal(mlir::Operation * operation);
+    // Frozen emission plans copied only after complete live DOM admission.
+    llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
+    llvm::DenseSet<mlir::Operation *> domReads;
+    llvm::DenseSet<mlir::Value> domParameters;
+    bool needsDOM = false;
+    bool needsDOMToggle = false;
+    bool needsDOMAttributes = false;
+    void censusDOM(const DOMEntryAnalysis & entry);
+    bool replaceDOM(mlir::Operation * operation);
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
     // any is lowered, so a call lowered before its callee already names the
     // callee's new symbol and no symbol use is ever rewritten in place. A

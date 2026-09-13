@@ -15,11 +15,23 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() && call->second.kind == HostDOMMethod::setAttribute) {
+            // The proof requires this result to be unused, and the effect is
+            // emitted as a void call. This placeholder never reaches C++.
+            v.setType(mlir::Float64Type::get(context));
+            return;
+        }
         needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
         needsBooleanString |= carrierOf(typeOf(v)) == carrier::booleanString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
+        if (domReads.contains(v.getDefiningOp())) {
+            // Only a checked receiver/callee path uses this erased property.
+            v.setType(mlir::Float64Type::get(context));
+            return;
+        }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);
             return;
