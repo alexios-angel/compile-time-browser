@@ -810,9 +810,57 @@ void install_destructuring_iteration(context & cx) {
     cx.define_native(std::string{yield_delegate_open_name}, [](context & c, std::span<value> a) {
         const value source = a.empty() ? value::undefined() : a[0];
         const bool async = a.size() > 1 && context::truthy(a[1]);
-        const value iterator =
-            async ? c.call(c.global(std::string{async_iterator_name}), {&source, 1})
-                  : c.get_iterator(source);
+        value iterator = value::undefined();
+        if (async) {
+            // 7.4.3 GetIterator(obj, async): GetMethod(@@asyncIterator), the
+            // sync method only when that is absent, and a method's result
+            // that is not an object is the TypeError - before any `next()`.
+            if (source.is_nullish()) {
+                c.throw_error("TypeError", "the value is not async iterable");
+                return value::undefined();
+            }
+            const value method = c.lookup_property(source, "@@asyncIterator");
+            if (c.throw_pending()) { return value::undefined(); }
+            if (!method.is_nullish()) {
+                if (!method.is_callable()) {
+                    c.throw_error("TypeError", "[Symbol.asyncIterator] is not a function");
+                    return value::undefined();
+                }
+                iterator = c.call(method, {}, source);
+                if (c.throw_pending()) { return value::undefined(); }
+                if (!iterator.is_object()) {
+                    c.throw_error("TypeError",
+                                  "Result of the Symbol.asyncIterator method is not an object");
+                    return value::undefined();
+                }
+            } else {
+                const value sync = c.lookup_property(source, "@@iterator");
+                if (c.throw_pending()) { return value::undefined(); }
+                if (!sync.is_callable()) {
+                    c.throw_error("TypeError", "the value is not async iterable");
+                    return value::undefined();
+                }
+                const value inner = c.call(sync, {}, source);
+                if (c.throw_pending()) { return value::undefined(); }
+                if (!inner.is_object()) {
+                    c.throw_error("TypeError",
+                                  "Result of the Symbol.iterator method is not an object");
+                    return value::undefined();
+                }
+                // CreateAsyncFromSyncIterator (27.1.6.1), through the shared
+                // native: it is handed an iterable whose @@iterator answers
+                // the sync iterator already made.
+                auto * iterable = detail::new_table(c);
+                auto * answer = c.allocate<native_object>(
+                    "[Symbol.iterator]", [inner](context &, std::span<value>) { return inner; });
+                answer->retained.push_back(inner);
+                iterable->set("@@iterator", value::object(answer));
+                const value wrapped = value::object(iterable);
+                iterator = c.call(c.global(std::string{async_iterator_name}), {&wrapped, 1});
+            }
+        } else {
+            iterator = c.get_iterator(source);
+        }
         auto * record = detail::new_table(c);
         record->set("iterator", iterator);
         record->set("next", iterator.is_object() ? c.lookup_property(iterator, "next")

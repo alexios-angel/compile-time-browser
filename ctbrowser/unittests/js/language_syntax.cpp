@@ -170,6 +170,21 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- yield* in an async generator: GetIterator(obj, async) refuses a
+    // non-object result before any next() (7.4.3)
+    answers("var r = 'none'; var obj = { [Symbol.asyncIterator]() { return true; } };"
+            " async function* g() { yield* obj; } g().next().catch(e => { r = e.name; });"
+            " await null; await null; return r;",
+            "TypeError");
+    answers("var r = 'none'; var obj = { [Symbol.iterator]() { return 1; } };"
+            " async function* g() { yield* obj; } g().next().catch(e => { r = e.name; });"
+            " await null; await null; return r;",
+            "TypeError");
+    answers("var out = []; async function* g() { yield* [1, 2]; } var it = g();"
+            " it.next().then(v => out.push(v.value)); await null; await null; await null;"
+            " return out.join();",
+            "1");
+
     // --- a direct eval in a parameter expression may not var-declare that
     // scope's names (19.2.1.3 step 3.d)
     answers("var r = 'none'; function f(p = eval('var arguments')) {} try { f(); }"
