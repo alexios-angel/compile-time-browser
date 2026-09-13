@@ -159,13 +159,31 @@ class Plan:
     timeout: float = TIMEOUT_NORMAL
     skip: str | None = None  # a reason, naming a feature - never a number
     wrapper: Path | None = None  # a generated .any.html to delete afterwards
+    # `?file=adoption01`: a `<meta name=variant>` value, handed to ctdrive as
+    # the page's query string. WPT names such a test `path?query`, and so does
+    # `rel` here, so each variant is its own line in the expectations.
+    query: str = ""
 
 
-def plan_for(path: Path, wpt: Path) -> Plan:
+VARIANT_RE = re.compile(rb'<meta\s+name="?variant"?\s+content="?([^">]*)"?', re.IGNORECASE)
+
+
+def with_variants(plan: Plan, variants) -> list[Plan]:
+    """One plan per variant - WPT's manifest does the same - or the plan itself."""
+    if not variants or plan.skip:
+        return [plan]
+    return [
+        dataclasses.replace(plan, rel=plan.rel + query, query=query)
+        for query in variants
+        if query.startswith("?") or query.startswith("#")
+    ] or [plan]
+
+
+def plan_for(path: Path, wpt: Path) -> list[Plan]:
     rel = str(path.relative_to(wpt))
     for marker, why in SERVER_SUFFIXES.items():
         if marker in path.name:
-            return Plan(rel, skip=why)
+            return [Plan(rel, skip=why)]
     head = read_head(path)
 
     if path.name.endswith((".any.js", ".window.js")):
@@ -177,9 +195,7 @@ def plan_for(path: Path, wpt: Path) -> Plan:
         # WPT would generate for it is not one we can open. Named as the missing
         # feature, which is what a skip has to be.
         if scopes and "window" not in scopes and "default" not in scopes:
-            return Plan(rel, skip=f"global={scopes}: no Worker/ServiceWorker in this engine")
-        if meta.get("variant"):
-            return Plan(rel, skip="variant: the driver opens a file and has no query string")
+            return [Plan(rel, skip=f"global={scopes}: no Worker/ServiceWorker in this engine")]
         # THE WRAPPER WPT'S MANIFEST WOULD HAVE GENERATED. A .any.js test has no
         # HTML on disk at all - wptrunner synthesises `<test>.any.html` at
         # request time - so the runner has to build the same page, beside the
@@ -196,26 +212,36 @@ def plan_for(path: Path, wpt: Path) -> Plan:
             "<div id=log></div>\n" + extra + f'<script src="{path.name}"></script>\n',
             encoding="utf-8",
         )
-        return Plan(
-            rel,
-            page=wrapper,
-            timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL,
-            wrapper=wrapper,
+        return with_variants(
+            Plan(
+                rel,
+                page=wrapper,
+                timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL,
+                wrapper=wrapper,
+            ),
+            meta.get("variant", []),
         )
 
     # A REFERENCE TEST IS NOT A TESTHARNESS TEST. It is a render comparison, and
     # this runner has no reference rendering to compare against - the render
     # goldens are a different instrument (tools/check/check-render.cmake).
     if b"rel=match" in head or b'rel="match"' in head or b"rel=mismatch" in head:
-        return Plan(rel, skip="reftest: needs a reference render, not a harness result")
+        return [Plan(rel, skip="reftest: needs a reference render, not a harness result")]
     if b"testharness.js" not in head:
-        return Plan(rel, skip="not a testharness test")
-    if b'name="variant"' in head or b"name=variant" in head:
-        return Plan(rel, skip="variant: the driver opens a file and has no query string")
+        return [Plan(rel, skip="not a testharness test")]
     if b"testdriver.js" in head:
-        return Plan(rel, skip="testdriver: needs WebDriver input injection")
+        return [Plan(rel, skip="testdriver: needs WebDriver input injection")]
     long_timeout = b'name="timeout" content="long"' in head or b"name=timeout content=long" in head
-    return Plan(rel, page=path, timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL)
+    # THE VARIANTS, from the whole file rather than its head: html5lib_write.html
+    # lists fifty `<meta name=variant>` lines, one .dat fixture each, and the
+    # 8 KB head holds only the first thirty.
+    variants = [
+        m.decode("utf-8", "replace")
+        for m in VARIANT_RE.findall(path.read_bytes() if b"variant" in head else b"")
+    ]
+    return with_variants(
+        Plan(rel, page=path, timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL), variants
+    )
 
 
 # --- driving one page -------------------------------------------------------
@@ -318,6 +344,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
             str(plan.page),
             "--port",
             "0",
+            *(["--query", plan.query] if plan.query else []),
         ],
         cwd=str(plan.page.parent),
         env=env,
@@ -780,7 +807,7 @@ def main():
     if args.limit:
         candidates = candidates[: args.limit]
 
-    plans = [plan_for(path, wpt) for path in candidates]
+    plans = [plan for path in candidates for plan in plan_for(path, wpt)]
     runnable = [p for p in plans if p.skip is None]
     directories = [where for where, _ in pairs]
     print(

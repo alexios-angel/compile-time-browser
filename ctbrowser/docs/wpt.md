@@ -152,10 +152,10 @@ touched, and the whole is 35%. By what stands in front of the most tests:
   server (`stash.py`) and can never finish here; the next row of this file
   drops that directory from the checkout. The html5lib tree-construction
   fixtures (`parsing/html5lib_write.html` and its siblings, one `.dat` per
-  `<meta name=variant>`) are SKIPPED by the runner, which opens a file and
-  has no query string to hand a variant - so the DOM's own tree builder is
-  still not measured by this corpus. That is an instrument gap, named here so
-  it is not read as a parser at 22 of 221.
+  `<meta name=variant>`) were SKIPPED by the runner at this row, which opened
+  a file and had no query string to hand a variant - so the DOM's own tree
+  builder was not measured here. The runner runs variants since `ctdrive
+  --query` (the row above this one is the first with them).
 - **`html/webappapis`** 47 of 309 (52 TIMEOUTs), **`html/semantics/forms`**
   58 of 331, **`dom/ranges`** 16 of 63 (9,294 failing subtests: `Range`
   mutations, `extractContents`/`cloneContents`/`deleteContents`),
@@ -1151,7 +1151,7 @@ The counts are in the baseline table above; the reasons are these and only these
 | `reftest: needs a reference render, not a harness result` | `<link rel=match>`. A different instrument — `tools/check/check-render.cmake` |
 | `not a testharness test` | the file never loads `testharness.js`; usually a fixture or a helper page |
 | `testdriver: needs WebDriver input injection` | `test_driver.click()` and friends. `ctdrive` can synthesise input, but not through testdriver's protocol |
-| `variant: the driver opens a file and has no query string` | `<meta name="variant" content="?1-10">`. The driver takes a path, not a URL |
+| ~~`variant: the driver opens a file and has no query string`~~ | gone on 2026-09-13: a `<meta name="variant" content="?file=x">` is one run per variant, `ctdrive --query` giving the page its `location.search`, keyed `path?query` in the expectations as WPT's manifest keys it |
 | `global=…: no Worker/ServiceWorker in this engine` | a `.any.js` whose declared scopes exclude `window` |
 | `Worker:` / `SharedWorker:` / `ServiceWorker: not implemented` | the `.worker.` / `.sharedworker.` / `.serviceworker.` filename spellings |
 | `https: needs a TLS origin` / `h2: needs an HTTP/2 server` | WPT encodes its server requirements in the filename, and there is no server here |
