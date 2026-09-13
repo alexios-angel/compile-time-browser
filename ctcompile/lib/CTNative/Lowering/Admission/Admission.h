@@ -5,6 +5,7 @@
 namespace ctcompile::ctnative {
 class OwnedMethodTableSlots;
 class OwnedGlobalRoots;
+class DOMEntryAnalysis;
 } // namespace ctcompile::ctnative
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -18,6 +19,7 @@ struct admission {
     const receiverGroups * groups = nullptr;
     const OwnedMethodTableSlots * ownedTableSlots = nullptr;
     const OwnedGlobalRoots * ownedGlobals = nullptr;
+    const DOMEntryAnalysis * domEntry = nullptr;
     // The carrier every `return` in the function agrees on; `none` until the
     // first return is seen. A function with no return at all returns NaN -
     // undefined's carrier - which lower() picks when this stays `none`.

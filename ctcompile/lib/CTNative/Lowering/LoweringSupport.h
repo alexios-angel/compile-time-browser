@@ -61,6 +61,7 @@ enum class carrier {
     methodTable,
     objectIdentity,
     objectValue,
+    domElement,
     structure,
     vector,
     stringVector
@@ -71,6 +72,7 @@ inline constexpr llvm::StringLiteral kBooleanStringType = "std::variant<bool, st
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
+inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
 bool isScalarCarrier(carrier value);
 bool isNullableCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
@@ -111,6 +113,7 @@ std::string cIdentifier(llvm::StringRef symbol);
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
 std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
+bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;

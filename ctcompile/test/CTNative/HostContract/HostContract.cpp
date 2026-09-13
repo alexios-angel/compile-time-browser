@@ -12,6 +12,184 @@ using namespace ctcompile::test::host_contract;
 
 namespace {
 
+void checkDOMEntry(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    constexpr const char * source = R"MLIR(
+module {
+  ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 4
+    %u = ctjs.constant #ctjs.undefined
+    %function = ctjs.create_closure %callee[1] this %this
+    ctjs.root %function in %frame
+    ctjs.store_global "toggle", %function
+    ctjs.frame_exit %frame
+    ctjs.return %u
+  }
+  ctjs.func private @toggle$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 20
+    ctjs.root %element in %frame
+    %listKey = ctjs.constant #ctjs.string<"classList">
+    %list = ctjs.get_property %element[%listKey]
+    %toggleKey = ctjs.constant #ctjs.string<"toggle">
+    %toggle = ctjs.get_property %list[%toggleKey]
+    %active = ctjs.constant #ctjs.string<"active">
+    %state = ctjs.call %toggle(%list, %active)
+    ctjs.root %state in %frame
+    %attributeKey = ctjs.constant #ctjs.string<"setAttribute">
+    %attribute = ctjs.get_property %element[%attributeKey]
+    %name = ctjs.constant #ctjs.string<"aria-pressed">
+    %unused = ctjs.call %attribute(%element, %name, %state)
+    ctjs.root %unused in %frame
+    ctjs.frame_exit %frame
+    ctjs.return %state
+  }
+}
+)MLIR";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(module), "typed DOM action fixture parses");
+    if (!module) { return; }
+    HostContract contract;
+    contract.provider = HostContract::Provider::ctbrowserDOM;
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    contract.entry = "toggle$1";
+    contract.elementParameters = {0};
+    const std::string json = "{\"version\":1,\"provider\":\"ctbrowser-dom-v1\","
+                             "\"module_sha256\":\"" +
+                             contract.moduleSha256 +
+                             "\",\"entry\":\"toggle$1\",\"element_parameters\":[0]}";
+    auto parsed = parseHostContract(json);
+    check(parsed && parsed->provider == HostContract::Provider::ctbrowserDOM &&
+              parsed->elementParameters == contract.elementParameters && parsed->roots.empty(),
+          "DOM manifest declares only the selected function and its typed parameter positions");
+    if (!parsed) { llvm::consumeError(parsed.takeError()); }
+    for (llvm::StringRef change :
+         {"[]", "[1]", "[0,0]", "[0,-1]", "[0,1.5]", "[4294967296]", "[\"0\"]", "null"}) {
+        auto invalid = parseHostContract(replaced(json, "[0]", change));
+        check(!invalid, "DOM parser refuses ambiguous, incomplete or untyped parameter indices");
+        if (!invalid) { llvm::consumeError(invalid.takeError()); }
+    }
+    for (llvm::StringRef extra : {"\"roots\":[]", "\"observations\":[]", "\"entry_receiver\":{}",
+                                  "\"effects\":[]", "\"cpp_type\":\"script::value\""}) {
+        auto invalid = parseHostContract(
+            replaced(json, "\"element_parameters\"", (extra + ",\"element_parameters\"").str()));
+        check(!invalid, "DOM parser cannot import closed-source assumptions or C++ effect claims");
+        if (!invalid) { llvm::consumeError(invalid.takeError()); }
+    }
+    auto wrongProvider = parseHostContract(replaced(json, "ctbrowser-dom-v1", "closed-source-v1"));
+    check(!wrongProvider, "closed-source JSON does not accept DOM entry parameters");
+    if (!wrongProvider) { llvm::consumeError(wrongProvider.takeError()); }
+
+    ctjs::CallOp toggle, attribute;
+    ctjs::GetPropertyOp tokens, method;
+    module->walk([&](ctjs::GetPropertyOp read) {
+        if (ctjs::constantKey(read.getKey()) == "classList") { tokens = read; }
+        if (ctjs::constantKey(read.getKey()) == "toggle") { method = read; }
+    });
+    module->walk([&](ctjs::CallOp call) {
+        if (call.getCallee() == method.getResult()) {
+            toggle = call;
+        } else {
+            attribute = call;
+        }
+    });
+    auto function = module->lookupSymbol<ctjs::FuncOp>(contract.entry);
+    auto element = function.getBody().front().getArgument(3);
+    DOMEntryAnalysis proof(*module, contract);
+    check(proof.proved() && proof.entry() == function && proof.wrapper() &&
+              proof.parameters().size() == 1 && proof.isElement(element) &&
+              proof.isTokenList(tokens.getResult()) &&
+              proof.method(method) == HostDOMMethod::toggleClass && proof.call(toggle) &&
+              proof.call(toggle)->element == element && proof.call(attribute) &&
+              proof.call(attribute)->kind == HostDOMMethod::setAttribute,
+          "live DOM proof retains the actual element, token view, method and call edges");
+    if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+    check(hostContractFingerprint(*module) == contract.moduleSha256,
+          "DOM proof leaves source declarations, effects and fingerprint unchanged");
+    check(!HostContractAnalysis(*module, contract).proved(),
+          "DOM provider cannot impersonate a closed-source host proof");
+    auto mixed = contract;
+    mixed.initialIntrinsics = {"Map"};
+    check(!DOMEntryAnalysis(*module, mixed).proved(),
+          "typed C++ input cannot mix DOM and closed-source environment promises");
+    mixed = contract;
+    mixed.elementParameters = {1};
+    check(!DOMEntryAnalysis(*module, mixed).proved(),
+          "typed C++ input cannot bypass the complete ordered parameter census");
+    if (proof.proved()) {
+        check(DOMEntryAnalysis(*module, contract, proof.steps()).proved(),
+              "the exact completed DOM discovery budget succeeds");
+        for (unsigned budget : {0u, proof.steps() - 1}) {
+            DOMEntryAnalysis limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && !limited.entry() &&
+                      limited.parameters().empty() && !limited.isElement(element) &&
+                      !limited.call(toggle) && !limited.method(method),
+                  "exhausted DOM discovery withholds all callable and handle evidence");
+        }
+    }
+    mlir::Builder builder(&context);
+    (*module)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+    DOMEntryAnalysis repeated(*module, contract);
+    check(repeated.proved(), "forged printed DOM proof attributes cannot alter live discovery");
+    method->setAttr("ctnative.dom_method", builder.getStringAttr("toggleClass"));
+    function->setAttr("ctnative.receiver", builder.getUnitAttr());
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    mlir::Value original = toggle.getReceiver();
+    toggle->setOperand(1, element);
+    DOMEntryAnalysis stale(*module, contract);
+    check(!stale.proved() && stale.reason().contains("fingerprint") && !stale.call(toggle),
+          "stale DOM manifest refuses even when both receivers are supported browser values");
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    DOMEntryAnalysis changed(*module, contract);
+    check(!changed.proved() && changed.reason().contains("receiver") && !changed.entry() &&
+              !changed.isElement(element) && !changed.method(method),
+          "fresh fingerprint cannot detach a DOM method from its actual receiver");
+    toggle->setOperand(1, original);
+    original = toggle.getArgs()[0];
+    toggle->setOperand(2, attribute.getArgs()[0]);
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    check(!DOMEntryAnalysis(*module, contract).proved(),
+          "DOM proof rejects a future SSA definition even with a matching fingerprint");
+    toggle->setOperand(2, original);
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    check(DOMEntryAnalysis(*module, contract).proved(),
+          "restoring exact source receiver and operand reestablishes DOM evidence");
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module->clone());
+    contract.moduleSha256 = hostContractFingerprint(*copy);
+    DOMEntryAnalysis cloned(*copy, contract);
+    check(cloned.proved() && !cloned.isElement(element) && !cloned.call(toggle),
+          "cloned DOM evidence names only handles and calls in its own current module");
+    if (cloned.proved()) {
+        cloned.wrapper().erase();
+        contract.moduleSha256 = hostContractFingerprint(*copy);
+        check(DOMEntryAnalysis(*copy, contract).proved(),
+              "the proved standalone entry survives removal of its inert declaration wrapper");
+        (*copy)->setAttr("ctjs.skipped", builder.getArrayAttr({builder.getDictionaryAttr({})}));
+        contract.moduleSha256 = hostContractFingerprint(*copy);
+        DOMEntryAnalysis omitted(*copy, contract);
+        check(!omitted.proved() && omitted.reason().contains("unimported") && !omitted.entry(),
+              "an omitted source wrapper cannot masquerade as a complete standalone DOM entry");
+    }
+    for (llvm::StringRef returned : {"%this", "%new", "%callee", "%element", "%list"}) {
+        auto changed = mlir::parseSourceString<mlir::ModuleOp>(
+            replaced(source, "ctjs.return %state", ("ctjs.return " + returned).str()), &context);
+        check(static_cast<bool>(changed), "observed implicit/borrowed DOM return fixture parses");
+        if (!changed) { continue; }
+        contract.moduleSha256 = hostContractFingerprint(*changed);
+        check(!DOMEntryAnalysis(*changed, contract).proved(),
+              "implicit receiver, new.target, closure and borrowed return stay unproved");
+    }
+    auto promise = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(source, "ctjs.return %state",
+                 "%promise = ctjs.wrap_promise %state\n    ctjs.return %promise"),
+        &context);
+    check(static_cast<bool>(promise), "async DOM completion fixture parses");
+    if (promise) {
+        contract.moduleSha256 = hostContractFingerprint(*promise);
+        check(!DOMEntryAnalysis(*promise, contract).proved(),
+              "Promise completion cannot become a synchronous Boolean DOM entry");
+    }
+}
+
 void checkCallables(mlir::MLIRContext & context) {
     auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
     check(static_cast<bool>(module), "uncaptured exported getter fixture parses");
@@ -559,6 +737,7 @@ int main() {
           "a missing declared output root refuses the contract");
     checkCallables(context);
     checkCapturedCallables(context);
+    checkDOMEntry(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
 }

@@ -1,0 +1,132 @@
+#include <ctbrowser/dom/element.hpp>
+
+#include "check.hpp"
+#include <array>
+#include <string_view>
+
+using namespace ctbrowser;
+
+namespace {
+
+void test_borrowed_identity() {
+    atom_table atoms;
+    atom_table other_atoms;
+    document doc{atoms};
+    document other{other_atoms};
+    const node_id node = doc.create_element(atoms.intern("button"));
+    const node_id other_node = other.create_element(other_atoms.intern("button"));
+    CHECK(node == other_node);
+    const element_ref element{&doc, node};
+    const element_ref same{&doc, node};
+    const element_ref different_document{&other, other_node};
+    const element_ref different_node{&doc, doc.create_element(atoms.intern("button"))};
+    CHECK(element == same);
+    CHECK(element != different_document);
+    CHECK(element != different_node);
+    CHECK(validate_element(element).has_value());
+    CHECK(validate_element(different_document).has_value());
+    CHECK(doc.append_child(doc.root(), node).has_value());
+    CHECK(doc.remove_child(node).has_value());
+    CHECK(element == same);
+    CHECK(validate_element(element).has_value());
+
+    const node_id stale{node.slot, node.generation + 1u};
+    for (const element_ref invalid :
+         {element_ref{}, element_ref{&doc, {}}, element_ref{&doc, stale}}) {
+        const auto result = validate_element(invalid);
+        CHECK(!result && result.error() == dom_error::no_such_node);
+    }
+    for (const node_id non_element :
+         {doc.create_text("text"), doc.create_processing_instruction(atoms.intern("pi"), "")}) {
+        const auto result = validate_element(element_ref{&doc, non_element});
+        CHECK(!result && result.error() == dom_error::not_an_element);
+    }
+}
+
+void test_attribute_names_and_writes() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id element = doc.create_element(atoms.intern("button"));
+    const atom pressed = atoms.intern("aria-pressed");
+    doc.log_writes(true);
+    CHECK(set_element_attribute(doc, element, "ARIA-Pressed", "false").has_value());
+    CHECK_EQ(doc.read().attribute_value(element, pressed), "false");
+    CHECK(!doc.read().has_attribute(element, atoms.intern("ARIA-Pressed")));
+    (void)doc.take_writes();
+    const auto before = doc.version();
+    CHECK(set_element_attribute(doc, element, "ARIA-Pressed", "false").has_value());
+    CHECK_EQ(doc.version(), before + 1);
+    const auto writes = doc.take_writes();
+    CHECK_EQ(writes.size(), 1u);
+    if (!writes.empty()) {
+        CHECK(writes.front().node == element && writes.front().name == pressed);
+    }
+
+    for (const std::string_view name :
+         {":", "a:0", "invalid^Name", "\\", "'", "\"", "0", "~", "a\vb", "a\302\240b"}) {
+        CHECK(is_valid_attribute_name(name));
+        CHECK(set_element_attribute(doc, element, name, "<&>").has_value());
+        CHECK_EQ(doc.read().attribute_value(element, attribute_key(doc, element, name)), "<&>");
+    }
+    (void)doc.take_writes();
+    const auto version = doc.version();
+    const auto interned = atoms.size();
+    constexpr std::array invalid_names = {std::string_view{},       std::string_view{"a\0b", 3},
+                                          std::string_view{"a\tb"}, std::string_view{"a\nb"},
+                                          std::string_view{"a\fb"}, std::string_view{"a\rb"},
+                                          std::string_view{"a b"},  std::string_view{"a/b"},
+                                          std::string_view{"a=b"},  std::string_view{"a>b"}};
+    for (const std::string_view name : invalid_names) {
+        CHECK(!is_valid_attribute_name(name));
+        const auto result = set_element_attribute(doc, element, name, "changed");
+        CHECK(!result && result.error() == dom_error::invalid_attribute_name);
+    }
+    const auto priority = set_element_attribute(doc, {}, "", "changed");
+    CHECK(!priority && priority.error() == dom_error::invalid_attribute_name);
+    CHECK_EQ(doc.version(), version);
+    CHECK_EQ(atoms.size(), interned);
+    CHECK(doc.take_writes().empty());
+    const auto missing = set_element_attribute(doc, {}, "valid", "changed");
+    CHECK(!missing && missing.error() == dom_error::no_such_node);
+    const auto text = set_element_attribute(doc, doc.create_text("text"), "valid", "changed");
+    CHECK(!text && text.error() == dom_error::not_an_element);
+}
+
+void test_case_and_namespace() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id svg = doc.create_element(atoms.intern("svg"), node_ns::svg);
+    const atom view_box = atoms.intern("viewBox");
+    const atom folded = atoms.intern("viewbox");
+    CHECK(set_element_attribute(doc, svg, "viewBox", "0 0 4 3").has_value());
+    CHECK_EQ(doc.read().attribute_value(svg, view_box), "0 0 4 3");
+    CHECK(!doc.read().has_attribute(svg, folded));
+
+    document xml{atoms};
+    xml.set_xml(true);
+    const node_id html_in_xml = xml.create_element(atoms.intern("div"));
+    CHECK(set_element_attribute(xml, html_in_xml, "viewBox", "case preserved").has_value());
+    CHECK_EQ(xml.read().attribute_value(html_in_xml, view_box), "case preserved");
+    CHECK(!xml.read().has_attribute(html_in_xml, folded));
+
+    const node_id element = doc.create_element(atoms.intern("div"));
+    const atom name = atoms.intern("p:attr");
+    CHECK(doc.set_attribute_ns(element, atoms.intern("urn:first"), name, "one").has_value());
+    CHECK(doc.set_attribute_ns(element, atoms.intern("urn:second"), name, "two").has_value());
+    CHECK(set_element_attribute(doc, element, "P:ATTR", "changed").has_value());
+    const auto txn = doc.read();
+    CHECK_EQ(txn.attributes(element).size(), 2u);
+    const auto * first = txn.find_attribute_ns(element, "urn:first", "attr");
+    const auto * second = txn.find_attribute_ns(element, "urn:second", "attr");
+    CHECK(first != nullptr && first->name == name && first->value == "changed");
+    CHECK(second != nullptr && second->name == name && second->value == "two");
+}
+
+} // namespace
+
+int main() {
+    test_borrowed_identity();
+    test_attribute_names_and_writes();
+    test_case_and_namespace();
+    REPORT("dom_element");
+}

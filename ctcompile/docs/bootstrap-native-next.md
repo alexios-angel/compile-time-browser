@@ -5,6 +5,13 @@ Surveyed on 2026-09-13 at `a4458ae1`; shared DOM token extraction landed as
 **5.3.8**, **133,701 bytes**, SHA256
 `5b29f1692a632853edc37b45bc1deedd595a777c9b234e8262ccd74ebfcf3d65`.
 
+The subsequent [typed DOM entry](native-dom-entry.md) connects source functions
+to real document/node handles and the shared token/attribute APIs. Its separate
+action gate covers synchronous borrowed parameters, identity, mutation and errors.
+Retained DOM-backed Data keys, original Button receivers/construction and full
+bundle initialization remain the next boundaries; the survey below is not a
+native Bootstrap completion claim.
+
 ## What is measured
 
 | Gate | What it establishes | What remains outside it |
@@ -34,7 +41,12 @@ show only each function's first failure; fixing one exposes its downstream failu
 
 ## The next browser path
 
-1. **Give the compiler a typed browser entry and real document/node values.**
+1. **Extend the typed browser entry to retained DOM-backed Data keys.**
+   Synchronous borrowed element entry and direct token/attribute calls now exist
+   through the `ctbrowser-dom-v1` provider. It cannot retain handles or combine its
+   contract with the existing source-owned Data provider. The next proof must
+   establish that each owning document outlives the stored keys and every future
+   Data invocation, using ordinary C++ ownership.
    Reuse `ctbrowser::document` and `node_id` from the public DOM API. Bind their
    identity, ownership and permitted calls through the existing HostContract,
    inference/admission and emission machinery. A host declaration must prove which

@@ -41,8 +41,17 @@ void lowering::applyDeclarativeRules(ctjs::FuncOp fn) {
 }
 
 void lowering::lower(ctjs::FuncOp fn) {
-    const bool isEntry = fn.getSymName().starts_with("_script_$");
+    const bool isEntry = !needsDOM && isScriptEntry(fn);
     mlir::Block & entry = fn.getBody().front();
+    if (needsDOM) {
+        // The complete entry proof has no collector or retained values. Drop
+        // bookkeeping before choosing carriers so dead undefined placeholders
+        // cannot pull a scalar value model into an ordinary DOM action.
+        fn.walk([](ctjs::RootOp root) { root.erase(); });
+        fn.walk([](ctjs::ConstantOp constant) {
+            if (constant.getResult().use_empty()) { constant.erase(); }
+        });
+    }
     applyDeclarativeRules(fn);
     retype(fn);
     convertBoundaries(fn);
@@ -116,6 +125,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     // constant whose only user was another dead constant goes too.
     llvm::SmallVector<mlir::Operation *> dead;
     made.getBody().walk([&](mlir::Operation * o) {
+        if (domReads.contains(o)) {
+            dead.push_back(o);
+            return;
+        }
         if (o->hasAttr(kNativeStoredRead)) {
             dead.push_back(o);
             return;
@@ -171,6 +184,11 @@ void lowering::lower(ctjs::FuncOp fn) {
         for (unsigned i = 0; i < body.getNumArguments(); ++i) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
+            if (domParameters.contains(arg)) {
+                callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
+                                           at.getStringAttr("ctnative::require_element"),
+                                           mlir::ValueRange{arg});
+            }
             auto suppression = callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
                                                           at.getStringAttr("static_cast<void>"),
                                                           mlir::ValueRange{arg});

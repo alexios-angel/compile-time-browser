@@ -1,5 +1,6 @@
 // Admission/Functions.cpp - native lowering implementation.
 #include "Admission.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -21,6 +22,7 @@ bool admission::function(ctjs::FuncOp fn) {
     // native carrier and must be unused.
     for (unsigned i = carriesReceiver ? 1 : 0; i < 3 && i < entry.getNumArguments(); ++i) {
         for (mlir::Operation * user : entry.getArgument(i).getUsers()) {
+            if (domEntry && domEntry->entry() == fn && llvm::isa<ctjs::RootOp>(user)) { continue; }
             // A closure that lowers to nothing does not READ these: a
             // declaration's pair is erased with its store, and a LIFTED
             // one's `$enclosing_closure` and `$enclosing_this` operands go
@@ -119,6 +121,11 @@ bool admission::function(ctjs::FuncOp fn) {
         // neither has a carrier and neither needs one.
         if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
         if (isNativeMapBookkeeping(o)) { return; }
+        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
+            read && domEntry &&
+            (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
+            return;
+        }
         if (o->getName().getStringRef() == "ub.poison") { return; }
         if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
             return;

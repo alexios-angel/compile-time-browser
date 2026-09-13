@@ -46,10 +46,11 @@
 namespace ctbrowser {
 
 enum class dom_error : std::uint8_t {
-    no_such_node,   // the handle is stale or was never valid
-    not_an_element, // attributes and children need an element
-    would_cycle,    // reparenting a node beneath its own descendant
-    is_root,        // the root has no parent to detach from
+    no_such_node,           // the handle is stale or was never valid
+    not_an_element,         // attributes and children need an element
+    would_cycle,            // reparenting a node beneath its own descendant
+    is_root,                // the root has no parent to detach from
+    invalid_attribute_name, // the qualified name cannot round-trip through HTML
 };
 
 class document;

@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ctcompile::ctnative {
@@ -22,8 +23,18 @@ struct HostRootRequest {
 // ordinary own global bindings and unmodified intrinsic prototypes; all
 // subsequent source mutations/calls still require the analysis below.
 struct HostContract {
+    enum class Provider {
+        closedSource,
+        ctbrowserDOM
+    };
+    Provider provider = Provider::closedSource;
     std::string moduleSha256;
     std::string entry;
+    // ctbrowser-dom-v1 invokes one ordinary function with borrowed elements.
+    // Indices name explicit JS parameters, excluding the three implicit ones.
+    // The document owns each node and must outlive this synchronous invocation;
+    // identity includes the document, not just the node_id's bits.
+    std::vector<unsigned> elementParameters;
     std::vector<HostRootRequest> roots;
     std::vector<std::string> observations;
     std::vector<std::string> absentBindings;
@@ -48,6 +59,49 @@ void clearHostContractReports(mlir::ModuleOp module);
 // Remove every attribute of `op` whose name starts with `prefix` - the
 // analyses' reports and proof markers, which a clone must never inherit.
 void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
+
+enum class HostDOMMethod {
+    toggleClass,
+    setAttribute
+};
+
+struct HostDOMCall {
+    ctjs::CallOp operation;
+    HostDOMMethod kind;
+    mlir::Value element;
+};
+
+// Live evidence for one synchronous typed DOM entry. Only the checked source
+// declaration wrapper may be omitted. No source invocation, retained handle,
+// receiver/capture observation, or arbitrary property dispatch is authorized.
+// Mutating the module invalidates this query; printed attributes are ignored.
+class DOMEntryAnalysis {
+public:
+    DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
+                     unsigned maxSteps = 100000);
+    [[nodiscard]] bool proved() const { return refusal.empty(); }
+    [[nodiscard]] llvm::StringRef reason() const { return refusal; }
+    [[nodiscard]] unsigned steps() const { return workSteps; }
+    [[nodiscard]] bool exhausted() const { return budgetExhausted; }
+    [[nodiscard]] ctjs::FuncOp entry() const { return checkedEntry; }
+    [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
+    [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return elements; }
+    [[nodiscard]] bool isElement(mlir::Value value) const;
+    [[nodiscard]] bool isTokenList(mlir::Value value) const;
+    [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
+
+private:
+    std::string refusal;
+    ctjs::FuncOp checkedEntry;
+    ctjs::FuncOp checkedWrapper;
+    std::vector<mlir::BlockArgument> elements;
+    std::vector<ctjs::GetPropertyOp> tokenLists;
+    std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
+    std::vector<HostDOMCall> calls;
+    unsigned workSteps = 0;
+    bool budgetExhausted = false;
+};
 
 struct HostSlotEdge {
     ctjs::SetPropertyOp write;

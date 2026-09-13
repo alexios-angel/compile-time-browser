@@ -2,6 +2,7 @@
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -22,6 +23,18 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    if (domEntry) {
+        if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+            read && (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
+            return true;
+        }
+        if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
+        if (auto compare = llvm::dyn_cast<CompareOp>(o);
+            compare && compare.getKind() == CompareKind::StrictEq &&
+            domEntry->isElement(compare.getLhs()) && domEntry->isElement(compare.getRhs())) {
+            return true;
+        }
+    }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;

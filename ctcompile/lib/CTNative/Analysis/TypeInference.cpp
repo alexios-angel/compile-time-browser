@@ -32,6 +32,7 @@
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "OwnedGlobalRoots.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
@@ -516,14 +517,26 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
 }
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
-    propagateIfChanged(lattice,
-                       lattice->join(TypeValue{BoxedType::get(lattice->getAnchor().getContext())}));
+    auto value = lattice->getAnchor();
+    const mlir::Type type = domEntry_ && domEntry_->isElement(value)
+                                ? mlir::Type(DOMElementType::get(value.getContext()))
+                                : mlir::Type(BoxedType::get(value.getContext()));
+    propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }
 
 mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && domEntry_) {
+        if (const auto * edge = domEntry_->call(call)) {
+            const auto type =
+                edge->kind == HostDOMMethod::toggleClass ? boolType(c) : absentType(c);
+            propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
+            return mlir::success();
+        }
+    }
 
     if (const auto * root = ownedRoots_ ? ownedRoots_->lookup(op) : nullptr) {
         if (llvm::isa<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(op)) {

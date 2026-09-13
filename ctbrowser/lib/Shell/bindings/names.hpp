@@ -1,10 +1,8 @@
 #pragma once
-// Private to lib/Shell/bindings/ - not installed. The name rules the document/
-// and element/ files BOTH apply: a qualified name's two halves, a valid
-// attribute name and a valid namespace prefix. One copy, because createAttribute
-// and setAttribute answering the same question differently was a bug the
-// corpus found (18a38dd7 changed the rule in two places). The namespace URIs
-// they compare against are dom/xml.hpp's.
+// Private qualified-name helpers. Attribute-name validation is shared with
+// native callers in dom/element.hpp; namespace URIs live in dom/xml.hpp.
+
+#include <ctbrowser/dom/element.hpp>
 
 #include <cstddef>
 #include <string_view>
@@ -25,38 +23,6 @@ struct qualified_name {
     const std::size_t colon = name.find(':');
     if (colon == std::string_view::npos) { return qualified_name{{}, name, false}; }
     return qualified_name{name.substr(0, colon), name.substr(colon + 1), true};
-}
-
-// WHAT AN ATTRIBUTE MAY BE CALLED - and it is NOT the XML `Name` production.
-//
-// `dom/nodes/productions.js` is the whole of the evidence and it is blunt:
-//
-//     var invalid_names = [""]
-//     var valid_names = ["x", "X", ":", "a:0", "invalid^Name", "\\", "'",
-//                        '"', "0", "0:a", ":a", "x:y:x", "~"]
-//
-// Thirteen names, every one of which the XML `Name` production refuses, and
-// every one of which `Document-createAttribute.html` and `attributes.html`
-// require to SUCCEED. Only the empty string throws. That is not an oversight
-// in the corpus: an attribute name is measured by whether it survives being
-// written into a start tag and read back, and the HTML tokenizer's attribute
-// name state ends the name on whitespace, `/`, `>` and `=` and on nothing
-// else. `"` and `'` inside one are a parse error the tokenizer explicitly
-// recovers from BY INCLUDING THE CHARACTER, so they round-trip; `~` and `^`
-// are not special at all. There is NO first-character rule: `"0"` and `":a"`
-// are legal attribute names and illegal element names (document/internal.hpp
-// has the element rule), which is exactly the pair productions.js draws.
-//
-// BYTE-WISE ON PURPOSE, and exact rather than approximate: every character the
-// rule names is ASCII, and no byte of a multi-byte UTF-8 sequence is. So no
-// decoder, and no dependence on how the VM happens to store a string.
-inline constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
-
-[[nodiscard]] inline bool is_valid_attribute_name(std::string_view name) {
-    // U+0000 is the one character the tokenizer cannot carry: it becomes
-    // U+FFFD, so a name containing one does not read back as itself.
-    return !name.empty() && name.find_first_of(attribute_name_breaks) == std::string_view::npos &&
-           name.find('\0') == std::string_view::npos;
 }
 
 // A "valid namespace prefix" (DOM 4.9, whatwg/dom#1079): not empty, no ASCII

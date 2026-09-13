@@ -75,7 +75,7 @@ add_mlir_pdll_library(CTNativeSymbolicPDLLIncGen
 # The native tier's lowering: proved CTJS -> EmitC over plain C++ types. Links
 # the analyses it consults and the dialects it emits into. Partial evaluation
 # also reuses compiler-side primitive helpers from ctbrowser; the generated
-# C++ still links no ctbrowser library, as part 24 §1.2 requires.
+# C++ uses only the public platform libraries it needs, never Script.
 add_library(ctcompile-ctnative-lowering
   ObjectValues/Types.cpp
   ObjectValues/Fields.cpp
@@ -134,6 +134,7 @@ add_library(ctcompile-ctnative-lowering
   EmitC/Shapes.cpp
   EmitC/OwnedGlobals.cpp
   EmitC/Module.cpp
+  EmitC/DOM.cpp
   EmitC/Expressions.cpp
   EmitC/Calls.cpp
   EmitC/ScalarConversions.cpp
