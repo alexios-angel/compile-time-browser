@@ -356,11 +356,18 @@ defined", catchable, in `context::global_or_named` so both tiers agree (the
 out-slot in the same change). The global object is the global environment's
 object record, so an inherited name resolves - a bare `toString` is
 `Object.prototype.toString`, as in every browser - and the shell's named-access
-hook (an element with an `id`) is still asked before the throw. `typeof x` is
-the one read that stays silent (13.5.3): it compiles to get_global + type_of on
-one register as it always did, the run loop peeks at the next instruction on a
-miss, and the AOT tier routes a load_global whose only use is typeof through
-`ct_aot_global_get_soft`. It was 1,180 files of test262 by itself.
+hook (an element with an `id`) is still asked before the throw. The original
+unresolvable-name correction accounted for 1,180 files of test262 by itself.
+
+Since 2026-09-13, source `typeof x` (including parentheses around `x`) emits
+`get_global_typeof` for its global fallback, followed by `type_of`. Only this
+lookup mode suppresses an unresolved-name error (13.5.3); `typeof (0, x)` and
+`var saved = x; typeof saved` keep ordinary throwing reads. Local TDZ checks and
+property getters retain their normal behavior, including inside `with`. CTJS
+preserves the lookup mode and the boxed AOT tier selects `ct_aot_global_get_soft`
+from it, then checks the frame status because hooks and proxy traps can still
+throw. Neither instruction adjacency nor a later TypeOf user grants permission
+to silence an ordinary lookup.
 
 ### THE FRONT END COSTS MORE THAN THE VM (2026-07-31)
 

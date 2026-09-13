@@ -18,6 +18,17 @@
 
 #include "js_expect.hpp"
 
+// A soft lookup can still invoke a throwing getter or proxy trap.
+#define CT_OPCODE(name, a, b, c, writes_a, allocates, may_throw, may_reenter, is_safepoint, ...)   \
+    static_assert(ctbrowser::script::op::name != ctbrowser::script::op::get_global_typeof ||       \
+                  (writes_a && may_throw && may_reenter && is_safepoint));
+#include <ctbrowser/script/bytecode_opcodes.def>
+#undef CT_OPCODE
+#define CT_AOT_HELPER(name, ret, params, may_throw, may_reenter, is_safepoint)                     \
+    static_assert(std::string_view{#name} != "ct_aot_global_get_soft" ||                           \
+                  (may_throw && may_reenter && is_safepoint));
+#include <ctbrowser/aot/aot_helpers.def>
+
 int main() {
     // --- typeof --------------------------------------------------------------
     // `typeof null` is "object" and always will be - it is the oldest bug in
@@ -36,6 +47,30 @@ int main() {
     // typeof is the ONE operator that does not throw on an undeclared name -
     // which is why `typeof x === "undefined"` is the guard every bundle uses.
     js_expect("typeof undeclaredThing", "undefined");
+    js_expect("typeof (undeclaredThing)", "undefined");
+    for (const char * body :
+         {"return typeof (0, undeclaredThing);",
+          "var saved = undeclaredThing; return typeof saved;",
+          "return typeof (true ? undeclaredThing : 0);", "return typeof undeclaredThing.member;",
+          "return (function(value = typeof value) { return value; })();",
+          "return (function(first = typeof later, later) { return first; })();",
+          "with ({}) { return typeof (0, undeclaredThing); }"}) {
+        js_expect(std::string{"(function () { try { "} + body +
+                      " } catch (e) { return e.constructor.name; } })()",
+                  "ReferenceError");
+    }
+    js_expect("(function () { with ({}) { return typeof undeclaredThing; } })()", "undefined");
+    js_expect("(function () { with ({}) { return typeof ((undeclaredThing)); } })()", "undefined");
+    js_expect("(function () { with ({x: 3}) { return typeof x; } })()", "number");
+    js_expect("(function () { var x = 3; with ({}) { return typeof x; } })()", "number");
+    for (const char * body :
+         {"return typeof ({get x() { throw 17; }}).x;",
+          "with ({get x() { throw 17; }}) { return typeof x; }",
+          "Object.defineProperty(globalThis, 'lookupGetter', {get: function() { throw 17; }});"
+          "return typeof lookupGetter;"}) {
+        js_expect(std::string{"(function () { try { "} + body + " } catch (e) { return e; } })()",
+                  "17");
+    }
     // Reading one is an unresolvable reference: ReferenceError, catchable
     // (6.2.5.5). A declared global holding undefined is NOT one.
     js_expect("(function () { try { undeclaredThing; return 'read'; }"
