@@ -77,7 +77,7 @@ def forge_map_facts(text, read_type):
 
 def check_nullable_read_facts(args, source):
     _, prepared, _ = boundary.prepare(args, "mixed-nullable-read-facts", source)
-    proved = run([args.opt, "--ctnative-binding-time-analysis", str(prepared)])
+    proved = run([args.opt, "--ctnative-binding-time-analysis", str(prepared)]).stdout
     assert proved.count('ctnative.map_read_type = "nullable_string"') == 1
     assert proved.count('ctnative.map_read_type = "bool"') == 1
     # Derivation also runs before native types exist. Both a fresh bogus claim
@@ -88,7 +88,7 @@ def check_nullable_read_facts(args, source):
             assert forged != text
             path = args.work / f"mixed-nullable-read-{phase}-{tag}.mlir"
             path.write_text(forged)
-            assert run([args.opt, "--ctnative-binding-time-analysis", str(path)]) == proved
+            assert run([args.opt, "--ctnative-binding-time-analysis", str(path)]).stdout == proved
 
 
 def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
@@ -127,8 +127,8 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
         js = args.work / f"{name}.js"
         js.write_text(function[0] + f"\nvar {trace} = {expression};\n")
         expected = f"{trace}={value}\n"
-        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
-        assert run([str(reference), str(js)]) == expected
+        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected
+        assert run([str(reference), str(js)]).stdout == expected
         if symbol == "mixedNullableRead":
             check_nullable_read_facts(args, js.read_text())
         ir = args.work / f"{name}.mlir"
@@ -144,7 +144,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
                 str(Path(__file__).resolve().parents[3] / "CTNative/Checks/pipeline.cmake"),
             ]
         )
-        cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
+        cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         assert "struct nullable_string" in cpp
         assert carrier in cpp
         assert "ctbrowser::script" not in cpp
@@ -170,8 +170,8 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
                     str(binary),
                 ]
             )
-            assert run([str(binary)]) == expected
-            assert "ctbrowser::script::" not in run([nm, "-C", str(binary)])
+            assert run([str(binary)]).stdout == expected
+            assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
 
 
 def main():
@@ -213,8 +213,8 @@ def main():
         )
         if ordered:
             expected += "traceSnapshot=1\n"
-        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
-        assert run([str(reference), str(js)]) == expected
+        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected
+        assert run([str(reference), str(js)]).stdout == expected
         ir = args.work / f"{name}.mlir"
         run(
             [
@@ -231,7 +231,7 @@ def main():
         deduced = args.work / f"{name}-deduced.mlir"
         run([args.opt, "--ctnative-print-deduced", str(ir), "-o", str(deduced)])
         for label, module in [("plain", ir), ("deduced", deduced)]:
-            cpp = run([args.translate, "--mlir-to-cpp", str(module)])
+            cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
             assert "ctbrowser::script" not in cpp
             assert "std::variant<bool," in cpp and "map_get_present_as<" in cpp
             assert "ctnative::number_map<ctnative::nullable_string>" in cpp
@@ -265,8 +265,8 @@ def main():
                         str(binary),
                     ]
                 )
-                assert run([str(binary)]) == expected
-                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)])
+                assert run([str(binary)]).stdout == expected
+                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
             if label == "plain":
                 binary = args.work / f"{name}-sanitized"
                 run(
@@ -288,13 +288,13 @@ def main():
                     ASAN_OPTIONS="detect_leaks=1:detect_stack_use_after_return=1",
                     UBSAN_OPTIONS="halt_on_error=1",
                 )
-                assert run([str(binary)], environment=environment) == expected
+                assert run([str(binary)], environment=environment).stdout == expected
     check_isolated_nullable_helpers(args, source, node, reference, compilers, nm)
     for fixture in args.fixtures.glob("*-refused.js"):
         name = fixture.stem
         js, ir, count = boundary.prepare(args, name, fixture.read_text())
-        expected = run([node, "-e", representation.NODE_GLOBALS, str(js)])
-        assert run([str(reference), str(js)]) == expected
+        expected = run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout
+        assert run([str(reference), str(js)]).stdout == expected
         before = ir.read_text()
         forged = forge_map_facts(before, "bool")
         assert forged != before

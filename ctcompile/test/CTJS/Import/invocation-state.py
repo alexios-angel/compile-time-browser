@@ -2,17 +2,13 @@
 """Pin importer call snapshots while source throwing calls remain refused."""
 
 import argparse
-import importlib.util
 from pathlib import Path
 import re
 import struct
 
-spec = importlib.util.spec_from_file_location(
-    "exceptions", Path(__file__).parents[2] / "CTNative/Lowering/Exceptions/exceptions.py"
-)
-exceptions = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(exceptions)
-run = exceptions.run
+from CTNative.harness import run
+from CTNative.Lowering.Exceptions import exceptions
+
 SSA = re.compile(r"%[\w.$-]+")
 EDGE = re.compile(r"\^(\w+)\(([^)]*)\)")
 CASES = {
@@ -209,11 +205,11 @@ def main():
     parser.add_argument("--opt", required=True)
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--node")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--reference", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node = exceptions.node_executable(args)
-    reference = exceptions.build_path(args.opt, "test/ctcompile-test-native-reference")
+    node, reference = args.node, args.reference
     for name, (denominator, expected, before) in CASES.items():
         source = args.fixtures / (name + ".js")
         exceptions.node_oracle(node, source.read_text(), expected, name + "/Node")
