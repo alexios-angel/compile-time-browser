@@ -14,6 +14,52 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-13, small hours
+
+**784 of the 1,090 tests that ran, which is 71.9%**, and still not one crash.
+Same instrument, engine at commit `b346dc0b` on `ctbrowser-wpt` - the merge of
+Codex's `ctcompile-v1` `3e803401` into the evening's 88 audit commits (about
+-8,000 lines) and agents J/V/D/M; five suites one after another on the devbox,
+4 workers, `CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 252 | 45 | 10 | 0 | 2 | 53 | 362 |
+| `dom/events` | 81 | 7 | 1 | 0 | 2 | 85 | 176 |
+| `html/dom` | 149 | 67 | 3 | 0 | 8 | 138 | 365 |
+| `css/cssom` | 145 | 37 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 157 | 97 | 8 | 0 | 9 | 237 | 508 |
+| **total** | **784** | **253** | **22** | **0** | **31** | **542** | **1,632** |
+
+Subtests: **69,851 PASS, 2,805 FAIL, 67 NOTRUN, 15 TIMEOUT.**
+
+Against `00b5ab38` (the row below): **+32 files, 3 lost.** `css/css-values`
+144 -> 157 (agent V: `attr-css-wide-keywords`, `attr-cycle`, the four
+`calc-*-serialize` and `calc-nesting-002`, `calc-rounds-to-integer`,
+`ident-function-computed`, `inherit-function-basic`, the three
+`minmax-*-serialize`, `random-in-custom-function`, `random-in-if`),
+`css/cssom` 140 -> 145 (agent M: `getComputedStyle-detached-subtree`,
+`-resolved-colors`, `-sticky-pos-percent`, `mediaquery-sort-dedup`,
+`ttwf-cssom-doc-ext-load-count`), `dom/nodes` 244 -> 252 (agent D: the
+`node-realm-*` and `node-creation-realm` files, `Element-matches`,
+`Node-isConnected`, `NodeList-live-mutations`), `html/dom` 146 -> 149
+(`document.forms`, `nameditem-names`, `document.title-not-in-html-svg`,
+`lang-attribute-document-element-replacement`).
+
+**The three lost are all the audit's, and named so they are fixed rather
+than re-baselined:** `html/dom/reflection-text.html` is a TIMEOUT - "the
+page never yielded", an infinite loop during load in a file that completed
+in under a second the evening before - which is the **-10,138 subtests** in
+the row (79,714 -> 69,851 is that one file); `dom/nodes/Element-children.html`
+reads `length`, `item` and `namedItem` as OWN enumerable properties of an
+HTMLCollection (the `Object.keys` edge case) since the collection's methods
+moved; `dom/nodes/MutationObserver-characterData.html` reports a processing
+instruction's `oldValue` as its data without the `<?target ...?>` wrapper.
+
+test262 at the same commit, and for the first time the WHOLE corpus:
+**32,295 of 48,624 (66.4%)**; the ten areas the old table had are 28,397 of
+32,927 (86.2%), from 81.5% - `docs/test262.md`, the `b346dc0b` row.
+
 ## The baseline — 2026-09-12, night
 
 **755 of the 1,090 tests that ran, which is 69.3%**, and still not one crash.
