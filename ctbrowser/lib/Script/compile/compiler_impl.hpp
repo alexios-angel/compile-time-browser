@@ -907,6 +907,15 @@ public:
     // After `super(...)` returned: the derived class's fields on the bound
     // `this` (see init_fields_name).
     void emit_init_fields_after_super();
+    // `super(...)` answered `result`: bind it as `this` when it is an object.
+    void emit_bind_this_after_super(std::uint16_t result);
+    // Set by compile_class while a BASE class's constructor compiles: its
+    // fields run first thing in the body (10.2.2 [[Construct]] step 6.b,
+    // InitializeInstanceElements before the body), whichever way the
+    // constructor is reached - `new`, a subclass's `super()`,
+    // Reflect.construct. compile_function_body consumes it.
+    bool base_fields_pending_ = false;
+    void emit_init_fields_at_entry();
 
     [[nodiscard]] bool any_spread(std::span<const std::int32_t> args) const;
 

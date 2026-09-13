@@ -373,6 +373,13 @@ inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
 // fields meet. The compiler emits it after every `super(...)`; a base class's
 // fields still run at construct entry (context::run_field_initialisers).
 inline constexpr std::string_view init_fields_name = "__ctbrowser_init_fields";
+// `super(...)` returned `(result)`: BindThisValue (10.2.1.3) with what the
+// parent constructor answered - the object it returned (a "return
+// override") replaces the instance as `this` for the rest of the derived
+// constructor, and a derived constructor's implicit return hands back
+// `this`, so `new` evaluates to it. The compiler emits it right after every
+// super call, before the fields.
+inline constexpr std::string_view bind_this_name = "__ctbrowser_bind_this";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
@@ -674,6 +681,14 @@ public:
         if (has_pending_throw_) { return; }
         thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+    // BindThisValue for the frame a native was called from (see
+    // bind_this_name): a native pushes no frame, so frames_.back() is its
+    // caller's - the derived constructor whose `super()` just returned. An
+    // arrow's frame (a `super()` inside one) rebinds only the arrow's own
+    // receiver.
+    void rebind_receiver(value v) {
+        if (!frames_.empty()) { frames_.back().receiver = v; }
     }
     // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
     // that has to CONVERT a throw crossing one of its `call`s - into a rejected

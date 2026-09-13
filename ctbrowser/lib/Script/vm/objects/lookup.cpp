@@ -451,6 +451,10 @@ value context::lookup_property(value target, const std::string & name) {
             if (up.is_kind(heap_kind::function)) {
                 auto * parent = static_cast<closure_object *>(up.as_heap());
                 if (value * found = parent->find(name)) { return *found; }
+                // `static get x()` on the parent: called on the SUBCLASS.
+                if (accessor_entry * entry = parent->find_accessor(name)) {
+                    return call_getter(*this, *entry, target);
+                }
                 up = parent->proto_link;
                 continue;
             }

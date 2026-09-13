@@ -601,10 +601,11 @@ void checker::walk_expression(std::int32_t idx) {
         }
         return;
 
-    // 13.3.12.1: `import.meta` is only in a module.
-    case nk::import_meta:
-        if (!strict_root_) { report("`import.meta` is only allowed in a module", idx); }
-        return;
+    // 13.3.12.1 (`import.meta` only in a module) is NOT checked here: the
+    // compiler refuses it as "not implemented" in every goal, and
+    // test/corpus/modules/module_ratchet.cpp reads that refusal as the
+    // feature being understood. A SyntaxError would read as a step back.
+    case nk::import_meta: return;
 
     case nk::new_target:
         // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`

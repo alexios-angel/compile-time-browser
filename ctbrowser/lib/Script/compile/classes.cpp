@@ -212,10 +212,21 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     if (n.a >= 0) { compile_expr(n.a, parent); }
 
     std::int32_t constructor_body = -1;
+    bool has_instance_elements = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.c == 1 && m.text == "constructor") { constructor_body = m.b; }
+        // An instance field, or a private method/accessor (whose brand the
+        // initialiser adds) - what `__fields` will hold, see below.
+        if ((m.d & 1) == 0 &&
+            (m.c == 0 || ((m.c == 1 || m.c == 2) && (m.d & 2) == 0 && m.text.starts_with('#')))) {
+            has_instance_elements = true;
+        }
     }
+    // A BASE class runs its fields at the top of its constructor - whichever
+    // way it is entered; a DERIVED class after its `super()` returns (see
+    // emit_init_fields_after_super). The VM runs none at [[Construct]].
+    base_fields_pending_ = n.a < 0 && has_instance_elements;
 
     if (constructor_body >= 0) {
         // Named after the CLASS. A constructor is a function expression, so
@@ -231,12 +242,16 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // parent constructor never ran, so `class MySet extends Set {}`
         // produced an object with none of Set's state and every method on
         // it failed - with nothing to say the constructor had been skipped.
-        compile_foreign_expr("(function (...args) { super(...args); })", dst);
+        // `return this`, because super() may have rebound it to the object
+        // the parent returned (bind_this_name) and [[Construct]] answers
+        // what the body returns when that is an object.
+        compile_foreign_expr("(function (...args) { super(...args); return this; })", dst);
     } else {
         // A base class with no constructor still needs a callable, or `new`
         // has nothing to invoke.
         compile_foreign_expr("(function () {})", dst);
     }
+    base_fields_pending_ = false;
     // A SYNTHESISED CONSTRUCTOR IS STILL NAMED AFTER ITS CLASS. Both
     // branches above build one from source text, so it arrives anonymous -
     // and `Object.getPrototypeOf(x).constructor.name` is a standard way to

@@ -250,21 +250,18 @@ value context::construct_new(value callee, std::span<const value> args,
 }
 
 void context::run_field_initialisers(value constructor, value self) {
-    // A BASE CLASS runs its own fields here, at [[Construct]] entry (10.2.2
-    // step 6, InitializeInstanceElements before the body). A DERIVED one -
-    // a class `extends` chained to a parent constructor (closure_object::
-    // proto_link, set by __ctbrowser_class_heritage) - runs them AFTER its
-    // `super()` returns, on the object that call bound as `this`: the
-    // compiler emits `__ctbrowser_init_fields` there. Until 2026-09-12 the
-    // whole chain ran here before the body, so a base constructor's
+    // NOTHING, SINCE 2026-09-12 - kept for its callers. Instance fields are the
+    // COMPILER's: a base class constructor runs its own `__fields` first thing
+    // in its body (10.2.2 [[Construct]] step 6.b), which a subclass's
+    // `super()` reaches as well as `new` does, and a derived class runs them
+    // after its `super()` returns on the object that call bound as `this`
+    // (`__ctbrowser_init_fields`, emitted after every super call). Until
+    // then the whole chain ran here before the body, so a base constructor's
     // `Object.preventExtensions(this)` or returned object never met the
-    // derived fields.
-    if (!constructor.is_kind(heap_kind::function)) { return; }
-    auto * klass = static_cast<closure_object *>(constructor.as_heap());
-    if (klass->proto_link.is_callable()) { return; }
-    if (value * fields = klass->find("__fields"); fields != nullptr && fields->is_callable()) {
-        call(*fields, {}, self);
-    }
+    // derived fields, and a parent reached through super() ran its fields
+    // on the wrong object or twice.
+    (void)constructor;
+    (void)self;
 }
 
 } // namespace ctbrowser::script

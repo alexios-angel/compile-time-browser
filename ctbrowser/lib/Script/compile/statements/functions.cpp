@@ -44,7 +44,14 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
     const std::uint32_t mark = reg_mark();
     const std::size_t defined = proto().emit(instruction{op::jump_if_defined, value});
     emit_super_check(fn().derived_flag, false);
-    proto().emit(instruction{op::ret_undef}); // [[Construct]] hands back `this`
+    {
+        // `this` EXPLICITLY, not ret_undef: super() may have rebound it to
+        // the object the parent returned (bind_this_name), which [[Construct]]
+        // would not see in the instance it made.
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        proto().emit(instruction{op::ret, self});
+    }
     patch_here(defined);
     const std::uint16_t kind = alloc_reg();
     proto().emit(instruction{op::type_of, kind, value});
@@ -64,7 +71,14 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
 }
 
 void compiler_impl::emit_implicit_return() {
-    if (!fn().derived_flag.empty()) { emit_super_check(fn().derived_flag, false); }
+    if (!fn().derived_flag.empty()) {
+        emit_super_check(fn().derived_flag, false);
+        // See emit_derived_return: `this` may be the parent's returned object.
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        proto().emit(instruction{op::ret, self});
+        return;
+    }
     if (!fn().is_async || fn().is_generator) {
         proto().emit(instruction{op::ret_undef});
         return;
@@ -236,6 +250,12 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fence_reg = alloc_reg();
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;
+    }
+    if (base_fields_pending_) {
+        // A base class constructor: its instance fields, before the
+        // parameter defaults and the body (see base_fields_pending_).
+        base_fields_pending_ = false;
+        emit_init_fields_at_entry();
     }
     {
         // A direct eval in a default may not `var` a parameter's name, nor

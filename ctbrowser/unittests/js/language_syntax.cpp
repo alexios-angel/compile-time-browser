@@ -134,7 +134,8 @@ int main() {
     answers("return (-2) ** 2;", "4");
     refused("0 && 0 ?? true");
     refused("0 ?? 0 || true");
-    answers("return (0 ?? 1) || 2;", "1");
+    answers("return (0 ?? 1) || 2;", "2");
+    answers("return (null ?? 1) || 2;", "1");
 
     // --- string and template escapes, and number grammar
     refused("'\\x0'");
@@ -292,7 +293,8 @@ int main() {
     answers("var t = 0; try { using a = {}; } catch (e) { t = e instanceof TypeError; } return t;",
             "true");
     refused("using x;");
-    refused("using [a] = b;");
+    answers("var using = [], q = 0; using [q] = 7; return using[0];",
+            "7"); // an index, not a pattern
     refused("if (x) using y = z;");
     refused("function f() { await using x = y; }");
     answers("var using = 1; return using;", "1"); // an ordinary name everywhere else

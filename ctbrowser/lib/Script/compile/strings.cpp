@@ -44,7 +44,26 @@ std::string compiler_impl::decode_string_body(std::string_view lexeme) {
         case 'n': out.push_back('\n'); break;
         case 't': out.push_back('\t'); break;
         case 'r': out.push_back('\r'); break;
-        case '0': out.push_back('\0'); break;
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7': {
+            // 12.9.4.3 LegacyOctalEscapeSequence: up to three octal digits,
+            // two after a leading 0-3 and one after 4-7; `\0` alone is NUL.
+            std::uint32_t code = static_cast<std::uint32_t>(lexeme[i] - '0');
+            const std::size_t more = lexeme[i] <= '3' ? 2 : 1;
+            for (std::size_t k = 0;
+                 k < more && i + 1 < lexeme.size() && lexeme[i + 1] >= '0' && lexeme[i + 1] <= '7';
+                 ++k) {
+                code = code * 8 + static_cast<std::uint32_t>(lexeme[++i] - '0');
+            }
+            append_utf8(out, code);
+            break;
+        }
         case 'b': out.push_back('\b'); break;
         case 'f': out.push_back('\f'); break;
         case 'v': out.push_back('\v'); break;

@@ -650,10 +650,14 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
     case reference::kind::upvalue: proto().emit(instruction{op::set_upvalue, ref.reg, src}); break;
-    case reference::kind::global:
-        emit_strict_assign_check(proto().names[ref.name]);
+    case reference::kind::global: {
+        // A COPY: the check interns names, which can grow `names` under a
+        // view into it.
+        const std::string name = proto().names[ref.name];
+        emit_strict_assign_check(name);
         proto().emit(instruction::with_bx(op::set_global, src, ref.name));
         break;
+    }
     case reference::kind::member:
         proto().emit(instruction{op::set_prop, ref.reg, static_cast<std::uint16_t>(ref.name), src});
         break;
@@ -1019,6 +1023,30 @@ void compiler_impl::emit_super_base(std::uint16_t dst) {
     proto().emit(instruction{op::get_proto, dst, dst});
 }
 
+void compiler_impl::emit_init_fields_at_entry() {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    const std::uint16_t klass = alloc_reg();
+    proto().emit(instruction{op::load_callee, klass});
+    proto().emit(instruction{op::call, callee, 2});
+    release_to(mark);
+}
+
+void compiler_impl::emit_bind_this_after_super(std::uint16_t result) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{bind_this_name})));
+    const std::uint16_t v = alloc_reg();
+    proto().emit(instruction{op::move, v, result});
+    proto().emit(instruction{op::call, callee, 1});
+    release_to(mark);
+}
+
 void compiler_impl::emit_init_fields_after_super() {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t callee = alloc_reg();
@@ -1159,7 +1187,10 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
     if (flag != nullptr) { emit_super_done(*flag); }
-    if (callee.kind == vp::nk::super_lit) { emit_init_fields_after_super(); }
+    if (callee.kind == vp::nk::super_lit) {
+        emit_bind_this_after_super(target);
+        emit_init_fields_after_super();
+    }
     proto().emit(instruction{op::move, dst, target});
     release_to(mark);
 }
@@ -1232,7 +1263,10 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
                              static_cast<std::uint16_t>(args.size()),
                              receiver ? self : std::uint16_t{0}});
     if (flag != nullptr) { emit_super_done(*flag); }
-    if (callee.kind == vp::nk::super_lit) { emit_init_fields_after_super(); }
+    if (callee.kind == vp::nk::super_lit) {
+        emit_bind_this_after_super(base);
+        emit_init_fields_after_super();
+    }
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
