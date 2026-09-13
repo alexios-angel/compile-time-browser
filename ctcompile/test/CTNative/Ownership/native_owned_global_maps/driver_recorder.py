@@ -16,6 +16,7 @@ from .driver_common import (
     host,
     methods,
     owned,
+    source_calls,
 )
 
 from .harness_objects import instrument_leaf_objects
@@ -88,7 +89,7 @@ host.slot.set(element, "bs.alert", 64);
 var traceSecondKept = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
 var traceSecondRejected = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
-# Separate invocation-proof probe; EXACT_DATA still has its Number carrier boundary.
+# Separate invocation-proof probe; EXACT_DATA still has host/carrier boundaries.
 ENTRY_OBJECTS = (
     DATA_PREFIX + """var element = {}; var other = {}; var absent = {}; var alias = element;
 var instance = {value: 64};
@@ -172,6 +173,12 @@ def recorder_cases():
             ),
         ),
     }
+    # Keep the original empty-manifest refusal and measure the same bytes with
+    # the existing fixed-undefined host contract. Ownership now completes;
+    # native Map recognition still needs that fact at its own environment check.
+    cases["recorder_exact_data_undefined"] = dict(
+        cases["recorder_exact_data"], fixed_undefined=True
+    )
     pins = {
         "recorder_single": (
             1327,
@@ -190,6 +197,7 @@ def recorder_cases():
             "5dc98179c1a06bcac5b7136ce8a86d11690e7a7e93de8229e82488c09c52e030",
         ),
     }
+    pins["recorder_exact_data_undefined"] = pins["recorder_exact_data"]
     assert hashlib.sha256(DATA_PREFIX.encode()).hexdigest() == (
         "c87ab961b1186537b86b5c96e35a5bec0905c97dbaa90c217f99c4175192efc9"
     )
@@ -197,7 +205,11 @@ def recorder_cases():
         source = row["source"].encode()
         assert (len(source), hashlib.sha256(source).hexdigest()) == pins[name], name
         assert row["source"].startswith(DATA_PREFIX), name
-        row.update(functions=7, admitted=name != "recorder_exact_data", recorder=True)
+        row.update(
+            functions=7,
+            admitted=name not in ("recorder_exact_data", "recorder_exact_data_undefined"),
+            recorder=True,
+        )
         if name != "recorder_single":
             row["max_steps"] = 1_000_000
     return cases
@@ -1088,7 +1100,11 @@ for (let i = 0; i < 1024; ++i) {
         def observed_contract(subject, label):
             config = contract(args, subject, label)
             value = json.loads(config.read_text())
-            value.update(initial_intrinsics=["Map", "Array"], observations=sorted(row["values"]))
+            value.update(
+                initial_intrinsics=["Map", "Array"],
+                observations=sorted(row["values"]),
+                undefined_bindings=["undefined"] if row.get("fixed_undefined") else [],
+            )
             config.write_text(json.dumps(value, indent=2) + "\n")
             return config
 
@@ -1114,7 +1130,8 @@ for (let i = 0; i < 1024; ++i) {
             output = owned.lower(args, ir, label, config, options=options, cleanup=row["admitted"])
             methods.census(output, functions, label, admitted=functions if row["admitted"] else 0)
             if not row["admitted"]:
-                check_call_preservation(ir.read_text(), output.read_text(), label)
+                if not row.get("fixed_undefined"):
+                    check_call_preservation(ir.read_text(), output.read_text(), label)
                 if (
                     "child" in row or row.get("recorder")
                 ) and "budget exhausted" in output.read_text():
@@ -1145,7 +1162,29 @@ for (let i = 0; i < 1024; ++i) {
                 cleanup=row["admitted"],
             )
             methods.census(checked, functions, label, admitted=functions if row["admitted"] else 0)
-            if not row["admitted"]:
+            if row.get("fixed_undefined"):
+                # Successful ownership prepares calls even when native emission
+                # refuses. Preserve every call and the exact entry method order.
+                targets = {"set": "fn$4", "get": "fn$5", "remove": "fn$6"}
+                expected = [
+                    targets[method]
+                    for method in re.findall(r"host\.slot\.(set|get|remove)\(", row["source"])
+                ]
+                for subject in (output, checked):
+                    text = subject.read_text()
+                    calls = re.findall(
+                        r"ctjs\.call_direct @([-\w.$]+)\([^\n]+\) "
+                        r"\{[^}\n]*ctnative\.stored_call = 1 : i32",
+                        text,
+                    )
+                    if (
+                        "ctnative.host_owner_proved = true" not in text
+                        or len(source_calls(text)) != len(source_calls(ir.read_text()))
+                        or calls != expected
+                    ):
+                        raise RuntimeError(f"{label}: declared undefined lost owned source calls")
+                check_call_preservation(output.read_text(), checked.read_text(), label + "-fresh")
+            elif not row["admitted"]:
                 check_call_preservation(forged.read_text(), checked.read_text(), label + "-fresh")
             elif comparable_provenance(
                 host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout, forged
