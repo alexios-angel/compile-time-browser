@@ -170,6 +170,28 @@ int main() {
             " await null; await null; return r;",
             "boom");
 
+    // --- the heritage (15.7.14 steps 6-9) and `super.x` with a receiver
+    answers("var r = 'none'; try { class C extends 42 {} } catch (e) { r = e.name; } return r;",
+            "TypeError");
+    answers("var r = 'none'; try { class C extends (() => {}) {} } catch (e) { r = e.name; }"
+            " return r;",
+            "TypeError");
+    answers("function P() {} P.prototype = 3; var r = 'none';"
+            " try { class C extends P {} } catch (e) { r = e.name; } return r;",
+            "TypeError");
+    answers("class B { static get x() { return this.name; } } class D extends B {}"
+            " return D.x + ':' + Object.getPrototypeOf(D).name;",
+            "D:B");
+    answers("class B { static m() { return 1; } static get x() { return 2; } }"
+            " class C extends B { static m() { return super.x + super.m(); } } return C.m();",
+            "3");
+    answers("class B { get x() { return this.v; } } class C extends B { constructor() { super();"
+            " this.v = 5; } get y() { return super.x; } } return new C().y;",
+            "5");
+    answers("class N extends null { constructor() { return Object.create(N.prototype); } }"
+            " return Object.getPrototypeOf(N.prototype) === null;",
+            "true");
+
     // --- private brands (7.3.28-30): a method's holder carries the class's
     // brand, a field is added once, a public field is defined rather than set
     answers("class C { #m() { return 7; } static call(o) { return o.#m(); } }"

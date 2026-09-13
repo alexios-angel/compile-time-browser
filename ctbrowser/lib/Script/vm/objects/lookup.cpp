@@ -67,6 +67,34 @@ bool context::private_element_present(value target, const std::string & key) {
     return own_property(target, brand, found);
 }
 
+value context::get_with_receiver(value base, const std::string & name, value receiver) {
+    for (value at = base; at.is_object_like();) {
+        if (at.is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(at.as_heap());
+            const value trap = proxy_trap(at, "get");
+            if (trap.is_callable()) {
+                const value args[3] = {p->target, string(name), receiver};
+                return call(trap, args, p->handler);
+            }
+            at = p->target;
+            continue;
+        }
+        property_descriptor found;
+        if (own_property(at, name, found)) {
+            if (!found.is_accessor()) { return found.held; }
+            return found.getter.is_callable() ? call(found.getter, {}, receiver)
+                                              : value::undefined();
+        }
+        // The implicit tables (Object.prototype and the like) sit past the
+        // explicit chain: lookup_property walks them, with `at` as the
+        // receiver, which no getter of theirs observes.
+        const value up = get_prototype(at);
+        if (!up.is_object_like()) { return lookup_property(at, name); }
+        at = up;
+    }
+    return value::undefined();
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());

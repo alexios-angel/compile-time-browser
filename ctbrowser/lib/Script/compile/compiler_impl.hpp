@@ -903,6 +903,7 @@ public:
     // `dst` = the object `super` looks properties up on: the prototype ABOVE the
     // one the running method was written into.
     void emit_super_base(std::uint16_t dst);
+    void emit_super_get(std::uint16_t key, std::uint16_t dst);
 
     [[nodiscard]] bool any_spread(std::span<const std::int32_t> args) const;
 

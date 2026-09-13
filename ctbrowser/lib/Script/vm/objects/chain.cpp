@@ -164,8 +164,17 @@ void context::copy_own_properties(value target, value source) {
 }
 
 value context::get_prototype(value target) {
-    return target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                              : value::undefined();
+    if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->prototype; }
+    // A closure's own [[Prototype]]: the parent class `extends` chained it
+    // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf) - which
+    // is what `super.x` inside a static method starts from.
+    if (target.is_kind(heap_kind::function)) {
+        const value link = static_cast<closure_object *>(target.as_heap())->proto_link;
+        if (!link.is_null()) { return link; }
+        object_object * table = prototype(proto_kind::function);
+        return table != nullptr ? value::object(table) : value::undefined();
+    }
+    return value::undefined();
 }
 
 void context::set_prototype(value target, value proto) {

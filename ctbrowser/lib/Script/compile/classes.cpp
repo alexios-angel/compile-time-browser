@@ -206,15 +206,10 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});
 
-    if (n.a >= 0) {
-        // `extends`: the parent's prototype becomes this one's, so a lookup
-        // that misses here walks up to it.
-        const std::uint16_t parent = alloc_reg();
-        compile_expr(n.a, parent);
-        const std::uint16_t parent_proto = alloc_reg();
-        proto().emit(instruction{op::get_prop, parent_proto, parent, name_operand("prototype")});
-        proto().emit(instruction{op::set_proto, prototype_reg, parent_proto});
-    }
+    // `extends`: the heritage is evaluated first (15.7.14 step 6), and wired
+    // once the constructor exists - see class_heritage_name below.
+    const std::uint16_t parent = n.a >= 0 ? alloc_reg() : 0;
+    if (n.a >= 0) { compile_expr(n.a, parent); }
 
     std::int32_t constructor_body = -1;
     for (const std::int32_t member : members) {
@@ -259,6 +254,24 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             ctor.source_begin = n.begin;
             ctor.source_end = n.end;
         }
+    }
+    if (n.a >= 0) {
+        // The parent must be null or a constructor with an object (or null)
+        // `prototype` - each a TypeError otherwise - and then C.prototype
+        // chains to P.prototype and C to P (15.7.14 steps 6-9). One native
+        // rather than four opcodes, and the checks with it.
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{class_heritage_name})));
+        const std::uint16_t ctor = alloc_reg();
+        proto().emit(instruction{op::move, ctor, dst});
+        const std::uint16_t heritage = alloc_reg();
+        proto().emit(instruction{op::move, heritage, parent});
+        const std::uint16_t table = alloc_reg();
+        proto().emit(instruction{op::move, table, prototype_reg});
+        proto().emit(instruction{op::call, callee, 3});
+        release_to(inner);
     }
     proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
     // `C.prototype.constructor === C`, which is both what pages expect and

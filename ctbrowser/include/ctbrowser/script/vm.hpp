@@ -341,6 +341,15 @@ inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict
 // when the object already carries the key (a constructor that returns the
 // same object twice) or is not extensible.
 inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
+// ClassDefinitionEvaluation steps 6-9 (15.7.14) for `class C extends P`:
+// `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
+// object or null - each a TypeError otherwise - then chains C.prototype to
+// P.prototype and C itself to P (or to Function.prototype for null).
+inline constexpr std::string_view class_heritage_name = "__ctbrowser_class_heritage";
+// `super.x` / `super[k]` READ (13.3.7.3, 6.2.5.5 GetValue of a Super
+// Reference): `(base, key, this)` is base.[[Get]](key, this) - a getter on
+// the parent runs with the method's own receiver, not with the parent.
+inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
 inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
 inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
 inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
@@ -1380,6 +1389,9 @@ public:
     // for the statics). So `Object.create(C.prototype)` and a subclass
     // constructor fail the brand check, as PrivateBrandCheck says.
     [[nodiscard]] bool private_element_present(value target, const std::string & key);
+    // [[Get]] with an explicit receiver (10.1.8.1 OrdinaryGet): `base`'s own
+    // property or the first one up its chain, a getter called on `receiver`.
+    [[nodiscard]] value get_with_receiver(value base, const std::string & name, value receiver);
 
     // [[DefineOwnProperty]], with 10.1.6.3's validation. False means REJECTED -
     // the caller decides whether that is a TypeError (Object.defineProperty) or

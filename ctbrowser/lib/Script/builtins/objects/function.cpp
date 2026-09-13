@@ -644,6 +644,47 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See class_heritage_name.
+    cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 3 || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
+        auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        const value parent = a[1];
+        if (parent.is_null()) {
+            // `extends null`: the prototype has no [[Prototype]], the
+            // constructor is still an ordinary function object.
+            c.set_prototype(a[2], value::undefined());
+            return value::undefined();
+        }
+        if (!is_constructor(parent)) {
+            c.throw_error("TypeError", "Class extends value " + c.to_string(parent) +
+                                           " is not a constructor or null");
+            return value::undefined();
+        }
+        const value proto_parent = c.lookup_property(parent, "prototype");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (!proto_parent.is_object_like() && !proto_parent.is_null()) {
+            c.throw_error("TypeError",
+                          "Class extends value does not have valid prototype property " +
+                              c.to_string(proto_parent));
+            return value::undefined();
+        }
+        c.set_prototype(a[2], proto_parent.is_null() ? value::undefined() : proto_parent);
+        ctor->proto_link = parent;
+        return value::undefined();
+    });
+    // See super_get_name.
+    cx.define_native(std::string{super_get_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 3) { return value::undefined(); }
+        if (a[0].is_nullish()) {
+            c.throw_error("TypeError", "Cannot read properties of " +
+                                           std::string{a[0].is_null() ? "null" : "undefined"} +
+                                           " (reading '" + c.to_string(a[1]) + "')");
+            return value::undefined();
+        }
+        const std::string key = c.to_string(a[1]);
+        if (c.throw_pending()) { return value::undefined(); }
+        return c.get_with_receiver(a[0], key, a[2]);
+    });
     // See private_add_name.
     cx.define_native(std::string{private_add_name}, [](context & c, std::span<value> a) {
         if (a.size() < 2 || !a[0].is_object_like() || a[0].is_kind(heap_kind::proxy)) {

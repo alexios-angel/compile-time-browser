@@ -67,12 +67,17 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     case vp::nk::ternary: compile_ternary(n, dst); break;
     case vp::nk::member: {
         // `super.x` reads through the parent prototype rather than through
-        // an object expression - there is no value `super` evaluates to.
+        // an object expression - there is no value `super` evaluates to -
+        // and with `this` as the receiver, so a getter up there sees it.
         if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
-            emit_super_base(dst);
-        } else {
-            compile_expr(n.a, dst);
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            emit_string(key, std::string{n.text});
+            emit_super_get(key, dst);
+            release_to(mark);
+            break;
         }
+        compile_expr(n.a, dst);
         const std::uint16_t name = member_operand(n.text);
         proto().emit(instruction{op::get_prop, dst, dst, name});
         break;
@@ -84,13 +89,16 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         break;
     case vp::nk::index: {
         const std::uint32_t mark = reg_mark();
-        // `super[k]`, like `super.x` above (13.3.7.1: the base first, then the
-        // key).
+        // `super[k]`, like `super.x` above (13.3.7.1: the key is evaluated
+        // before the base is asked for, and the read carries `this`).
         if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
-            emit_super_base(dst);
-        } else {
-            compile_expr(n.a, dst);
+            const std::uint16_t key = alloc_reg();
+            compile_expr(n.b, key);
+            emit_super_get(key, dst);
+            release_to(mark > dst ? mark : static_cast<std::uint16_t>(dst + 1));
+            break;
         }
+        compile_expr(n.a, dst);
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, dst, key});
@@ -991,6 +999,23 @@ void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
 void compiler_impl::emit_super_base(std::uint16_t dst) {
     proto().emit(instruction{op::load_home, dst});
     proto().emit(instruction{op::get_proto, dst, dst});
+}
+
+// `dst = __ctbrowser_super_get(HomeObject.[[Prototype]], key, this)`.
+void compiler_impl::emit_super_get(std::uint16_t key, std::uint16_t dst) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{super_get_name})));
+    const std::uint16_t base = alloc_reg();
+    emit_super_base(base);
+    const std::uint16_t k = alloc_reg();
+    proto().emit(instruction{op::move, k, key});
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    proto().emit(instruction{op::call, callee, 3});
+    proto().emit(instruction{op::move, dst, callee});
+    release_to(mark);
 }
 
 bool compiler_impl::any_spread(std::span<const std::int32_t> args) const {
