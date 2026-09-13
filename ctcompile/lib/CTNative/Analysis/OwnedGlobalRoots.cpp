@@ -219,4 +219,16 @@ const HostObjectGlobalRead * OwnedGlobalRoots::objectGlobal(mlir::Operation * op
     return found == objectEdges.end() ? nullptr : &checkedObjectReads[found->second];
 }
 
+ctjs::CreateObjectOp OwnedGlobalRoots::returnedLeaf(mlir::Value value) const {
+    auto * call = value ? value.getDefiningOp() : nullptr;
+    if (!proved() || !call) { return {}; }
+    for (const auto & root : checked) {
+        if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+        for (const auto & leaf : root.methodTable->capturedMap->returnedLeaves) {
+            if (leaf.call == call) { return leaf.object; }
+        }
+    }
+    return {};
+}
+
 } // namespace ctcompile::ctnative

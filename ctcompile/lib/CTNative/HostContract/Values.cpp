@@ -874,6 +874,107 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         });
         if (checked.wasInterrupted()) { return {}; }
     }
+    llvm::SmallVector<ctjs::GetPropertyOp> unguarded;
+    const auto fieldCensus = entry.getBody().walk([&](ctjs::GetPropertyOp read) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (familyInvocations.contains(read.getObject().getDefiningOp()) &&
+            !llvm::is_contained(result.leafReads, read)) {
+            unguarded.push_back(read);
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (fieldCensus.wasInterrupted()) { return {}; }
+    if (!unguarded.empty()) {
+        // Complete reusable effects above remain independent of these optional
+        // entry-order facts. Never carry mutable state through the category DAG:
+        // its iteration order groups calls by method, not by execution order.
+        CapturedMapInvocation invocation;
+        invocation.root = result.allocation.getResult();
+        auto & initial = invocation.states[{invocation.root, nullptr}];
+        initial.completeKeys = true;
+        initial.currentSize = 0;
+        std::vector<HostReturnedLeaf> leaves;
+        unsigned visited = 0;
+        bool complete = true;
+        for (mlir::Operation & operation : entry.getBody().front()) {
+            if (!step()) { return {}; }
+            if (!familyInvocations.contains(&operation)) { continue; }
+            ctjs::FuncOp member;
+            for (unsigned index = 0; index < familyCalls.size(); ++index) {
+                if (!step()) { return {}; }
+                if (llvm::is_contained(familyCalls[index], &operation)) {
+                    member = result.parameters[index].function;
+                    break;
+                }
+            }
+            HostMethodParameters parameters{member, {}};
+            if (!member || !capturedMapParameters(member, prepared, {&operation}, familyInvocations,
+                                                  completedResults, parameters)) {
+                complete = false;
+                break;
+            }
+            invocation.call = &operation;
+            invocation.arguments.clear();
+            for (auto parameter :
+                 member.getBody().front().getArguments().drop_front(prepared ? 4u : 3u)) {
+                if (!step()) { return {}; }
+                auto actual = explicitArgument(&operation, parameter.getArgNumber());
+                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    if (auto object = objectGlobalRead(load)) {
+                        actual = object->object.getResult();
+                    }
+                }
+                invocation.arguments[parameter] = actual;
+            }
+            HostCapturedMap scratch;
+            scratch.childMapContents = result.childMapContents;
+            scratch.childEntries = result.childEntries;
+            scratch.childScalarContents = result.childScalarContents;
+            scratch.childLeafContents = result.childLeafContents;
+            scratch.outerStringKeys = result.outerStringKeys;
+            scratch.childStringKeys = result.childStringKeys;
+            scratch.scalarCallbacks = result.scalarCallbacks;
+            PrimitiveAlternatives alternatives;
+            if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
+                                 alternatives, &invocation)) {
+                complete = false;
+                break;
+            }
+            ++visited;
+            auto leaf = invocation.returnedLeaf
+                            ? invocation.returnedLeaf.getDefiningOp<ctjs::CreateObjectOp>()
+                            : ctjs::CreateObjectOp{};
+            if (leaf && leaf->getParentOp() == entry &&
+                dominance.properlyDominates(leaf.getOperation(), &operation)) {
+                leaves.push_back({&operation, leaf});
+            }
+        }
+        if (complete && visited == familyInvocations.size()) {
+            result.returnedLeaves = std::move(leaves);
+            for (ctjs::GetPropertyOp read : unguarded) {
+                if (!step()) { return {}; }
+                if (!ctjs::ordinaryKey(ctjs::constantKey(read.getKey())) ||
+                    !dominance.dominates(read.getObject(), read) ||
+                    !dominance.dominates(read.getKey(), read)) {
+                    continue;
+                }
+                for (const auto & leaf : result.returnedLeaves) {
+                    if (!step()) { return {}; }
+                    if (leaf.call != read.getObject().getDefiningOp()) { continue; }
+                    for (ctjs::SetPropertyOp write : result.leafWrites) {
+                        if (!step()) { return {}; }
+                        if (write->getParentOp() == entry &&
+                            object(write.getObject()) == leaf.object &&
+                            ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
+                            dominance.properlyDominates(write.getOperation(), read)) {
+                            result.leafReads.push_back(read);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (exhausted) { return {}; }
     // Only the completed whole-family proof supplies entry expression facts.
     // The invocation worklist above uses its own map, so provisional or cyclic

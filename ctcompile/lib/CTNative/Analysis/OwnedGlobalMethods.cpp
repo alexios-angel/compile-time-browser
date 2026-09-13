@@ -91,6 +91,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->snapshotOperations != capture->snapshotOperations ||
                          edge.capturedMap->scalarCallbacks != capture->scalarCallbacks ||
+                         edge.capturedMap->returnedLeaves != capture->returnedLeaves ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
@@ -467,6 +468,19 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
 
     llvm::DenseSet<mlir::Operation *> observations;
     if (capture) {
+        llvm::DenseSet<mlir::Operation *> returnedCalls;
+        for (const auto & returned : capture->returnedLeaves) {
+            if (!spend()) { return; }
+            auto object = returned.object;
+            if (!returned.call || !methodCalls.contains(returned.call) ||
+                !returnedCalls.insert(returned.call).second ||
+                returned.call->getNumResults() != 1 || !object ||
+                !argumentObjects.contains(object) || object->getParentOp() != entry ||
+                returned.call->getParentOp() != entry || !object->isBeforeInBlock(returned.call)) {
+                reject("owned returned leaf lacks its exact current call and caller allocation");
+                return;
+            }
+        }
         for (ctjs::GetPropertyOp read : capture->leafReads) {
             if (!spend()) { return; }
             if (read->getParentOfType<ctjs::FuncOp>() != entry) { continue; }

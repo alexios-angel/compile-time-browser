@@ -7,8 +7,38 @@
 #include "llvm/ADT/StringMap.h"
 
 #include <optional>
+#include <utility>
 
 namespace ctcompile::ctnative::host_detail {
+
+using CapturedMapOrigin = std::pair<mlir::Value, mlir::Operation *>;
+
+struct CapturedMapEntry {
+    mlir::Value key;
+    PrimitiveAlternatives payload;
+    bool present = true;
+    mlir::Value object;
+    bool absent = false;
+    CapturedMapOrigin map{};
+};
+
+struct CapturedMapState {
+    llvm::SmallVector<CapturedMapEntry> entries;
+    bool completeKeys = false;
+    llvm::SmallVector<mlir::Value> possibleKeys;
+    std::optional<unsigned> currentSize;
+    llvm::DenseSet<mlir::Operation *> observations;
+};
+
+// Optional entry-order facts, used only after every reusable body has passed
+// the independent complete-family proof. Child identity includes this call.
+struct CapturedMapInvocation {
+    mlir::Value root;
+    mlir::Operation * call = nullptr;
+    llvm::DenseMap<mlir::Value, mlir::Value> arguments;
+    llvm::DenseMap<CapturedMapOrigin, CapturedMapState> states;
+    mlir::Value returnedLeaf;
+};
 
 struct analyzer {
     mlir::ModuleOp module;
@@ -55,7 +85,8 @@ struct analyzer {
     std::optional<std::vector<HostObjectGlobalRead>> objectGlobalReads(ctjs::CreateObjectOp made);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
-                         PrimitiveAlternatives & returnAlternatives);
+                         PrimitiveAlternatives & returnAlternatives,
+                         CapturedMapInvocation * invocation = nullptr);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);

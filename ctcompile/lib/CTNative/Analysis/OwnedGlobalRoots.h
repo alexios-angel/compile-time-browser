@@ -70,6 +70,9 @@ public:
         return checkedObjectReads;
     }
     [[nodiscard]] const HostObjectGlobalRead * objectGlobal(mlir::Operation * operation) const;
+    // Exact caller leaf returned by this invocation; the method's reusable
+    // return schema remains independent of this source-order proof.
+    [[nodiscard]] ctjs::CreateObjectOp returnedLeaf(mlir::Value value) const;
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
 

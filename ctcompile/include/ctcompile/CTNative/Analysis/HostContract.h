@@ -117,6 +117,16 @@ struct HostScalarCallback {
     }
 };
 
+// Exact caller allocation returned by one checked entry invocation. Neither
+// the reusable method's result ABI nor another invocation is narrowed.
+struct HostReturnedLeaf {
+    mlir::Operation * call = nullptr;
+    ctjs::CreateObjectOp object;
+    bool operator==(const HostReturnedLeaf & other) const {
+        return call == other.call && object == other.object;
+    }
+};
+
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
@@ -124,8 +134,9 @@ struct HostScalarCallback {
 // size/set/get/has/delete/clear effects and confined immediate key snapshots.
 // Child Maps cannot retain Maps.
 // Caller formals permit only key/payload uses; method-local leaves cannot be keys.
-// No object escapes through a method result, field or unchecked use. Effects remain
-// runtime; no startup value or result type is promised. Optional cell operations describe
+// Only checked owning leaves may leave a method through its result. Fields
+// and unchecked uses cannot publish objects. Effects remain runtime; the
+// family promises no startup value or invocation result. Optional cell operations describe
 // the original binding; after lifting, the call reads its environment value.
 // Every handle is rederived from the current module, never from native markers.
 struct HostCapturedMap {
@@ -165,6 +176,7 @@ struct HostCapturedMap {
     // Element reads permit equality; String-key facts also permit checked Concat.
     std::vector<mlir::Operation *> snapshotOperations{};
     std::vector<HostScalarCallback> scalarCallbacks{};
+    std::vector<HostReturnedLeaf> returnedLeaves{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

@@ -1,3 +1,4 @@
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -7,6 +8,9 @@ bool admission::identityField(mlir::Operation * op) {
     const mlir::Value object = op->getOperand(0);
     const mlir::Type type = typeOf(object);
     bool owned = llvm::isa_and_nonnull<ObjectIdentityType>(type);
+    if (auto leaf = ownedGlobals ? ownedGlobals->returnedLeaf(object) : ctjs::CreateObjectOp{}) {
+        owned |= llvm::isa_and_nonnull<ObjectIdentityType>(typeOf(leaf.getResult()));
+    }
     // Refine the exact SSA receiver inside a structured guard. Comparing a
     // different lookup or a reloaded binding cannot establish this fact.
     unsigned ancestors = 0;
