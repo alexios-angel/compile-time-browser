@@ -6,6 +6,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Source lookup provenance and native browser UMD, 2026-09-13 UTC
+
+Resumed the interrupted 13:04–13:09 UTC thread from dirty compiler files, the existing
+`codex-lookup-20260913` worktree and the sync journal's explicit 13:09:29 abandonment.
+Shared HEAD was **79cc7999**; the old September 7 WIP was already merged. Three agents
+recovered source-lookup tests, the isolated runtime change and immutable escape facts.
+Root integrated and gated the combined tree.
+
+**5f27789b**, landed by atomic merge **f4e1bfd4**, preserves source `typeof
+IdentifierReference` through dedicated `get_global_typeof` bytecode. Comma expressions,
+saved locals and conditional expressions perform ordinary reads, which throw for absent
+names. Parenthesized identifiers yield "undefined". TDZ and throwing getters still
+throw. The old adjacent-opcode inference is removed. The existing soft AOT helper now
+advertises throwing effects; its caller checks exception status before using the raw
+value. This intentionally corrects the VM toward Node semantics, as coordinated in
+AGENT-SYNC. Inventories are **94 opcodes / 69 result writers**.
+
+**ff57f36b** carries default-hard `typeof_lookup` provenance through CTJS import,
+skipped-body effect census and boxed lowering. **beb37605** updates the shared
+independent escape checker inventory; source and snapshot rows stay intact. **a30d8669**
+requires that provenance for absent-binding proof and prefix specialization. Only a
+fully validated private owner clone materializes declared absent soft reads as
+undefined, charging work before mutation and reproving before publication. Hard absent
+reads stop prefix progress and remain compile-time refusals. **b4146261** exempts only
+an exactly proved source-created ordinary `globalThis`/`window` object from the coarse
+realm-write rule; incomplete, stale or unproved sibling accesses still box scalars.
+**5deee2a3** marks unused calls after dead-store cleanup, retaining their effects
+without unused C++ results.
+
+The original browser UMD is unchanged: **3218 bytes**, SHA256
+**80a6fd87cbfdaafa6b2a3c6aab05bfc66ca36bf23f3827c29b4fe79b93ab3722**. With the existing
+declared manifest and prefix specialization it now executes **7/7 native functions at
+explicit 1,000,000 steps**, both optimization policies, both printing layouts and
+GCC/Clang. All **19 typed Node/VM observations**, **23 Data calls** and the payload
+field read remain. No-Script symbol checks, ASan/UBSan/leak checks and **1024 future
+lifetime rounds**, reentry and final-owner release pass. Raw input/default 100k, missing
+declarations, stale evidence, observed fallback/arguments, ordinary absent reads and
+source writes still refuse. Fresh forged reports cannot change the emitted program. The
+prior safe wrapper remains 4/4. The default budget is unchanged.
+
+**63770328** recovers immutable held escape facts: original producer, primitive category
+and optional saved String/array length travel together, including simultaneous successor
+assignment. Six regressions cover swaps, opaque replacement, stored primitive
+categories, saved lengths and continued backedge refusal. The complete oracle snapshot
+remains **222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 39/172**. The final fixture gate passed in **2.01s**. No loop admission or
+escape precision increase is claimed.
+
+Validation: focused source-mode, type-inference, cleanup and original UMD gates pass.
+Standard devbox configure/build passed. The full run was **538/540 CTests in 1129.83s**,
+including **166/167 lit cases in 806.98s**. Failures were the unchanged browser
+`frames.cpp:70` baseline and one old absent-read diagnostic assertion. Updating only
+that assertion passed the filtered gate **1/1 in 16.04s**. All compiler CTests and **167
+lit cases** have passing coverage across those runs; only the unchanged browser failure
+remains. Fresh full Bootstrap stays **19/574 native / zero of 43 globals resolved**,
+both policies. Original 2522-byte Data stays **7/7 at explicit 1m with declared
+undefined / 0/7 at default 100k**; its empty manifest still gives 0/7. Fresh CommonJS
+and realm fallback remain **0/7**, raw and prefix-specialized, at 1m with optimizations
+disabled. All **1273 frozen compiler/test/tool inputs** match the isolated tree and
+devbox; compiler/tool copies also match the shared tree before integration. The required
+bundled formatter retains **nine pre-existing files / 26 diagnostics**; changed C++
+passes, and whole Homebrew 23.1.1 formatting passes **804 C++ / 85 Python / 33 web
+files**. Evidence is in `/tmp/ctcompile-lookup/`. No push.
+
+Next native: the unchanged **3117-byte CommonJS / SHAcc6c3960** provider. Preserve both
+writes to `module.exports` and `exports` retaining the first object; extend existing
+per-read publication history, not just the single-write predicate in
+`OwnedGlobalRoots.cpp`. Actual realm fallback (**3568 / SHAa8dd4151**) remains a
+separate typed embedding-ownership/entry-ABI boundary; prefix realm tokens do not
+provide native storage. Browser APIs must still call public ctbrowser RAII seams.
+
+Next escape: original `confinedArray`, **118 bytes / SHA7bc1160c**, still fn2/pc3
+`escapes:passed`. Held facts are now available; prove literal-zero/+1 Number induction
+against the same stable dense array's strict `< length` guard, then preserve exact
+element alternatives under the unchanged budget/effect checks. Do not remove the
+visited-block refusal without that finite-bound proof. The original CFG and eight
+controls remain in `/tmp/ctcompile-umd/escape-loop.md` and `escape-loop-controls.js`.
+Full native Bootstrap and the application driver remain unfinished.
+
 ## Browser UMD ownership and safe preparation, 2026-09-13 UTC
 
 Continued clean **4a5ff450**, resuming its promised original browser UMD boundary
