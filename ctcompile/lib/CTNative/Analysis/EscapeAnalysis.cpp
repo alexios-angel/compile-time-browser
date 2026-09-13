@@ -779,6 +779,21 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 
 namespace {
 
+// An original Number in the exact array-length range; -0 has index value zero.
+std::optional<std::size_t> boundedNumber(mlir::Value value) {
+    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+    auto number =
+        constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
+    if (number) {
+        const double integer = number.getDouble();
+        if (std::isfinite(integer) && integer >= 0 && integer <= 4294967295.0 &&
+            std::floor(integer) == integer) {
+            return static_cast<std::size_t>(integer);
+        }
+    }
+    return std::nullopt;
+}
+
 // An own array element, not a property requiring conversion/prototype lookup.
 // Number -0 and canonical String/BigInt "0" are index zero; 2^32-1 is not an element.
 // Original literals, or one subtraction of two bounded original BigInt literals.
@@ -799,12 +814,8 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     }
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
-    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())) {
-        const double index = number.getDouble();
-        if (std::isfinite(index) && index >= 0 && index < 4294967295.0 &&
-            std::floor(index) == index) {
-            return static_cast<std::size_t>(index);
-        }
+    if (const auto number = boundedNumber(value); number && *number < 4294967295ULL) {
+        return number;
     }
     llvm::StringRef key;
     unsigned radix = 10;
@@ -862,8 +873,8 @@ enum class ContentsKind {
 struct ContentsValue {
     mlir::Value original;
     ContentsKind kind = ContentsKind::Identity;
-    // ponytail: length minus bounded literals only; other arithmetic needs proof.
-    std::optional<std::size_t> lengthNumber = std::nullopt;
+    // ponytail: lengths, bounded literal offsets and static Add only; no loop proof.
+    std::optional<std::size_t> integerNumber = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {
@@ -1287,18 +1298,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         literal && llvm::isa<ctjs::StringAttr>(literal.getValue())
                             ? ownArrayIndex(rhs)
                             : std::nullopt;
-                    if (left.lengthNumber && (number || stringOffset)) {
+                    if (left.integerNumber && (number || stringOffset)) {
                         const double offset =
                             number ? number.getDouble() : static_cast<double>(*stringOffset);
                         // Canonical decimal Strings convert exactly without object hooks.
                         // Both operands and the result are exact integers in [0, 2^32-1].
                         // Guard before conversion/subtraction: no NaN, rounding or wrap.
                         if (std::isfinite(offset) && offset >= 0 &&
-                            offset <= static_cast<double>(*left.lengthNumber) &&
+                            offset <= static_cast<double>(*left.integerNumber) &&
                             std::floor(offset) == offset) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            result.lengthNumber =
-                                *left.lengthNumber - static_cast<std::size_t>(offset);
+                            result.integerNumber =
+                                *left.integerNumber - static_cast<std::size_t>(offset);
                         }
                     }
                 }
@@ -1360,9 +1371,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // Independent primitive origins exclude source user conversion.
                 // Fresh objects/arrays are insufficient: inherited valueOf or
                 // toString can retain them or their contents even though today's
-                // VM converts them statically. The independent Number result
-                // proves no value, key, branch liveness or allocation success.
-                state.values[binary.getResult()] = {binary.getResult(), ContentsKind::NonBigInt};
+                // VM converts them statically. Only bounded original Numbers or
+                // saved exact Number facts supply an index; never branch liveness.
+                ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
+                if (binary.getKind() == ctjs::BinaryKind::Add) {
+                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    // Fixed-cost work is covered by this operation's visit. The
+                    // bound guards before addition; no rounding, wrap or coercion.
+                    if (a && b && *a <= 4294967295ULL - *b) { result.integerNumber = *a + *b; }
+                }
+                state.values[binary.getResult()] = result;
                 continue;
             }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
@@ -1527,8 +1546,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 auto index = key ? ownArrayIndex(key) : std::nullopt;
-                if (keyValue.lengthNumber && *keyValue.lengthNumber < 4294967295ULL) {
-                    index = keyValue.lengthNumber;
+                if (keyValue.integerNumber && *keyValue.integerNumber < 4294967295ULL) {
+                    index = keyValue.integerNumber;
                 }
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or

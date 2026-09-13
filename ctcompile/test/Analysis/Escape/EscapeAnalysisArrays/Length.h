@@ -231,6 +231,92 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[zero]",
         .exit = "a -> {a}"};
     run(originalIndex);
+    const std::string addIndex =
+        "  %index = ctjs.binary_static add %zero, %zero {storage_test_id = \"index\"}\n";
+    run({.what = "bounded static Number Add selects its exact overwritten element",
+         .body = values + addIndex + indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    run({.what = "static Add uses the saved length before a later append",
+         .body = values + read +
+                 "  %index = ctjs.binary_static add %length, %zero\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  %saved = ctjs.get_property %a[%index]\n  ctjs.return %saved\n",
+         .arrays = "a:[x,zero]",
+         .reads = "a[1]=zero",
+         .exit = "zero -> {}"});
+    run({.what = "saved Add facts survive replacement and simultaneous successor transport",
+         .body = values + one +
+                 "  ctjs.append %zero to %a\n"
+                 "  %index = ctjs.binary_static add %zero, %one {storage_test_id = \"index\"}\n"
+                 "  %keys = ctjs.create_array [%index] {storage_test_id = \"keys\"}\n"
+                 "  %saved = ctjs.get_property %keys[%zero]\n"
+                 "  ctjs.set_property %keys[%zero], %zero\n"
+                 "  cf.br ^pair(%saved, %zero : !ctjs.value, !ctjs.value)\n"
+                 "^pair(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%newIndex: !ctjs.value, %oldIndex: !ctjs.value):\n"
+                 "  %old = ctjs.get_property %a[%oldIndex]\n"
+                 "  %next = ctjs.binary_static add %newIndex, %zero\n"
+                 "  %child = ctjs.get_property %a[%next]\n"
+                 "  ctjs.set_property %a[%next], %zero\n  ctjs.return %child\n",
+         .arrays = "a:[zero,zero]; keys:[zero]",
+         .reads = "keys[0]=index; a[1]=zero; a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    for (const std::string input : {"#ctjs.number<9223372036854775808>",    // -0
+                                    "#ctjs.number<4751297606873776128>"}) { // 2^32-1
+        run({.what = "bounded Add endpoints retain exact offset authority without wrap",
+             .body = values + "  %bound = ctjs.constant " + input +
+                     "\n  %sum = ctjs.binary_static add %bound, %zero\n"
+                     "  %index = ctjs.binary sub %sum, %bound\n" +
+                     indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "static Add rejects an exact sum above the array-length bound",
+         .body = values + one +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %sum = ctjs.binary_static add %bound, %one\n"
+                 "  %index = ctjs.binary sub %sum, %bound\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    for (const std::string input : {"#ctjs.number<4602678819172646912>",  // 0.5
+                                    "#ctjs.number<13830554455654793216>", // -1
+                                    "#ctjs.number<4751297606875873280>",  // 2^32
+                                    "#ctjs.number<9218868437227405312>",  // infinity
+                                    "#ctjs.number<9221120237041090560>",  // NaN
+                                    "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
+                                    "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
+        for (const bool left : {false, true}) {
+            run({.what = "each static Add operand independently needs an exact bounded Number",
+                 .body = values + "  %input = ctjs.constant " + input +
+                         "\n  %index = ctjs.binary_static add " +
+                         (left ? "%input, %zero\n" : "%zero, %input\n") + indexed,
+                 .failure = ArrayContentsFailure::UnknownIndex});
+        }
+    }
+    run({.what = "one exact Add arm cannot authorize an opaque forwarded operand",
+         .body = values + addIndex +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%index : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                 "^join(%before: !ctjs.value):\n"
+                 "  %next = ctjs.binary_static add %before, %zero\n"
+                 "  ctjs.set_property %a[%next], %zero\n  ctjs.return %a\n",
+         .failure = ArrayContentsFailure::UnknownValue});
+    run({.what = "exact Add values cannot prune an inactive publication arm",
+         .body = values + addIndex +
+                 "  %flag = ctjs.truthy %index\n  cf.cond_br %flag, ^safe, ^effect\n"
+                 "^safe:\n  ctjs.return %zero\n"
+                 "^effect:\n  ctjs.store_global \"held\", %a\n  ctjs.return %zero\n",
+         .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "exact Add transport supplies no repeated-block or induction proof",
+         .body = values + one +
+                 "  cf.br ^loop(%zero : !ctjs.value)\n"
+                 "^loop(%before: !ctjs.value):\n"
+                 "  %next = ctjs.binary_static add %before, %one\n"
+                 "  cf.br ^loop(%next : !ctjs.value)\n",
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
     const std::string stringOne = "  %one = ctjs.constant #ctjs.string<\"1\">\n";
     // Preserve the exact formerly refused String-offset body.
     run({.what = "the original denseIndexStringOffset releases its overwritten child",
@@ -409,7 +495,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
           "ctjs.binary mul %length, %zero", "ctjs.binary_static add %length, %zero"}) {
         run({.what = "other arithmetic does not borrow length-subtraction index authority",
              .body = values + one + read + "  %index = " + producer + "\n" + indexed,
-             .failure = ArrayContentsFailure::UnknownIndex});
+             .failure = producer == "ctjs.binary_static add %length, %zero"
+                            ? ArrayContentsFailure::MissingElement
+                            : ArrayContentsFailure::UnknownIndex});
     }
     run({.what = "an independently primitive computed offset supplies no exact Number value",
          .body = values + one + read +

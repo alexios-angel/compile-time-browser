@@ -110,10 +110,15 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + produce + branch + done +
                                   "^no:\n  ctjs.store_global \"held\", %x\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "a static Number result is not an exact array index",
+            {.contents = {.what = "only bounded static Add supplies an exact array index",
                           .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
                                   done,
-                          .failure = ArrayContentsFailure::UnknownIndex}},
+                          .failure = kind == ctjs::BinaryKind::Add
+                                         ? ArrayContentsFailure::None
+                                         : ArrayContentsFailure::UnknownIndex,
+                          .arrays = "a:[x]",
+                          .reads = "a[0]=x",
+                          .exit = "zero -> {}"}},
             {.contents = {.what = "a static Number result is not an exact own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,
