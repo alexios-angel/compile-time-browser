@@ -229,8 +229,14 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    const std::uint16_t item =
-        (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
+    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
+    // top-level `var x` does - a local scoped to the loop left `x` unbound
+    // after it, so the next `for (x in o)` in strict code was an assignment
+    // to an unresolvable name. Written as a declaration (declaring_).
+    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const std::uint16_t item = (declares && !is_shape && !var_global)
+                                   ? declare_local(std::string{target.text})
+                                   : alloc_reg();
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -251,7 +257,16 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const bool using_head = (n.d & 48) != 0; // see compile_for_of
     const auto bind_and_body = [&] {
         if (using_head) { emit_using_add(item, (n.d & 32) != 0); }
-        if (is_shape) {
+        if (var_global) {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            if (is_shape) {
+                compile_pattern_binding(target.b, item, false);
+            } else {
+                emit_write(target.text, item);
+            }
+            declaring_ = outer_declaring;
+        } else if (is_shape) {
             compile_pattern_binding(target.b, item, declares);
         } else if (!declares) {
             emit_write(target.text, item);
@@ -347,8 +362,14 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    const std::uint16_t item =
-        (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
+    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
+    // top-level `var x` does - a local scoped to the loop left `x` unbound
+    // after it, so the next `for (x in o)` in strict code was an assignment
+    // to an unresolvable name. Written as a declaration (declaring_).
+    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const std::uint16_t item = (declares && !is_shape && !var_global)
+                                   ? declare_local(std::string{target.text})
+                                   : alloc_reg();
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -371,7 +392,16 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const bool using_head = (n.d & 48) != 0;
     const auto bind_and_body = [&] {
         if (using_head) { emit_using_add(item, (n.d & 32) != 0); }
-        if (is_shape) {
+        if (var_global) {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            if (is_shape) {
+                compile_pattern_binding(target.b, item, false);
+            } else {
+                emit_write(target.text, item);
+            }
+            declaring_ = outer_declaring;
+        } else if (is_shape) {
             compile_pattern_binding(target.b, item, declares);
         } else if (!declares) {
             emit_write(target.text, item);
