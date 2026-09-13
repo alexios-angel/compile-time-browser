@@ -27,6 +27,12 @@ std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
         (lexeme.front() == '\'' || lexeme.front() == '"' || lexeme.front() == '`')) {
         lexeme = lexeme.substr(1, lexeme.size() - 2);
     }
+    return decode_string_body(lexeme);
+}
+
+// The escapes of a string's BODY - the text between the quotes, or a
+// template's chunk, which has no quotes to strip and may begin with one.
+std::string compiler_impl::decode_string_body(std::string_view lexeme) {
     std::string out;
     out.reserve(lexeme.size());
     for (std::size_t i = 0; i < lexeme.size(); ++i) {

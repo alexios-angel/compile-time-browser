@@ -911,7 +911,7 @@ void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::ui
         const std::uint16_t piece = alloc_reg();
         for (const std::string & chunk : chunks) {
             if (template_chunk_cooks(chunk)) {
-                emit_string(piece, decode_string_literal(chunk));
+                emit_string(piece, decode_string_body(chunk));
             } else {
                 proto().emit(instruction{op::load_undef, piece});
             }
@@ -944,14 +944,17 @@ void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::ui
 }
 
 void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
-    std::string_view raw = n.text;
-    if (raw.size() >= 2 && raw.front() == '`' && raw.back() == '`') {
-        raw = raw.substr(1, raw.size() - 2);
-    }
+    // The same cut a tagged template gets (split_template); each chunk is
+    // COOKED - every escape 12.9.6 names, through decode_string_literal, not
+    // the three this used to know - and each hole is compiled as a
+    // parenthesised expression (`${ {v: 1}.v }` would otherwise parse as a
+    // block), then concatenated, which is the coercion a template performs.
+    std::vector<std::string> chunks;
+    std::vector<std::string> holes;
+    split_template(n.text, chunks, holes);
     const std::uint32_t mark = reg_mark();
     const std::uint16_t piece = alloc_reg();
     bool started = false;
-
     const auto append = [&](std::uint16_t src) {
         if (!started) {
             proto().emit(instruction{op::move, dst, src});
@@ -960,49 +963,26 @@ void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
             proto().emit(instruction{op::concat, dst, dst, src});
         }
     };
-    const auto append_literal = [&](std::string text) {
-        if (text.empty() && started) { return; }
-        emit_string(piece, std::move(text));
-        append(piece);
-    };
-
-    std::string literal;
-    for (std::size_t i = 0; i < raw.size();) {
-        if (raw[i] == '\\' && i + 1 < raw.size()) {
-            // One level of escape handling, so `\n` and `\`` behave.
-            const char c = raw[i + 1];
-            literal += c == 'n' ? '\n' : (c == 't' ? '\t' : (c == 'r' ? '\r' : c));
-            i += 2;
-            continue;
-        }
-        if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
-            append_literal(std::move(literal));
-            literal.clear();
-            // Find the matching brace, counting nesting so an object
-            // literal or a nested template inside the hole survives.
-            std::size_t depth = 1;
-            std::size_t at_char = i + 2;
-            const std::size_t start = at_char;
-            while (at_char < raw.size() && depth > 0) {
-                if (raw[at_char] == '{') { ++depth; }
-                if (raw[at_char] == '}') { --depth; }
-                if (depth > 0) { ++at_char; }
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+        // A CRLF or lone CR in the template text reads as LF (TV, 12.9.6).
+        std::string text;
+        for (std::size_t k = 0; k < chunks[i].size(); ++k) {
+            if (chunks[i][k] == '\r') {
+                text += '\n';
+                if (k + 1 < chunks[i].size() && chunks[i][k + 1] == '\n') { ++k; }
+            } else {
+                text += chunks[i][k];
             }
-            // PARENTHESISED, so the hole is parsed as an EXPRESSION.
-            // `${ {v: 1}.v }` parses as a program otherwise, and a leading
-            // brace at statement position is a BLOCK - so the object
-            // literal became a labelled statement and the whole hole
-            // evaluated to undefined, silently.
-            compile_owned_expr("(" + std::string{raw.substr(start, at_char - start)} + ")", piece);
-            // Concatenation is what stringifies the value, which is exactly
-            // the coercion a template literal performs.
-            append(piece);
-            i = at_char + 1;
-            continue;
         }
-        literal += raw[i++];
+        if (!text.empty() || !started) {
+            emit_string(piece, decode_string_body(text));
+            append(piece);
+        }
+        if (i < holes.size()) {
+            compile_owned_expr("(" + holes[i] + ")", piece);
+            append(piece);
+        }
     }
-    append_literal(std::move(literal));
     if (!started) { emit_string(dst, std::string{}); }
     release_to(mark);
 }

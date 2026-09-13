@@ -159,6 +159,8 @@ int main() {
             "\\unicode");
     refused("a?.`x`");
     refused("a?.b`x`");
+    // an untagged template cooks every escape, and a quote is just a character
+    answers("return `'\\x41\\u{42}' ${1 + 1}`;", "'AB' 2");
 
     // --- `import.source` is a rejected promise, never a throw
     answers(

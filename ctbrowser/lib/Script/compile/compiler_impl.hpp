@@ -464,6 +464,7 @@ public:
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
     // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
+    [[nodiscard]] static std::string decode_string_body(std::string_view lexeme);
 
     // The names a SCRIPT declares with var/let/const, at any block depth and
     // outside any function. Only the script frame's list is read - the strict
