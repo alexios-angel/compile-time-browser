@@ -6,6 +6,122 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured String-key templates and literal BigInt indices, 2026-09-13 UTC
+
+Resumed **9132ada5**, its **04:10:47 UTC** synchronization journal and the
+promised String-key/template boundary. Saved snapshot recovery and dense shrink
+were already landed; `codex-wip-20260907` is an ancestor. Three agents split
+source-preserving execution, source/prepared ownership tests and the independent
+escape proposal. The resumed native work was gated and committed before the
+escape increment. This entry supersedes older pending-template and recovery
+instructions below.
+
+**5f0d5dfd / 9e9b7d57** prove and execute captured String-key template snapshots.
+Separate outer/child facts close every insertion across the complete sibling
+family with no invocation-result authority. Only checked Concat may convert a
+String-key snapshot element; equality-only snapshots remain independent and direct
+key return/storage stays refused. Existing snapshot-operation evidence carries the
+completed conversions through the environment check. Existing ordered Map, owning
+vector and nullable-String lowering supply the C++; no runtime helper was added.
+
+The exact child probe **1303 bytes / SHA256
+e39ea88765761d962f82aefa4b100ef5f6b508ef7f45cfe7a32fc31c0a36bc86** is
+**6/6 native at the default 100,000-step budget**, both optimization policies.
+The exact outer probe **1108 bytes / SHA256
+db9730efbaeb237a8a123801cb40ed79288162c99a39369b21a3fe4ecd14a81e** is
+**6/6 with `host-max-steps=1000000`**, both policies; it remains **0/6 at the
+default budget**. Its 13 entry calls repeatedly reprove the family. The compiler
+default is unchanged. New unsafe-key controls use the explicit budget and must
+finish a semantic refusal, never pass merely by exhausting it.
+
+Measured focused gates: **324-step build**, a **255-step correction rebuild**,
+and **3/3 ownership/host CTests in 271.53s**. New source/prepared checks cover
+**27 rows / four scope mutations each**, stale/forged reports and incomplete/exact
+budgets. Recorder group: **six native programs / 16 refusals / 142 typed Node/VM
+observations / 11 distinguishing mutations**. Both policies/layouts, GCC/Clang,
+no-Script symbols, ASan/UBSan/leaks and **1024 future String calls** pass. These
+exercise empty/Undefined snapshots, insertion order, deletion/reinsertion, copied
+String keys, old owners across entry reruns, detached methods and final destruction.
+All previous source assignments, fixture bodies and source pins are preserved.
+
+**1a587848** proves exact indices from one subtraction of two bounded original
+BigInt literals. Both operands use the existing literal index parser; nonnegative
+subtraction is exact. Loaded operands, chains, other arithmetic, invalid spellings,
+large values and negative results remain conservative. Existing path-local origins
+transport the computed result without new state or category/effect authority.
+The **256-step rebuild**, arrays gate (**133 rows / 36 live states / 2851 retention
+cutoffs**) and three vendor escape gates pass. The measured fixture rerun passes
+**1.17s**, including **13 evidence / eight malformed-record controls**.
+All **112,001 JavaScript bytes and old pins** are unchanged. Exactly one existing
+claim improves: `radixBigIntComputed`, **fn 215 / pc 3**, Stored to Confined.
+Oracle: **222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 26/172**; all other allocation coordinates, observations and claims match.
+
+Final standard gate at **1a587848**: **539/540 CTests in 1015.87s**; all
+ctcompile tests pass, including **166/166 lit cases in 708.68s** (CTest **708.75s**).
+The sole failure is the existing browser `frames` test. All **1284 frozen inputs**
+match locally and on the devbox. The required bundled clang-format **23.0.0git**
+retains the same **nine baseline files / 26 diagnostics**; changed C++ passes.
+The whole check with Homebrew **23.1.1** passes **803 C++ / 84 Python / 33 web**.
+The frame failure again observes `0px,184px,rgb(0, 0, 0),184,0,8px` instead of
+`200px,50px,rgb(1, 2, 3),50,1,0px`; the frame document has zero style elements.
+It remains Claude's browser boundary. Generated template C++ uses existing owning
+String vectors and checked nullable reads; no Script symbol or VM call appears.
+
+Fresh full Bootstrap remains **19/574 native**, both policies. Exact Data and
+the original single/repeated numeric recorder probes remain **0/7**, both policies,
+with `property receiver lacks a fresh own-data object proof`. The final measurement
+also reconfirms the child/outer template counts and explicit-budget limit above.
+The exact Data source remains **2522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**;
+original single/repeated sources retain **4ebf1cd4 / 45d621b3**. Source pins are in
+the committed driver, independent of temporary evidence files.
+
+Next native increment: advance the **unchanged numeric single/repeated recorder
+probes** in `native_owned_global_maps/driver_recorder.py`. Their source creates its
+own `console.error` closure; this needs no browser API extraction. The first body
+blocker is `load_global "console"`; the later property-receiver diagnostic follows
+from the failed family proof. Prove the unique initialized own callable slot and
+its exact target, every source alias/use, all callback arms and String arguments,
+the initializers/reads/writes of `traceErrorCount` and `traceErrorMessage`, and
+preserved Number categories across repeated future calls. Reject replacement,
+pre-initialization reads, unsafe inactive-arm writes, unknown calls and reentry.
+The callback must have no access to captured Maps or caller leaves.
+
+Carry callback/global evidence separately through `HostContract`,
+`CapturedMapBody` and `OwnedGlobalMethods`; keep it distinct from exported method
+calls and pure snapshot operations. Feed the exact source target to existing
+closure/direct-call lowering, preserving receiver/argument order and real callback
+effects, then recheck transformed source with a fresh fingerprint. Startup
+`ProviderCallbacks` reports do not prove reusable callback effects. Existing
+nullable Number storage/arithmetic suffices; do not weaken `scalarGlobalRead`'s
+sole-store rule or type inference's sole-store removal of initial Undefined.
+Preserve both original probes, their mutations and pins, and gate future calls,
+owner/callable destruction, both policies/layouts, no-Script and sanitizers.
+
+Exact Data's unguarded `.value` and mixed scalar observations still separately
+need per-invocation content/identity proof. Future browser API calls use public
+ctbrowser RAII subsystem interfaces; the VM-context AOT ABI is not a native
+boundary. The prior weak-global absence pins are already retired in **73d4e034**;
+the MathML comparator still waits for the browser's public `node_ns::mathml` enum.
+
+Independent escape next: canonical original String offsets in the unchanged
+`denseIndexStringOffset` (**144 bytes / SHA256
+373e33a520eb82e157c0e5137c0f14928a155fe768b0cc111a1447bf2913803f**,
+**fn 219 / pc 3**). Its child is observed confined but still claimed Stored.
+The existing length-minus-Number proof can reuse `ownArrayIndex` under an explicit
+StringAttr guard and its existing exact bounds checks. No new state or parser is
+needed. Preserve the source, distinguish String conversion from BigInt arithmetic,
+keep noncanonical/coercing categories refused, and measure the complete oracle
+before changing its snapshot. No further original computed-BigInt witness exists.
+
+Evidence: `/tmp/ctcompile-string-snapshots/`, including focused/full logs, frozen
+inputs, exact-source measurements, generated C++, and the read-only
+`next-recorder.md` / `next-escape.md` audits. The original BigInt proposal and
+preservation checks are in `/tmp/ctcompile-next-bigint-audit/`.
+No browser/runtime/parser files changed. No push; full native Bootstrap remains
+unfinished.
+
 ## Captured snapshots recovered and dense array shrink proved, 2026-09-13 UTC
 
 Resumed **7adddab2**, its saved nine-path recovery patch and **03:11:11 UTC**
