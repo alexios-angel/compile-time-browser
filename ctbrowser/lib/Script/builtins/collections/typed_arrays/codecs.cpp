@@ -231,12 +231,25 @@ constexpr std::string_view handlings[] = {"loose", "strict", "stop-before-partia
     return false;
 }
 
-// ValidateUint8Array: a Uint8Array specifically, whatever its buffer's state.
-[[nodiscard]] array_object * this_uint8_array(context & cx, const char * method) {
+// ValidateUint8Array: a Uint8Array specifically, whatever its buffer's state
+// - except that one the caller means to `write` refuses an immutable buffer
+// HERE, before any option is read (the detached check stays where the
+// specification puts it, after them).
+[[nodiscard]] array_object * this_uint8_array(context & cx, const char * method,
+                                              bool write = false) {
     const value self = cx.current_this();
     if (is_typed_array(self) &&
         static_cast<array_object *>(self.as_heap())->elements == element_kind::u8) {
-        return static_cast<array_object *>(self.as_heap());
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        if (write) {
+            if (array_object * store = typed_array_store(arr);
+                store != nullptr && store_immutable(store)) {
+                cx.throw_error("TypeError",
+                               std::string{method} + ": the typed array's buffer is immutable");
+                return nullptr;
+            }
+        }
+        return arr;
     }
     cx.throw_error("TypeError", std::string{method} + ": this is not a Uint8Array");
     return nullptr;
@@ -336,7 +349,7 @@ void install_uint8array_codecs(context & cx, native_object * ctor, object_object
         return c.string(std::move(out));
     });
     method(cx, proto, "setFromBase64", 1, [](context & c, std::span<value> a) {
-        if (this_uint8_array(c, "Uint8Array.prototype.setFromBase64") == nullptr) {
+        if (this_uint8_array(c, "Uint8Array.prototype.setFromBase64", true) == nullptr) {
             return value::undefined();
         }
         const value text = arg_at(a, 0);
@@ -369,7 +382,7 @@ void install_uint8array_codecs(context & cx, native_object * ctor, object_object
         return read_written(c, result.read, result.bytes.size());
     });
     method(cx, proto, "setFromHex", 1, [](context & c, std::span<value> a) {
-        if (this_uint8_array(c, "Uint8Array.prototype.setFromHex") == nullptr) {
+        if (this_uint8_array(c, "Uint8Array.prototype.setFromHex", true) == nullptr) {
             return value::undefined();
         }
         const value text = arg_at(a, 0);

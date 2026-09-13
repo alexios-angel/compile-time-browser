@@ -208,6 +208,10 @@ bool to_integer_or_infinity(context & cx, value v, double & out) {
     value prim = v;
     if (v.is_object_like() && !cx.to_primitive_hint(v, "number", prim)) { return false; }
     if (!numeric_arg(cx, prim)) { return false; }
+    if (prim.is_kind(heap_kind::bigint)) {
+        cx.throw_error("TypeError", "Cannot convert a BigInt value to a number");
+        return false;
+    }
     const double n = cx.to_number_value(prim);
     if (cx.throw_pending()) { return false; }
     out = std::isnan(n) ? 0.0 : std::trunc(n);
