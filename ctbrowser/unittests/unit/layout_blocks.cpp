@@ -105,7 +105,7 @@ void test_intrinsic_sizing_keywords() {
         "#min { width: min-content } #fit { width: fit-content } "
         "#wide { width: fit-content; padding: 0 5px } #lo { min-width: max-content; width: 1px }");
     engine eng;
-    const fragment out = eng.run(f.root, 40);
+    const fragment out = eng.run(f.root, 60);
     const fragment * max = out.find(f.find_id("max"));
     const fragment * min = out.find(f.find_id("min"));
     const fragment * fit = out.find(f.find_id("fit"));
@@ -114,8 +114,11 @@ void test_intrinsic_sizing_keywords() {
     if (!max || !min || !fit || !wide) { return; }
     expect_near(max->bounds.width, 7 * 9.6f, "max-content is the whole line");
     expect_near(min->bounds.width, 4 * 9.6f, "min-content is the longest word");
-    expect_near(fit->bounds.width, 40, "fit-content stops at the available width");
-    expect_near(wide->bounds.width, 40, "...and the padding is inside that border box");
+    expect_near(fit->bounds.width, 60, "fit-content stops at the available width");
+    // 60 available, 10 of padding: the content gets 50 and the border box is 60.
+    // (Narrower than the min-content it would be the min-content: fit-content
+    // never breaks a word.)
+    expect_near(wide->bounds.width, 60, "...and the padding is inside that border box");
 }
 
 void test_padding_and_margin_resolve() {

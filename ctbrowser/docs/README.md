@@ -29,6 +29,7 @@ something lives.**
 | [`plans/angle.md`](plans/angle.md) | **ANGLE as the WebGL back end** — stop implementing GLES and call the one Chrome ships. Stage 0 is DONE on both platforms: 192 M frag/s on Linux, 332 M on Windows, against the interpreter's 1.03 M, and both render the identical pixel |
 | [`plans/babylon.md`](plans/babylon.md) | **Babylon.js, from "renders a box" to functional** — the twelve-rung ladder, measured one feature at a time. Reads 10/12 |
 | [`plans/modules.md`](plans/modules.md) | **ES modules — running ordinary JavaScript with nothing shimmed.** Reads 8/9; rung 9 is Babylon's ES build, which is not vendored |
+| [`plans/wpt-next.md`](plans/wpt-next.md) | **WPT: the next round, as briefs** - four agent branches waiting to merge, what is open at the tip, and the four disjoint briefs (animations, the value grammar, layout, the cascade) sized by the widened corpus |
 | [`plans/ada-url.md`](plans/ada-url.md) | **this engine parses URLs by the wrong standard** — `shell/net/url.cpp` is RFC 3986 where browsers are WHATWG. 8 of 15 measured cases differ. Read before touching `shell/net/url` |
 
 ## History — done, superseded, or deliberately stale

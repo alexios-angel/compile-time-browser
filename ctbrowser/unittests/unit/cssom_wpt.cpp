@@ -38,7 +38,7 @@ void test_class_strings_and_iterators() {
         console.log('escape=' + CSS.escape.length + ',' + caught + ',' +
                     CSS.hasOwnProperty(Symbol.toStringTag));
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "tag="),
              std::string{"tag=[object CSSStyleRule],[object CSSStyleProperties],[object CSS]"});
     CHECK_EQ(logged(page, "iter="), std::string{"iter=true,color,true"});
@@ -70,7 +70,7 @@ void test_removed_rules_charset_keyframes_and_container() {
         console.log('container=' + (c instanceof CSSContainerRule) + ',' + c.containerName + ',' +
                     c.containerQuery + ',' + c.conditionText);
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     // `@charset` is consumed before the rule list: rule zero is the keyframes.
     CHECK_EQ(logged(page, "charset="), std::string{"charset=2,k"});
     CHECK_EQ(logged(page, "charsetInsert="), std::string{"charsetInsert=SyntaxError"});
@@ -119,7 +119,7 @@ void test_declaration_blocks() {
         el.COLOR = 'red'; el.unknown = 'unknown'; el.color = 'red'; el.fontSize = '10pt';
         console.log('expando=' + el.cssText + '|' + el.unknown + '|' + el.COLOR + '|' + el.length);
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     // `transform` is not a page-context property; `cssFloat` is not a page
     // descriptor - the block is a CSSPageDescriptors, not a CSSStyleProperties.
     CHECK_EQ(logged(page, "page="),
@@ -153,7 +153,7 @@ void test_sheet_attribute_and_origin() {
         console.log('far=' + caught + ',' + inserted + ',' +
                     document.getElementById('near').sheet.cssRules.length);
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "proto="), std::string{"proto=true,true,true"});
     CHECK_EQ(logged(page, "far="), std::string{"far=SecurityError,SecurityError,0"});
 }
@@ -175,7 +175,7 @@ void test_resolved_colours() {
         console.log('shadow=' + cs.boxShadow + '|' + cs.textShadow + '|' +
                     getComputedStyle(document.getElementById('u')).boxShadow);
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "sys="),
              std::string{"sys=rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|"
                          "rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|1px|solid"});
@@ -222,7 +222,7 @@ void test_flat_tree_and_pseudo_arguments() {
                     getComputedStyle(host, '::view-transition-old(x)').color + '|' +
                     document.styleSheets[0].cssRules[0].selectorText);
         </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "flat="), std::string{"flat=true,false,true,false,true"});
     CHECK_EQ(logged(page, "hl="),
              std::string{"hl=rgb(0, 128, 0)|rgb(0, 0, 0)|rgb(0, 0, 128)|#host::highlight(name)"});
@@ -246,7 +246,7 @@ void test_sticky_insets() {
         const cs = getComputedStyle(document.getElementById('t'));
         console.log('sticky=' + cs.top + ',' + cs.bottom + ',' + cs.left + ',' + cs.right);
         </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "sticky="), std::string{"sticky=250px,49px,0px,auto"});
 }
 
@@ -272,7 +272,7 @@ void test_match_media() {
                                 matchMedia('(min-width: 26em)').matches,
                                 matchMedia('(width >= calc(100vh * 2))').matches].join());
         </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "mm="),
              std::string{"mm=(min-width: 10px) and (min-height: 10px)|(color) and (color)|"
                          "true,false,true,false|[object MediaQueryList]"});
@@ -295,7 +295,7 @@ void test_live_sheet_list() {
                     (list === document.styleSheets) + ',' + (list instanceof StyleSheetList) + ',' +
                     Object.prototype.toString.call(list));
         </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "live="),
              std::string{"live=2,2,2|1,1,true,true,true,true,[object StyleSheetList]"});
 }
@@ -313,7 +313,7 @@ void test_descriptors_refuse_tree_counting() {
         console.log('desc=' + rules[0].style.marginTop + '|' + rules[0].style.marginBottom + '|' +
                     rules[1].style.fontWeight);
     </script></body></html>)");
-    CHECK(page.script_error().empty());
+    CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "desc="), std::string{"desc=10px||300"});
 }
 

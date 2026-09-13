@@ -278,9 +278,11 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
         d.body.innerHTML = '<style>* { margin: 0 } div { height: 100vw; width: 50vh }'
             + ' @media (width: 200px) { div { color: rgb(1, 2, 3) } }</style><div></div>';
         var div = d.querySelector('div'), cs = w.getComputedStyle(div);
-        return [cs.height, cs.width, cs.color, div.offsetWidth].join();
+        return [cs.height, cs.width, cs.color, div.offsetWidth,
+                d.querySelectorAll('style').length, d.styleSheets.length,
+                d.body.getAttribute('style'), w.getComputedStyle(d.body).marginLeft].join();
     })())JS",
-       "200px,50px,rgb(1, 2, 3),50");
+       "200px,50px,rgb(1, 2, 3),50,1,1,null,0px");
     // A SECOND WRITE IS SEEN BY THE NEXT READ: the frame has no mutation hook,
     // so the flush compares the document's version with the one laid out.
     is(sized_frame,
