@@ -6,6 +6,100 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded returned fields and original radix BigInt indices, 2026-09-13 UTC
+
+This entry supersedes the integration failures and next steps in older entries below.
+Resumed **3e803401**, its promised guarded returned-field step, and the
+**23:15:01 UTC** synchronization journal after Claude's **7d76748d** merge.
+Gated that integration before applying new proof code. **8c980759** repairs four
+remaining callers of the retired key helper using the existing `constantKey` and
+`ordinaryKey`; **98500c0b** formats the dump checker without changing its AST.
+The full integration run passed **538/540 CTests in 1068.40s**. **7b493560**
+corrects the lattice census **146→141**, exactly the five retired interface checks,
+and **db6233d0** completes the shared harness migration in invocation-state and
+map-mixed. Their focused reruns pass; all source bodies/assertions remain intact.
+
+**b7bc36d3** proves a field read from a returned owner only under a dominating
+strict-identity guard on that exact result, against a checked caller object with
+an initialized scalar own field. Reuses existing leaf evidence, carriers and native
+field helpers; adds no runtime or browser implementation. Entry observation branches
+must remain pure. Unchecked fields, truthiness-only guards, another lookup's guard,
+missing fields and scalar comparators stay refused. The source-scope check covers
+If/Yield operands before active-arm selection. Source/prepared ownership checks pass
+**29 rows each**, including stale/forged reports, wrong guards, invalid inactive-arm
+yields and incomplete budgets; the original five raw MLIR fragments are unchanged.
+
+**58350704** adds eight separate witnesses while preserving all **71 historical
+JavaScript bodies**. Three guarded sources execute **5/5 native** in both policies,
+with **16 calls** each; five hostile controls refuse. The full nested-Map cohort passes
+**41 native programs / 38 refusals**, **275 typed Node/VM observations / 192
+mutations**, both C++ layouts, GCC/Clang, no-Script and ASan/UBSan/leak checks.
+Saved owners survive overwrite/delete/clear, field mutation, **128 future calls**,
+detached closures, entry reexecution and final release. The new same-guard complete
+budget is **32813 / 29 cutoffs**; the unchanged returned-identity source now needs
+**31170 / 32 cutoffs** after the stronger scope checks.
+
+**415c4d5c** extends the existing bounded index parser to original
+hexadecimal/octal/binary BigInt constants. It preserves bounds, origin and category
+checks; computed BigInts and String lookalikes remain conservative. The matrix passes
+**126 rows / 18 live states / 2237 retention cutoffs**. Five appended witnesses
+preserve the old **107,754-byte** source prefix and every old source pin. Fresh oracle:
+**217 functions / 840 claims / 874 observed sites / 35 unclaimed / zero violations /
+precision 21/168**, exactly two additional confinement claims. Every old function
+1–210 row/claim is unchanged; only five new closures, their consequent PC offsets,
+and the new functions change the complete snapshot. The checker still passes its
+**13 evidence mutations / eight malformed or duplicate controls**.
+
+The **260-step build** and feature gates pass; the initial sole failure was the old
+escape snapshot, updated only after measuring and reviewing its full dump. Its final
+CTest rerun passes **1.16s**. Final standard gate at **415c4d5c**:
+**540/540 CTests in 1003.73s**, including **166/166 lit cases in
+686.97s** (CTest **687.05s**). All **1597 frozen inputs** match the
+devbox. The required bundled clang-format **23.0.0git** check retains exactly the
+same **nine pre-existing files / 26 diagnostics**; changed C++ files pass. The same
+whole check with Homebrew clang-format **23.1.1** passes **802 C++ / 83 Python /
+33 web files**. No browser/runtime/parser files changed this increment.
+
+Fresh full Bootstrap is **19/574 native** in both policies. Exact Data stays
+**0/7** in both policies, preserving **2522 bytes / SHA256
+8359592c4d7ff4c78daf03c99a9b874ab48277a4ab17d9374b3043efd43b69b3**.
+Its reported host-contract diagnostic remains `property receiver lacks a fresh
+own-data object proof`; the separate numeric recorder probes reach the same earlier
+boundary even without returned-object field reads.
+
+Next: keep the original recorder and Data factory bytes, use a separate numeric-only
+entry to isolate the conflict diagnostic (`Array.from(s.keys())`, template expression,
+then source recorder), and prove its complete call/effect boundary. Reuse existing
+snapshot/string lowering and provider callback analysis. The current owning Map
+representation permits lookup only: preserve insertion order, or prove the snapshot
+has at most one live key. Prefix summaries alone do not authorize native future calls. Exact Data's unguarded `.value` and direct scalar
+observations also need per-invocation return evidence: matching key/object, last write,
+and no intervening delete/clear/reentry. Its later identity check is on another call.
+The old unguarded returned-field probe remains refused. Independent escape next:
+bounded integer provenance for `denseLengthIndexed`'s `before - 1`.
+
+Two separate next-step probes preserve the original **975-byte recorder/factory
+prefix**, SHA256 **c87ab961b1186537b86b5c96e35a5bec0905c97dbaa90c217f99c4175192efc9**.
+Single conflict **4ebf1cd4** (1327 bytes) and repeat after delete/reinsert **45d621b3**
+(1733 bytes) pass **15 typed Node/VM observations / two distinguishing mutations**.
+Both remain **0/7 native**, both policies, using the existing Map/Array host contract
+and explicit observed globals. Counts/messages are **1/1**, then **2/0** after the
+first live key changes; removing the recorder and freezing the first key are caught.
+Use `/tmp/ctcompile-recorder-next-probe/{README.md,prepare.py,measured.json}` to
+resume this exact boundary; these are measured probes, not new native successes.
+
+Actual component/DOM work must call ctbrowser's public RAII subsystem APIs. Data itself
+needs no browser extraction. Check current helper signatures: the AOT VM-context ABI
+is not an allowed native boundary, and the audited tree removed the old public
+ctnative generator directory. Lift any needed VM-only platform behavior into its
+owning subsystem, with a thin binding adapter and the required atomic browser gate.
+
+Evidence: `/tmp/ctcompile-return-fields-{first-native.log,first-ctest.log,full.log,
+full-detail.log,measured.json,final-frozen.json,final-remote-hashes.json}`,
+`/tmp/ctcompile-radix-measured-review/`, and
+`/tmp/ctcompile-return-fields-next-boundary.md`. No push. This is a completed
+increment; the complete native Bootstrap plan remains unfinished.
+
 ## Owning child returns, Map keys and escape evidence, 2026-09-12
 
 Resumed clean **b0439107** and the **20:46:23 UTC** recovery journal. The old
