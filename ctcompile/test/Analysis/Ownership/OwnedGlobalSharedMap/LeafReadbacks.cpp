@@ -279,6 +279,182 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             2);
     check(rows == 29, "all guarded returned-field source and prepared controls ran");
 
+    auto distinct = replaced(unguarded, "%actual = ctjs.constant #ctjs.string<\"x\">",
+                             "%actual = ctjs.create_object");
+    distinct = replaced(distinct, "%future = ctjs.constant #ctjs.string<\"y\">",
+                        "%future = ctjs.create_object");
+    const std::string getterSignature =
+        "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
+        std::string(prepared ? ", %state: !ctjs.value" : "");
+    distinct = replaced(distinct, getterSignature, getterSignature + ", %outerKey: !ctjs.value");
+    distinct = replaced(distinct, "    %outerKey = ctjs.constant #ctjs.string<\"x\">\n", "");
+    distinct = replaced(distinct, prepared ? "%getterEnv)" : "%getter(%owned)",
+                        prepared ? "%getterEnv, %actual)" : "%getter(%owned, %actual)");
+    distinct = replaced(distinct, prepared ? "%againEnv)" : "%againGetter(%owned)",
+                        prepared ? "%againEnv, %actual)" : "%againGetter(%owned, %actual)");
+    const std::string seeded =
+        "    %seeded = ctjs.call %childSetter(%value, %payloadKey, %input)\n";
+    const std::string sizeBranch = R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %eraser = ctjs.get_property %value[%deleteKey]
+    %wrongKey = ctjs.constant #ctjs.string<"wrong">
+    %erased = ctjs.call %eraser(%value, %wrongKey)
+    %branchSizeKey = ctjs.constant #ctjs.string<"size">
+    %branchSize = ctjs.get_property %value[%branchSizeKey]
+    %zero = ctjs.constant #ctjs.number<0>
+    %empty = ctjs.compare strict_eq %zero, %branchSize
+    %emptyFlag = ctjs.truthy %empty
+    scf.if %emptyFlag {
+      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)
+      scf.yield
+    } else {
+      scf.yield
+    }
+)MLIR";
+    const auto wrongDelete = replaced(distinct, seeded, seeded + sizeBranch);
+    const auto emptyChild =
+        replaced(wrongDelete, "%eraser(%value, %wrongKey)", "%eraser(%value, %payloadKey)");
+    unsigned invocationRows = 0;
+    const auto invocationVariant = [&](const std::string & text, bool expected, const char * label,
+                                       bool live = false) {
+        ++invocationRows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "object-key invocation source/prepared fixture parses");
+        if (!module) { return; }
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
+            operation->setAttr("ctnative.object_origin", mlir::StringAttr::get(&context, "same"));
+            operation->setAttr("ctnative.map_size",
+                               mlir::IntegerAttr::get(mlir::IntegerType::get(&context, 64), 0));
+        });
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
+                  !owner.exhausted(),
+              label);
+        if (host.proved() != expected || owner.proved() != expected) {
+            std::fprintf(stderr, "object-key invocation %s row %u: host=%s owner=%s\n",
+                         prepared ? "prepared" : "source", invocationRows,
+                         host.reason().str().c_str(), owner.reason().str().c_str());
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "invocation key and size queries preserve their complete source");
+        if (!expected) {
+            check(host.callables().empty() && empty(*module, owner),
+                  "unproved invocation results publish no partial owner or callable");
+            return;
+        }
+        if (!host.proved() || !owner.proved() || owner.roots().empty()) { return; }
+        const auto & capture = *owner.roots().front().methodTable->capturedMap;
+        auto payload =
+            capture.leafWrites.front()->getOperand(0).getDefiningOp<ctjs::CreateObjectOp>();
+        const auto returnedPayload = [&](const OwnedGlobalRoots & query) {
+            return llvm::all_of(capture.returnedLeaves, [&](const auto & leaf) {
+                return leaf.object == payload &&
+                       query.returnedLeaf(leaf.call->getResult(0)) == payload;
+            });
+        };
+        check(payload && capture.returnedLeaves.size() == 2 && returnedPayload(owner) &&
+                  !owner.returnedLeaf(payload.getResult()),
+              "two entry lookups return the payload despite distinct equal-shaped keys");
+        if (!live) { return; }
+        const unsigned completion = owner.steps();
+        check(completion > 2 && completion < 100000,
+              "object-key and size invocation proof completes within its ordinary budget");
+        if (completion <= 2 || completion >= 100000) { return; }
+        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited) &&
+                      llvm::all_of(capture.returnedLeaves,
+                                   [&](const auto & leaf) {
+                                       return !limited.returnedLeaf(leaf.call->getResult(0));
+                                   }),
+                  "incomplete invocation budgets withhold every owner and exact result");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion && returnedPayload(exact),
+              "the exact invocation budget publishes both independently returned leaves");
+        std::vector<mlir::Operation *> setters;
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        for (const auto & edge : host.callables()) {
+            if (edge.function == setter) { setters.push_back(edge.call); }
+        }
+        check(setters.size() == 3, "the invocation sequence retains all three child constructors");
+        if (setters.size() != 3) { return; }
+        const unsigned keyOperand = prepared ? 4u : 2u;
+        const auto original = setters.back()->getOperand(keyOperand);
+        setters.back()->setOperand(keyOperand, setters.front()->getOperand(keyOperand));
+        OwnedGlobalRoots stale(*module, contract);
+        HostContractAnalysis freshHost(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale) &&
+                  !freshHost.proved() && !freshHost.exhausted() && freshHost.callables().empty() &&
+                  !fresh.proved() && !fresh.exhausted() && empty(*module, fresh) &&
+                  llvm::all_of(capture.returnedLeaves,
+                               [&](const auto & leaf) {
+                                   return !stale.returnedLeaf(leaf.call->getResult(0)) &&
+                                          !fresh.returnedLeaf(leaf.call->getResult(0));
+                               }),
+              "stale and forged disjointness cannot hide an alias's later scalar replacement");
+        setters.back()->setOperand(keyOperand, original);
+        OwnedGlobalRoots restored(*module, contract);
+        check(restored.proved() && returnedPayload(restored),
+              "restoring the distinct actual rederives both exact caller-leaf returns");
+        std::printf("object-key invocation %s: 1 live mutation, 4 incomplete budgets, %u steps\n",
+                    prepared ? "prepared" : "source", completion);
+    };
+    invocationVariant(distinct, true,
+                      "separate empty caller allocations retain independent child Maps", true);
+    invocationVariant(replaced(distinct, "%future = ctjs.create_object",
+                               "%future = ctjs.constant #ctjs.string<\"other\">"),
+                      true, "a proved primitive key remains distinct from the caller object");
+    invocationVariant(replaced(distinct, ", %future, %fieldValue)", ", %actual, %fieldValue)"),
+                      false, "an actual alias replaces the original child with its scalar payload");
+    invocationVariant(replaced(distinct, "%future = ctjs.create_object",
+                               "%future = ctjs.load_global \"external\""),
+                      false,
+                      "a different global SSA value supplies no independent object identity");
+    const auto recreated =
+        replaced(replaced(distinct,
+                          prepared ? "%repeatEnv, %actual, %payload)"
+                                   : "%repeatPutter(%owned, %actual, %payload)",
+                          prepared ? "%repeatEnv, %actual, %fieldValue)"
+                                   : "%repeatPutter(%owned, %actual, %fieldValue)"),
+                 ", %future, %fieldValue)", ", %actual, %payload)");
+    invocationVariant(replaced(recreated, "    %future = ctjs.create_object\n", ""), true,
+                      "a new invocation of one child constructor restores the caller object");
+    invocationVariant(wrongDelete, true,
+                      "wrong-key deletion keeps size positive and the exact payload alive", true);
+    invocationVariant(emptyChild, true,
+                      "deleting the actual child key proves zero size and selects reinsertion");
+    invocationVariant(
+        replaced(wrongDelete, "strict_eq %zero, %branchSize", "strict_eq %branchSize, %zero"), true,
+        "a reversed zero-size comparison retains the same read-time proof");
+    invocationVariant(
+        replaced(replaced(wrongDelete, "%emptyFlag = ctjs.truthy %empty",
+                          "%notEmpty = ctjs.unary not %empty\n"
+                          "    %emptyFlag = ctjs.truthy %notEmpty"),
+                 "      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)\n"
+                 "      scf.yield\n    } else {\n      scf.yield",
+                 "      scf.yield\n    } else {\n"
+                 "      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)\n"
+                 "      scf.yield"),
+        true, "negation selects the opposite arm of the independently proved size comparison");
+    invocationVariant(replaced(wrongDelete, "    %zero =",
+                               "    %cleared = ctjs.call %eraser(%value, %payloadKey)\n"
+                               "    %zero ="),
+                      false, "a later deletion cannot rewrite an earlier positive size read");
+    invocationVariant(
+        replaced(wrongDelete,
+                 "      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)",
+                 "      %unknown = ctjs.call %this(%this)\n"
+                 "      %restored = ctjs.call %childSetter(%value, %payloadKey, %input)"),
+        false, "an inactive zero-size arm still needs complete independent effects");
+    check(invocationRows == 11, "all invocation object-key and size-branch controls ran");
+
     for (const auto & liveFixture : {returnedIdentity, guarded, unguarded}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(liveFixture, &context);
         check(static_cast<bool>(module), "returned-child live source fixture parses");

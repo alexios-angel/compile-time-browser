@@ -141,8 +141,29 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     const auto keyRelation = [&](mlir::Value left, mlir::Value right,
                                  PrimitiveMapKeyEvidence leftEvidence = {},
                                  PrimitiveMapKeyEvidence rightEvidence = {}) {
-        return comparePrimitiveMapKeys(actualKey(left), actualKey(right), leftEvidence,
-                                       rightEvidence);
+        left = actualKey(left);
+        right = actualKey(right);
+        const auto relation = comparePrimitiveMapKeys(left, right, leftEvidence, rightEvidence);
+        if (!invocation || relation != PrimitiveMapKeyRelation::Unknown) { return relation; }
+        // Entry allocations identify this activation's actual objects. Different
+        // loads, method-local allocation sites and carrier schemas do not.
+        const auto entryObject = [&](mlir::Value value) {
+            auto made = value.getDefiningOp<ctjs::CreateObjectOp>();
+            return made && made->getParentOp() == entry &&
+                   dominance.properlyDominates(made.getOperation(), invocation->call);
+        };
+        const auto primitiveKey = [](mlir::Value value, PrimitiveMapKeyEvidence evidence) {
+            auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+            return evidence.tag.has_value() ||
+                   (constant &&
+                    llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
+                              ctjs::UndefinedAttr>(constant.getValue()));
+        };
+        if ((entryObject(left) && (entryObject(right) || primitiveKey(right, rightEvidence))) ||
+            (entryObject(right) && primitiveKey(left, leftEvidence))) {
+            return PrimitiveMapKeyRelation::Distinct;
+        }
+        return relation;
     };
     // Mutable state belongs to a runtime origin, never a shared C++ schema.
     // Captured contents start unknown on every invocation; a fresh child starts
@@ -466,6 +487,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             constant && constant.getType().isInteger(1)) {
             return !llvm::cast<mlir::IntegerAttr>(constant.getValue()).getValue().isZero();
         }
+        if (auto compare = value.getDefiningOp<ctjs::CompareOp>();
+            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            const auto left = actualKey(compare.getLhs()), right = actualKey(compare.getRhs());
+            const auto lhs = primitiveMapSize(left, keyEvidence(left));
+            const auto rhs = primitiveMapSize(right, keyEvidence(right));
+            // These read-time facts describe finite nonnegative integers, so
+            // strict equality needs neither coercion nor SameValueZero's NaN rule.
+            if (lhs && rhs) { return *lhs == *rhs; }
+            if ((lhs && *lhs < sizeBounds.lookup(right)) ||
+                (rhs && *rhs < sizeBounds.lookup(left))) {
+                return false;
+            }
+        }
         const auto fact = alternatives.lookup(value);
         if (fact.known && fact.truthy && !fact.falsy) { return true; }
         if (fact.known && fact.falsy && !fact.truthy) { return false; }
@@ -663,7 +697,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         if (leafValues.contains(source)) { leafValues.insert(value); }
                         if (primitives.contains(source)) { primitives.insert(value); }
                         if (auto leaf = exactLeaves.lookup(source)) { exactLeaves[value] = leaf; }
-                        alternatives[value] = alternatives.lookup(source);
+                        auto fact = alternatives.lookup(source);
+                        if (const auto truth = knownTruth(knownTruth, source)) {
+                            fact = fact.filtered(*truth);
+                        }
+                        alternatives[value] = fact;
                     }
                     continue;
                 }
