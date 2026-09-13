@@ -372,6 +372,69 @@ void test_flex_shorthand() {
     }
 }
 
+void test_native_and_cssom_expansion_contracts() {
+    // Both callers exercise the shared assignment grammar, while CSSOM owns
+    // canonical strings and the cascade keeps borrowed substituted tokens.
+    const std::pair<std::string_view, std::string_view> examples[]{{"margin", "1px 2px 3px"},
+                                                                   {"padding", "1px 2px 3px 4px"},
+                                                                   {"inset", "auto 2px"},
+                                                                   {"border-width", "1px 2px"},
+                                                                   {"border-style", "solid dotted"},
+                                                                   {"border-color", "red blue"},
+                                                                   {"gap", "1px 2px"},
+                                                                   {"overflow", "hidden auto"},
+                                                                   {"flex", "2 3 10px"},
+                                                                   {"border-top", "red solid 2px"}};
+    for (const auto & [name, text] : examples) {
+        css::declaration_block block;
+        check(css::set_declaration(block, name, text, false), "CSSOM accepts the common form");
+        const auto native = css::expand_cascaded_shorthand(name, text);
+        const auto names = css::longhands_of(name);
+        check(native.size() >= names.size(), "native core expands each common longhand");
+        for (std::size_t i = 0; i < std::min(native.size(), names.size()); ++i) {
+            check(native[i].first == names[i] &&
+                      native[i].second == css::declaration_value(block, names[i]),
+                  "both callers retain positional/component order");
+        }
+    }
+    std::string text = "1px 2px";
+    const auto borrowed = css::expand_cascaded_shorthand("margin", text);
+    css::declaration_block owned;
+    css::set_declaration(owned, "margin", text, false);
+    text[0] = '3';
+    check(borrowed[0].second == "3px" && css::declaration_value(owned, "margin-top") == "1px",
+          "native expansion borrows its source while CSSOM keeps its own strings");
+
+    css::declaration_block flex;
+    css::set_declaration(flex, "flex", "1", false);
+    const auto native_flex = css::expand_cascaded_shorthand("flex", "1");
+    check(native_flex[2].second == "0%" && css::declaration_value(flex, "flex-basis") == "0px",
+          "the two callers preserve their existing omitted-basis policy");
+    const auto legacy_flex = css::expand_cascaded_shorthand("flex", "1 20px 30px");
+    check(legacy_flex[1].second == "1" && legacy_flex[2].second == "30px" &&
+              !css::set_declaration(flex, "flex", "1 20px 30px", false),
+          "legacy cascade acceptance does not relax CSSOM validation");
+    const auto truncated = css::expand_cascaded_shorthand("margin", "1px 2px 3px 4px 5px");
+    check(truncated.size() == 4 && truncated[3].second == "4px" &&
+              !css::set_declaration(owned, "margin", "1px 2px 3px 4px 5px", false),
+          "cascade truncation and CSSOM arity rejection retain their timing");
+
+    const auto border = css::expand_cascaded_shorthand("border", "solid 2px red");
+    css::declaration_block cssom_border;
+    css::set_declaration(cssom_border, "border", "solid 2px red", false);
+    check(border.size() == 15 && border[0].first == "border-width" &&
+              border[3].first == "border-top-width" && border[14].first == "border-left-color",
+          "uniform aliases and side ordering remain in the cascade");
+    check(cssom_border.size() == 17 &&
+              css::declaration_value(cssom_border, "border-image-source") == "none",
+          "CSSOM retains its additional border-image reset");
+    const auto radius = css::expand_cascaded_shorthand("border-radius", "1px 2px / 3px");
+    check(radius.size() == 4 && radius[0].second == "1px" && radius[3].second == "2px",
+          "the cascade still keeps only circular radii");
+    check(css::expand_cascaded_shorthand("overflow", "inherit hidden").empty(),
+          "invalid computed overflow remains refused");
+}
+
 } // namespace
 
 int main() {
@@ -382,5 +445,6 @@ int main() {
     test_the_per_side_border_shorthands_expand();
     test_border_shorthand();
     test_flex_shorthand();
+    test_native_and_cssom_expansion_contracts();
     REPORT("style_shorthands");
 }
