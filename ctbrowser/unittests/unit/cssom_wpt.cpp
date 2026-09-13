@@ -262,11 +262,22 @@ void test_match_media() {
                     matchMedia('(min-width: 500px)').matches + ',' +
                     matchMedia('screen').matches + ',' + matchMedia('print').matches + '|' +
                     Object.prototype.toString.call(matchMedia('all')));
+        // Media Queries 4: a length may be any unit (em is the initial 16px,
+        // the viewport units are the viewport's) or a math function of them.
+        console.log('units=' + [matchMedia('(width: 100vw)').matches,
+                                matchMedia('(height: 100vh)').matches,
+                                matchMedia('(width: calc(50vw + 200px))').matches,
+                                matchMedia('(width: calc(200vh + 5em))').matches,
+                                matchMedia('(min-width: 25em)').matches,
+                                matchMedia('(min-width: 26em)').matches,
+                                matchMedia('(width >= calc(100vh * 2))').matches].join());
         </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "mm="),
              std::string{"mm=(min-width: 10px) and (min-height: 10px)|(color) and (color)|"
                          "true,false,true,false|[object MediaQueryList]"});
+    // 400 x 200: 200vh + 5em is 480 (false), 100vh * 2 is 400.
+    CHECK_EQ(logged(page, "units="), std::string{"units=true,true,true,false,true,false,true"});
 }
 
 // ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -

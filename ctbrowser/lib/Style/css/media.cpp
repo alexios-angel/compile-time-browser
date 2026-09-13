@@ -9,6 +9,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/boolean.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/token.hpp>
 
 // Media Queries Level 4, over the token stream:
@@ -45,19 +46,44 @@ namespace {
 }
 
 // A length in a media query is resolved against the ROOT font size, not an element's -
-// there is no element here. 16 is the same figure layout uses, and both move together
-// when the cascade folds units.
-[[nodiscard]] float length_in_px(const css_token & t, std::string_view unit) {
+// there is no element here (Media Queries 4 §1.3: the initial value). 16 is
+// the same figure layout uses, and both move together when the cascade folds
+// units. The viewport units are the environment's - `@media (width: 100vw)`
+// is true by definition - and every other length unit goes through calc/'s
+// evaluator, which knows them all; a resolution unit is dppx.
+[[nodiscard]] float length_in_px(const token_stream & s, const css_token & t,
+                                 const media_environment & env) {
+    const std::string_view unit = s.unit_of(t);
     if (ascii_iequals(unit, "px") || unit.empty()) { return static_cast<float>(t.number); }
-    if (ascii_iequals(unit, "em") || ascii_iequals(unit, "rem")) {
-        return static_cast<float>(t.number) * 16.0f;
-    }
-    if (ascii_iequals(unit, "pt")) { return static_cast<float>(t.number) * 4.0f / 3.0f; }
     if (ascii_iequals(unit, "dppx") || ascii_iequals(unit, "x")) {
         return static_cast<float>(t.number);
     }
     if (ascii_iequals(unit, "dpi")) { return static_cast<float>(t.number) / 96.0f; }
+    if (ascii_iequals(unit, "dpcm")) { return static_cast<float>(t.number) / 96.0f * 2.54f; }
+    length_context ctx;
+    ctx.viewport_width = env.viewport_width;
+    ctx.viewport_height = env.viewport_height;
+    const math_answer answer = evaluate_math(s.text_of(t), ctx);
+    if (answer.outcome == math_outcome::resolved && !answer.value.has_percent) {
+        return static_cast<float>(answer.value.px);
+    }
     return static_cast<float>(t.number);
+}
+
+// A MATH FUNCTION AS A FEATURE VALUE - `(width: calc(200vh + 5em))` - with
+// the same bases: the root font size and the viewport. Media Queries 4 §2.4
+// makes it a value like any other; a function calc/ cannot resolve is the
+// `<general-enclosed>` the caller folds as unknown.
+[[nodiscard]] std::optional<float> math_in_px(std::string_view text,
+                                              const media_environment & env) {
+    length_context ctx;
+    ctx.viewport_width = env.viewport_width;
+    ctx.viewport_height = env.viewport_height;
+    const math_answer answer = evaluate_math(text, ctx);
+    if (answer.outcome != math_outcome::resolved || answer.value.has_percent) {
+        return std::nullopt;
+    }
+    return static_cast<float>(answer.value.px);
 }
 
 [[nodiscard]] bool compare_number(media_feature::compare op, float have, float want) {
@@ -115,8 +141,27 @@ namespace {
 [[nodiscard]] std::optional<truth> feature(const token_stream & s, std::size_t from, std::size_t to,
                                            const media_environment & env) {
     std::vector<std::size_t> at; // the significant tokens
+    // A FUNCTION IS ONE VALUE: its tokens up to the matching `)` are one
+    // entry here, keyed on the function token, so `calc(200vh + 5em)` has
+    // the shape of a dimension to the grammar below.
+    std::vector<std::size_t> ends(s.tokens.size(), 0);
     for (std::size_t i = from; i < to; ++i) {
-        if (s.tokens[i].type != token_type::whitespace) { at.push_back(i); }
+        if (s.tokens[i].type == token_type::whitespace) { continue; }
+        at.push_back(i);
+        if (s.tokens[i].type == token_type::function) {
+            int depth = 1;
+            std::size_t j = i + 1;
+            for (; j < to && depth > 0; ++j) {
+                if (s.tokens[j].type == token_type::function ||
+                    s.tokens[j].type == token_type::open_paren) {
+                    ++depth;
+                } else if (s.tokens[j].type == token_type::close_paren) {
+                    --depth;
+                }
+            }
+            ends[i] = j;
+            i = j - 1;
+        }
     }
     if (at.empty()) { return std::nullopt; }
     const auto is_name = [&](std::size_t i) { return s.tokens[i].type == token_type::ident; };
@@ -127,7 +172,15 @@ namespace {
             return true;
         }
         if (t.type == token_type::number || t.type == token_type::dimension) {
-            f.value = length_in_px(t, s.unit_of(t));
+            f.value = length_in_px(s, t, env);
+            return true;
+        }
+        if (t.type == token_type::function) {
+            const std::string_view text = std::string_view{s.pool}.substr(
+                t.text, s.tokens[ends[i] - 1].text + s.tokens[ends[i] - 1].length - t.text);
+            const std::optional<float> px = math_in_px(text, env);
+            if (!px) { return false; }
+            f.value = *px;
             return true;
         }
         return false;
