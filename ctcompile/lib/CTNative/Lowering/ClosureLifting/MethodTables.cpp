@@ -250,13 +250,31 @@ void closureLifter::discardNativeSourceFacts() {
 
 std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const OwnedGlobalRoots & globals, const HostContract & contract, unsigned maxSteps) {
-    if (!globals.proved() || globals.roots().empty() || !globals.roots().front().methodTable) {
+    if (!globals.proved() || globals.steps() > maxSteps || globals.roots().empty() ||
+        !globals.roots().front().methodTable) {
         return std::nullopt;
     }
     discardNativeSourceFacts();
     const auto sourceTable = *globals.roots().front().methodTable;
     liftReport out;
     if (sourceTable.capturedMap) {
+        // The complete owner proof supplies this sole exact wrapper call.
+        // Drop only unobserved explicit slots; their evaluated producers stay.
+        auto wrapper = sourceTable.wrapper;
+        auto & block = wrapper.getBody().front();
+        llvm::BitVector unused(block.getNumArguments());
+        unsigned remaining = maxSteps - globals.steps();
+        for (unsigned index = ctjs::implicit_arguments; index < block.getNumArguments(); ++index) {
+            if (!remaining) { return std::nullopt; }
+            --remaining;
+            if (block.getArgument(index).use_empty()) { unused.set(index); }
+        }
+        if (unused.any()) {
+            sourceTable.wrapperCall->eraseOperands(unused);
+            if (mlir::failed(wrapper.eraseArguments(unused))) {
+                llvm::report_fatal_error("ctnative: could not erase unused proved wrapper slots");
+            }
+        }
         // The input proof follows the factory through one call-only wrapper
         // parameter. Reuse that parameter's checked removal and the ordinary
         // local closure lift, retaining the source wrapper/factory calls.

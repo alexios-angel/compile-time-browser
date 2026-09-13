@@ -57,18 +57,32 @@ using namespace lowering_detail;
 // Called only on the private clone after complete ownership validation. Absent
 // bindings and source writes never reach this constant path. Collect and charge
 // every rewrite before mutation; the caller must reprove the changed module.
-bool materializeFixedUndefined(mlir::ModuleOp module, const HostContract & contract,
-                               unsigned remaining) {
-    if (contract.undefinedBindings.empty()) { return true; }
+bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contract,
+                               const OwnedGlobalRoots & owners, unsigned remaining) {
     const auto spend = [&] {
         if (!remaining) { return false; }
         --remaining;
         return true;
     };
     llvm::SmallVector<ctjs::LoadGlobalOp> reads;
+    llvm::SmallVector<ctjs::UnaryOp> objectTypes;
     const auto walked = module.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::Operation * operation) -> mlir::WalkResult {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (auto query = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+                query && query.getKind() == ctjs::UnaryKind::TypeOf) {
+                auto * origin = query.getOperand().getDefiningOp();
+                // Root fields can hold other types. Only the actual fresh
+                // owner and its checked global loads are ordinary objects.
+                if (llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(origin) &&
+                    owners.lookup(origin)) {
+                    for ([[maybe_unused]] mlir::OpOperand & use : query.getResult().getUses()) {
+                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    }
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    objectTypes.push_back(query);
+                }
+            }
             auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
             if (!load) { return mlir::WalkResult::advance(); }
             for (const std::string & name : contract.undefinedBindings) {
@@ -90,6 +104,14 @@ bool materializeFixedUndefined(mlir::ModuleOp module, const HostContract & contr
                                                  ctjs::UndefinedAttr::get(module.getContext()));
         load.getResult().replaceAllUsesWith(constant.getResult());
         load.erase();
+    }
+    for (ctjs::UnaryOp query : objectTypes) {
+        mlir::OpBuilder at(query);
+        auto constant =
+            ctjs::ConstantOp::create(at, query.getLoc(), query.getResult().getType(),
+                                     ctjs::StringAttr::get(module.getContext(), "object"));
+        query.getResult().replaceAllUsesWith(constant.getResult());
+        query.erase();
     }
     return true;
 }
@@ -179,7 +201,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             normalizedContract.moduleSha256 = hostContractFingerprint(*normalized);
             const OwnedGlobalRoots original(*normalized, normalizedContract, hostMaxSteps);
             if (original.proved() && !original.roots().empty() &&
-                materializeFixedUndefined(*normalized, normalizedContract,
+                materializeHostPrimitives(*normalized, normalizedContract, original,
                                           hostMaxSteps - original.steps())) {
                 // Prepare only the checked table and environment, speculatively.
                 // A stale input never reaches this rewrite. Its internally

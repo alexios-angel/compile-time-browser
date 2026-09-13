@@ -12,6 +12,7 @@ from .driver_map_sizes import *
 from .driver_object_keys import *
 from .driver_nested_maps import check_nested_maps
 from .driver_recorder import check_recorders
+from .driver_umd import check_umd
 
 from CTNative.harness import find_compilers
 
@@ -24,7 +25,7 @@ def main():
     parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument(
-        "--group", choices=("all", "object-keys", "nested-maps", "recorder"), default="all"
+        "--group", choices=("all", "object-keys", "nested-maps", "recorder", "umd"), default="all"
     )
     parser.add_argument(
         "--jobs",
@@ -45,6 +46,10 @@ def main():
         or not owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
     ):
         raise RuntimeError("need both host compilers and a working VM-symbol control")
+    if args.group in {"all", "umd"}:
+        check_umd(args, node, reference, compilers, nm)
+        if args.group == "umd":
+            return
     if args.group in {"all", "recorder"}:
         check_recorders(args, node, reference, compilers, nm)
         if args.group == "recorder":
