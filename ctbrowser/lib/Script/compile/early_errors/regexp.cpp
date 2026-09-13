@@ -534,6 +534,17 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
         return "the regular expression literal is never closed";
     }
     const std::string_view body = lexeme.substr(1, close - 1);
+    // 12.9.5: no LineTerminator in the body, escaped or not - the lexer
+    // stops at a bare one but a backslash before one takes it along.
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(body[i]);
+        if (c == '\n' || c == '\r' ||
+            (c == 0xE2 && i + 2 < body.size() && static_cast<unsigned char>(body[i + 1]) == 0x80 &&
+             (static_cast<unsigned char>(body[i + 2]) == 0xA8 ||
+              static_cast<unsigned char>(body[i + 2]) == 0xA9))) {
+            return "the regular expression literal contains a line break";
+        }
+    }
     const std::string_view flags = lexeme.substr(close + 1);
     std::string seen;
     for (const char f : flags) {
