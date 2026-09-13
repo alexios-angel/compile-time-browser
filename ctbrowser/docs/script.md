@@ -1090,3 +1090,38 @@ refuse the conversion outright, and cannot until ToPropertyKey is separated
 from ToString, because `o[sym]` resolves through the same call. Adding it there
 made `"" + Symbol("x")` yield the internal key instead of "Symbol(x)" - a worse
 wrong answer - and `ctbrowser/unittests/js/symbol_basics.cpp` caught it.
+
+## Typed arrays, ArrayBuffer and DataView (2026-09-12)
+
+The typed arrays were one 273-line file that knew nine constructors, `set`,
+`subarray`, `from`/`of`, and an `ArrayBuffer` that was a `byteLength` and a
+`__bytes` array. It is now `builtins/collections/typed_arrays/` - clauses 23.2,
+25.1 and 25.3 as written: `%TypedArray%` as the [[Prototype]] of the nine
+constructors with `from`, `of` and `@@species`, every `%TypedArray%.prototype`
+method and accessor, `ArrayBuffer` with `maxByteLength`, `resize`, `slice`,
+`transfer`, `transferToFixedLength`, `detached` and a real detach, `DataView`
+for every element type in both byte orders (Float16 and the BigInt64 pair
+included), and the ES2025 `Uint8Array` base64/hex codecs. The header in that
+directory is the storage model; two decisions in it are worth knowing:
+
+* **A typed array made from a length or a list OWNS its elements** (in
+  `array_object::items`, as before) and becomes a view over a fresh buffer
+  only when something asks for its `buffer` or a `subarray` - in place, so the
+  aliasing a page then relies on is real. Not always-a-view, because lib/Shell
+  reads `items` off the typed arrays a page hands it (`readPixels`,
+  `putImageData`), and a view's `items` is empty by design.
+* **A buffer keeps a list of the views whose length has to follow it.** The
+  VM reads `view_length` off a view without asking anybody, so `resize` and
+  detach re-bound every registered view; a `subarray` over a fixed-length
+  buffer is not registered, since nothing can shrink under it.
+
+What the VM cannot answer yet, and where: `element_kind` (value.hpp) has no
+BigInt or Float16 member, so `BigInt64Array`, `BigUint64Array` and
+`Float16Array` are not installed - test262's harness tests each with `typeof`,
+and ~890 of its typed-array files want the BigInt pair; a typed array's
+[[Prototype]] is found through its kind's global, so a subclass instance cannot
+be one; and `vm/objects/lookup.cpp` answers `buffer`, `length`, `byteLength`
+and `byteOffset` for a view before any prototype getter is asked, building a
+fresh wrapper for `buffer` each read, so `ta.buffer === ta.buffer` is false.
+`$262.detachArrayBuffer` in tools/ct262 still throws; the engine's detach is
+`ArrayBuffer.prototype.transfer`'s, one call away.
