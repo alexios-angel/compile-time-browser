@@ -56,11 +56,6 @@ void browser::layout_frames() {
     const auto walk = [&](auto && self, dom_bindings & owner, const fragment & fragments) -> void {
         for (const dom_bindings::loaded_frame & each : owner.loaded_frames()) {
             const fragment * frag = fragments.find(each.element);
-            // A frame with no box - `display: none`, or an owner that has not
-            // laid out - renders nothing, and its document reads as unrendered,
-            // which is what getComputedStyle-detached-subtree asserts.
-            if (frag == nullptr) { continue; }
-            const auto [width, height] = content_size(*frag);
             document & doc = each.bindings->owned_document();
             // Kept across layouts when nothing moved: the style engine holds
             // the parsed sheets, and re-parsing them for a page that only
@@ -74,6 +69,24 @@ void browser::layout_frames() {
                 layout = std::make_unique<frame_layout>();
                 layout->element = each.element;
                 layout->bindings = each.bindings;
+            }
+            // A frame with no box - `display: none`, or an owner that has not
+            // laid out - renders nothing, and its document reads as unrendered,
+            // which is what getComputedStyle-detached-subtree asserts. It keeps
+            // an entry so that frames_stale() has its version to compare and
+            // does not re-run this on every read of an idle page.
+            if (frag == nullptr) {
+                each.bindings->observe_layout(nullptr);
+                each.bindings->observe_boxes(nullptr);
+                each.bindings->observe_styles(nullptr);
+                layout->version = doc.version();
+                layout->style_stamp = each.bindings->style_stamp();
+                layout->width = layout->height = -1;
+                made.push_back(std::move(layout));
+                continue;
+            }
+            const auto [width, height] = content_size(*frag);
+            if (!layout->styles) {
                 layout->styles = std::make_unique<ctbrowser::style::engine>(atoms_);
                 layout->styles->set_text_measure([this](std::string_view text, float size,
                                                         std::string_view family, bool bold,
@@ -83,7 +96,7 @@ void browser::layout_frames() {
                 layout->styles->add_sheet(ctbrowser::style::ua_css, ctbrowser::style::ua_origin);
                 each.bindings->observe_style_engine(*layout->styles);
             }
-            const bool moved = fresh || layout->version != doc.version() ||
+            const bool moved = layout->version != doc.version() ||
                                layout->style_stamp != each.bindings->style_stamp() ||
                                layout->width != width || layout->height != height;
             if (moved) {

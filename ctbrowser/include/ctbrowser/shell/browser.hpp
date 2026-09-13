@@ -604,8 +604,8 @@ private:
         // What this layout was made from, so a read knows when it is stale.
         std::uint64_t version = 0;
         std::uint64_t style_stamp = 0;
-        float width = 0;
-        float height = 0;
+        float width = -1; // -1: never laid out, or no box
+        float height = -1;
         std::unique_ptr<ctbrowser::style::engine> styles;
         ctbrowser::style::style_map resolved;
         box_node boxes;
