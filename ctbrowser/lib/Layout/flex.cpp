@@ -744,6 +744,24 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                                           : cross_position;
             it.placed.bounds.x = edges.content_left() + (horizontal ? main_final : cross_final);
             it.placed.bounds.y = edges.content_top() + (horizontal ? cross_final : main_final);
+            // The used margins: the resolved ones, plus the free space an auto
+            // margin on the main axis absorbed (§8.1 - a positive share only).
+            it.placed.margin_top = it.edges.margin_top;
+            it.placed.margin_right = it.edges.margin_right;
+            it.placed.margin_bottom = it.edges.margin_bottom;
+            it.placed.margin_left = it.edges.margin_left;
+            {
+                float & start =
+                    horizontal
+                        ? (b.flex.reversed() ? it.placed.margin_right : it.placed.margin_left)
+                        : (b.flex.reversed() ? it.placed.margin_bottom : it.placed.margin_top);
+                float & end =
+                    horizontal
+                        ? (b.flex.reversed() ? it.placed.margin_left : it.placed.margin_right)
+                        : (b.flex.reversed() ? it.placed.margin_top : it.placed.margin_bottom);
+                if (it.main_start_auto) { start += auto_share; }
+                if (it.main_end_auto) { end += auto_share; }
+            }
 
             main_at += it.target + it.main_margin;
             if (it.main_end_auto) { main_at += auto_share; }

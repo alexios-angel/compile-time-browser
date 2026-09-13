@@ -660,8 +660,16 @@ struct block_flow {
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
                 // centres a box with a definite width, and that is the whole of how
                 // a page is centred.
-                f.bounds.x = edges.content_left() +
-                             auto_margin_left(child, child_c, child_edges, f.bounds.width);
+                f.margin_left = auto_margin_left(child, child_c, child_edges, f.bounds.width);
+                // The right margin is whatever the line has left over once the
+                // box and its left margin are placed, which is the resolved one
+                // unless it was `auto` (or the pair over-constrains the box).
+                f.margin_right = child.margin_right_auto
+                                     ? child_c.available_width - f.margin_left - f.bounds.width
+                                     : child_edges.margin_right;
+                f.margin_top = child_edges.margin_top;
+                f.margin_bottom = child_edges.margin_bottom;
+                f.bounds.x = edges.content_left() + f.margin_left;
                 if (at_collapsible_top) {
                     // The first child's top border edge is the parent's top
                     // border edge. A chain of empty children keeps adjoining and

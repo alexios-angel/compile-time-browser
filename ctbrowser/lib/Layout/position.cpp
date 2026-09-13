@@ -129,7 +129,7 @@ struct positioner {
         const offset bottom = resolve_offset(b.inset.bottom, cb.height, b.font_size);
 
         const constraints outer{cb.width, cb.height, b.font_size};
-        const resolved_edges edges = resolve_edges(b, outer);
+        resolved_edges edges = resolve_edges(b, outer);
 
         // THE WIDTH, and the three cases are genuinely different rules rather than
         // one rule with exceptions (§10.3.7). A stated width is itself; BOTH
@@ -146,10 +146,46 @@ struct positioner {
             width = shrink_to_fit_width(b, outer, edges, measure);
         }
 
+        // AUTO MARGINS ARE SOLVED, §10.3.7 rule 6 and §10.6.4 rule 6: with both
+        // offsets and a width given, what is left over goes to the auto
+        // margins - both, equally, which is how `left: 0; right: 0; margin:
+        // auto` centres an absolutely positioned box; one, wholly. Horizontally
+        // a negative remainder falls on margin-right (`direction: ltr`); the
+        // vertical rule has no such clause and a negative split is what it says.
+        if (!b.width.is_auto() && left.given && right.given &&
+            (b.margin_left_auto || b.margin_right_auto)) {
+            const float spare = cb.width - left.value - right.value - width -
+                                (b.margin_left_auto ? 0.0f : edges.margin_left) -
+                                (b.margin_right_auto ? 0.0f : edges.margin_right);
+            if (b.margin_left_auto && b.margin_right_auto) {
+                edges.margin_left = spare < 0 ? 0.0f : spare / 2;
+                edges.margin_right = spare - edges.margin_left;
+            } else if (b.margin_left_auto) {
+                edges.margin_left = spare;
+            } else {
+                edges.margin_right = spare;
+            }
+        }
+
         fragment placed =
             layout_box(b, constraints{cb.width, cb.height, b.font_size, width, true}, measure);
         placed.box = &b;
         placed.source = b.source;
+
+        if (!b.height.is_auto() && top.given && bottom.given &&
+            (b.margin_top_auto || b.margin_bottom_auto)) {
+            const float spare = cb.height - top.value - bottom.value - placed.bounds.height -
+                                (b.margin_top_auto ? 0.0f : edges.margin_top) -
+                                (b.margin_bottom_auto ? 0.0f : edges.margin_bottom);
+            if (b.margin_top_auto && b.margin_bottom_auto) {
+                edges.margin_top = spare / 2;
+                edges.margin_bottom = spare - edges.margin_top;
+            } else if (b.margin_top_auto) {
+                edges.margin_top = spare;
+            } else {
+                edges.margin_bottom = spare;
+            }
+        }
 
         // Where it goes, in absolute coordinates. An `auto` offset means the
         // static position - where the box would have been in flow - which is the
@@ -168,6 +204,10 @@ struct positioner {
             y = cb.y + cb.height - bottom.value - height - edges.margin_bottom;
         }
 
+        placed.margin_top = edges.margin_top;
+        placed.margin_right = edges.margin_right;
+        placed.margin_bottom = edges.margin_bottom;
+        placed.margin_left = edges.margin_left;
         // Back into the parent's coordinates, which is what a fragment's bounds
         // are relative to.
         placed.bounds.x = x - abs_x;

@@ -839,7 +839,22 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 }
             }
             const layout::length len = layout::parse_length(text);
-            if (len.is_auto()) { return "auto"; }
+            if (len.is_auto()) {
+                // A MARGIN'S USED VALUE IS A NUMBER, and `auto` is a value only
+                // for a box no flow has placed: a centred block's `margin: 0
+                // auto` and an absolutely positioned box's between two offsets
+                // are the pixels the flow gave them (computed-style-005). Every
+                // other length answers `auto` still - a width, an inset, which
+                // have their own rows above.
+                if (at.frag != nullptr && property.starts_with("margin-")) {
+                    const layout::fragment & f = *at.frag;
+                    return px_text(property == "margin-left"    ? f.margin_left
+                                   : property == "margin-right" ? f.margin_right
+                                   : property == "margin-top"   ? f.margin_top
+                                                                : f.margin_bottom);
+                }
+                return "auto";
+            }
             // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the
             // percentage as specified - resolving it needs a containing block, which
             // is a used-value question, and unlike width there is no used value to
