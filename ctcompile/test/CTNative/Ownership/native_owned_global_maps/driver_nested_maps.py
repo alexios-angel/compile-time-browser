@@ -656,10 +656,22 @@ host.slot.poison(); trace = host.slot.get();
         ),
         16,
         functions=5,
+        admitted=True,
     )
     rows["nested_map_mixed_child_returned_field"].update(
+        mixed_child=True,
+        mixed_child_kind="returned",
+        entry_fields=1,
+        entry_field_mutations=[
+            ("var traceObject = host.slot.get().value;", "var traceObject = 0;"),
+        ],
         expected_trace=True,
         observations={"traceMissing": True, "traceNumber": True, "traceObject": 64},
+    )
+    original_field = rows["nested_map_mixed_child_returned_field"]["source"]
+    assert len(original_field.encode()) == 595
+    assert hashlib.sha256(original_field.encode()).hexdigest() == (
+        "9d4c8b9c5e52297f6dd7f37f2a3a8c1a955f0d8348912cf35365de1ec00f57a0"
     )
     # Strict identity refines this exact lexical result, never every later get().
     # Script-scope const is a global in this importer, so each saved result lives
@@ -742,6 +754,67 @@ host.slot.poison(); trace = host.slot.get();
             expected_trace=True,
             observations=observations,
         )
+        if name in {"other_lookup", "other_receiver", "scalar_guard"}:
+            rows["nested_map_returned_fields_" + name].update(
+                admitted=True,
+                owner=True,
+                mixed_child=True,
+                mixed_child_kind="returned",
+                entry_fields=3,
+            )
+    # A later call's exact result never inherits an earlier object's fields.
+    # Recreating the child executes the same constructor at another invocation.
+    removal = original_field.replace(
+        "        get() {", "        remove() { t.delete(1); return 0; },\n        get() {"
+    )
+    for name, source, calls, functions, admitted in (
+        (
+            "overwritten_scalar",
+            original_field.replace("var traceObject =", "host.slot.set(64); var traceObject ="),
+            17,
+            5,
+            False,
+        ),
+        (
+            "recreated_scalar",
+            removal.replace(
+                "var traceObject =", "host.slot.remove(); host.slot.set(64); var traceObject ="
+            ),
+            19,
+            6,
+            False,
+        ),
+        (
+            "recreated_object",
+            removal.replace("host.slot.set(key);", "host.slot.remove(); host.slot.set(key);"),
+            18,
+            6,
+            True,
+        ),
+        (
+            "inactive_unknown_effect",
+            original_field.replace("set(value) {", "set(value) { if (false) { unknown(value); }"),
+            17,
+            5,
+            False,
+        ),
+    ):
+        add("returned_fields_" + name, source, calls, functions=functions, admitted=admitted)
+        rows["nested_map_returned_fields_" + name].update(
+            expected_trace=True,
+            observations={
+                "traceMissing": True,
+                "traceNumber": True,
+                "traceObject": "undefined" if name.endswith("scalar") else 64,
+            },
+        )
+        if admitted:
+            rows["nested_map_returned_fields_" + name].update(
+                mixed_child=True,
+                mixed_child_kind="returned",
+                entry_fields=1,
+                replacement=True,
+            )
     return rows
 
 
@@ -934,9 +1007,12 @@ def mixed_child_observer(source, row):
 })();
 """
     if row.get("entry_fields"):
+        initial = " && ".join(
+            f"{name} === {json.dumps(value)}" for name, value in row["observations"].items()
+        )
         observed = observed.replace(
             "let ok = set(64)",
-            "let ok = traceMissing === 0 && traceNumber === 0 && traceObject === 64 && set(64)",
+            "let ok = " + initial + " && set(64)",
         )
     if kind == "returned":
         observed = observed.replace(
@@ -2021,6 +2097,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
             "nested_map_mixed_child_identity",
             "nested_map_mixed_child_replace",
             "nested_map_mixed_child_returned_identity",
+            "nested_map_mixed_child_returned_field",
             "nested_map_returned_fields_same",
         }:
             check_budgets(args, ir, config, name, functions=functions)
