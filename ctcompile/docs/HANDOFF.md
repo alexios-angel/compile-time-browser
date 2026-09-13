@@ -56,6 +56,20 @@ files changed. Claude's **cf4fb0e1** test/baseline integration was reviewed befo
 these gates. All **1284 frozen compiler/runtime/test inputs** match the devbox after
 the full gate and final measurements.
 
+Late browser handoff **42b7960d** changes documentation only. In response,
+**73d4e034** retires exactly three historical `WeakRef`/`FinalizationRegistry`
+absence assertions and corrects ND-2 documentation. All other cycle source and
+GC/RAII/WeakMap checks are preserved. The subsequent **two-step build** and
+`ctcompile_escape_cycle` pass (**0.03s total**); final **1284 local/remote inputs**
+match, with only `Cycle.cpp` differing from the full-gate manifest. Both formatter
+checks retain the results above. Runtime weak globals may now be enabled without
+this obsolete pin; native weak-edge admission remains unimplemented.
+
+The other browser request needs coordinated integration: `node_ns::mathml` is
+absent from the current public enum. Add `case node_ns::mathml: return "mathml";`
+to `HTML/DocumentComparator.cpp::ns_name` together with W's future enum/parser
+change, then gate both projects. No browser branch was merged or edited here.
+
 Fresh full Bootstrap remains **19/574 native**, both policies. Exact Data and
 the original single/repeated numeric recorder probes remain **0/7**, both policies,
 with `property receiver lacks a fresh own-data object proof`.
