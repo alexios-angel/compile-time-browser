@@ -284,6 +284,17 @@ void test_aria_element_references_reflect_both_ways() {
        " f.ariaLabelledByElements = null; seen.push(String(f.ariaLabelledByElements));"
        " return seen.join(); })()",
        "2,true,true,true,true,,null");
+    // ANOTHER DOCUMENT'S ELEMENT reads and writes its own tree, and keeps the
+    // reference through adoption (aria-element-reflection.html, "Adopting
+    // element keeps references").
+    is("(function () { var other = document.implementation.createHTMLDocument('o');"
+       " var d = other.createElement('div'); var s = other.createElement('span');"
+       " d.appendChild(s); other.body.appendChild(d);"
+       " d.ariaActiveDescendantElement = s; var seen = [d.ariaActiveDescendantElement === s];"
+       " document.body.appendChild(document.adoptNode(d));"
+       " seen.push(d.ariaActiveDescendantElement === s, d.ownerDocument === document);"
+       " return seen.join(); })()",
+       "true,true,true");
 }
 
 // --- the translate attribute --------------------------------------------------
