@@ -40,10 +40,8 @@ namespace detail {
 // was no other kind - an `.xhtml` file and a frame whose `src` is one both have
 // `document::xml()` set, and in one of those `getAttribute("viewBox")` must find
 // the attribute the parser stored with its capitals intact.
-atom dom_bindings::attribute_key(const read_txn & txn, node_id id,
-                                 std::string_view qualified) const {
-    const bool folds = txn.element_ns(id) == node_ns::html && !doc_->xml();
-    return folds ? atoms_->intern_lower(qualified) : atoms_->intern(qualified);
+atom dom_bindings::attribute_key(const read_txn &, node_id id, std::string_view qualified) const {
+    return ctbrowser::attribute_key(*doc_, id, qualified);
 }
 
 // ONE Attr, AND IT IS LIVE IN BOTH DIRECTIONS. `attr.value` reads the element's
@@ -585,12 +583,11 @@ void dom_bindings::install_attribute_methods(context & cx) {
         }
         if (!id) { return value::undefined(); }
         const std::string text = arg_string(c, args, 1);
-        const auto txn = doc_->read();
         // THE FIRST ATTRIBUTE WITH THIS QUALIFIED NAME, whatever its namespace,
         // and only its VALUE changes - the DOM layer's set_attribute is what
         // means "Setting the same attribute with another prefix should not
         // change the prefix", which is a subtest by name.
-        (void)doc_->set_attribute(id, attribute_key(txn, id, name), text);
+        (void)set_element_attribute(*doc_, id, name, text);
         mutated();
         return value::undefined();
     });

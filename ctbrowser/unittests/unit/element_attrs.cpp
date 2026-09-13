@@ -157,6 +157,17 @@ void test_what_an_attribute_may_be_called() {
     is("document.createElement('foo').setAttribute('a/b', 'x')", "threw:InvalidCharacterError");
     is("document.createElement('foo').setAttribute('a=b', 'x')", "threw:InvalidCharacterError");
     is("document.createElement('foo').setAttribute('a>b', 'x')", "threw:InvalidCharacterError");
+    // Name validation precedes value conversion; the shared DOM helper must
+    // not make the adapter evaluate a value for an invalid name.
+    is(R"JS((function () {
+        var e = document.createElement('foo');
+        var conversions = 0;
+        var text = {toString: function () { conversions++; return 'changed'; }};
+        try { e.setAttribute('bad name', text); }
+        catch (error) { return error.name + ',' + conversions + ',' + e.attributes.length; }
+        return 'did not throw';
+    })())JS",
+       "InvalidCharacterError,0,0");
     // `xmlns` is an ordinary attribute name to `setAttribute` - the namespace
     // rules below belong to `setAttributeNS` and to nothing else.
     is(R"JS((function () {
