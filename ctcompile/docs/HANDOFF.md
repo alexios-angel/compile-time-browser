@@ -6,6 +6,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Frame stylesheet failure fixed, 2026-09-13 UTC
+
+After **c478d66f**, the user requested fixing the remaining `frames` failure before
+ending this conversation. **53ec43be**, landed atomically as **fc902a6e**,
+fixes the shared fragment parser path: `innerHTML` parsed a full document and
+copied only its body, dropping a leading stylesheet routed into the scratch head.
+The same defect affected `outerHTML` and `insertAdjacentHTML`.
+
+Public `parse_html_body_fragment` now initializes the existing DOM tree builder
+in body mode, preserving leading whitespace, comments and metadata in order and
+ignoring document shell tags. All three bindings use it. Full-document parsing
+and `document.write` keep their existing behavior. This helper covers the body's
+context; table/select/raw-text fragment contexts remain separate work.
+
+The original frame expectation is unchanged. Baseline failure was reproduced;
+a **196-step focused build and 4/4 CTests in 0.11s** pass after the fix. Chromium
+**151.0.7922.34** confirms all **18 new insertion observations** and the exact frame
+result, `200px,50px,rgb(1, 2, 3),50,1,0px`. The final standard
+devbox gate passed its **884-step build and 543/543 CTests in 1185.32s**, including
+**167/167 lit cases in 837.34s**. All **1398 frozen inputs** match shared, isolated
+and devbox trees.
+Whole stable formatting passes **812 C++ / 86 Python / 33 web files**; the bundled
+formatter retains the same **nine baseline files / 26 diagnostics**. Full
+WPT/test262 scores were not remeasured. Evidence: `/tmp/ctbrowser-frames-fix/`.
+
+Native Bootstrap and DOM entry scope are unchanged. Fresh full Bootstrap remains
+**19/574 native / zero of 43 globals resolved**, both policies, with no skipped
+or pruned functions.
+The next native boundary remains retained DOM-backed Data keys with document
+ownership outliving every key and future invocation, followed by original Button
+construction and disposal. No push. Shared tree and synchronization claims are
+clean at handoff; the next session can resume that native boundary.
+
 ## Typed native DOM entries and shared attributes, 2026-09-13 UTC
 
 Continued clean **f7966251**, resuming the typed document/node entry promised by
