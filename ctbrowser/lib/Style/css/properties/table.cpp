@@ -178,6 +178,7 @@ constexpr property_syntax table[] = {
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
+    {"caret-color", k::freeform, "", "auto", true, false},
     {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
@@ -250,6 +251,12 @@ constexpr property_syntax table[] = {
     {"word-break", k::keyword_only, "normal break-all keep-all break-word", "normal", true, false},
     {"overflow-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},
     {"direction", k::keyword_only, "ltr rtl", "ltr", true, false},
+    // Read by the cascade (an inherited property) and by the computed style's
+    // logical-to-physical mapping; a property the engine reads must be in
+    // this table, because the table is what `el.style.writingMode = x` is
+    // checked against - an unsupported name is an expando there.
+    {"writing-mode", k::keyword_only,
+     "horizontal-tb vertical-rl vertical-lr sideways-rl sideways-lr", "horizontal-tb", true, false},
     {"unicode-bidi", k::freeform, "", "normal", false, false},
     {"tab-size", k::number_length, "", "8", true, true},
     {"vertical-align", k::length_percentage,
