@@ -75,7 +75,9 @@ int main() {
     answers("function f(await) { return await; } return f(4);", "4");
     answers("function g() { var await = 5; return await; } return g();", "5");
     answers("async function h() { return await 6; } return await h();", "6");
-    answers("var r = 0; (async () => { r = await 8; })(); await null; return r;", "8");
+    answers("var r = 0; (async () => { r = await 8; })(); await new Promise(r => "
+            "Promise.resolve().then(r)); return r;",
+            "8");
 
     // --- for-in/of heads: any LeftHandSideExpression, a literal as a pattern
     answers("var o = {}; for (o.p of [1, 2]) {} return o.p;", "2");
@@ -163,25 +165,26 @@ int main() {
     answers("return `'\\x41\\u{42}' ${1 + 1}`;", "'AB' 2");
 
     // --- `import.source` is a rejected promise, never a throw
-    answers(
-        "var r; import.source('x').catch(e => { r = e.name; }); await null; await null; return r;",
-        "SyntaxError");
+    answers("var r; import.source('x').catch(e => { r = e.name; }); await new Promise(r => "
+            "Promise.resolve().then(r)); return r;",
+            "SyntaxError");
     answers("var r; import.source({ toString() { throw 'boom'; } }).catch(e => { r = e; });"
-            " await null; await null; return r;",
+            " await new Promise(r => Promise.resolve().then(r)); return r;",
             "boom");
 
     // --- yield* in an async generator: GetIterator(obj, async) refuses a
     // non-object result before any next() (7.4.3)
     answers("var r = 'none'; var obj = { [Symbol.asyncIterator]() { return true; } };"
             " async function* g() { yield* obj; } g().next().catch(e => { r = e.name; });"
-            " await null; await null; return r;",
+            " await new Promise(r => Promise.resolve().then(r)); return r;",
             "TypeError");
     answers("var r = 'none'; var obj = { [Symbol.iterator]() { return 1; } };"
             " async function* g() { yield* obj; } g().next().catch(e => { r = e.name; });"
-            " await null; await null; return r;",
+            " await new Promise(r => Promise.resolve().then(r)); return r;",
             "TypeError");
     answers("var out = []; async function* g() { yield* [1, 2]; } var it = g();"
-            " it.next().then(v => out.push(v.value)); await null; await null; await null;"
+            " it.next().then(v => out.push(v.value)); await new Promise(r => "
+            "Promise.resolve().then(r));"
             " return out.join();",
             "1");
 
