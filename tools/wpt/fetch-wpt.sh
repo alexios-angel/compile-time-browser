@@ -103,6 +103,10 @@ SPARSE_PATHS=(
   # runs every html5lib .dat fixture through the tree builder and compares the
   # tree - the DOM's own tokenizer and tree builder, measured at last.
   /html/syntax/
+  # ...LESS speculative-parsing/, which needs the WPT server (stash.py) and
+  # can only TIMEOUT here: 126 of the first wide run's 133 html/syntax
+  # TIMEOUTs were these. A negated pattern is what --no-cone allows.
+  !/html/syntax/speculative-parsing/
   /html/semantics/forms/   # form controls, constraint validation, submission
   /html/webappapis/        # timers, structured clone, atob, scripting, events
   /dom/ranges/             # Range and StaticRange
