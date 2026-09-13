@@ -5,26 +5,49 @@ agents still running. **Everything below is measured** (`docs/wpt.md`, the
 `7f9211d0` row; `docs/css-conformance.md` §2-wide; `docs/test262.md`, the
 `b346dc0b` row) except where it says what an agent's transcript reports.
 
-## 1. Four agent branches to merge FIRST
+## 1. Four agent branches to merge FIRST — all finished, all clean, all gated
 
-Round one ran four agents in their own worktrees, cut from `b346dc0b`. The
-session ended before their reports; their branches hold their commits, and
-their transcripts (`~/.claude/projects/-mnt-c-Users-aange-Downloads-claude-wt-ctbrowser-wpt/2f716b6e-2cd2-4c93-b4ee-942acece2a4e/subagents/workflows/wf_ddb62f45-b03/agent-*.jsonl`)
-hold what they measured. Worktrees are under the MAIN checkout's
-`.claude/worktrees/wf_ddb62f45-b03-{1,2,3,4}`:
+Round one ran four agents in their own worktrees, cut from `b346dc0b`. They
+FINISHED minutes after the session's handoff was written: every worktree is
+clean, every branch's own gate was 193/193 (the browser preset, MLIR off),
+and an adversarial reviewer read each diff whole. Reports and reviews, in
+full, are `~/Downloads/claude/wt/wpt11-session/round1-reports.jsonl` (one
+JSON line per agent and per review). Worktrees are under the MAIN checkout's
+`.claude/worktrees/wf_ddb62f45-b03-{1,2,3,4}`; branch `worktree-wf_ddb62f45-b03-N`.
 
-| worktree | agent | branch | commits | state |
-|---|---|---|---:|---|
-| `-1` | E: test262 `test/language` (compile, early errors, VM, ctjs) | `worktree-wf_ddb62f45-b03-1` | 25 | 4 files dirty (mid-edit: `compile/frames.cpp`, `statements/functions.cpp`, two js unit tests). Its ctjs commits (`b2b5155..69cc3d8`, seven) are saved as branch `agentE-ctjs` in the ctbrowser-wpt worktree's submodule; the gitlink bump must land with the merge |
-| `-2` | T: TypedArray / ArrayBuffer / DataView | `worktree-wf_ddb62f45-b03-2` | 5 | clean |
-| `-3` | P: Promise / Proxy / Reflect / Symbol / Iterator / Date / DisposableStack | `worktree-wf_ddb62f45-b03-3` | 7 | 1 file dirty |
-| `-4` | W: WPT dom/nodes + html/dom (DOM, bindings) | `worktree-wf_ddb62f45-b03-4` | 18 | clean |
+| wt | agent | tip | commits | measured (devbox, same instrument) | review |
+|---|---|---|---:|---|---|
+| `-1` | **E** test262 `test/language`: compiler, early errors, VM, ctjs | `c8c281b1`, ctjs `69cc3d8` (gitlink bumped; the seven ctjs commits are also branch `agentE-ctjs` in the ctbrowser-wpt worktree's submodule) | 28 | **19,829 -> 21,290 of 23,726** (+1,476, 15 lost - each an accidental pass before: decorators now a parse error, tagged-template TCO files, `using` TDZ, `delete arguments.length`, two `for (var x of ..)` files whose fix is `/tmp/agentE/var-noinit.patch` = `wpt11-session/var-noinit.patch`, unmeasured) | merge-with-fixes: two MAJORS - `declaring_` set around the whole top-level declarator loop makes every initialiser expression a declaration's write (`dispatch.cpp`, `destructuring.cpp:53`); Annex B.3.3 regressed - a function declared in a nested block of a sloppy function is block-local only (`statements/functions.cpp`). Minors: param-scope names swapped back too early, mixed sync/async `using` in one block, tagged-template cache key, uncapped prototype walks in `lookup.cpp` |
+| `-2` | **T** TypedArray / ArrayBuffer / DataView / Uint8Array codecs | `e6f8a94f` | 8 | TypedArray **1 -> 745** of 1,446, TypedArrayConstructors **74 -> 275**, ArrayBuffer **24 -> 190**, DataView **0 -> 438**, Uint8Array **4 -> 64**, Array 2,774 -> 2,787; 0 lost | merge-with-fixes: one MAJOR - `ensure_store` (the `buffer` getter, `subarray`) converts an owning typed array into a view in place (`typed_arrays/constructors.cpp`); minors: constructor-made views on a strong per-buffer list (a leak), a private %ArrayIteratorPrototype%, DataView ctor steps 11-14. Touched `Shell/bindings/resources.cpp` (2 rooting lines, needed) |
+| `-3` | **P** Promise / Proxy / Reflect / Symbol / Iterator / Date / DisposableStack | `b4250867` | 9 | Promise **257 -> 703** of 731, Iterator **13 -> 603** of 653, Proxy 146 -> 169, Reflect 115 -> 150, Symbol 48 -> 75, DisposableStack **0 -> 91**, AsyncDisposableStack **0 -> 101**, SuppressedError 0 -> 20, Date 580 -> 583, AsyncFromSync 12 -> 18; WeakRef/FinalizationRegistry measured 28/28 and 46/46 but SHIPPED OFF (`install_weak_refs` commented out) behind Codex's ND-2 pin in `ctcompile/test/Analysis/Escape/Cycle.cpp:530-537`; 0 lost | merge-with-fixes: one MAJOR - **the branch alone turns the gate red**: `unit/image_basics` SEGFAULTs unless `wpt11-session/dispatch-rooting.patch` (10 lines in `bindings/events/dispatch.cpp` `invoke_listener`: root callback/receiver/args across the fence's first compile) is applied - it is a pre-existing GC hole the extra allocations expose; apply it with the merge. Minors: `Reflect.set` through a proxy answers `!throw_pending()`, `set_prototype_of` on a proxy answers false where 10.5.2 says TypeError, `install_iterator`/`install_disposable` called from the tail of `install_promise` instead of `builtins.cpp` |
+| `-4` | **W** WPT dom/nodes + html/dom + dom/events | `c9acd0fc` | 19 | dom/nodes **252 -> 262** of 309 (12,061 -> 12,075 subtests), html/dom 149 -> 150, dom/events 81 -> 81 (677 subtests); 0 lost; `document.characterSet` from `<meta charset>` with the Encoding Standard label table is DONE and unit-tested but the 636 subtests stay FAIL because the runner has no server for `encoding.py` | merge-with-fixes: one MAJOR - `compile_handler_attribute` wraps every inline handler in `with (document) { with (form) { with (this) {...}}}` (`events/dispatch.cpp`), the HTML scope chain done as `with` statements: review it against 8.1.6.1's "element's event handler scope" before it meets the corpus. Minors: `tHead` setter's exception type, `xml.cpp` entity splicing O(n^2), `run_inserted_scripts` walks the whole document per inserted script, its `expectations.txt` was regenerated over `b346dc0b`'s (take the root's `aff857e0` file and re-measure instead), MathML-as-foreign-content reverted (`3a4bf5b7`) because `ctcompile/lib/HTML/DocumentComparator.cpp` needs `case node_ns::mathml` - Codex's file |
 
-Merge each into `ctbrowser-wpt` under `/tmp/ctbrowser-repo-git.lock`
-(`/tmp/wpt11/merge-agent.sh <branch> <worktree>` did the checks), gate, then
-remove the worktree, branch and its devbox dir `projects/ctbrowser-agent{E,T,P,W}`.
-Read the ctjs note in the memory file `agent-worktree-submodule-commits`
-before removing `-1`.
+**Merge order and what to do at each:** T, then P (+ the dispatch rooting
+patch), then W (drop its `expectations.txt`, keep the root's), then E (the
+largest; bump the ctjs gitlink to `69cc3d8` - fetch the commits from
+`agentE-ctjs` first, see the memory note `agent-worktree-submodule-commits`).
+Resolve conflicts in `builtins/internal.hpp` (three agents appended a line),
+`Shell/bindings/resources.cpp` (T and W both added the same rooting lines),
+`docs/script.md`. Then ONE full gate (MLIR on), a full WPT+test262 re-measure,
+and the JOURNAL lines for Codex: every agent reported JS SEMANTICS changes
+(class fields compiler-driven, `delete` semantics, `using`, tagged templates,
+typed arrays real, Promise two-tick thenables, Proxy invariants, `Symbol`
+well-knowns, `hasOwnProperty` via the descriptor trap) - the native backend
+reads this VM as its oracle and will see every one as a divergence. Expected
+after the merge, if nothing is lost in the merge: test262 roughly **+4,300
+files** (language +1,461, built-ins about +2,900) on the 32,295 of `7f9211d0`.
+
+**Things the agents asked of files outside their paths** (all in the reports;
+the ones worth doing first): `symbol.cpp` needs `Symbol.dispose`,
+`Symbol.asyncDispose` and `Symbol.unscopables` as well-knowns (81 `using`
+tests and `remove-unscopable.html` wait on them); `value.hpp` needs
+`element_kind` `big_i64`/`big_u64`/`f16` (~800 typed-array files read
+`BigInt64Array`); `compile/classes.cpp` must link a derived CONSTRUCTOR's
+[[Prototype]] to the parent (15.7.14 step 8.d: `class P extends Promise`,
+`class X extends Uint8Array`, ~50 files); `ct262.cpp`'s `$262.detachArrayBuffer`
+can be `ArrayBuffer.prototype.transfer` now (294 skipped files); the VM's
+proxy `get` trap hands symbol keys as `"@@..."` strings; a sloppy function
+called from a native with `this` undefined must bind `globalThis`.
 
 ## 2. Open at the tip (`d05c82ad`)
 
