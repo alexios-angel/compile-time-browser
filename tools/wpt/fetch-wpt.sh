@@ -79,6 +79,16 @@ SPARSE_PATHS=(
   /css/*/inheritance.html
   /css/*/animation/
   /css/*/animations/
+  # ...AND THE HELPERS THOSE IMPORT, which a pattern on the test directories
+  # alone leaves out: css-properties-values-api/animation/ loads
+  # ../resources/utils.js, every animation/ test loads
+  # /web-animations/testcommon.js, and a module's support/ holds its own
+  # fixtures. SKIP_DIR_PARTS in run-wpt.py keeps resources/ and support/ from
+  # ever being collected as tests. (60 HARNESS_ERRORs in
+  # css-properties-values-api on the first wide run were the missing utils.js.)
+  /css/*/resources/
+  /css/*/support/
+  /web-animations/testcommon.js
   # WHOLE MODULES THAT ARE MOSTLY testharness AND MOSTLY IMPLEMENTED.
   /css/css-syntax/         # the tokenizer and grammar (style/css/)
   /css/css-variables/      # custom properties and var()
