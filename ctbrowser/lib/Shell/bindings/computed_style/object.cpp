@@ -370,6 +370,11 @@ void dom_bindings::install_computed_style(context & cx) {
             // both windows.
             if (!args.empty()) {
                 if (dom_bindings * owner = owner_of(args[0]); owner != nullptr && owner != this) {
+                    // Only a document the browser has laid out has styles to
+                    // observe; one it has not - a `display: none` frame's, a
+                    // createHTMLDocument's - is unrendered and answers empty
+                    // (getComputedStyle-detached-subtree, through both windows).
+                    if (owner->styles_ == nullptr) { return computed_style_object(c, node_id{}); }
                     return owner->computed_style_object(c, owner->handle_of(args[0]));
                 }
             }
