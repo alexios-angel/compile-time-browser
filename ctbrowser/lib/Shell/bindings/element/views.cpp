@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/dom/token_list.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -829,15 +831,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // THE UPDATE STEPS: nothing is written when there is no attribute and
         // nothing to put in one, otherwise the set, space-joined.
         const auto update = [this, id, attribute_name](const std::vector<std::string> & tokens) {
-            const atom key = atoms_->intern(attribute_name);
-            if (tokens.empty() && !doc_->read().has_attribute(id, key)) { return; }
-            std::string text;
-            for (const std::string & token : tokens) {
-                if (!text.empty()) { text += ' '; }
-                text += token;
-            }
-            (void)doc_->set_attribute(id, key, text);
-            mutated();
+            const auto result = update_tokens(*doc_, id, atoms_->intern(attribute_name), tokens);
+            if (!result || *result) { mutated(); }
         };
         // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING CHANGES: "" is a
         // SyntaxError, a token with whitespace in it an InvalidCharacterError,
@@ -846,27 +841,30 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // `add` and `remove` check each token in turn; `replace` checks BOTH
         // for emptiness before either for whitespace (DOM 7.1, steps 1-2),
         // so `replace(" ", "")` is a SyntaxError - hence `all_empty_first`.
-        const auto valid_tokens = [this](context & c, std::span<value> args,
-                                         std::vector<std::string> & out,
-                                         bool all_empty_first = false) {
+        const auto report_token_error = [this](context & c, const std::string & token,
+                                               token_error error) {
+            if (error == token_error::empty) {
+                throw_dom_exception(c, "SyntaxError",
+                                    "DOMTokenList: the empty string is not a token");
+            } else {
+                throw_dom_exception(c, "InvalidCharacterError",
+                                    "DOMTokenList: '" + token + "' contains whitespace");
+            }
+        };
+        const auto valid_tokens = [report_token_error](context & c, std::span<value> args,
+                                                       std::vector<std::string> & out,
+                                                       bool all_empty_first = false) {
             for (const value & v : args) { out.push_back(c.to_string(v)); }
-            for (std::size_t i = 0; i < out.size(); ++i) {
-                const std::string & token = out[i];
-                if (token.empty()) {
-                    throw_dom_exception(c, "SyntaxError",
-                                        "DOMTokenList: the empty string is not a token");
-                    return false;
-                }
-                if (!all_empty_first && token.find_first_of("\t\n\f\r ") != std::string::npos) {
-                    throw_dom_exception(c, "InvalidCharacterError",
-                                        "DOMTokenList: '" + token + "' contains whitespace");
+            for (const std::string & token : out) {
+                const auto error = validate_token(token);
+                if (error && (*error == token_error::empty || !all_empty_first)) {
+                    report_token_error(c, token, *error);
                     return false;
                 }
             }
             for (const std::string & token : out) {
-                if (token.find_first_of("\t\n\f\r ") != std::string::npos) {
-                    throw_dom_exception(c, "InvalidCharacterError",
-                                        "DOMTokenList: '" + token + "' contains whitespace");
+                if (const auto error = validate_token(token)) {
+                    report_token_error(c, token, *error);
                     return false;
                 }
             }
@@ -903,28 +901,20 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         });
         // `toggle(token, force)`, DOM 7.1 - and a no-op runs NO update steps:
         // `toggle("c", false)` on `class="a a"` leaves the duplicate in place.
-        list_method("toggle",
-                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
-                        std::vector<std::string> given;
-                        if (!valid_tokens(c, args.subspan(0, args.empty() ? 0 : 1), given)) {
-                            return value::undefined();
-                        }
-                        const std::string token = given.empty() ? "undefined" : given.front();
-                        std::vector<std::string> tokens = tokens_now();
-                        const bool present = has(tokens, token);
-                        const bool forced = args.size() > 1 && !args[1].is_undefined();
-                        const bool force = forced && context::truthy(args[1]);
-                        if (present) {
-                            if (forced && force) { return value::boolean(true); }
-                            std::erase(tokens, token);
-                            update(tokens);
-                            return value::boolean(false);
-                        }
-                        if (forced && !force) { return value::boolean(false); }
-                        tokens.push_back(token);
-                        update(tokens);
-                        return value::boolean(true);
-                    });
+        list_method("toggle", [this, id, attribute_name,
+                               report_token_error](context & c, std::span<value> args) {
+            const std::string token = args.empty() ? "undefined" : c.to_string(args.front());
+            const bool forced = args.size() > 1 && !args[1].is_undefined();
+            const auto result =
+                toggle_token(*doc_, id, atoms_->intern(attribute_name), token,
+                             forced ? std::optional{context::truthy(args[1])} : std::nullopt);
+            if (!result) {
+                report_token_error(c, token, result.error());
+                return value::undefined();
+            }
+            if (!result->update || *result->update) { mutated(); }
+            return value::boolean(result->present);
+        });
         // `replace(token, newToken)`: "replace within an ordered set" - the
         // FIRST of either becomes the new token and every other instance of
         // either goes, so `class="a b c"` replacing c with a is "a b".

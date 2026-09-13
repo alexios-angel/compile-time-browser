@@ -107,6 +107,41 @@ void test_class_list_edits_the_attribute() {
     check(log[6] == "item=c,null", "classList.item, past the end too: " + log[6]);
 }
 
+void test_class_list_force_and_validation() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=d></div><script>
+        const d = document.getElementById('d');
+        const raw = ' \ta a\nb\r ';
+        d.setAttribute('class', raw);
+        console.log('ordered=' + d.classList.length + ',' + d.classList.item(0) + ',' + d.classList.item(1));
+        console.log('keep=' + d.classList.toggle('a', true) + ',' + (d.getAttribute('class') === raw));
+        console.log('absent=' + d.classList.toggle('missing', false) + ',' + (d.getAttribute('class') === raw));
+        console.log('default=' + d.classList.toggle('new', undefined) + ',' + d.getAttribute('class'));
+        d.setAttribute('class', raw);
+        const errors = [];
+        try { d.classList.add('new', ''); }
+        catch (e) { errors.push(e.name + ':' + (d.getAttribute('class') === raw)); }
+        try { d.classList.remove(' ', ''); }
+        catch (e) { errors.push(e.name + ':' + (d.getAttribute('class') === raw)); }
+        try { d.classList.replace(' ', ''); }
+        catch (e) { errors.push(e.name + ':' + (d.getAttribute('class') === raw)); }
+        console.log('errors=' + errors.join(','));
+        d.removeAttribute('class');
+        console.log('missing=' + d.classList.toggle() + ',' + d.getAttribute('class'));
+    </script></body></html>)");
+    check(page.script_error().empty(),
+          "class list force/validation script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    CHECK_EQ(log.size(), 6u);
+    if (log.size() != 6) { return; }
+    CHECK_EQ(log[0], "ordered=2,a,b");
+    CHECK_EQ(log[1], "keep=true,true");
+    CHECK_EQ(log[2], "absent=false,true");
+    CHECK_EQ(log[3], "default=true,a b new");
+    CHECK_EQ(log[4], "errors=SyntaxError:true,InvalidCharacterError:true,SyntaxError:true");
+    CHECK_EQ(log[5], "missing=true,undefined");
+}
+
 void test_class_list_reaches_the_cascade() {
     browser page{browser_options{400, 200}};
     // The point of writing the attribute rather than keeping a list beside it:
@@ -457,6 +492,7 @@ int main() {
     test_a_broken_script_still_renders();
     test_window_and_performance();
     test_class_list_edits_the_attribute();
+    test_class_list_force_and_validation();
     test_class_list_reaches_the_cascade();
     test_style_writes_reach_the_document();
     test_style_writes_reach_the_pixels();

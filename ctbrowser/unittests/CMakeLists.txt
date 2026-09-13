@@ -9,6 +9,12 @@ foreach(test IN LISTS tests)
   ctbrowser_test(${test})
 endforeach()
 
+# The native token-list client must link without the interpreter or Shell.
+# Keep the test helper's configured trace libraries and DOM/Core dependencies.
+get_target_property(_token_list_libs ctbrowser-test-dom_token_list LINK_LIBRARIES)
+list(FILTER _token_list_libs EXCLUDE REGEX "^ctbrowser::(script|style|layout|paint|raster|shell|ctbrowser)$")
+set_property(TARGET ctbrowser-test-dom_token_list PROPERTY LINK_LIBRARIES "${_token_list_libs}")
+
 # vm_operators is the one file that still runs ctjs - `diff_vs_v1` sends an
 # expression through the previous engine's interpreter as well - and that
 # public header also reaches its nested ctc dependency.
