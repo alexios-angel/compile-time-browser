@@ -1,6 +1,181 @@
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
+namespace {
+
+void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & source,
+                            bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map", "Array"};
+        return contract;
+    };
+    const auto subject = [&](const std::string & body) {
+        return replaced(source,
+                        "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                        "    %size = ctjs.get_property %state[%key]\n"
+                        "    ctjs.return %size",
+                        body);
+    };
+    const std::string head = R"MLIR(
+    %frame = ctjs.frame_enter 1
+    %zero = ctjs.constant #ctjs.number<0>
+    %expected = ctjs.constant #ctjs.string<"x">
+)MLIR";
+    const std::string snapshot = R"MLIR(
+    %array = ctjs.load_global "Array"
+    %fromKey = ctjs.constant #ctjs.string<"from">
+    %from = ctjs.get_property %array[%fromKey]
+    %keysKey = ctjs.constant #ctjs.string<"keys">
+    %keys = ctjs.get_property %state[%keysKey]
+    %iterator = ctjs.call %keys(%state)
+    ctjs.root %iterator in %frame
+    %copy = ctjs.call %from(%array, %iterator)
+    %element = ctjs.get_property %copy[%zero]
+    %matched = ctjs.compare strict_eq %element, %expected
+    %lengthKey = ctjs.constant #ctjs.string<"length">
+    %length = ctjs.get_property %copy[%lengthKey]
+    %lengthMatch = ctjs.compare strict_eq %length, %zero
+)MLIR";
+    const std::string tail = "    ctjs.frame_exit %frame\n    ctjs.return %matched\n";
+    const auto normal = subject(head + snapshot + tail);
+    for (const bool length : {false, true}) {
+        const auto program =
+            length ? replaced(normal, "ctjs.return %matched", "ctjs.return %lengthMatch") : normal;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured snapshot fixtures parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (!query.proved()) {
+            std::fprintf(stderr, "snapshot owner %s: %s\n", prepared ? "prepared" : "source",
+                         query.reason().str().c_str());
+        }
+        check(query.proved(), "length and strict index comparisons close the shared owner");
+        if (!query.proved()) { continue; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(capture.snapshotOperations.size() == 5 && capture.calls.size() == 2,
+              "Array/from/copy/index/length evidence stays separate from Map effects");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap &&
+                      edge.capturedMap->snapshotOperations == capture.snapshotOperations &&
+                      edge.capturedMap->calls == capture.calls,
+                  "every current call retains the complete snapshot family evidence");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "snapshot ownership queries preserve every source operation");
+        const unsigned completion = query.steps();
+        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "snapshot proof cutoffs expose no partial owner or operation index");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion,
+              "the exact snapshot completion budget reproduces the whole family");
+        auto missing = contract;
+        missing.initialIntrinsics = {"Map"};
+        OwnedGlobalRoots uncontracted(*module, missing);
+        check(!uncontracted.proved() && empty(*module, uncontracted),
+              "an Array spelling cannot supply its standard identity");
+    }
+    const auto refuse = [&](const std::string & program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured snapshot refusal fixture parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        check(!query.proved() && !query.exhausted() && empty(*module, query), message);
+    };
+    refuse(replaced(normal, "%from(%array, %iterator)", "%from(%array, %zero)"),
+           "an unconsumed iterator cannot gain a snapshot proof");
+    refuse(replaced(normal, "    %element =",
+                    "    %again = ctjs.call %from(%array, %iterator)\n    %element ="),
+           "the same iterator cannot be consumed twice");
+    refuse(replaced(normal, "    %copy =", R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %expected)
+    %copy =)MLIR"),
+           "iterator consumption cannot cross a Map mutation");
+    for (const auto & literal :
+         {"#ctjs.number<9221120237041090560>", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<13830554455654793216>", "#ctjs.string<\"0\">"}) {
+        refuse(replaced(normal, "#ctjs.number<0>", literal),
+               "NaN, fractional, negative and String snapshot indexes stay refused");
+    }
+    refuse(replaced(normal, "ctjs.return %matched", "ctjs.return %copy"),
+           "the owning snapshot cannot escape through a method return");
+    refuse(replaced(normal, "ctjs.return %matched", "ctjs.return %element"),
+           "a snapshot key receives no primitive or returned-object authority");
+    refuse(replaced(normal, "    %element =",
+                    "    ctjs.set_property %copy[%zero], %expected\n    %element ="),
+           "snapshot element writes stay outside this read-only proof");
+
+    const auto branch = subject(head + R"MLIR(
+    %sizeKey = ctjs.constant #ctjs.string<"size">
+    %size = ctjs.get_property %state[%sizeKey]
+    %condition = ctjs.truthy %size
+    scf.if %condition {
+)MLIR" + snapshot + R"MLIR(
+    } else {
+      ctjs.root %zero in %frame
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %zero
+)MLIR");
+    auto foreign =
+        replaced(normal, "    %setKey =", "    %otherFrame = ctjs.frame_enter 1\n    %setKey =");
+    foreign = replaced(foreign,
+                       "    %u = ctjs.constant #ctjs.undefined\n"
+                       "    ctjs.return %u\n  }\n}\n",
+                       "    %u = ctjs.constant #ctjs.undefined\n"
+                       "    ctjs.root %value in %otherFrame\n"
+                       "    ctjs.frame_exit %otherFrame\n"
+                       "    ctjs.return %u\n  }\n}\n");
+    for (const auto & program : {branch, foreign}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "snapshot scope controls parse before hostile edits");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "local iterator and scalar roots have a complete source owner");
+        mlir::Value iterator;
+        ctjs::RootOp root;
+        module->walk([&](ctjs::CallOp call) {
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (read && ctjs::constantKey(read.getKey()) == "keys") { iterator = call.getResult(); }
+        });
+        module->walk([&](ctjs::RootOp candidate) {
+            if (candidate->getOperand(1).getDefiningOp<ctjs::ConstantOp>()) { root = candidate; }
+        });
+        check(iterator && root, "scope controls locate the iterator and independent scalar root");
+        if (!iterator || !root) { continue; }
+        const auto saved = root->getOperand(1);
+        root->setOperand(1, iterator);
+        mlir::Builder attributes(&context);
+        (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        root->setAttr("ctnative.map_snapshot_copy", attributes.getUnitAttr());
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
+              "foreign iterator roots invalidate the supplied source fingerprint");
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+              "fresh reports and forged snapshot facts cannot authorize a foreign iterator root");
+        root->setOperand(1, saved);
+        check(OwnedGlobalRoots(*module, requested(*module)).proved(),
+              "restored source rederives its snapshot proof despite forged reports");
+        root->removeAttr("ctnative.map_snapshot_copy");
+        check(hostContractFingerprint(*module) == contract.moduleSha256 &&
+                  OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the source also restores its original fingerprint and snapshot proof");
+    }
+    std::printf("captured snapshots %s: length/index, 10 refusals, scope/report/budget controls\n",
+                prepared ? "prepared" : "source");
+}
+
+} // namespace
 
 void checkSharedMap(mlir::MLIRContext & context) {
     auto source = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
@@ -60,6 +235,9 @@ void checkSharedMap(mlir::MLIRContext & context) {
         }
         return text;
     };
+    for (const bool prepared : {false, true}) {
+        checkCapturedSnapshots(context, prepared ? prepare(source) : source, prepared);
+    }
     auto objectKey = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
                               "ctjs.call %factory(%u)");
     objectKey =

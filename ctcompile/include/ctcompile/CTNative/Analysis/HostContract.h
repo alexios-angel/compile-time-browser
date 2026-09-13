@@ -87,7 +87,8 @@ struct HostChildMapEntry {
 // empty. The complete live census of every closure sharing that slot permits
 // primitive contents, fresh method-local leaves with fixed scalar fields, or
 // checked scalar-field caller leaves, fresh child Maps, and standard
-// size/set/get/has/delete/clear effects. Child Maps cannot retain Maps.
+// size/set/get/has/delete/clear effects and confined immediate key snapshots.
+// Child Maps cannot retain Maps.
 // Caller formals permit only key/payload uses; method-local leaves cannot be keys.
 // No object escapes through a method result, field or unchecked use. Effects remain
 // runtime; no startup value or result type is promised. Optional cell operations describe
@@ -122,6 +123,9 @@ struct HostCapturedMap {
     // Every child write is a supported scalar or a checked scalar-field leaf.
     // Reads may be Undefined; this gives no primitive, field or identity facts.
     bool childLeafContents = false;
+    // Confined immediate key copies and read-only length/index observations.
+    // Element reads carry no scalar or object category authority.
+    std::vector<mlir::Operation *> snapshotOperations{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

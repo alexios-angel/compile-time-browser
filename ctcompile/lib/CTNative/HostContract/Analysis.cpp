@@ -315,6 +315,9 @@ std::string analyzer::environmentProblem() {
             for (ctjs::GetPropertyOp read : capture.leafReads) {
                 if (step()) { capturedOperations.insert(read); }
             }
+            for (mlir::Operation * snapshot : capture.snapshotOperations) {
+                if (step()) { capturedOperations.insert(snapshot); }
+            }
             for (ctjs::ConstructOp child : capture.childMaps) {
                 if (step()) { capturedOperations.insert(child); }
                 if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }

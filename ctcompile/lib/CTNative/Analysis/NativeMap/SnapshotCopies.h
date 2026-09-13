@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <string>
 
@@ -16,8 +17,8 @@ struct snapshotCopies {
 // caller also proves the module has no unknown calls or global reflection.
 // Each iterator must have one immediate Array.from consumer, so its eager
 // native vector cannot expose iterator state or move a read across effects.
-std::string collectSnapshotCopies(mlir::ModuleOp module,
-                                  const llvm::DenseSet<mlir::Operation *> & mapCalls,
-                                  snapshotCopies & out);
+std::string collectSnapshotCopies(
+    mlir::Operation * scope, const llvm::DenseSet<mlir::Operation *> & mapCalls,
+    snapshotCopies & out, llvm::function_ref<bool()> spend = [] { return true; });
 
 } // namespace ctcompile::ctnative::map_detail

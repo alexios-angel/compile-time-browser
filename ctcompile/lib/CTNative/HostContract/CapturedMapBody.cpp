@@ -1,11 +1,13 @@
 #include "Analysis.h"
 
+#include "../Analysis/NativeMap/SnapshotCopies.h"
 #include "../Analysis/PrimitiveAlternatives.h"
 #include "../Analysis/PrimitiveMapKey.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace ctcompile::ctnative::host_detail {
 
@@ -27,6 +29,36 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // Closed scalar/leaf alternatives permit non-coercing observations, never
     // an own-field receiver or a primitive category without separate evidence.
     llvm::DenseSet<mlir::Value> leafValues;
+    llvm::DenseSet<mlir::Value> snapshotElements;
+    llvm::DenseSet<mlir::Operation *> snapshotReads;
+    std::optional<map_detail::snapshotCopies> copies;
+    const auto prepareSnapshots = [&] {
+        if (copies) { return true; }
+        if (!llvm::is_contained(contract.initialIntrinsics, "Array") || !globals["Array"].empty()) {
+            return false;
+        }
+        llvm::DenseSet<mlir::Operation *> candidates;
+        const auto census =
+            function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                if (!call) { return mlir::WalkResult::advance(); }
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (read && ctjs::constantKey(read.getKey()) == "keys") { candidates.insert(call); }
+                return mlir::WalkResult::advance();
+            });
+        map_detail::snapshotCopies found;
+        if (census.wasInterrupted() ||
+            !map_detail::collectSnapshotCopies(function, candidates, found, [&] {
+                 return step();
+             }).empty()) {
+            return false;
+        }
+        // Candidates have only an iterator timing proof. The walk below must
+        // still close every receiver/effect before this family can be published.
+        copies = std::move(found);
+        return true;
+    };
     llvm::DenseMap<mlir::Value, mlir::Value> maps;
     const auto capturedOrigin = body.getArgument(prepared ? 3 : 2);
     llvm::DenseSet<mlir::Operation *> constructors, allocations, mapStores;
@@ -411,6 +443,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (!llvm::isa<mlir::IntegerAttr>(constant.getValue())) { return false; }
                 if (constant.getType().isInteger(1)) { flags.insert(constant.getResult()); }
             } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                if (load.getName() == "Array") {
+                    if (!prepareSnapshots() || !copies->builtins.contains(load)) { return false; }
+                    result.snapshotOperations.push_back(load);
+                    continue;
+                }
                 if (load.getName() != "Map" || !globals["Map"].empty()) { return false; }
                 constructors.insert(load);
             } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
@@ -460,10 +497,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (compare.getKind() != ctjs::CompareKind::StrictEq ||
                     (!primitives.contains(compare.getLhs()) &&
                      !objects.contains(compare.getLhs()) &&
-                     !leafValues.contains(compare.getLhs())) ||
+                     !leafValues.contains(compare.getLhs()) &&
+                     !snapshotElements.contains(compare.getLhs())) ||
                     (!primitives.contains(compare.getRhs()) &&
                      !objects.contains(compare.getRhs()) &&
-                     !leafValues.contains(compare.getRhs()))) {
+                     !leafValues.contains(compare.getRhs()) &&
+                     !snapshotElements.contains(compare.getRhs()))) {
                     return false;
                 }
                 identities.insert(compare);
@@ -684,6 +723,31 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 maps.try_emplace(load.getResult(), capturedOrigin);
             } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                 const auto key = ctjs::constantKey(read.getKey());
+                if (copies && copies->builtins.contains(read)) {
+                    result.snapshotOperations.push_back(read);
+                    continue;
+                }
+                if (copies && copies->calls.contains(read.getObject().getDefiningOp())) {
+                    if (key == "length") {
+                        primitives.insert(read.getResult());
+                        alternatives.try_emplace(
+                            read.getResult(),
+                            PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
+                    } else {
+                        auto literal = read.getKey().getDefiningOp<ctjs::ConstantOp>();
+                        auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
+                                              : ctjs::NumberAttr{};
+                        if (!number || !std::isfinite(number.getDouble()) ||
+                            number.getDouble() < 0 || number.getDouble() >= 4294967295.0 ||
+                            std::floor(number.getDouble()) != number.getDouble()) {
+                            return false;
+                        }
+                        snapshotElements.insert(read.getResult());
+                    }
+                    snapshotReads.insert(read);
+                    result.snapshotOperations.push_back(read);
+                    continue;
+                }
                 if (auto origin = objects.lookup(read.getObject())) {
                     if (!ctjs::ordinaryKey(key)) { return false; }
                     PrimitiveAlternatives payload;
@@ -706,9 +770,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 if (!maps.contains(read.getObject()) ||
                     (key != "size" && key != "set" && key != "get" && key != "has" &&
-                     key != "delete" && key != "clear")) {
+                     key != "delete" && key != "clear" && key != "keys")) {
                     return false;
                 }
+                if (key == "keys" && !prepareSnapshots()) { return false; }
                 result.reads.push_back(read);
                 reads.insert(read);
                 if (key == "size") {
@@ -724,12 +789,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     if (fact->exact) { exactSizes[read.getResult()] = *fact->exact; }
                 }
             } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                if (copies && copies->calls.contains(invoke)) {
+                    auto iterator = invoke.getArgs().front().getDefiningOp<ctjs::CallOp>();
+                    if (!iterator || !calls.contains(iterator)) { return false; }
+                    result.snapshotOperations.push_back(invoke);
+                    continue;
+                }
                 auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!read || !reads.contains(read) || read.getObject() != invoke.getReceiver()) {
                     return false;
                 }
                 const auto key = ctjs::constantKey(read.getKey());
-                const unsigned arity = key == "set" ? 2u : (key == "clear" ? 0u : 1u);
+                const unsigned arity =
+                    key == "set" ? 2u : (key == "clear" || key == "keys" ? 0u : 1u);
                 if (key == "size" || invoke.getArgs().size() != arity) { return false; }
                 const auto origin = maps.lookup(invoke.getReceiver());
                 if (!origin) { return false; }
@@ -757,6 +829,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 result.calls.push_back(invoke);
                 calls.insert(invoke);
+                if (key == "keys") { continue; }
                 if (key == "set") {
                     maps.try_emplace(invoke.getResult(), origin);
                     if (!mutate(state, invoke.getArgs()[0], false,
@@ -1023,6 +1096,50 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 continue;
             }
             return false;
+        }
+    }
+    if (copies) {
+        // The timing helper permits GC roots, but even bookkeeping cannot
+        // carry a then-local iterator into a sibling region or function.
+        for (mlir::Operation * operation : calls) {
+            auto call = llvm::cast<ctjs::CallOp>(operation);
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!step()) { return false; }
+            if (ctjs::constantKey(read.getKey()) != "keys") { continue; }
+            for (mlir::OpOperand & use : call.getResult().getUses()) {
+                if (!step() || !dominance.dominates(call.getResult(), use.getOwner())) {
+                    return false;
+                }
+            }
+        }
+        for (mlir::Operation * operation : result.snapshotOperations) {
+            if (!step()) { return false; }
+            if (operation->getParentOfType<ctjs::FuncOp>() != function) { continue; }
+            for (mlir::Value operand : operation->getOperands()) {
+                if (!step() || !dominance.dominates(operand, operation)) { return false; }
+            }
+        }
+        for (mlir::Operation * copy : copies->calls) {
+            for (mlir::OpOperand & use : copy->getResult(0).getUses()) {
+                if (!step() || !dominance.dominates(copy->getResult(0), use.getOwner())) {
+                    return false;
+                }
+                if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                    !(use.getOperandNumber() == 0 && snapshotReads.contains(use.getOwner()))) {
+                    return false;
+                }
+            }
+        }
+    }
+    // A key may itself be a caller object. Equality observes identity without
+    // granting a primitive category, field receiver, return or storage edge.
+    for (mlir::Value element : snapshotElements) {
+        for (mlir::OpOperand & use : element.getUses()) {
+            if (!step() || !dominance.dominates(element, use.getOwner())) { return false; }
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                !(identities.contains(use.getOwner()) && use.getOperandNumber() < 2)) {
+                return false;
+            }
         }
     }
     // Unproved Map.get results remain potentially nullable/mixed. Even a

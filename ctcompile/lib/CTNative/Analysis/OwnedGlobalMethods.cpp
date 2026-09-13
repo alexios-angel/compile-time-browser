@@ -89,6 +89,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->upvalues != capture->upvalues ||
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls ||
+                         edge.capturedMap->snapshotOperations != capture->snapshotOperations ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||
                          !(edge.capturedMap->childScalarContents == capture->childScalarContents) ||
@@ -256,9 +257,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             const auto action = ctjs::constantKey(read.getKey());
-            const unsigned arity = action == "set" ? 2u : (action == "clear" ? 0u : 1u);
+            const unsigned arity =
+                action == "set" ? 2u : (action == "clear" || action == "keys" ? 0u : 1u);
             if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
-                 action != "clear") ||
+                 action != "clear" && action != "keys") ||
                 call.getArgs().size() != arity) {
                 reject("owned child Map call has another method or arity");
                 return;
@@ -518,7 +520,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             if (!llvm::is_contained(slot.reads, read) && !methodReads.contains(read) &&
                 (!capture || (!llvm::is_contained(capture->reads, read) &&
-                              !llvm::is_contained(capture->leafReads, read)))) {
+                              !llvm::is_contained(capture->leafReads, read) &&
+                              !llvm::is_contained(capture->snapshotOperations, operation)))) {
                 reject("owned global method field read lacks a complete live callable edge");
             }
         }
@@ -533,7 +536,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation) && operation != factoryCall &&
             operation != wrapperCall.getOperation() && !methodCalls.contains(operation) &&
             (!capture ||
-             !llvm::is_contained(capture->calls, llvm::dyn_cast<ctjs::CallOp>(operation)))) {
+             (!llvm::is_contained(capture->calls, llvm::dyn_cast<ctjs::CallOp>(operation)) &&
+              !llvm::is_contained(capture->snapshotOperations, operation)))) {
             reject("owned global method table has another call or factory invocation");
         }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);
