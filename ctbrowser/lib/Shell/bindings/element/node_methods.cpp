@@ -223,17 +223,8 @@ void dom_bindings::install_node_methods(context & cx) {
                // Parsed into a scratch document, as innerHTML does and for the same
                // reason: tree_builder::parse replaces the root it is handed.
                document scratch{*atoms_};
-               (void)parse_html(scratch, markup);
+               const node_id body = parse_html_body_fragment(scratch, markup);
                const auto from = scratch.read();
-               node_id body{};
-               const auto find_body = [&](auto && walk, node_id at) -> void {
-                   if (!body && from.tag(at).value_or(atom{}) == atoms_->intern_lower("body")) {
-                       body = at;
-                   }
-                   for (const node_id child : from.children(at)) { walk(walk, child); }
-               };
-               find_body(find_body, from.root());
-               if (!body) { return value::undefined(); }
 
                // IN ORDER, because each node goes before the SAME reference rather
                // than before the one just added. copy_subtree appends to the parent it

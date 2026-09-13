@@ -31,4 +31,13 @@ struct parse_result {
     return out;
 }
 
+// Parse into a fresh scratch document and return the body holding the fragment.
+// Unlike document parsing, leading metadata and whitespace belong to the result.
+// ponytail: body context only; table/select/raw-text contexts need a context-aware
+// fragment entry when those callers are supported.
+[[nodiscard]] inline node_id parse_html_body_fragment(document & doc, std::string_view source) {
+    html::tree_builder builder{doc, doc.atoms()};
+    return builder.parse_body_fragment(source);
+}
+
 } // namespace ctbrowser
