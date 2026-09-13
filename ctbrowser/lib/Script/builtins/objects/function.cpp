@@ -645,8 +645,18 @@ void install_destructuring_iteration(context & cx) {
         return value::undefined();
     });
     cx.define_native(std::string{define_accessor_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 4 || !a[0].is_object()) { return value::undefined(); }
-        c.define_accessor(a[0], c.to_string(a[1]), a[2], a[3]);
+        // A CLASS IS A CLOSURE: `static get [k]()` defines on the constructor,
+        // which is_object() (heap_kind::object exactly) does not admit - so
+        // every static computed accessor was silently dropped.
+        if (a.size() < 4 || !(a[0].is_object() || a[0].is_kind(heap_kind::function))) {
+            return value::undefined();
+        }
+        // ToPropertyKey (7.1.19) of the computed key: a symbol keeps its key,
+        // anything else goes through ToPrimitive-then-ToString, whose throw
+        // is the throw of the class definition.
+        const std::string key = c.to_string(a[1]);
+        if (c.throw_pending()) { return value::undefined(); }
+        c.define_accessor(a[0], key, a[2], a[3]);
         return value::undefined();
     });
     // See yield_delegate_open_name.
