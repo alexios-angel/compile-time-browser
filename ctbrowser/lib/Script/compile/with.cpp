@@ -151,6 +151,10 @@ void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
 // may not throw). The write that follows still runs when the check passes.
 void compiler_impl::emit_strict_assign_check(std::string_view name) {
     if (!fn().is_strict || declaring_) { return; }
+    // NOT AT A MODULE'S TOP LEVEL, deliberately (docs/script.md, strict
+    // mode): ctcompile's module fixtures publish to their host through
+    // `OUT = ...` and rely on the write.
+    if (module_scope_ && frames_.size() == 1) { return; }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t callee = alloc_reg();
     proto().emit(instruction::with_bx(op::get_global, callee,

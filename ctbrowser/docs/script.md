@@ -327,10 +327,19 @@ declares it (`compiler_impl::private_scopes_`), so an inner class's `#x` is
 never an outer instance's and two classes' `#x` never alias. `lookup_property`
 treats any `@#` key as 7.3.31 PrivateGet: an object the class did not
 initialise - or any proxy - is the TypeError "Cannot read private member #x
-from an object whose class did not declare it". A WRITE is not checked yet:
-`this.#x = v` on a foreign object creates the element instead of throwing,
-because the field initialiser still defines through `set_prop` and a checked
-store would need a define native there. `#x in obj` is not parsed.
+from an object whose class did not declare it". A write is the same check
+(7.3.32), a private method is not writable, and `#x in obj` is the check as a
+boolean. Since 2026-09-12 (later that day) the check is
+`context::private_element_present`, PrivateElementFind for this spelling: an
+own `@#x:N` key - a FIELD, added once by `__ctbrowser_private_add`, which is
+the TypeError when the object already carries it or is not extensible - or a
+METHOD/ACCESSOR key up the prototype chain (up the static chain for a static
+one) PLUS the class's brand, the own `@#:N` key the class's `<fields>`
+initialiser adds to every instance it constructs and the definition adds to
+the constructor for the statics. So `Object.create(C.prototype)` and a
+subclass constructor fail a method's brand check. Not yet: two evaluations of
+one class expression share N, so their private names alias where the
+specification gives each evaluation its own.
 
 ### Strict mode, the part that changes what runs (since 2026-09-12)
 
@@ -341,11 +350,40 @@ non-extensible receiver, getter without setter, primitive receiver - is a
 TypeError (`store_rejected_`, read by `set_prop`/`set_index` and by the AOT
 bridge off the frame's proto) instead of the silent drop sloppy code gets, and
 an assignment to an unresolvable name is a ReferenceError (the compiler emits
-a `get_global` probe before the `set_global`). NOT in a module's top level,
-deliberately: ctcompile's module fixtures publish to their host through
+a call of `__ctbrowser_strict_assign(name)` before the `set_global`, since
+op::set_global's contract says it cannot throw; a declaration's own first
+write - `let x = 1`, `class C {}`, a declared pattern at a script's top level -
+sets `compiler_impl::declaring_` and is not probed). NOT in a module's top
+level, deliberately: ctcompile's module fixtures publish to their host through
 `OUT = ...` and rely on the write. Still sloppy everywhere: `this` in a plain
 call (undefined, not globalThis - the AOT contract pins it), `arguments`
 aliasing, `delete` of a non-configurable property, the early errors.
+
+### The language forms that landed with test/language (2026-09-12)
+
+Measured before/after in `docs/test262.md`. The front end (ctjs `vparse.hpp`,
+gitlink 945b60e): the whitespace and line-terminator sets of 12.2/12.3 on
+their UTF-8 bytes; ASI at statement ends (12.10 - `a b` on one line is the
+SyntaxError it always was, a do-while takes its virtual `;`); `await` as a
+name outside an async body and `yield`/`await`/`let`/`async` as labels and
+arrow parameters where they are names; escaped words never keywords; class
+static blocks; class fields ending at `;`, `}` or a line break; any
+LeftHandSideExpression as a for-in/of head (`for (o.p of xs)`, `for ([a.b]
+of pairs)`); `{ a = 1 }` as a pattern (CoverInitializedName); tagged
+templates; `import.source(x)` / `import.defer(x)`; `using` and `await using`;
+the `**` / `??` grammar; division after an object literal's `}`; an unknown
+byte as a token rather than a silent skip. The checker (`compile/early_errors/`):
+string and template escapes, the whole numeric grammar, static-block rules,
+class names, labels, lexical for-in/of heads, labelled function bodies, strict
+Annex B, `using` rules. The compiler and VM: static fields and blocks run in
+one `<static>` function with the class as `this`; `using` lowers to a
+disposal region (`compile/statements/using.cpp` - needs `Symbol.dispose`, not
+installed yet); `import.source` is a rejected promise; tagged templates cache
+one frozen strings array per site; a class heritage is checked and chains the
+constructor (`Object.getPrototypeOf(D) === B`); `super.x` reads with `this`
+as receiver; accessors and object-literal methods have a home object; a
+deleted synthesised `name`/`length` stays deleted; `f.length` is
+ExpectedArgumentCount.
 
 ### Reading an unresolvable name throws (since 2026-09-12)
 
