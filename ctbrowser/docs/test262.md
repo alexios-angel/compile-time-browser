@@ -50,7 +50,7 @@ runner is 460 lines of C++ and 610 of Python.
 | `tools/fetch-test262.sh` | shallow-fetches tc39/test262 at a **pinned commit** into `~/.cache/ctbrowser/test262` (override with `TEST262_DIR`) and VERIFIES the hash. Outside the source tree, never committed, not synced by `remote-build.sh`. |
 | `ctbrowser/tools/ct262/ct262.cpp` | the HOST. One process, one test, one realm: `$262`, `print`, the harness preludes as separate programs, the strict transformation, the ES-module loader, and a one-line machine-readable failure report. |
 | `tools/check/test262.py` | the RUNNER. Frontmatter, mode selection, the process cap, classification, the per-directory table, the gate, and its own self-test. |
-| `tools/check/test262-baseline.sh` | the ten areas below, run one after another with identical flags. Sequential: four workers is the cap the whole devbox shares. |
+| `tools/check/test262-baseline.sh` | THE WHOLE OF ECMAScript since 2026-09-12: `test/language`, `test/built-ins` and `test/annexB`, one after another with identical flags (intl402 is ECMA-402, staging is not the specification; neither runs). Before that, ten hand-picked areas - the rows of the tables below, still readable out of the built-ins JSON by directory. Sequential: four workers is the cap the whole devbox shares. |
 | `ctbrowser/test/test262/expectations.txt` | what the gate's subset does today. Written by `--update-expectations`, never by hand. |
 
 The pinned commit is **`771005236e88a909635104e03ba12559688c0172`** (tc39/test262
@@ -973,3 +973,82 @@ class elements ~180, `module-code` 111), 350 `with` files, 139
 at `import.` (154), `using`/`await-using` (~130). Built-ins: `Array` 280
 (60 are the BigInt typed arrays being absent, 41 "Expected a TypeError"),
 `Object` 134, `String` 124, `Function` 86.
+
+## Measured at `b346dc0b` — 2026-09-13, the WHOLE corpus for the first time
+
+`tools/check/test262-baseline.sh` widened on 2026-09-12 from ten hand-picked
+areas to `test/language`, `test/built-ins` and `test/annexB` - every file the
+corpus holds for the language and its library, 48,624 of them against 32,927
+before - because the old list scored the areas that were being worked on and
+made the rest invisible: RegExp at 24%, Promise at 34% and TypedArray at 0.1%
+were never a number in this file. Same instrument otherwise (devbox, 4 workers,
+10 s timeout, 2 GB cap), engine at `b346dc0b` on `ctbrowser-wpt` (the merge of
+`ctcompile-v1` `3e803401` into the audit cuts of the evening). Areas with
+fewer than 93 files are in the JSON and not in the table:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `language` | 23,726 | 18350 | **19,829** | +1479 | 3,869 | 0/1/6 | 21 |
+| `annexB` | 1,086 | - | **369** | - | 675 | 0/0/0 | 42 |
+| `built-ins/Temporal` | 4,603 | - | **0** | - | 4,603 | 0/0/0 | 0 |
+| `built-ins/Object` | 3,411 | 3275 | **3,284** | +9 | 125 | 0/0/0 | 2 |
+| `built-ins/Array` | 3,082 | 2774 | **2,774** | +0 | 280 | 0/1/11 | 16 |
+| `built-ins/RegExp` | 1,879 | - | **938** | - | 924 | 3/0/2 | 12 |
+| `built-ins/TypedArray` | 1,446 | - | **1** | - | 114 | 0/0/1192 | 139 |
+| `built-ins/String` | 1,223 | 1096 | **1,149** | +53 | 71 | 0/0/0 | 3 |
+| `built-ins/TypedArrayConstructors` | 738 | - | **74** | - | 39 | 0/0/495 | 130 |
+| `built-ins/Promise` | 732 | - | **257** | - | 474 | 0/0/0 | 1 |
+| `built-ins/Iterator` | 654 | - | **13** | - | 640 | 0/0/0 | 1 |
+| `built-ins/Date` | 594 | - | **580** | - | 11 | 0/0/0 | 3 |
+| `built-ins/DataView` | 561 | - | **0** | - | 442 | 0/0/0 | 119 |
+| `built-ins/Function` | 509 | 410 | **432** | +22 | 64 | 0/0/0 | 13 |
+| `built-ins/Atomics` | 389 | - | **0** | - | 0 | 0/0/0 | 389 |
+| `built-ins/Set` | 383 | - | **368** | - | 14 | 0/0/0 | 1 |
+| `built-ins/Number` | 340 | 333 | **333** | +0 | 6 | 0/0/0 | 1 |
+| `built-ins/Math` | 327 | 326 | **327** | +1 | 0 | 0/0/0 | 0 |
+| `built-ins/Proxy` | 311 | - | **146** | - | 129 | 0/0/0 | 36 |
+| `built-ins/ArrayBuffer` | 221 | - | **24** | - | 161 | 3/0/5 | 28 |
+| `built-ins/Map` | 204 | - | **190** | - | 13 | 0/0/0 | 1 |
+| `built-ins/JSON` | 165 | 137 | **137** | +0 | 26 | 0/0/0 | 2 |
+| `built-ins/Reflect` | 153 | - | **115** | - | 38 | 0/0/0 | 0 |
+| `built-ins/WeakMap` | 141 | - | **135** | - | 5 | 0/0/0 | 1 |
+| `built-ins/AsyncDisposableStack` | 104 | - | **0** | - | 101 | 0/0/2 | 1 |
+| `built-ins/SharedArrayBuffer` | 104 | - | **0** | - | 0 | 0/0/0 | 104 |
+| `built-ins/Symbol` | 98 | - | **48** | - | 31 | 0/0/0 | 19 |
+| `built-ins/NativeErrors` | 94 | - | **82** | - | 6 | 0/0/0 | 6 |
+| `built-ins/DisposableStack` | 93 | - | **0** | - | 91 | 0/0/1 | 1 |
+| `built-ins/Error` | 93 | 83 | **83** | +0 | 5 | 0/0/0 | 5 |
+| **total** | **48,624** | 26,833 | **32,295** | | 13,485 | 6/2/1718 | 1118 |
+
+**32,295 of 48,624 (66.4%); of the 47,506 that ran, 68.0%.** The ten old
+areas alone are 28,397 of 32,927 (86.2%), from 26,833 (81.5%) at `00b5ab38`.
+`test/language` +1,479 is agent J's evening (`3fad5e7c`: the `with`
+statement, restricted-production ASI, import attributes, hashbang - ctjs
+`b2b5155`) and the class/destructuring early errors; `String` +53 and
+`Function` +22 are the RegExp 22.2 work landing in `split`/`replace` and
+`Function.prototype.toString`. **6 files went PASS -> FAIL** across the
+same period: `comments/hashbang/multi-line-comment.js` (a refusal where the
+parser must reject), the three `module-code/import-attributes/early-dup-
+attribute-key-*` files (the duplicate-key early error the ctjs bump was
+meant to carry - lost between the submodule and the checker), `class/
+elements/privatefieldset-evaluation-order-3.js` and `class/subclass/derived-
+class-return-override-for-of-arrow.js`. All six are in the language agent's
+brief for the next round.
+
+**Where the corpus says the holes are**, in files, largest first:
+`Temporal` 4,603 (not implemented, not planned - it is a calendar library
+the size of the rest of the standard library); the typed arrays - 1,707
+files across `TypedArray`, `TypedArrayConstructors`, `Array` and `DataView`
+die in `harness/testTypedArray.js` before the test runs, on
+`BigInt64Array` being absent, and `DataView` is not defined (388); `Iterator`
+is not defined (407, the ES2025 iterator helpers); `RegExp` 924 FAIL of
+1,879; `Promise` 474 of 732; `Proxy` 129 of 311; `DisposableStack` /
+`AsyncDisposableStack` / `SuppressedError` (ES2026 explicit resource
+management, 201 files, none passing); `annexB` 675 of 1,044 - 192 of them
+the "initialized binding is not created" family, which is Annex B.3.2's
+web-compat block-level function hoisting, and 27 `escape`/`unescape`.
+In `test/language` the top causes are the ones the `00b5ab38` row named,
+each smaller: 544 early errors, 348 wrong `SameValue`s (classes), 193
+"Expected a SyntaxError" (139 in direct eval), 154 `import.source`/
+`import.defer` (parsed as a broken `import.meta`), 126 missing TypeErrors,
+94 missing ReferenceErrors.
