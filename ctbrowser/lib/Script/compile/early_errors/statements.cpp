@@ -415,7 +415,17 @@ void checker::check_switch(std::int32_t idx, std::vector<binding> & vars) {
     std::vector<std::int32_t> body;
     for (const std::int32_t clause : kids(n)) {
         walk_expression(at(clause).a);
-        for (const std::int32_t s : kids(at(clause))) { body.push_back(s); }
+        for (const std::int32_t s : kids(at(clause))) {
+            // A `using` is not a CaseClause's statement (14.3.2's grammar
+            // puts UsingDeclaration in a block, a body or a module only).
+            if (at(s).kind == nk::var_decl &&
+                (at(s).text == "using" || at(s).text == "await using")) {
+                report("a `using` declaration is not allowed directly in a `case` clause; it "
+                       "needs a block",
+                       s);
+            }
+            body.push_back(s);
+        }
     }
     ++frames_.back().switches;
     std::vector<binding> inner = check_list(body, list_kind::block, nullptr, "");

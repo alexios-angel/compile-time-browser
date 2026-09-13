@@ -601,6 +601,11 @@ void checker::walk_expression(std::int32_t idx) {
         }
         return;
 
+    // 13.3.12.1: `import.meta` is only in a module.
+    case nk::import_meta:
+        if (!strict_root_) { report("`import.meta` is only allowed in a module", idx); }
+        return;
+
     case nk::new_target:
         // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`
         // ABOVE - the second half of one decision rather than a second one.

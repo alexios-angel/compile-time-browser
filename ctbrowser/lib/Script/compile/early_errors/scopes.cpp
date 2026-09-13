@@ -179,17 +179,13 @@ void checker::check_contextual_name(std::string_view name, std::int32_t node) {
     }
 }
 
-// NOT `debugger`: the lexer has no such keyword, so `debugger;` reaches the
-// compiler as a reference to that name and throws a ReferenceError at the
-// line - a parser gap, which must stay a runtime throw and not become a
-// refusal of the whole script.
 bool checker::reserved_word(std::string_view name) {
     for (const std::string_view word :
-         {"break",   "case", "catch",    "class", "const",  "continue", "default",
-          "delete",  "do",   "else",     "enum",  "export", "extends",  "false",
-          "finally", "for",  "function", "if",    "import", "in",       "instanceof",
-          "new",     "null", "return",   "super", "switch", "this",     "throw",
-          "true",    "try",  "typeof",   "var",   "void",   "while",    "with"}) {
+         {"break",  "case",     "catch",  "class",  "const",  "continue",   "debugger", "default",
+          "delete", "do",       "else",   "enum",   "export", "extends",    "false",    "finally",
+          "for",    "function", "if",     "import", "in",     "instanceof", "new",      "null",
+          "return", "super",    "switch", "this",   "throw",  "true",       "try",      "typeof",
+          "var",    "void",     "while",  "with"}) {
         if (name == word) { return true; }
     }
     return false;
