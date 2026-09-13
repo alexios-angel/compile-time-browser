@@ -1458,8 +1458,7 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
     install_option_reflection(cx);
     install_form_owner(cx);
     std::vector<script::object_object *> hosts;
-    for (const std::string_view interface :
-         {"HTMLElement", "SVGElement", "MathMLElement", "Document"}) {
+    for (const std::string_view interface : {"HTMLElement", "SVGElement", "Document"}) {
         if (const value proto = interface_prototype(interface); proto.is_object()) {
             hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
         }

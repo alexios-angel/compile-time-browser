@@ -131,10 +131,9 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                          : ns == "http://www.w3.org/2000/svg" ? "image/svg+xml"
                                                               : "application/xml";
     if (!qualified_name.empty()) {
-        const node_ns kind = ns == xhtml_namespace    ? node_ns::html
-                             : ns == svg_namespace    ? node_ns::svg
-                             : ns == mathml_namespace ? node_ns::mathml
-                                                      : node_ns::other;
+        const node_ns kind = ns == "http://www.w3.org/1999/xhtml" ? node_ns::html
+                             : ns == "http://www.w3.org/2000/svg" ? node_ns::svg
+                                                                  : node_ns::other;
         // INTERNED AS WRITTEN: an XML document is case-sensitive, so the
         // qualified name is the tag and folding it would lose the case the
         // page asked for.

@@ -706,13 +706,12 @@ private:
         return {};
     }
 
-    // The three vocabularies this engine distinguishes. Everything else is
+    // The two vocabularies this engine distinguishes. Everything else is
     // `other`: `node` has no room for a URI - see dom/node.hpp - so an element
-    // in a fourth namespace keeps its tag and loses its URI, which is the same
+    // in a third namespace keeps its tag and loses its URI, which is the same
     // deal `createElementNS` already strikes for one.
     [[nodiscard]] static node_ns ns_of(std::string_view uri) {
         if (uri == svg_namespace) { return node_ns::svg; }
-        if (uri == mathml_namespace) { return node_ns::mathml; }
         if (uri.empty() || uri == xhtml_namespace) { return node_ns::html; }
         return node_ns::other;
     }

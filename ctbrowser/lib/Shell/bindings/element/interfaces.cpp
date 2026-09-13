@@ -78,7 +78,6 @@ constexpr dom_interface interface_table[] = {
     // `Body-FrameSet-Event-Handlers.html` asserts an element in a foreign
     // namespace is `instanceof Element` and NOT `instanceof HTMLElement`.
     {"SVGElement", "Element", ""},
-    {"MathMLElement", "Element", ""},
     {"HTMLUnknownElement", "HTMLElement", ""},
 
     {"HTMLAnchorElement", "HTMLElement", "a"},
@@ -691,7 +690,6 @@ value dom_bindings::prototype_for_node(const read_txn & txn, node_id id) const {
     // the same atom - the trap the CLAUDE.md invariant names for anything
     // walking the DOM for <title>, <style> or <script>.
     if (txn.element_ns(id) == node_ns::svg) { return interface_prototype("SVGElement"); }
-    if (txn.element_ns(id) == node_ns::mathml) { return interface_prototype("MathMLElement"); }
     if (txn.element_ns(id) != node_ns::html) { return interface_prototype("Element"); }
     // BY LOCAL NAME: `createElementNS(HTML, "foo:span")` is an HTMLSpanElement.
     const std::size_t at = interface_for_tag(txn.local_name(id));
