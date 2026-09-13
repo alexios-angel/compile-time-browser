@@ -402,6 +402,168 @@ namespace {
 }
 } // namespace
 
+// `using` / `await using` (9.13 DisposableResource, DisposeResources): the
+// five natives compile/statements/using.cpp calls. The stack is a plain
+// table - `__resources` an array of {value, method, async, sync_fallback}
+// records, `__seeded` once the completion in flight has been read,
+// `__threw` / `__error` the completion being folded - so the collector sees
+// everything in it. Disposal errors fold as 9.13.4 step 1.a.iii says: a
+// SuppressedError whose `error` is the new throw and whose `suppressed` is
+// the completion so far.
+namespace {
+
+[[nodiscard]] value suppressed_error(context & c, value error, value suppressed) {
+    const value made = c.make_error("SuppressedError", "An error was suppressed during disposal");
+    auto * o = static_cast<object_object *>(made.as_heap());
+    o->define("error", error, attr_builtin);
+    o->define("suppressed", suppressed, attr_builtin);
+    return made;
+}
+
+void fold_disposal_error(context & c, object_object * stack, value error) {
+    const bool threw = context::truthy(slot(stack, "__threw"));
+    stack->set("__error", threw ? suppressed_error(c, error, slot(stack, "__error")) : error);
+    stack->set("__threw", value::boolean(true));
+}
+
+// The completion in flight, read once: kind 1 is a throw of `thrown`.
+void seed_completion(object_object * stack, value kind, value thrown) {
+    if (context::truthy(slot(stack, "__seeded"))) { return; }
+    stack->set("__seeded", value::boolean(true));
+    if (kind.is_number() && kind.as_number() == 1.0) {
+        stack->set("__threw", value::boolean(true));
+        stack->set("__error", thrown);
+    }
+}
+
+// Pop the top resource and call its dispose method; answers what the
+// caller should await (the method's result for an async resource, undefined
+// for a sync one or after a throw), and whether there was a resource at all.
+[[nodiscard]] bool dispose_top(context & c, object_object * stack, value & awaited) {
+    awaited = value::undefined();
+    const value list = slot(stack, "__resources");
+    if (!list.is_array()) { return false; }
+    auto * items = static_cast<array_object *>(list.as_heap());
+    if (items->items.empty()) { return false; }
+    const value record = items->items.back();
+    items->items.pop_back();
+    if (!record.is_object()) { return true; }
+    auto * r = static_cast<object_object *>(record.as_heap());
+    const value method = slot(r, "method");
+    const value receiver = slot(r, "value");
+    const std::size_t before = c.unwinds();
+    const value result = c.call(method, {}, receiver);
+    if (c.throw_pending()) {
+        fold_disposal_error(c, stack, c.take_pending_throw());
+        return true;
+    }
+    if (c.unwinds() != before || c.failed()) { return true; }
+    if (context::truthy(slot(r, "async")) && !context::truthy(slot(r, "sync_fallback"))) {
+        awaited = result;
+    }
+    return true;
+}
+
+void throw_folded(context & c, object_object * stack) {
+    if (!context::truthy(slot(stack, "__threw"))) { return; }
+    const value error = slot(stack, "__error");
+    stack->set("__threw", value::boolean(false));
+    stack->set("__error", value::undefined());
+    c.throw_value(error);
+}
+
+void install_using(context & cx) {
+    cx.define_native(std::string{using_stack_name}, [](context & c, std::span<value>) {
+        auto * stack = detail::new_table(c);
+        stack->set("__resources", c.make_array());
+        stack->set("__seeded", value::boolean(false));
+        stack->set("__threw", value::boolean(false));
+        stack->set("__error", value::undefined());
+        return value::object(stack);
+    });
+    // AddDisposableResource (9.13.1) with CreateDisposableResource (9.13.2)
+    // and GetDisposeMethod (9.13.3): null and undefined register nothing; a
+    // non-object is a TypeError; an `await using` asks for @@asyncDispose
+    // first and falls back to @@dispose, whose result is then NOT awaited
+    // (the fallback closure of 9.13.3 step 1.b.ii returns undefined).
+    cx.define_native(std::string{using_add_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2 || !a[0].is_object()) { return value::undefined(); }
+        auto * stack = static_cast<object_object *>(a[0].as_heap());
+        const value v = a[1];
+        const bool async = a.size() > 2 && context::truthy(a[2]);
+        if (v.is_nullish()) { return v; }
+        if (!v.is_object()) {
+            c.throw_error("TypeError",
+                          "`using` needs an object, not " + std::string{context::type_of(v)});
+            return value::undefined();
+        }
+        value method = value::undefined();
+        bool sync_fallback = false;
+        if (async) {
+            method = c.lookup_property(v, "@@asyncDispose");
+            if (c.throw_pending()) { return value::undefined(); }
+            if (method.is_nullish()) {
+                method = c.lookup_property(v, "@@dispose");
+                if (c.throw_pending()) { return value::undefined(); }
+                sync_fallback = true;
+            }
+        } else {
+            method = c.lookup_property(v, "@@dispose");
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+        if (!method.is_callable()) {
+            c.throw_error("TypeError", std::string{"the value of a `"} + (async ? "await " : "") +
+                                           "using` declaration has no " +
+                                           (async ? "[Symbol.asyncDispose] or " : "") +
+                                           "[Symbol.dispose] method");
+            return value::undefined();
+        }
+        auto * record = detail::new_table(c);
+        record->set("value", v);
+        record->set("method", method);
+        record->set("async", value::boolean(async));
+        record->set("sync_fallback", value::boolean(sync_fallback));
+        const value list = slot(stack, "__resources");
+        if (list.is_array()) {
+            static_cast<array_object *>(list.as_heap())->items.push_back(value::object(record));
+        }
+        return v;
+    });
+    // DisposeResources (9.13.4) for a sync stack: every resource in reverse,
+    // the completion folded, and thrown when it is a throw.
+    cx.define_native(std::string{using_dispose_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * stack = static_cast<object_object *>(a[0].as_heap());
+        seed_completion(stack, a.size() > 1 ? a[1] : value::undefined(),
+                        a.size() > 2 ? a[2] : value::undefined());
+        value ignored;
+        while (dispose_top(c, stack, ignored)) {
+            if (c.failed()) { return value::undefined(); }
+        }
+        throw_folded(c, stack);
+        return value::undefined();
+    });
+    // One step of an async stack: the next resource's result to await, or
+    // the stack itself when none is left - after throwing what was folded.
+    cx.define_native(std::string{using_step_name}, [](context & c, std::span<value> a) {
+        if (a.empty() || !a[0].is_object()) { return value::undefined(); }
+        auto * stack = static_cast<object_object *>(a[0].as_heap());
+        seed_completion(stack, a.size() > 1 ? a[1] : value::undefined(),
+                        a.size() > 2 ? a[2] : value::undefined());
+        value awaited;
+        if (dispose_top(c, stack, awaited)) { return awaited; }
+        throw_folded(c, stack);
+        return a[0];
+    });
+    cx.define_native(std::string{using_failed_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2 || !a[0].is_object()) { return value::undefined(); }
+        fold_disposal_error(c, static_cast<object_object *>(a[0].as_heap()), a[1]);
+        return value::undefined();
+    });
+}
+
+} // namespace
+
 void install_destructuring_iteration(context & cx) {
     cx.define_native(std::string{iterator_open_name}, [](context & c, std::span<value> a) {
         const value iterator = c.get_iterator(a.empty() ? value::undefined() : a[0]);
@@ -468,6 +630,7 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    install_using(cx);
     cx.define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
         context::property_descriptor wanted;

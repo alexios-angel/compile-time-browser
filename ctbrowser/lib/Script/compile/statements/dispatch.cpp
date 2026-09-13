@@ -125,6 +125,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
+                if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
                 if (decl.b >= 0) { // a shape, not a name
                     compile_pattern_binding(decl.b, r, true);
                 } else {
@@ -176,6 +177,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
                     compile_named_expr(decl.a, tmp, decl.text);
+                    if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
                     emit_write(decl.text, tmp);
                     release_to(mark);
                 }
@@ -187,6 +189,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             } else {
                 proto().emit(instruction{op::load_undef, r});
             }
+            if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
             // A captured local is boxed AFTER its initializer runs, so the
             // cell starts out holding the right value.
             if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
@@ -196,7 +199,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         return; // locals must NOT be released by the mark below
     case vp::nk::block:
         push_scope();
-        for (const std::int32_t s : kids(n)) { compile_stmt(s); }
+        compile_statement_list(kids(n), false);
         pop_scope();
         break;
     case vp::nk::if_stmt: compile_if(n); break;

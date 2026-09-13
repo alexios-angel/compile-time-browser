@@ -330,9 +330,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         for (const std::int32_t s : kids(at(body))) {
             if (at(s).kind == vp::nk::func_decl) { compile_stmt(s); }
         }
-        for (const std::int32_t s : kids(at(body))) {
-            if (at(s).kind != vp::nk::func_decl) { compile_stmt(s); }
-        }
+        compile_statement_list(kids(at(body)), true);
         emit_implicit_return();
     } else if (body >= 0) {
         // concise arrow body: `x => expr` returns expr

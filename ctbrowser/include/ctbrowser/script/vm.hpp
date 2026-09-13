@@ -304,6 +304,21 @@ struct run_result {
 // the compiler and the VM's own builtins share it and this is the header
 // both include.
 inline constexpr std::string_view import_source_name = "__ctbrowser_import_source";
+// `using` / `await using` (explicit resource management, 9.13), as five
+// hidden natives the compiler calls around a protected region - see
+// compile/statements/using.cpp for the lowering and builtins/objects/
+// function.cpp for the bodies. `stack()` makes the DisposeCapability;
+// `add(stack, v, async)` is AddDisposableResource and answers v; `dispose
+// (stack, kind, value)` is DisposeResources for a sync stack, handed the
+// completion in flight (kind 1 = a throw of `value`) and throwing what comes
+// out; `step(stack, kind, value)` disposes ONE resource of an async stack and
+// answers what to await, or the stack itself when it is empty (throwing the
+// folded completion then); `failed(stack, e)` folds an awaited rejection in.
+inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
+inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
+inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
+inline constexpr std::string_view using_step_name = "__ctbrowser_using_step";
+inline constexpr std::string_view using_failed_name = "__ctbrowser_using_failed";
 
 class context {
 public:

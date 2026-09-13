@@ -756,6 +756,16 @@ public:
     void emit_finally_dispatch(const finally_context & open);
     void compile_try_with_finally(const vp::node & n);
 
+    // `using` / `await using` - statements/using.cpp. A statement list with a
+    // using declaration in it compiles, from that declaration on, inside a
+    // region whose finally disposes the resources; `using_stacks_` holds the
+    // register of the innermost region's stack for emit_using_add.
+    [[nodiscard]] static bool is_using_decl(const vp::node & n);
+    void compile_statement_list(std::span<const std::int32_t> stmts, bool skip_func_decls);
+    void compile_using_region(bool async, const std::function<void()> & body);
+    void emit_using_add(std::uint16_t reg, bool async);
+    std::vector<std::uint16_t> using_stacks_;
+
     void patch_breaks(loop_context & loop);
     void patch_continues(loop_context & loop, std::size_t target);
 

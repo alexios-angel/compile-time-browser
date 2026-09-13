@@ -79,6 +79,8 @@ void checker::lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
     }
     return "declaration";
 }
+// (`using` and `await using` are let_ for every rule here: lexical, and
+// never a duplicate of anything.)
 
 // ONE STATEMENT LIST, WITH ITS OWN LEXICAL SCOPE, and the var names it
 // hands back to the scope above.

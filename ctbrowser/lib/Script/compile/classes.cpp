@@ -88,9 +88,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             for (const std::int32_t st : kids(at(m.b))) {
                 if (at(st).kind == vp::nk::func_decl) { compile_stmt(st); }
             }
-            for (const std::int32_t st : kids(at(m.b))) {
-                if (at(st).kind != vp::nk::func_decl) { compile_stmt(st); }
-            }
+            compile_statement_list(kids(at(m.b)), true);
             pop_scope();
             continue;
         }

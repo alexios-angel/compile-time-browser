@@ -185,6 +185,10 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) 
         return;
     }
     const vp::node & n = at(idx);
+    if (n.kind == nk::var_decl && (n.text == "using" || n.text == "await using")) {
+        report("a `using` declaration cannot be the body of a statement; it needs a block", idx);
+        return;
+    }
     if (n.kind == nk::var_decl && n.text != "var") {
         // `let` IS AN IDENTIFIER HERE WHEN A NEWLINE FOLLOWS IT.
         //
@@ -239,8 +243,25 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const bool is_var = n.text == "var";
     const bool is_const = n.text == "const";
+    // `using` / `await using` (14.3.2.1 / 14.3.3.1): a name, never a pattern,
+    // always with an initialiser, never named `let` (which the lexical
+    // rule below already refuses); `await using` only where `await` is the
+    // keyword - an async body, a module's top level, a static block.
+    const bool is_using = n.text == "using" || n.text == "await using";
+    if (n.text == "await using" && !(frames_.empty() || frames_.back().is_async)) {
+        report("`await using` is only allowed in an async function or a module", idx);
+    }
     for (const std::int32_t d : kids(n)) {
         const vp::node & decl = at(d);
+        if (is_using) {
+            if (decl.b >= 0) {
+                report("a `using` declaration binds a name, not a pattern", d);
+            } else if (decl.a < 0) {
+                report(quoted(decl.text) + " is declared `using` with no initialiser", d);
+            } else if (decl.text == "let") {
+                report("`let` cannot be the name of a `using` declaration", d);
+            }
+        }
         // 14.3.1.1: "It is a Syntax Error if Initializer is not present and
         // IsConstantDeclaration of LexicalDeclaration is true." The only
         // `const` without one that the grammar allows is a for-in/of head,
@@ -339,8 +360,18 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     // distinct, that none is `let`, and that none is also var-declared in
     // the body.
     std::vector<binding> head;
+    // `for (using x of xs)` (d bit4) / `for (await using x of xs)` (bit5):
+    // `of` only, a plain name, and the async form only where `await` is the
+    // keyword (14.7.5.1).
+    if ((n.d & 48) != 0) {
+        if (n.text != "of") { report("a `using` declaration in a `for` head needs `of`", idx); }
+        if (target.b >= 0) { report("a `using` declaration binds a name, not a pattern", n.a); }
+        if ((n.d & 32) != 0 && !(frames_.empty() || frames_.back().is_async)) {
+            report("`await using` is only allowed in an async function or a module", idx);
+        }
+    }
     if ((n.d & 2) == 0) {
-        const bool lexical = (n.d & 9) != 0;
+        const bool lexical = (n.d & 57) != 0;
         bound_names(n.a, lexical ? binding_kind::let_ : binding_kind::var, head);
         check_strict_bindings(head);
         if (lexical) {
