@@ -154,6 +154,17 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             if (auto wrapper = source.wrapper()) {
                 prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
             }
+            // Only the initialized DOM provider and complete source proof
+            // authorize this binding. Normalize in the private clone, then
+            // reprove it below; no VM lookup or C++ global survives emission.
+            prepared->walk([](ctjs::LoadGlobalOp load) {
+                if (load.getName() != "undefined") { return; }
+                mlir::OpBuilder at(load);
+                auto constant = ctjs::ConstantOp::create(
+                    at, load.getLoc(), ctjs::UndefinedAttr::get(load.getContext()));
+                load.getResult().replaceAllUsesWith(constant.getResult());
+                load.erase();
+            });
             prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
             HostContract transformed = *hostContract;

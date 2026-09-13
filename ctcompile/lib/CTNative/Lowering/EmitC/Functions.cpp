@@ -44,6 +44,13 @@ void lowering::lower(ctjs::FuncOp fn) {
     const bool isEntry = !needsDOM && isScriptEntry(fn);
     mlir::Block & entry = fn.getBody().front();
     if (needsDOM) {
+        // Optional undefined force is omitted for token lists, false for
+        // Element.toggleAttribute in the current platform adapter. Erase the
+        // proved argument before carrier selection; emission supplies false
+        // for the latter without introducing a boxed undefined value.
+        fn.walk([&](ctjs::CallOp call) {
+            if (domUndefinedForces.contains(call)) { call.getArgsMutable().erase(1); }
+        });
         // The complete entry proof has no collector or retained values. Drop
         // bookkeeping before choosing carriers so dead undefined placeholders
         // cannot pull a scalar value model into an ordinary DOM action.

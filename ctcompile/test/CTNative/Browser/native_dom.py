@@ -35,6 +35,45 @@ INVALID_TOKEN = """function invalidToken(element) {
   return true;
 }
 """
+FORCED = """function forced(element) {
+  const wanted = element.hasAttribute('DATA-Force');
+  const active = element.classList.toggle('active', wanted);
+  return element.toggleAttribute('DISABLED', active);
+}
+"""
+ATTRIBUTES = """function attributes(element) {
+  const added = element.toggleAttribute('DATA-Empty');
+  const seen = element.hasAttribute('data-empty');
+  element.toggleAttribute('DATA-Copy', added);
+  element.setAttribute('data-seen', seen);
+  element.removeAttribute('DATA-Empty');
+  return element.hasAttribute('data-empty');
+}
+"""
+ATTRIBUTE_NOOPS = """function attributeNoops(element) {
+  const present = element.hasAttribute('DATA-Empty');
+  element.toggleAttribute('DATA-Empty', true);
+  element.toggleAttribute('data-missing', false);
+  element.removeAttribute('bad name');
+  return present;
+}
+"""
+EXPLICIT_FORCES = """function explicitForces(element) {
+  element.classList.toggle('missing', false);
+  element.classList.toggle('active', true);
+  element.classList.toggle('active', undefined);
+  const absent = element.toggleAttribute('data-missing', undefined);
+  element.setAttribute('data-missing-was', absent);
+  element.toggleAttribute('disabled', true);
+  return element.toggleAttribute('disabled', undefined);
+}
+"""
+INVALID_ATTRIBUTE = """function invalidAttribute(element) {
+  element.toggleAttribute('bad name', false);
+  element.setAttribute('aria-pressed', 'after');
+  return true;
+}
+"""
 FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
 NATIVE = re.compile(r"\bemitc\.func @([^ (]+)\(")
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_|ctbrowser/(?:script/|aot/aot\.hpp)")
@@ -168,6 +207,134 @@ INVALID_TOKEN_CHECKS = r"""
         (void)foreign;
 """
 
+FORCED_CHECKS = r"""
+        const auto force = atoms.intern("data-force");
+        const auto disabled = atoms.intern("disabled");
+        assert(doc.set_attribute(button, classes, " btn\tbtn  "));
+        (void)doc.take_writes();
+        auto version = doc.version();
+        assert(!@ENTRY@(alias));
+        assert(doc.version() == version && doc.take_writes().empty());
+        assert(doc.read().attribute_value(button, classes) == " btn\tbtn  ");
+        assert(!doc.read().has_attribute(button, disabled));
+        assert(doc.set_attribute(button, force, ""));
+        (void)doc.take_writes();
+        assert(@ENTRY@(alias));
+        auto writes = doc.take_writes();
+        assert(writes.size() == 2 && writes[0].name == classes && writes[1].name == disabled);
+        assert(doc.read().attribute_value(button, classes) == "btn active");
+        assert(doc.read().has_attribute(button, disabled));
+        assert(doc.read().attribute_value(button, disabled).empty());
+        assert(doc.set_attribute(button, classes, " active\tbtn active "));
+        assert(doc.set_attribute(button, disabled, "kept"));
+        (void)doc.take_writes();
+        version = doc.version();
+        assert(@ENTRY@(element));
+        assert(doc.version() == version && doc.take_writes().empty());
+        assert(doc.read().attribute_value(button, classes) == " active\tbtn active ");
+        assert(doc.read().attribute_value(button, disabled) == "kept");
+        assert(doc.remove_attribute(button, force));
+        (void)doc.take_writes();
+        version = doc.version();
+        assert(!@ENTRY@(alias));
+        writes = doc.take_writes();
+        assert(doc.version() == version + 2);
+        assert(writes.size() == 1 && writes[0].name == classes);
+        assert(doc.read().attribute_value(button, classes) == "btn");
+        assert(!doc.read().has_attribute(button, disabled));
+        assert(doc.remove_child(button));
+        version = doc.version();
+        assert(!@ENTRY@(element));
+        assert(doc.version() == version && doc.take_writes().empty());
+        assert(!@ENTRY@(foreign));
+        (void)pressed;
+"""
+
+ATTRIBUTE_CHECKS = r"""
+        const auto empty = atoms.intern("data-empty");
+        const auto copy = atoms.intern("data-copy");
+        const auto seen = atoms.intern("data-seen");
+        for (int call = 0; call < 2; ++call) {
+            const auto version = doc.version();
+            assert(!@ENTRY@(alias));
+            assert(!doc.read().has_attribute(button, empty));
+            assert(doc.read().has_attribute(button, copy));
+            assert(doc.read().attribute_value(button, copy).empty());
+            assert(doc.read().attribute_value(button, seen) == "true");
+            const auto writes = doc.take_writes();
+            assert(doc.version() == version + (call == 0 ? 4u : 3u));
+            assert(writes.size() == (call == 0 ? 3u : 2u));
+            assert(writes.front().name == empty && writes.back().name == seen);
+            if (call == 0) { assert(writes[1].name == copy); }
+        }
+        (void)foreign;
+        (void)pressed;
+"""
+
+ATTRIBUTE_NOOP_CHECKS = r"""
+        const auto empty = atoms.intern("data-empty");
+        const auto missing = atoms.intern("data-missing");
+        for (const auto text : {"", "kept"}) {
+            assert(doc.set_attribute(button, empty, text));
+            (void)doc.take_writes();
+            const auto version = doc.version();
+            assert(@ENTRY@(alias));
+            assert(doc.version() == version && doc.take_writes().empty());
+            assert(doc.read().attribute_value(button, empty) == text);
+            assert(!doc.read().has_attribute(button, missing));
+        }
+        assert(doc.remove_attribute(button, empty));
+        (void)doc.take_writes();
+        assert(!@ENTRY@(element));
+        assert(doc.read().has_attribute(button, empty));
+        assert(doc.read().attribute_value(button, empty).empty());
+        const auto writes = doc.take_writes();
+        assert(writes.size() == 1 && writes[0].name == empty);
+        (void)foreign;
+        (void)pressed;
+"""
+
+EXPLICIT_FORCE_CHECKS = r"""
+        const auto missing = atoms.intern("data-missing");
+        const auto was_missing = atoms.intern("data-missing-was");
+        const auto disabled = atoms.intern("disabled");
+        for (const bool active : {true, false}) {
+            assert(doc.set_attribute(button, classes,
+                active ? " btn\tbtn active active " : "btn missing"));
+            (void)doc.take_writes();
+            const auto version = doc.version();
+            assert(!@ENTRY@(alias));
+            assert(doc.read().attribute_value(button, classes) == "btn");
+            assert(!doc.read().has_attribute(button, missing));
+            assert(doc.read().attribute_value(button, was_missing) == "false");
+            assert(!doc.read().has_attribute(button, disabled));
+            const auto writes = doc.take_writes();
+            assert(doc.version() == version + (active ? 4u : 6u));
+            assert(writes.size() == (active ? 3u : 5u));
+            const auto class_writes = writes.size() - 2;
+            for (std::size_t at = 0; at < class_writes; ++at) {
+                assert(writes[at].name == classes);
+            }
+            assert(writes[class_writes].name == was_missing);
+            assert(writes.back().name == disabled);
+        }
+        (void)foreign;
+        (void)pressed;
+"""
+
+INVALID_ATTRIBUTE_CHECKS = r"""
+        const auto version = doc.version();
+        bool rejected = false;
+        try { (void)@ENTRY@(alias); }
+        catch (const std::bad_expected_access<dom_error> & error) {
+            rejected = error.error() == dom_error::invalid_attribute_name;
+        }
+        assert(rejected);
+        assert(doc.version() == version && doc.take_writes().empty());
+        assert(!doc.read().has_attribute(button, pressed));
+        (void)foreign;
+"""
+
 
 def prepare(args, name, source, parameters):
     js = args.work / f"{name}.js"
@@ -278,6 +445,9 @@ def standalone(args, native, name, checks, compilers, includes, libraries):
             "ctbrowser::toggle_token" not in cpp or "ctbrowser::set_element_attribute" not in cpp
         ):
             raise RuntimeError(f"{name}/{mode}: action bypasses the shared browser API\n{cpp}")
+        if name.startswith(("forced-", "attributes-", "attribute-noops-", "explicit-forces-")):
+            if "ctbrowser::toggle_element_attribute" not in cpp:
+                raise RuntimeError(f"{name}/{mode}: attribute toggle bypasses the shared DOM API")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
@@ -308,13 +478,19 @@ def main():
         compilers[1] = args.clang
     includes, libraries = link_options(args)
     prepared = {}
-    for name, source, parameters, checks in (
+    entries = (
         ("action", ACTION, 1, ACTION_CHECKS),
         ("identity", IDENTITY, 2, IDENTITY_CHECKS),
         ("reserved-name", IDENTITY.replace("same(", "_script_("), 2, IDENTITY_CHECKS),
         ("label", LABEL, 1, LABEL_CHECKS),
         ("invalid-token", INVALID_TOKEN, 1, INVALID_TOKEN_CHECKS),
-    ):
+        ("forced", FORCED, 1, FORCED_CHECKS),
+        ("attributes", ATTRIBUTES, 1, ATTRIBUTE_CHECKS),
+        ("attribute-noops", ATTRIBUTE_NOOPS, 1, ATTRIBUTE_NOOP_CHECKS),
+        ("explicit-forces", EXPLICIT_FORCES, 1, EXPLICIT_FORCE_CHECKS),
+        ("invalid-attribute", INVALID_ATTRIBUTE, 1, INVALID_ATTRIBUTE_CHECKS),
+    )
+    for name, source, parameters, checks in entries:
         ir, contract = prepare(args, name, source, parameters)
         prepared[name] = ir, contract
         for optimize in (False, True):
@@ -334,7 +510,7 @@ def main():
     diagnostic = lower(args, stale, contract, "stale", success=False)
     if "fingerprint mismatch" not in diagnostic:
         raise RuntimeError("stale DOM contract did not name the fingerprint mismatch")
-    for name, source, reason in (
+    refusals = [
         (
             "unknown-receiver",
             "function toggle(element) { const other = {}; return other.classList.toggle('active'); }",
@@ -353,11 +529,68 @@ def main():
             "DOM",
         ),
         ("invoked-entry", ACTION + "toggle({});\n", "wrapper"),
-    ):
+        (
+            "replaced-undefined",
+            EXPLICIT_FORCES.replace("explicitForces(", "undefined("),
+            "wrapper",
+        ),
+        (
+            "unknown-global-force",
+            EXPLICIT_FORCES.replace("undefined", "unknownForce"),
+            "DOM",
+        ),
+        (
+            "written-undefined",
+            EXPLICIT_FORCES.replace(
+                "  element.classList", "  undefined = true;\n  element.classList", 1
+            ),
+            "DOM",
+        ),
+        (
+            "retained-key",
+            "function retain(element) { const data = new Map(); data.set(element, true); return true; }",
+            "DOM",
+        ),
+        (
+            "retained-field",
+            "function retain(element) { element.saved = element; return true; }",
+            "DOM",
+        ),
+        (
+            "observed-remove-result",
+            "function remove(element) { return element.removeAttribute('disabled'); }",
+            "unused",
+        ),
+    ]
+    for method in ("classList.toggle", "toggleAttribute", "hasAttribute", "removeAttribute"):
+        label = method.replace(".", "-")
+        toggle = method in ("classList.toggle", "toggleAttribute")
+        extra = "'active', true, false" if toggle else "'active', true"
+        for arity, arguments in (("missing", ""), ("extra", extra)):
+            refusals.append(
+                (
+                    f"{label}-{arity}",
+                    f"function invalid(element) {{ element.{method}({arguments}); return true; }}",
+                    "DOM",
+                )
+            )
+        if toggle:
+            for force_label, force in (("element", "element"), ("string", "'false'")):
+                refusals.append(
+                    (
+                        f"{label}-force-{force_label}",
+                        f"function invalid(element) {{ return element.{method}('active', {force}); }}",
+                        "DOM",
+                    )
+                )
+    for name, source, reason in refusals:
         ir, manifest = prepare(args, name, source, 1)
-        diagnostic = lower(args, ir, manifest, name, success=False)
-        if reason not in diagnostic:
-            raise RuntimeError(f"{name}: missing intended proof refusal\n{diagnostic}")
+        for optimize in (False, True):
+            diagnostic = lower(
+                args, ir, manifest, f"{name}-{optimize}", optimize=optimize, success=False
+            )
+            if reason not in diagnostic:
+                raise RuntimeError(f"{name}: missing intended proof refusal\n{diagnostic}")
         if name == "unknown-receiver":
             forged = args.work / "forged.mlir"
             text, count = re.subn(
@@ -379,7 +612,8 @@ def main():
     ):
         lower(args, action, changed, name, success=False)
     print(
-        "native DOM: 5 action/identity/name/string/error entries, both policies/layouts, GCC/Clang, DOM/Core-only; 10 refusal controls"
+        f"native DOM: {len(entries)} action/identity/attribute/force/error entries, "
+        f"both policies/layouts, GCC/Clang, DOM/Core-only; {len(refusals) + 6} refusal controls"
     )
 
 
