@@ -113,6 +113,11 @@ void test_declaration_blocks() {
         st.setProperty('color', 'green', undefined);
         st.setProperty('width', 'undefined');
         console.log('undef=' + st.color + '|' + st.width);
+        // cssstyledeclaration-csstext: a name that is not a supported property
+        // has no IDL setter - the write is an ordinary property, never a declaration.
+        const el = document.body.style;
+        el.COLOR = 'red'; el.unknown = 'unknown'; el.color = 'red'; el.fontSize = '10pt';
+        console.log('expando=' + el.cssText + '|' + el.unknown + '|' + el.COLOR + '|' + el.length);
     </script></body></html>)");
     CHECK(page.script_error().empty());
     // `transform` is not a page-context property; `cssFloat` is not a page
@@ -126,6 +131,8 @@ void test_declaration_blocks() {
     CHECK_EQ(logged(page, "dup="), std::string{"dup=color: blue; padding: 1px !important;"});
     CHECK_EQ(logged(page, "nulled="), std::string{"nulled=|4"});
     CHECK_EQ(logged(page, "undef="), std::string{"undef=green|"});
+    CHECK_EQ(logged(page, "expando="),
+             std::string{"expando=color: red; font-size: 10pt;|unknown|red|2"});
 }
 
 // style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the

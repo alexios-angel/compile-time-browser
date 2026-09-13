@@ -240,6 +240,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // because answering "" there would break every ordinary lookup.
         // A shorthand is read from its longhands (declarations.cpp).
         if (store->find(css) == nullptr && style::css::find_property(css) == nullptr) {
+            // An ordinary property the page put there (the set trap below).
+            if (const value * own = expandos_of(*store, c).find(name)) { return *own; }
             return value::undefined();
         }
         return c.string(read_declaration(*store, c, css));
@@ -261,11 +263,21 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             seed_declarations(*store, c, c.to_string(args[2]));
         } else {
             // The IDL spelling, canonicalised, and the value through the
-            // grammar. A refusal is silent - CSSOM says an unparseable value
-            // leaves the declaration alone, and a throw here would break every
-            // page that sets a property this engine has not implemented - and
-            // writes nothing, so no mutation record is queued for it.
-            if (!store_declaration(*store, c, css_name_of(name), c.to_string(args[2]), false)) {
+            // grammar. A NAME THAT IS NOT A PROPERTY has no IDL setter: the
+            // write makes an ordinary property (expandos_of), never a
+            // declaration - `style.unknown` and `style.COLOR` are the two
+            // cssstyledeclaration-csstext.html reads back through cssText.
+            // A refusal of the value is silent - CSSOM says an unparseable
+            // value leaves the declaration alone, and a throw here would break
+            // every page that sets a property this engine has not implemented
+            // - and writes nothing, so no mutation record is queued for it.
+            const std::string css = css_name_of(name);
+            if (!css.starts_with("--") && store->find(css) == nullptr &&
+                style::css::find_property(css) == nullptr) {
+                expandos_of(*store, c).set(name, args[2]);
+                return value::boolean(true);
+            }
+            if (!store_declaration(*store, c, css, c.to_string(args[2]), false)) {
                 return value::boolean(true);
             }
         }

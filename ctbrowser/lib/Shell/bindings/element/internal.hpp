@@ -157,6 +157,9 @@ std::string style_attribute(script::object_object & held, context & cx);
 std::string css_text_of(script::object_object & held, context & cx);
 [[nodiscard]] std::string_view declared_value(std::string_view stored);
 [[nodiscard]] std::string_view declared_priority(std::string_view stored);
+// The expando table's key on the store (declarations.cpp).
+inline constexpr std::string_view expando_key = "@expandos";
+[[nodiscard]] script::object_object & expandos_of(script::object_object & held, context & cx);
 bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
                        std::string_view text, bool important);
 void seed_declarations(script::object_object & held, context & cx, std::string_view text);
