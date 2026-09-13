@@ -1189,8 +1189,8 @@ alloc 15 arr 1 0 1 0 0 temporaries:1 escapes:returned
 
 # Original hexadecimal/octal/binary BigInts select dense elements; saved reads
 # retain the child and a saved loaded key retains its original literal origin.
-# String lookalikes remain named properties. Computed BigInt indices remain
-# conservative even where the runtime observes the overwritten child confined.
+# String lookalikes remain named properties. One bounded subtraction of two
+# original BigInt literals also selects the exact overwritten element.
 fn 211 radixBigIntReleased
 alloc 2 obj 1 1 0 0 0 - confined
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
@@ -1207,7 +1207,7 @@ fn 214 radixBigIntString
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
 fn 215 radixBigIntComputed
-alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 
 # Exact length-derived Numbers retain saved values and independent path snapshots.

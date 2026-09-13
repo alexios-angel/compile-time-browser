@@ -774,8 +774,22 @@ namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
 // Number -0 and canonical String/BigInt "0" are index zero; 2^32-1 is not an element.
-// Only an original literal proves an index; computed categories do not.
+// Original literals, or one subtraction of two bounded original BigInt literals.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
+    if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
+        binary && binary.getKind() == ctjs::BinaryKind::Sub) {
+        auto lhs = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        if (!lhs || !rhs || !llvm::isa<ctjs::BigIntAttr>(lhs.getValue()) ||
+            !llvm::isa<ctjs::BigIntAttr>(rhs.getValue())) {
+            return std::nullopt;
+        }
+        // ponytail: two literal parses only; loaded operands/chains need charged provenance.
+        const auto left = ownArrayIndex(lhs.getResult());
+        const auto right = ownArrayIndex(rhs.getResult());
+        if (left && right && *left >= *right) { return *left - *right; }
+        return std::nullopt;
+    }
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
     if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())) {

@@ -866,6 +866,123 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
         fail(row{.what = original.what, .body = original.body, .expected = ""},
              "the live literal BigInt index fixture did not parse");
     }
+    const std::string calculated =
+        array + "  %lhs = ctjs.constant #ctjs.bigint<\"0x1\">\n"
+                "  %rhs = ctjs.constant #ctjs.bigint<\"0b1\">\n"
+                "  %difference = ctjs.binary sub %lhs, %rhs {storage_test_id = \"difference\"}\n";
+    const std::string access = "  %saved = ctjs.get_property %a[%difference]\n"
+                               "  ctjs.set_property %a[%difference], %zero\n";
+    contents_row difference{.what = "bounded original BigInt subtraction proves an exact own index",
+                            .body = calculated + access + done,
+                            .arrays = "a:[zero]",
+                            .reads = "a[0]=x",
+                            .exit = "a -> {a}",
+                            .writes =
+                                "ctjs.create_array[0]:a[0]=x; ctjs.set_property[2]:a[0]=zero"};
+    run(difference);
+    run({.what = "a saved child survives the subtraction-indexed overwrite",
+         .body = calculated + access + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "a loaded subtraction result keeps its origin after replacement",
+         .body = calculated +
+                 "  %keys = ctjs.create_array [%difference] {storage_test_id = \"keys\"}\n"
+                 "  %loaded = ctjs.get_property %keys[%zero]\n"
+                 "  ctjs.set_property %keys[%zero], %x\n"
+                 "  ctjs.set_property %a[%loaded], %zero\n" +
+                 done,
+         .arrays = "a:[zero]; keys:[x]",
+         .reads = "keys[0]=difference",
+         .exit = "a -> {a}"});
+    for (const bool opaque : {false, true}) {
+        run({.what = "subtraction index transport still checks the statically untaken arm",
+             .body = calculated +
+                     "  %flag = ctjs.truthy %zero\n"
+                     "  cf.cond_br %flag, ^left(%difference : !ctjs.value), ^right(" +
+                     (opaque ? "%p" : "%difference") +
+                     " : !ctjs.value)\n"
+                     "^left(%leftkey: !ctjs.value):\n"
+                     "  ctjs.set_property %a[%leftkey], %zero\n" +
+                     done +
+                     "^right(%rightkey: !ctjs.value):\n"
+                     "  ctjs.set_property %a[%rightkey], %zero\n" +
+                     done,
+             .failure = opaque ? ArrayContentsFailure::UnknownIndex : ArrayContentsFailure::None,
+             .arrays = "a:[zero] | a:[zero]",
+             .exit = "a -> {a}; a -> {a}"});
+    }
+    for (const std::string operand : {"%difference", "%loaded"}) {
+        run({.what = "a computed or loaded subtraction operand needs separate exact provenance",
+             .body = calculated +
+                     "  %keys = ctjs.create_array [%lhs]\n"
+                     "  %loaded = ctjs.get_property %keys[%zero]\n"
+                     "  %chain = ctjs.binary sub " +
+                     operand +
+                     ", %key\n"
+                     "  ctjs.set_property %a[%chain], %zero\n" +
+                     done,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + difference.body + "}\n", &context);
+    if (module) {
+        ctjs::BinaryOp subtraction;
+        module->walk([&](ctjs::BinaryOp op) { subtraction = op; });
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        mlir::OpBuilder builder(subtraction);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*module))) {
+            fail(row{.what = difference.what, .body = difference.body, .expected = ""},
+                 "the subtraction fixture's stale solver did not converge");
+        }
+        for (const bool left : {true, false}) {
+            auto operand = (left ? subtraction.getLhs() : subtraction.getRhs())
+                               .getDefiningOp<ctjs::ConstantOp>();
+            for (const auto & [attribute, failure] :
+                 {std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0x1")),
+                            ArrayContentsFailure::None},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0O1")),
+                            ArrayContentsFailure::None},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "2")),
+                            left ? ArrayContentsFailure::MissingElement
+                                 : ArrayContentsFailure::UnknownIndex},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0")),
+                            left ? ArrayContentsFailure::UnknownIndex
+                                 : ArrayContentsFailure::MissingElement},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "4294967295")),
+                            ArrayContentsFailure::UnknownIndex},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0x1n")),
+                            ArrayContentsFailure::UnknownIndex},
+                  std::pair{mlir::Attribute(ctjs::NumberAttr::get(&context, 1.0)),
+                            ArrayContentsFailure::UnknownIndex},
+                  std::pair{mlir::Attribute(ctjs::StringAttr::get(&context, "1")),
+                            ArrayContentsFailure::UnknownIndex},
+                  std::pair{mlir::Attribute(ctjs::BigIntAttr::get(&context, "0x1")),
+                            ArrayContentsFailure::None}}) {
+                operand.setValueAttr(attribute);
+                difference.failure = failure;
+                check(*module, difference, "x");
+                const auto current = computeVerdicts(stale, function);
+                const bool complete = failure == ArrayContentsFailure::None;
+                if (current.arrayRetentionComplete != complete ||
+                    current.confinedStoredSites != static_cast<unsigned>(complete)) {
+                    fail(row{.what = difference.what, .body = difference.body, .expected = ""},
+                         "stale solver or forged markers authorized a subtraction index");
+                }
+                ++liveStates;
+            }
+        }
+    } else {
+        fail(row{.what = difference.what, .body = difference.body, .expected = ""},
+             "the subtraction index fixture did not parse");
+    }
     std::printf("literal BigInt indices: %u rows, %u live states, %zu retention budget cutoffs\n",
                 rowCount, liveStates, budgets);
 }
