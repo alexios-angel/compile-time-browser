@@ -334,6 +334,66 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
                       .arrays = "a:[x] | a:[x]",
                       .exit = "zero -> {}; zero -> {}"},
          .discharged = "x"},
+        {.contents = {.what =
+                          "successor pairs swap together on each edge while opaque values travel",
+                      .body =
+                          array +
+                          "  ctjs.append %y to %a\n"
+                          "  cf.cond_br %condition, ^pair(%zero, %one, %p : "
+                          "!ctjs.value, !ctjs.value, !ctjs.value), ^pair(%one, %zero, %q : "
+                          "!ctjs.value, !ctjs.value, !ctjs.value)\n"
+                          "^pair(%left: !ctjs.value, %right: !ctjs.value, %opaque: !ctjs.value):\n"
+                          "  cf.br ^swapped(%right, %left, %opaque : "
+                          "!ctjs.value, !ctjs.value, !ctjs.value)\n"
+                          "^swapped(%first: !ctjs.value, %second: !ctjs.value, "
+                          "%unused: !ctjs.value):\n"
+                          "  %chosen = ctjs.get_property %a[%first]\n"
+                          "  %other = ctjs.get_property %a[%second]\n"
+                          "  ctjs.return %chosen\n",
+                      .arrays = "a:[x,y] | a:[x,y]",
+                      .reads = "a[1]=y; a[0]=x; a[0]=x; a[1]=y",
+                      .exit = "y -> {y}; x -> {x}"}},
+        {.contents = {.what = "a swapped opaque key cannot borrow the other path's exact key",
+                      .body =
+                          array +
+                          "  cf.cond_br %condition, ^pair(%p, %zero : !ctjs.value, !ctjs.value), "
+                          "^pair(%zero, %p : !ctjs.value, !ctjs.value)\n"
+                          "^pair(%left: !ctjs.value, %right: !ctjs.value):\n"
+                          "  cf.br ^swapped(%right, %left : !ctjs.value, !ctjs.value)\n"
+                          "^swapped(%key: !ctjs.value, %unused: !ctjs.value):\n"
+                          "  %read = ctjs.get_property %a[%key]\n"
+                          "  ctjs.return %read\n",
+                      .failure = ArrayContentsFailure::UnknownIndex}},
+        {.contents = {.what =
+                          "saved computed categories survive slot overwrites and successor swaps",
+                      .body = values +
+                              "  %text = ctjs.unary typeof %x {storage_test_id = \"text\"}\n"
+                              "  %literal = ctjs.constant #ctjs.bigint<\"1\">\n"
+                              "  %big = ctjs.unary neg %literal {storage_test_id = \"big\"}\n"
+                              "  %a = ctjs.create_array [%text, %big] {storage_test_id = \"a\"}\n"
+                              "  %savedText = ctjs.get_property %a[%zero]\n"
+                              "  %savedBig = ctjs.get_property %a[%one]\n"
+                              "  ctjs.set_property %a[%zero], %x\n"
+                              "  ctjs.set_property %a[%one], %y\n"
+                              "  cf.br ^pair(%savedText, %savedBig : !ctjs.value, !ctjs.value)\n"
+                              "^pair(%left: !ctjs.value, %right: !ctjs.value):\n"
+                              "  cf.br ^swapped(%right, %left : !ctjs.value, !ctjs.value)\n"
+                              "^swapped(%number: !ctjs.value, %string: !ctjs.value):\n"
+                              "  %result = ctjs.binary add %string, %number "
+                              "{storage_test_id = \"result\"}\n"
+                              "  ctjs.return %result\n",
+                      .arrays = "a:[x,y]",
+                      .reads = "a[0]=text; a[1]=big",
+                      .exit = "result -> {}"},
+         .discharged = "x,y"},
+        {.contents = {.what = "simultaneous transport does not authorize a swapping backedge",
+                      .body = array +
+                              "  cf.br ^loop(%zero, %one : !ctjs.value, !ctjs.value)\n"
+                              "^loop(%left: !ctjs.value, %right: !ctjs.value):\n"
+                              "  cf.cond_br %condition, ^loop(%right, %left : "
+                              "!ctjs.value, !ctjs.value), ^exit\n^exit:\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedControlFlow}},
         {.contents = {.what = "truthy observes an external predicate without proving its contents",
                       .body =
                           array + split + "  ctjs.append %p to %a\n" + done + "^right:\n" + done,

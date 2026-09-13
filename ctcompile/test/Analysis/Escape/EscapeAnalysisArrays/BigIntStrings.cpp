@@ -218,9 +218,8 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
             if (!narrow.complete || !expanded.complete ||
-                expanded.work != narrow.work + (concat ? 64 : 128)) {
-                fail(row{.what = "String Add snapshots independently charge result origins and "
-                                 "categories",
+                expanded.work != narrow.work + (concat ? 64 : 96)) {
+                fail(row{.what = "String Add snapshots charge each held result once",
                          .body = wide.contents.body,
                          .expected = ""},
                      "String snapshot accounting changed");

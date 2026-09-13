@@ -324,6 +324,27 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .arrays = "a:[zero]; keys:[x]",
          .reads = "keys[0]=index",
          .exit = "a -> {a}"});
+    run({.what = "held lengths survive storage, reload, replacement and simultaneous transport",
+         .body = values + one + read +
+                 "  %snapshots = ctjs.create_array [%length] {storage_test_id = \"snapshots\"}\n"
+                 "  %saved = ctjs.get_property %snapshots[%zero]\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  %later = ctjs.get_property %a[%key] {storage_test_id = \"later\"}\n"
+                 "  ctjs.set_property %snapshots[%zero], %later\n"
+                 "  %fresh = ctjs.get_property %snapshots[%zero]\n"
+                 "  cf.br ^pair(%saved, %fresh : !ctjs.value, !ctjs.value)\n"
+                 "^pair(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%newLength: !ctjs.value, %oldLength: !ctjs.value):\n"
+                 "  %oldIndex = ctjs.binary sub %oldLength, %one\n"
+                 "  %newIndex = ctjs.binary sub %newLength, %one\n"
+                 "  %oldChild = ctjs.get_property %a[%oldIndex]\n"
+                 "  %newChild = ctjs.get_property %a[%newIndex]\n"
+                 "  ctjs.set_property %a[%oldIndex], %zero\n"
+                 "  ctjs.return %a\n",
+         .arrays = "a:[zero,zero]; snapshots:[later]",
+         .reads = "snapshots[0]=length; snapshots[0]=later; a[0]=x; a[1]=zero",
+         .exit = "a -> {a}"});
     run({.what = "forwarded length and literal offset keep both original Number identities",
          .body = "  %frame = ctjs.frame_enter 8\n" + values + one + read +
                  "  cf.br ^next(%length, %one : !ctjs.value, !ctjs.value)\n"
@@ -479,6 +500,18 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .body = values + one + "  ctjs.append %zero to %a\n" + read +
                  "  ctjs.set_property %a[%key], %one\n" + subtract + indexed,
          .failure = ArrayContentsFailure::MissingElement});
+    run({.what = "a reloaded old length cannot borrow a later post-shrink value",
+         .body = values + one + "  ctjs.append %zero to %a\n" + read +
+                 "  %snapshots = ctjs.create_array [%length]\n"
+                 "  %saved = ctjs.get_property %snapshots[%zero]\n"
+                 "  ctjs.set_property %a[%key], %one\n"
+                 "  %later = ctjs.get_property %a[%key]\n"
+                 "  ctjs.set_property %snapshots[%zero], %later\n"
+                 "  cf.br ^next(%saved : !ctjs.value)\n"
+                 "^next(%oldLength: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %oldLength, %one\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::MissingElement});
     run({.what = "a removed slot cannot be read through its saved original index",
          .body = values + one + read + subtract + shrink +
                  "  %saved = ctjs.get_property %a[%index]\n  ctjs.return %saved\n",
@@ -584,11 +617,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     if (narrowModule && wideModule) {
         const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
         const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 128) {
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 96) {
             fail(row{.what = "length snapshots charge every independent result",
                      .body = wide.body,
                      .expected = ""},
-                 "32 extra length results did not charge both origin and Number snapshots");
+                 "32 extra lengths did not charge each read, exact value and held snapshot");
         }
         check(*wideModule, wide, "x");
     } else {

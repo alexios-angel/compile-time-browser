@@ -31,7 +31,6 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
@@ -849,42 +848,30 @@ mlir::StringAttr ownObjectKey(mlir::Value value) {
     return mlir::StringAttr::get(constant.getContext(), string.getValue());
 }
 
-// This is an ORIGINAL origin already accepted on this exact contents path,
-// not the operation immediately defining a forwarded or loaded SSA value.
-// Keep the list explicit and exclude independently proved computed BigInts:
-// the producer opcode alone no longer proves a non-BigInt result category.
-// binary_static reaches catchable errors before its static conversions.
-bool primitiveNonBigIntOrigin(mlir::Value origin,
-                              const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
-    if (bigIntOrigins.contains(origin)) { return false; }
-    mlir::Operation * definition = origin.getDefiningOp();
-    if (auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(definition)) {
-        return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
-                         ctjs::StringAttr>(constant.getValue());
-    }
-    // Only an admitted dense-array length read has its own GetProperty origin;
-    // element/own-field reads forward their payload's original origin instead.
-    return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryOp,
-                                 ctjs::BinaryStaticOp, ctjs::GetPropertyOp>(definition);
-}
+enum class ContentsKind {
+    Identity,
+    Opaque,
+    NonBigInt,
+    BigInt,
+    String
+};
 
-bool bigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
-    if (bigIntOrigins.contains(origin)) { return true; }
-    auto constant = origin.getDefiningOp<ctjs::ConstantOp>();
-    return constant && llvm::isa<ctjs::BigIntAttr>(constant.getValue());
-}
+// Facts belong to the held value, not mutable metadata on its SSA producer.
+// Copies into successors and containers keep the read-time scalar snapshot.
+// The original producer remains the identity used by public evidence records.
+struct ContentsValue {
+    mlir::Value original;
+    ContentsKind kind = ContentsKind::Identity;
+    // ponytail: length minus bounded literals only; other arithmetic needs proof.
+    std::optional<std::size_t> lengthNumber = std::nullopt;
 
-bool stringOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & stringAddOrigins) {
-    if (stringAddOrigins.contains(origin)) { return true; }
-    if (auto constant = origin.getDefiningOp<ctjs::ConstantOp>()) {
-        return llvm::isa<ctjs::StringAttr>(constant.getValue());
+    mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
+    bool nonBigInt() const {
+        return kind == ContentsKind::NonBigInt || kind == ContentsKind::String;
     }
-    if (auto unary = origin.getDefiningOp<ctjs::UnaryOp>()) {
-        return unary.getKind() == ctjs::UnaryKind::TypeOf;
-    }
-    auto binary = origin.getDefiningOp<ctjs::BinaryOp>();
-    return binary && binary.getKind() == ctjs::BinaryKind::Concat;
-}
+    bool bigInt() const { return kind == ContentsKind::BigInt; }
+    bool string() const { return kind == ContentsKind::String; }
+};
 
 } // namespace
 
@@ -914,25 +901,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // overwrite would incorrectly erase an element of an unmodified array.
     // Every branch edge is visited, including a constant flag's untaken edge
     // and a switch's default edge. Any unsupported path refuses everything.
+    using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;
     struct State {
-        llvm::DenseMap<mlir::Value, mlir::Value> origins;
-        // Only original computed results enter this set. Exact saved/forwarded
-        // origins keep their category after a slot changes, while a later
-        // Boolean/Number/String producer must prove its own result separately.
-        llvm::DenseSet<mlir::Value> bigIntOrigins;
-        // Only Add needs a path-dependent String category. TypeOf/Concat
-        // always yield String once their original result is proved.
-        llvm::DenseSet<mlir::Value> stringAddOrigins;
-        // Original Number snapshots, not the current length of their source array.
-        // ponytail: only length minus bounded Number/canonical String literals;
-        // other arithmetic needs a separate bounded exact-value proof.
-        llvm::DenseMap<mlir::Value, std::size_t> lengthNumbers;
         // Imported successors forward every raw register, including unused
-        // receiver/parameter values. Keep their exact entry identity separate:
+        // receiver/parameter values. Their Opaque kind keeps entry identity:
         // forwarding or testing one never proves its contents or retention.
-        llvm::DenseMap<mlir::Value, mlir::Value> opaqueOrigins;
-        llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
-        llvm::MapVector<mlir::Operation *, ObjectOwnProperties> objects;
+        llvm::DenseMap<mlir::Value, ContentsValue> values;
+        llvm::MapVector<mlir::Operation *, llvm::SmallVector<ContentsValue, 4>> arrays;
+        llvm::MapVector<mlir::Operation *, HeldProperties> objects;
         llvm::SmallPtrSet<mlir::Block *, 8> visited;
         ctjs::FrameEnterOp frame;
         bool frameExited = false;
@@ -942,7 +918,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, function); }
         if (llvm::isa<ctjs::ValueType>(argument.getType())) {
-            state.opaqueOrigins[argument] = argument;
+            state.values[argument] = {argument, ContentsKind::Opaque};
         }
     }
     state.visited.insert(&function.getBody().front());
@@ -950,22 +926,25 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     llvm::SmallVector<State, 2> alternatives;
     llvm::SmallPtrSet<mlir::Operation *, 8> arraySites;
     llvm::SmallPtrSet<mlir::Operation *, 8> objectSites;
-    const auto origin = [&](mlir::Value value) { return state.origins.lookup(value); };
+    const auto held = [&](mlir::Value value) { return state.values.lookup(value); };
+    const auto origin = [&](mlir::Value value) { return held(value).origin(); };
     const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
         if (next->getParent() != &function.getBody() || next->empty() ||
             next->getNumArguments() != operands.size() || !path.visited.insert(next).second) {
             return ArrayContentsFailure::UnsupportedControlFlow;
         }
-        for (auto [argument, value] : llvm::zip(next->getArguments(), operands)) {
+        // Read every source before assigning any destination: successor operands
+        // are simultaneous, including swaps. One kind replaces exact/opaque state.
+        if (!spend(operands.size())) { return ArrayContentsFailure::WorkLimit; }
+        llvm::SmallVector<ContentsValue, 8> incoming;
+        for (mlir::Value value : operands) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-            const mlir::Value exact = path.origins.lookup(value);
-            if (exact) {
-                path.origins[argument] = exact;
-            } else {
-                const mlir::Value opaque = path.opaqueOrigins.lookup(value);
-                if (!opaque) { return ArrayContentsFailure::UnknownValue; }
-                path.opaqueOrigins[argument] = opaque;
-            }
+            const ContentsValue fact = path.values.lookup(value);
+            if (!fact.original) { return ArrayContentsFailure::UnknownValue; }
+            incoming.push_back(fact);
+        }
+        for (auto [argument, fact] : llvm::zip(next->getArguments(), incoming)) {
+            path.values[argument] = fact;
         }
         path.current = &next->front();
         return ArrayContentsFailure::None;
@@ -973,9 +952,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
         // Path enumeration can be exponential. Charge every copied value,
         // visited block, container and element before allocating the snapshot.
-        if (!spend(state.origins.size()) || !spend(state.bigIntOrigins.size()) ||
-            !spend(state.stringAddOrigins.size()) || !spend(state.opaqueOrigins.size()) ||
-            !spend(state.lengthNumbers.size()) || !spend(state.visited.size())) {
+        if (!spend(state.values.size()) || !spend(state.visited.size())) {
             return ArrayContentsFailure::WorkLimit;
         }
         for (const auto & [array, elements] : state.arrays) {
@@ -1012,7 +989,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     return refuse(ArrayContentsFailure::InvalidFrame, &op);
                 }
                 state.frame = entered;
-                state.origins[state.frame.getResult()] = state.frame.getResult();
+                state.values[state.frame.getResult()] = {state.frame.getResult()};
                 continue;
             }
             if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
@@ -1076,8 +1053,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             // Truthy is total, noncapturing and nonthrowing (Operators.td). An
             // external input remains unknown for every other use; only its i1
             // result can be carried as a predicate. Neither branch is pruned.
-            if (llvm::isa<ctjs::ConstantOp, ctjs::TruthyOp>(&op)) {
-                state.origins[op.getResult(0)] = op.getResult(0);
+            if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(&op)) {
+                ContentsKind kind = ContentsKind::Identity;
+                if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
+                    kind = ContentsKind::String;
+                } else if (llvm::isa<ctjs::BigIntAttr>(constant.getValue())) {
+                    kind = ContentsKind::BigInt;
+                } else if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                                     ctjs::NumberAttr>(constant.getValue())) {
+                    kind = ContentsKind::NonBigInt;
+                }
+                state.values[constant.getResult()] = {constant.getResult(), kind};
+                continue;
+            }
+            if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(&op)) {
+                state.values[truthy.getResult()] = {truthy.getResult()};
                 continue;
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(&op)) {
@@ -1097,15 +1087,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::CompareKind::Le:
                 case ctjs::CompareKind::Gt:
                 case ctjs::CompareKind::Ge: {
-                    const mlir::Value lhs = origin(compare.getLhs());
-                    const mlir::Value rhs = origin(compare.getRhs());
+                    const ContentsValue left = held(compare.getLhs());
+                    const ContentsValue right = held(compare.getRhs());
+                    const mlir::Value lhs = left.origin();
+                    const mlir::Value rhs = right.origin();
                     if (!lhs || !rhs) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                    if ((!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
-                         !bigIntOrigin(lhs, state.bigIntOrigins)) ||
-                        (!primitiveNonBigIntOrigin(rhs, state.bigIntOrigins) &&
-                         !bigIntOrigin(rhs, state.bigIntOrigins))) {
+                    if ((!left.nonBigInt() && !left.bigInt()) ||
+                        (!right.nonBigInt() && !right.bigInt())) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // loose_equals uses digits, String parsing and static
@@ -1120,7 +1110,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.origins[compare.getResult()] = compare.getResult();
+                state.values[compare.getResult()] = {compare.getResult(), ContentsKind::NonBigInt};
                 continue;
             }
             if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(&op)) {
@@ -1130,7 +1120,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (convert.getKind() != ctjs::ConvertKind::ToBoolean) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.origins[convert.getResult()] = convert.getResult();
+                state.values[convert.getResult()] = {convert.getResult(), ContentsKind::NonBigInt};
                 continue;
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
@@ -1142,15 +1132,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // This is a contents proof, not a no-allocation/effect claim.
                 // Keep an independent primitive origin without a value, key,
                 // operand alias or structural-edge liveness fact.
+                ContentsKind kind = ContentsKind::NonBigInt;
                 switch (unary.getKind()) {
                 case ctjs::UnaryKind::Not:
-                case ctjs::UnaryKind::TypeOf:
                 case ctjs::UnaryKind::Void: break;
+                case ctjs::UnaryKind::TypeOf: kind = ContentsKind::String; break;
                 case ctjs::UnaryKind::Neg:
                 case ctjs::UnaryKind::Plus:
                 case ctjs::UnaryKind::BitNot: {
-                    const mlir::Value input = origin(unary.getOperand());
-                    if (input && bigIntOrigin(input, state.bigIntOrigins)) {
+                    const ContentsValue input = held(unary.getOperand());
+                    if (input.bigInt()) {
                         if (unary.getKind() == ctjs::UnaryKind::Plus) {
                             // to_number_value rejects BigInt before any lookup
                             // or user conversion. Its TypeError (or depth-guard
@@ -1166,10 +1157,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         // the actual category, never a Number or concrete value.
                         // No allocation-success/native effect claim follows.
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.bigIntOrigins.insert(unary.getResult());
+                        kind = ContentsKind::BigInt;
                         break;
                     }
-                    if (!input || !primitiveNonBigIntOrigin(input, state.bigIntOrigins)) {
+                    if (!input.nonBigInt()) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // Known primitive non-BigInt inputs cannot invoke object
@@ -1187,7 +1178,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.origins[unary.getResult()] = unary.getResult();
+                state.values[unary.getResult()] = {unary.getResult(), kind};
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
@@ -1201,17 +1192,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::BinaryKind::Concat: break;
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                const mlir::Value lhs = origin(binary.getLhs());
-                const mlir::Value rhs = origin(binary.getRhs());
-                if (lhs && rhs &&
-                    (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
-                     bigIntOrigin(lhs, state.bigIntOrigins)) &&
-                    (primitiveNonBigIntOrigin(rhs, state.bigIntOrigins) ||
-                     bigIntOrigin(rhs, state.bigIntOrigins)) &&
+                const ContentsValue left = held(binary.getLhs());
+                const ContentsValue right = held(binary.getRhs());
+                const mlir::Value lhs = left.origin();
+                const mlir::Value rhs = right.origin();
+                if (lhs && rhs && (left.nonBigInt() || left.bigInt()) &&
+                    (right.nonBigInt() || right.bigInt()) &&
                     (binary.getKind() == ctjs::BinaryKind::Concat ||
                      (binary.getKind() == ctjs::BinaryKind::Add &&
-                      (stringOrigin(lhs, state.stringAddOrigins) ||
-                       stringOrigin(rhs, state.stringAddOrigins))))) {
+                      (left.string() || right.string())))) {
                     // Concat converts both primitives before bigint_binary;
                     // Add selects its String arm before mixed-BigInt errors.
                     // BigInt conversion copies digits, never an input object
@@ -1222,13 +1211,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // apply; this proves neither completion nor native effects.
                     if (binary.getKind() == ctjs::BinaryKind::Add) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.stringAddOrigins.insert(binary.getResult());
                     }
-                    state.origins[binary.getResult()] = binary.getResult();
+                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::String};
                     continue;
                 }
-                if (lhs && rhs && bigIntOrigin(lhs, state.bigIntOrigins) &&
-                    bigIntOrigin(rhs, state.bigIntOrigins) &&
+                if (lhs && rhs && left.bigInt() && right.bigInt() &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||
                      binary.getKind() == ctjs::BinaryKind::Sub ||
                      binary.getKind() == ctjs::BinaryKind::Mul ||
@@ -1249,8 +1236,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // completion or no-throw/native effects. Mixed inputs remain
                     // a separate boundary even on observed success.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    state.bigIntOrigins.insert(binary.getResult());
-                    state.origins[binary.getResult()] = binary.getResult();
+                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
                     continue;
                 }
                 if ((binary.getKind() == ctjs::BinaryKind::Add ||
@@ -1260,10 +1246,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                      binary.getKind() == ctjs::BinaryKind::Mod ||
                      binary.getKind() == ctjs::BinaryKind::Pow) &&
                     lhs && rhs &&
-                    ((bigIntOrigin(lhs, state.bigIntOrigins) &&
-                      primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
-                     (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
-                      bigIntOrigin(rhs, state.bigIntOrigins)))) {
+                    ((left.bigInt() && right.nonBigInt()) ||
+                     (left.nonBigInt() && right.bigInt()))) {
                     // Mixed original primitives cannot retain local objects:
                     // bigint_binary returns an independent TypeError/Undefined.
                     // Add first makes both operands primitive and may concatenate
@@ -1273,11 +1257,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // Calls, handlers and publication remain excluded across
                     // the whole frame. Check EVERY structural continuation:
                     // retention proves no successful completion or native effect.
-                    state.origins[binary.getResult()] = binary.getResult();
+                    state.values[binary.getResult()] = {binary.getResult(),
+                                                        ContentsKind::NonBigInt};
                     continue;
                 }
-                if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
-                    !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) {
+                if (!lhs || !rhs || !left.nonBigInt() || !right.nonBigInt()) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 // With primitive non-BigInt originals, binary_op cannot call
@@ -1294,8 +1278,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // a normal-completion or no-throw/effect contract. String
                 // results allocate in the VM and static conversions can allocate
                 // C++ temporaries; absence/success of allocation is unproved.
+                ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                    const auto length = state.lengthNumbers.find(lhs);
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
                     auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
                                           : ctjs::NumberAttr{};
@@ -1303,22 +1287,22 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         literal && llvm::isa<ctjs::StringAttr>(literal.getValue())
                             ? ownArrayIndex(rhs)
                             : std::nullopt;
-                    if (length != state.lengthNumbers.end() && (number || stringOffset)) {
+                    if (left.lengthNumber && (number || stringOffset)) {
                         const double offset =
                             number ? number.getDouble() : static_cast<double>(*stringOffset);
                         // Canonical decimal Strings convert exactly without object hooks.
                         // Both operands and the result are exact integers in [0, 2^32-1].
                         // Guard before conversion/subtraction: no NaN, rounding or wrap.
                         if (std::isfinite(offset) && offset >= 0 &&
-                            offset <= static_cast<double>(length->second) &&
+                            offset <= static_cast<double>(*left.lengthNumber) &&
                             std::floor(offset) == offset) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            state.lengthNumbers[binary.getResult()] =
-                                length->second - static_cast<std::size_t>(offset);
+                            result.lengthNumber =
+                                *left.lengthNumber - static_cast<std::size_t>(offset);
                         }
                     }
                 }
-                state.origins[binary.getResult()] = binary.getResult();
+                state.values[binary.getResult()] = result;
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(&op)) {
@@ -1332,26 +1316,24 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::BinaryKind::UShr: break;
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                const mlir::Value lhs = origin(binary.getLhs());
-                const mlir::Value rhs = origin(binary.getRhs());
+                const ContentsValue left = held(binary.getLhs());
+                const ContentsValue right = held(binary.getRhs());
+                const mlir::Value lhs = left.origin();
+                const mlir::Value rhs = right.origin();
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                if ((bigIntOrigin(lhs, state.bigIntOrigins) &&
-                     primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
-                    (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
-                     bigIntOrigin(rhs, state.bigIntOrigins)) ||
-                    (binary.getKind() == ctjs::BinaryKind::UShr &&
-                     bigIntOrigin(lhs, state.bigIntOrigins) &&
-                     bigIntOrigin(rhs, state.bigIntOrigins))) {
+                if ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()) ||
+                    (binary.getKind() == ctjs::BinaryKind::UShr && left.bigInt() &&
+                     right.bigInt())) {
                     // bigint_binary rejects mixed original primitives, or two
                     // BigInts for UShr, before conversion. Its independent
                     // TypeError/Undefined carrier has no operand/local edge or
                     // BigInt category. Keep all continuations and whole-frame
                     // exclusions; normal completion/native effects are unproved.
-                    state.origins[binary.getResult()] = binary.getResult();
+                    state.values[binary.getResult()] = {binary.getResult(),
+                                                        ContentsKind::NonBigInt};
                     continue;
                 }
-                if (bigIntOrigin(lhs, state.bigIntOrigins) &&
-                    bigIntOrigin(rhs, state.bigIntOrigins) &&
+                if (left.bigInt() && right.bigInt() &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||
                      binary.getKind() == ctjs::BinaryKind::BitAnd ||
                      binary.getKind() == ctjs::BinaryKind::BitOr ||
@@ -1369,12 +1351,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // proves neither allocation success nor normal completion
                     // or no-throw/native effects.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    state.bigIntOrigins.insert(binary.getResult());
-                    state.origins[binary.getResult()] = binary.getResult();
+                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
                     continue;
                 }
-                if (!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
-                    !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) {
+                if (!left.nonBigInt() || !right.nonBigInt()) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 // Independent primitive origins exclude source user conversion.
@@ -1382,13 +1362,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // toString can retain them or their contents even though today's
                 // VM converts them statically. The independent Number result
                 // proves no value, key, branch liveness or allocation success.
-                state.origins[binary.getResult()] = binary.getResult();
+                state.values[binary.getResult()] = {binary.getResult(), ContentsKind::NonBigInt};
                 continue;
             }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
                 if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
                 state.objects.try_emplace(&op);
-                state.origins[object.getResult()] = object.getResult();
+                state.values[object.getResult()] = {object.getResult()};
                 continue;
             }
             if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
@@ -1396,12 +1376,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 auto & elements = state.arrays[&op];
                 for (unsigned position = 0; position < array.getElements().size(); ++position) {
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    const mlir::Value value = origin(array.getElements()[position]);
-                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    const ContentsValue value = held(array.getElements()[position]);
+                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
                     elements.push_back(value);
-                    out.writes.push_back({&op, position, &op, position, value});
+                    out.writes.push_back({&op, position, &op, position, value.original});
                 }
-                state.origins[array.getResult()] = array.getResult();
+                state.values[array.getResult()] = {array.getResult()};
                 continue;
             }
             if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(&op)) {
@@ -1423,11 +1403,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (!spend(sourceObject->second.size())) {
                     return refuse(ArrayContentsFailure::WorkLimit, &op);
                 }
-                const ObjectOwnProperties snapshot = sourceObject->second;
+                const HeldProperties snapshot = sourceObject->second;
                 for (const auto & [key, value] : snapshot) {
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     targetObject->second[key] = value;
-                    out.propertyCopies.push_back({&op, from, into, key, value});
+                    out.propertyCopies.push_back({&op, from, into, key, value.original});
                 }
                 continue;
             }
@@ -1451,7 +1431,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 auto & properties = object->second;
                 auto found = properties.find(key);
                 const mlir::Value removed =
-                    found == properties.end() ? mlir::Value{} : found->second;
+                    found == properties.end() ? mlir::Value{} : found->second.original;
                 if (removed) {
                     // Fresh set_property fields are configurable (value.hpp's
                     // attr_default). delete_own_property erases exactly that own
@@ -1485,8 +1465,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (found == properties.end()) {
                         return refuse(ArrayContentsFailure::MissingProperty, &op);
                     }
-                    state.origins[op.getResult(0)] = found->second;
-                    out.propertyReads.push_back({&op, container, key, found->second});
+                    state.values[op.getResult(0)] = found->second;
+                    out.propertyReads.push_back({&op, container, key, found->second.original});
                     continue;
                 }
                 auto found = state.arrays.find(container);
@@ -1495,16 +1475,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 auto & elements = found->second;
                 if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
-                    const mlir::Value value = origin(append.getElement());
-                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    const ContentsValue value = held(append.getElement());
+                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
                     if (elements.size() >= 4294967295ULL) {
                         return refuse(ArrayContentsFailure::MissingElement, &op);
                     }
-                    out.writes.push_back({&op, 1, container, elements.size(), value});
+                    out.writes.push_back({&op, 1, container, elements.size(), value.original});
                     elements.push_back(value);
                     continue;
                 }
-                const mlir::Value key = origin(op.getOperand(1));
+                const ContentsValue keyValue = held(op.getOperand(1));
+                const mlir::Value key = keyValue.origin();
                 if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
                     const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
                     if (name && name.getValue() == "length") {
@@ -1516,8 +1497,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             return refuse(ArrayContentsFailure::MissingElement, &op);
                         }
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.lengthNumbers[op.getResult(0)] = elements.size();
-                        state.origins[op.getResult(0)] = op.getResult(0);
+                        state.values[op.getResult(0)] = {op.getResult(0), ContentsKind::NonBigInt,
+                                                         elements.size()};
                         continue;
                     }
                 } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
@@ -1546,9 +1527,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 auto index = key ? ownArrayIndex(key) : std::nullopt;
-                if (const auto exact = state.lengthNumbers.find(key);
-                    exact != state.lengthNumbers.end() && exact->second < 4294967295ULL) {
-                    index = exact->second;
+                if (keyValue.lengthNumber && *keyValue.lengthNumber < 4294967295ULL) {
+                    index = keyValue.lengthNumber;
                 }
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or
@@ -1557,13 +1537,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     return refuse(ArrayContentsFailure::MissingElement, &op);
                 }
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
-                    const mlir::Value value = origin(store.getValue());
-                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    const ContentsValue value = held(store.getValue());
+                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
                     elements[*index] = value;
-                    out.writes.push_back({&op, 2, container, *index, value});
+                    out.writes.push_back({&op, 2, container, *index, value.original});
                 } else {
-                    state.origins[op.getResult(0)] = elements[*index];
-                    out.reads.push_back({&op, container, *index, elements[*index]});
+                    state.values[op.getResult(0)] = elements[*index];
+                    out.reads.push_back({&op, container, *index, elements[*index].original});
                 }
                 continue;
             }
@@ -1585,9 +1565,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     exit.reachableSites.push_back(site);
                     auto array = state.arrays.find(site);
                     if (array != state.arrays.end()) {
-                        for (mlir::Value element : array->second) {
+                        for (const ContentsValue & element : array->second) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            pending.push_back(element);
+                            pending.push_back(element.original);
                         }
                     }
                     auto object = state.objects.find(site);
@@ -1595,12 +1575,30 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         for (const auto & [key, element] : object->second) {
                             (void)key;
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            pending.push_back(element);
+                            pending.push_back(element.original);
                         }
                     }
                 }
-                exit.arrays = std::move(state.arrays);
-                exit.objects = std::move(state.objects);
+                // Public evidence keeps original producers, never private scalar facts.
+                // Charge the projection before copying each container and its values.
+                for (const auto & [array, elements] : state.arrays) {
+                    if (!spend() || !spend(elements.size())) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                    auto & originals = exit.arrays[array];
+                    for (const ContentsValue & element : elements) {
+                        originals.push_back(element.original);
+                    }
+                }
+                for (const auto & [object, properties] : state.objects) {
+                    if (!spend() || !spend(properties.size())) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                    auto & originals = exit.objects[object];
+                    for (const auto & [key, element] : properties) {
+                        originals[key] = element.original;
+                    }
+                }
                 out.exits.push_back(std::move(exit));
                 returned = true;
                 continue;

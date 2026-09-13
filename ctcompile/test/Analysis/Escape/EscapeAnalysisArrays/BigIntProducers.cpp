@@ -203,12 +203,11 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 128) {
-                fail(row{.what = "BigInt snapshots charge result origins and categories separately",
+            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 96) {
+                fail(row{.what = "BigInt snapshots charge each held result once",
                          .body = wide.contents.body,
                          .expected = ""},
-                     "32 results did not charge their operations, categories and both snapshot "
-                     "entries");
+                     "32 results did not charge their operations, categories and held snapshots");
             }
             check(*wideModule, wide);
         } else {
@@ -633,13 +632,11 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 128) {
-                fail(row{.what =
-                             "BigInt binary snapshots charge origins and categories independently",
+            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 96) {
+                fail(row{.what = "BigInt binary snapshots charge each held result once",
                          .body = wide.contents.body,
                          .expected = ""},
-                     "32 binary results did not charge operations, categories and both snapshot "
-                     "entries");
+                     "32 binary results did not charge operations, categories and held snapshots");
             }
             check(*wideModule, wide);
         } else {
