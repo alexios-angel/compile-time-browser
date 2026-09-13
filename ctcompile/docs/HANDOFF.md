@@ -6,6 +6,106 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Browser UMD ownership and safe preparation, 2026-09-13 UTC
+
+Continued clean **4a5ff450**, resuming its promised original browser UMD boundary
+from HANDOFF and `/tmp/ctcompile-data-number/next-bootstrap.md`. Both commit logs
+and the synchronization journal showed the preceding Number thread completed;
+`codex-wip-20260907` is already an ancestor. Three agents covered proof tests,
+exact-source execution and the independent escape-loop/provenance review. Root
+integrated the results and serialized every devbox and Git operation.
+
+**01238f3a** follows the factory through its exact explicit wrapper formal instead
+of requiring parameter 3 in a four-argument wrapper. Existing unique invocation,
+closed callable and actual/formal arity proofs remain mandatory. Five additional
+source/prepared/imported shapes exercise later and trailing formals, with exhaustive
+incomplete/exact budgets, stale/forged evidence, swapped actuals, escaping callbacks
+and repeated calls. **278d4322** admits only nonescaping `typeof` inspection of
+proved ordinary root aliases; source/prepared mutations to coercing unary Plus
+still refuse. Original fixture bodies are unchanged.
+
+**2205942e** prepares only a privately validated owner clone: `typeof` of an exact
+ordinary owner or its checked global load becomes String `"object"`, and unused
+explicit wrapper slots are erased together with their exact actual operands.
+Every evaluated producer remains. Fields are not assumed to be objects; observed
+fallbacks and raw argument windows are not erased. Collection is budgeted, and
+complete ownership is rechecked before publication. Fixed-present-undefined
+normalization remains; **absent loads are not folded or erased**.
+
+The original browser UMD remains **3218 bytes**, SHA256
+**80a6fd87cbfdaafa6b2a3c6aab05bfc66ca36bf23f3827c29b4fe79b93ab3722**. With its
+existing declared manifest and prefix specialization, complete native ownership
+now succeeds at explicit **1,000,000 steps**, both optimization policies; it still
+emits **0/7 native functions**. Raw prepared input and the unchanged default100k
+remain owner-refused and 0/7. Before primitive preparation, the complete specialized
+owner used **875,901 steps**. Prefix reports alone confer no native authority.
+
+The registered `global-maps.py --group umd` gate preserves all **19 typed Node/VM
+observations** and **23 Data calls in order**. It covers missing declarations,
+0/32/default100k budgets, stale/fresh forged evidence, observed fallback returns
+and publication, ordinary absent reads and source writes. A separate four-function
+wrapper is **4/4 native**, both policies/layouts, GCC/Clang and no-Script checks:
+its unused `(tracePre = 1, this)` actual still performs the visible assignment,
+and its ordinary-root type observation stays correct. Returning the fallback,
+reading `arguments.length`, and incrementing a twice-written scalar global remain
+refused. Original UMD bytes and all earlier recorder sources remain intact.
+
+Focused gates passed: **257-step build / 3 CTests in 41.74s**, then **256-step
+build / 2 CTests in 1.93s**; final consumers rebuilt in **241 steps**, with
+**2/2 CTests in 1.95s** and the complete new UMD group passing. The new harness
+was corrected to accept rollback's original diagnostic and to compare canonically
+printed SSA operands after inserting a result. No production diagnostic edits remain.
+The devbox connection recovered through the authorized start/allow-ip workflow.
+
+The standard devbox configure/build passed. The first full run was **538/540
+CTests in 1098.92s**, with **165/166 lit cases in 785.36s**. Failures were the
+unchanged browser `frames` baseline and `global-methods.test`'s hard-coded
+480–544 preparation-budget window. **3b614722** replaces that window with the
+bounded binary search already used by the neighboring global test. Source fixtures,
+partial-component rejection and unchanged-operation rollback checks remain; the
+measured adjacent boundary is **547 rollback / 548 complete**. The corrected
+filtered CTest passed **1/1 in 33.57s**, with lit **33.50s**. Across those runs,
+every compiler CTest and all **166 lit cases** have passing coverage. The sole
+remaining failure is `frames.cpp:70`, with the same embedded-style/viewport mismatch.
+
+The escape fixture passed in **1.74s**; no escape code or snapshots changed.
+Fresh full Bootstrap remains **19/574 native / zero of 43 globals resolved**, both
+policies. Original 2522-byte Data remains **7/7 at explicit 1m with declared
+undefined**, **0/7 at default100k**, both policies; its empty manifest still refuses.
+Other recorder/template admissions and original source hashes are unchanged.
+
+All **1286 final inputs** match locally and on the devbox. Production stayed fixed
+after **2205942e**; the only later test change is **3b614722**. Required
+`tools/format.sh --check` retains exactly **nine baseline files / 26 diagnostics**
+with bundled 23.0.0git; changed C++ passes. The whole check with Homebrew **23.1.1**
+passes **804 C++ / 85 Python / 33 web files**. Logs, both frozen manifests and
+`final-measured.json` are under `/tmp/ctcompile-umd/`.
+
+The next native boundary requires **source reference-mode provenance**, not a
+broader TypeOf-use heuristic. Direct `typeof missing` returns `"undefined"`;
+`typeof (0, missing)` and `var x = missing; typeof x` must throw ReferenceError.
+Fresh devbox imports reduce all three to a LoadGlobal-to-TypeOf use graph. Measured
+`traceCaught` is **0/0/1 in the VM versus 0/1/1 in Node**: moves lose the alias's
+hard-read behavior, and the VM's adjacent-op heuristic also misclassifies comma.
+An experimental absent-TypeOf fold was removed before committing. The existing
+host queries and boxed soft-global lowering have the same missing provenance.
+
+Coordinate the real lookup mode from Script `compile/expressions.cpp`, through
+`bytecode_opcodes.def` / VM `run_loop.cpp`, CTJS `Import/Bytecode/Instructions.cpp`
+and `Ops/Bindings.td`, then make both boxed and native consumers use it. The sync
+journal records this for Claude; `/tmp/ctcompile-umd/absent-typeof.md` and
+`typeof-measured/` preserve exact sources, hashes, raw IR and observations.
+CommonJS replacement/old-exports aliases and realm embedding remain separate work.
+
+Escape production and snapshots are unchanged. The untouched 118-byte confinedArray
+still needs immutable held scalar facts, simultaneous successor transport and a
+verified Number induction/guard relation before bounded read-only-loop admission.
+Eight source controls pass; no escape precision gain is claimed. The exact CFG,
+backedge hazards and first implementation step are in `/tmp/ctcompile-umd/escape-loop.md`.
+Full native Bootstrap and the application driver remain unfinished. Browser APIs
+must use public ctbrowser RAII subsystem headers. No browser/runtime/parser edits
+or push; all session evidence is under `/tmp/ctcompile-umd/`.
+
 ## Exact Data Number observations, 2026-09-13 UTC
 
 Resumed the interrupted **10:38:21 / 10:39:13 UTC** Number-result thread from
