@@ -38,12 +38,12 @@
 //     browser shows its own error page; this reports the error and builds the
 //     tree it had, which is what lets a caller decide.
 //
-// WHAT IS NOT HERE, named rather than silently missing: internal DTD subsets
-// are SKIPPED rather than read, so an entity an internal subset declares is
-// not resolved (the five predefined ones and numeric character references
-// are). There is no validation and no external entity fetching - both are
-// what every browser also refuses. A doctype, a comment or a processing
-// instruction outside the root element lands under the Document node - see
+// WHAT IS NOT HERE, named rather than silently missing: an internal DTD
+// subset is read only for the general entities it declares with a literal
+// value - those, the five predefined ones and numeric character references
+// are resolved; a parameter or external entity is not. There is no validation
+// and no external entity fetching - both are what every browser also refuses. A doctype, a comment
+// or a processing instruction outside the root element lands under the Document node - see
 // document::document_node - a CDATA section is a CDATASection node and a
 // processing instruction inside the tree a ProcessingInstruction. An inline
 // `<svg>` is put in the SVG namespace but its SOURCE is not captured the way
@@ -52,12 +52,13 @@
 //
 // MEASURED, rather than asserted: all 80 `.xhtml`, `.xht` and `.xml` files in
 // the web-platform-tests checkout at pin `3f6b09ae` were parsed with this, and
-// 76 are well-formed by it. The four that are not are each correct: two are
+// 77 are well-formed by it. The three that are not are each correct: two are
 // zero-byte files (`Document-createElement-namespace-tests/empty.xhtml` and
-// `.xml`), one declares `&tree;` in an internal subset this parser skips
-// (`Element-firstElementChild-entity-xhtml.xhtml`), and one has a genuinely
-// unterminated `<?start name="p">` that the test wrote on purpose
+// `.xml`), and one has a genuinely unterminated `<?start name="p">` that the
+// test wrote on purpose
 // (`html/dom/partial-updates/tentative/resources/template-for.xhtml`).
+// (`Element-firstElementChild-entity-xhtml.xhtml` declares `&tree;` in its
+// internal subset, which this parser now expands.)
 //
 // Namespace URIs are interned into the document's atom table and reach the tree
 // through `document::set_attribute_ns`, the same path `setAttributeNS` uses, so

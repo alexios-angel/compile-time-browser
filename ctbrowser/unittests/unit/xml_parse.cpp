@@ -193,6 +193,51 @@ void test_references() {
     CHECK_EQ(text, std::string{"<&>\"'AB"});
 }
 
+// A general entity the internal subset declares expands where it is
+// referenced - as CONTENT, so markup in it makes elements - and in an
+// attribute value; character references in its value are resolved when it is
+// declared; the first declaration wins; a parameter entity, an external one
+// and the other declaration kinds are passed over; and a self-reference is
+// an error rather than a loop. (Element-firstElementChild-entity-xhtml.xhtml.)
+void test_internal_subset_entities() {
+    atom_table atoms;
+    document doc{atoms};
+    const xml_parse_result out = parse_xml(doc, R"(<!DOCTYPE a [
+  <!ELEMENT a ANY>
+  <!ATTLIST a x CDATA ">">
+  <!-- a comment with > in it -->
+  <!ENTITY tree "<b id='k'>leaf</b>">
+  <!ENTITY amp2 "&#38;lt;">
+  <!ENTITY amp2 "second">
+  <!ENTITY % pe "ignored">
+  <!ENTITY ext SYSTEM "x.ent">
+  <!NOTATION n SYSTEM "n">
+]>
+<a t="&amp2;">x&tree;y</a>)");
+    CHECK(out.error.empty());
+    const auto r = doc.read();
+    std::string shape;
+    for (const node_id kid : r.children(out.tree.root)) {
+        shape += r.kind(kid) == node_kind::element
+                     ? "<" + std::string{tag_of(atoms, r, kid)} + ">" +
+                           std::string{r.text(r.children(kid)[0])}
+                     : std::string{r.text(kid)};
+        shape += '|';
+    }
+    CHECK_EQ(shape, std::string{"x|<b>leaf|y|"});
+    CHECK_EQ(std::string{r.attribute_value(out.tree.root, atoms.intern("t"))}, std::string{"<"});
+
+    atom_table atoms2;
+    document doc2{atoms2};
+    const xml_parse_result looped = parse_xml(doc2, "<!DOCTYPE a [<!ENTITY a \"&a;\">]><a>&a;</a>");
+    CHECK(!looped.error.empty());
+    atom_table atoms3;
+    document doc3{atoms3};
+    const xml_parse_result undeclared =
+        parse_xml(doc3, "<!DOCTYPE a [<!ENTITY b \"\">]><a>&c;</a>");
+    CHECK(!undeclared.error.empty());
+}
+
 // The document knows what it is, and an XML document is never in quirks mode.
 void test_document_is_marked() {
     atom_table atoms;
@@ -239,6 +284,7 @@ int main() {
     test_namespaces();
     test_wellformedness_is_fatal();
     test_references();
+    test_internal_subset_entities();
     test_document_is_marked();
     test_extension();
     test_prolog();

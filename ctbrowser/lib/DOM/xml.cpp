@@ -1,6 +1,7 @@
 #include <ctbrowser/dom/xml.hpp>
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -173,10 +174,14 @@ private:
     }
 
     // `<!DOCTYPE name PUBLIC "p" "s" [ ... ]>`: the name and the two
-    // identifiers become a DocumentType node under the Document; the internal
-    // subset - which may itself contain `>` inside its brackets - is SKIPPED
-    // rather than read. Nothing downstream asks what it declared, and an XML
-    // document is never in quirks mode whether or not a doctype is present.
+    // identifiers become a DocumentType node under the Document, and the
+    // internal subset is read for the one thing a page can observe of it: a
+    // general entity declared with a literal value (XML 1.0 §4.2), which
+    // `&name;` in the content or an attribute value then expands to. Element,
+    // attribute-list and notation declarations, parameter entities and
+    // external entities are skipped - nothing downstream asks about them, and
+    // fetching is what every browser also refuses. An XML document is never
+    // in quirks mode whether or not a doctype is present.
     void doctype() {
         advance(9); // <!DOCTYPE
         skip_space();
@@ -195,19 +200,160 @@ private:
             skip_space();
             (void)quoted_literal(system_id);
         }
-        int depth = 0;
+        skip_space();
+        if (peek() == '[') {
+            advance();
+            internal_subset();
+            if (failed_) { return; }
+        }
+        skip_space();
+        if (peek() != '>') {
+            fail("unterminated doctype");
+            return;
+        }
+        advance();
+        emit(doc_.create_document_type(atoms_.intern(doctype_name), public_id, system_id));
+    }
+
+    // The bracketed part of a doctype, up to its `]`. Each declaration is
+    // read far enough to find its end without being fooled by a `>` inside a
+    // quoted literal or a comment; only `<!ENTITY name "..."` is kept.
+    void internal_subset() {
         while (!done()) {
-            const char c = peek();
-            if (c == '[') { ++depth; }
-            if (c == ']') { --depth; }
-            if (c == '>' && depth <= 0) {
+            skip_space();
+            if (peek() == ']') {
                 advance();
-                emit(doc_.create_document_type(atoms_.intern(doctype_name), public_id, system_id));
+                return;
+            }
+            if (looking_at("<!--")) {
+                comment_skipped();
+                continue;
+            }
+            if (looking_at("<?")) {
+                const std::size_t end = src_.find("?>", at_);
+                if (end == std::string_view::npos) { break; }
+                advance(end + 2 - at_);
+                continue;
+            }
+            if (looking_at("<!ENTITY")) {
+                entity_declaration();
+                if (failed_) { return; }
+                continue;
+            }
+            if (looking_at("<!")) {
+                // ELEMENT, ATTLIST, NOTATION: to the `>` outside any quotes.
+                char quote = 0;
+                while (!done()) {
+                    const char c = peek();
+                    advance();
+                    if (quote != 0) {
+                        if (c == quote) { quote = 0; }
+                    } else if (c == '"' || c == '\'') {
+                        quote = c;
+                    } else if (c == '>') {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (peek() == '%') {
+                // A parameter entity reference: nothing here declares one, so
+                // it names nothing this can expand.
+                const std::size_t end = src_.find(';', at_);
+                if (end == std::string_view::npos) { break; }
+                advance(end + 1 - at_);
+                continue;
+            }
+            fail("unexpected text in the internal subset");
+            return;
+        }
+        fail("unterminated internal subset");
+    }
+
+    // A comment inside the DTD leaves no node behind.
+    void comment_skipped() {
+        const std::size_t end = src_.find("-->", at_ + 4);
+        advance((end == std::string_view::npos ? src_.size() : end + 3) - at_);
+    }
+
+    // `<!ENTITY name "value">`. The value's character references are resolved
+    // now (XML 1.0 §4.4.2, "included in literal"); its general entity
+    // references stay for the reference that uses it. A parameter entity
+    // (`<!ENTITY % ...`) or an external one (SYSTEM/PUBLIC) is skipped.
+    void entity_declaration() {
+        advance(8); // <!ENTITY
+        skip_space();
+        const bool parameter = peek() == '%';
+        if (parameter) {
+            advance();
+            skip_space();
+        }
+        const std::string entity_name = name();
+        if (entity_name.empty()) {
+            fail("an entity declaration has no name");
+            return;
+        }
+        skip_space();
+        std::string literal;
+        const bool internal = peek() == '"' || peek() == '\'';
+        if (internal) {
+            const char quote = peek();
+            advance();
+            while (!done() && peek() != quote) {
+                if (peek() == '&' && peek(1) == '#') {
+                    if (!reference(literal)) { return; }
+                    continue;
+                }
+                literal.push_back(peek());
+                advance();
+            }
+            if (done()) {
+                fail("unterminated entity value");
                 return;
             }
             advance();
         }
-        fail("unterminated doctype");
+        // To the closing `>`, past an external identifier or NDATA clause.
+        char quote = 0;
+        while (!done()) {
+            const char c = peek();
+            advance();
+            if (quote != 0) {
+                if (c == quote) { quote = 0; }
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '>') {
+                break;
+            }
+        }
+        // THE FIRST DECLARATION WINS (XML 1.0 §4.2), and only a general
+        // entity with a literal value is one this parser can expand.
+        if (!parameter && internal && !entities_.contains(entity_name)) {
+            entities_.emplace(entity_name, std::move(literal));
+        }
+    }
+
+    // "Included" (XML 1.0 §4.4.2): the entity's replacement text takes the
+    // place of the reference in the input and is parsed as whatever the
+    // reference sat in - content, so markup inside it makes elements, or an
+    // attribute value, where a `<` in it is then the error the spec says it
+    // is. Done by splicing a copy of the input: an entity reference is rare
+    // and the input small, and the alternative is a second cursor through
+    // every production. A bound on expansions is what stops `<!ENTITY a
+    // "&a;">` from being a loop.
+    bool include_entity(const std::string & replacement, std::size_t reference_end) {
+        if (++expansions_ > max_entity_expansions) {
+            fail("entity expansion too deep");
+            return false;
+        }
+        std::string spliced;
+        spliced.reserve(src_.size() + replacement.size());
+        spliced.append(src_.substr(0, at_));
+        spliced.append(replacement);
+        spliced.append(src_.substr(reference_end));
+        owned_ = std::move(spliced);
+        src_ = owned_;
+        return true;
     }
 
     // A quoted literal with NO references in it - a doctype's identifiers, XML
@@ -502,6 +648,9 @@ private:
                 return true;
             }
         }
+        if (const auto declared = entities_.find(std::string{body}); declared != entities_.end()) {
+            return include_entity(declared->second, semicolon + 1);
+        }
         fail("undeclared entity &" + std::string{body} + ";");
         return false;
     }
@@ -568,10 +717,17 @@ private:
         return node_ns::other;
     }
 
+    static constexpr std::size_t max_entity_expansions = 10000;
+
     document & doc_;
     document::builder builder_;
     atom_table & atoms_;
     std::string_view src_;
+    // The input with entity references spliced out, once one has been - see
+    // include_entity. `src_` views this from then on.
+    std::string owned_;
+    std::map<std::string, std::string> entities_;
+    std::size_t expansions_ = 0;
     std::size_t at_ = 0;
     std::size_t line_ = 1;
     std::size_t column_ = 1;
