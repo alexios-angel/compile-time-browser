@@ -140,7 +140,6 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
           std::pair{"  %bad = ctjs.get_property %a[%x]\n", ArrayContentsFailure::UnknownIndex},
           std::pair{"  %bad = ctjs.get_property %a[%length]\n",
                     ArrayContentsFailure::MissingElement},
-          std::pair{"  ctjs.set_property %a[%key], %zero\n", ArrayContentsFailure::UnknownIndex},
           std::pair{"  ctjs.set_property %x[%key], %zero\n",
                     ArrayContentsFailure::UnsupportedOperation},
           std::pair{"  %child = ctjs.get_property %a[%zero]\n"
@@ -283,6 +282,163 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                      "  %index = ctjs.binary sub %before, %one\n" +
                      indexed,
              .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    const std::string shrink = "  ctjs.set_property %a[%key], %zero\n";
+    // Preserve the exact formerly refused length-write body.
+    run({.what = "a bounded own length write drops the original dense elements",
+         .body = values + read + shrink + done,
+         .arrays = "a:[]",
+         .exit = "length -> {}"});
+    const contents_row originalShrink{
+        .what = "the original denseLengthChanged source releases only its removed child",
+        .body = values + read + shrink +
+                "  %result = ctjs.create_array [%a, %length] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,length]",
+        .exit = "result -> {a,result}"};
+    run(originalShrink);
+    run({.what = "a same-length write preserves every original child",
+         .body = values + one + read + "  ctjs.set_property %a[%key], %one\n  ctjs.return %a\n",
+         .arrays = "a:[x]",
+         .exit = "a -> {a,x}"},
+        "");
+    run({.what = "a bounded nonzero shrink retains the unremoved prefix",
+         .body = values + one + "  ctjs.append %x to %a\n" +
+                 "  ctjs.set_property %a[%key], %one\n  ctjs.return %a\n",
+         .arrays = "a:[x]",
+         .exit = "a -> {a,x}"},
+        "");
+    run({.what = "negative zero is an exact empty length",
+         .body = values + "  %wanted = ctjs.constant #ctjs.number<9223372036854775808>\n" + read +
+                 "  ctjs.set_property %a[%key], %wanted\n" + done,
+         .arrays = "a:[]",
+         .exit = "length -> {}"});
+    run({.what = "a saved child remains retained after its array is truncated",
+         .body = values + read + "  %saved = ctjs.get_property %a[%zero]\n" + shrink +
+                 "  ctjs.return %saved\n",
+         .arrays = "a:[]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "an exact array alias truncates only its own contents",
+         .body = values + "  %b = ctjs.create_array [%x] {storage_test_id = \"b\"}\n"
+                          "  %aliases = ctjs.create_array [%a] {storage_test_id = \"aliases\"}\n"
+                          "  %alias = ctjs.get_property %aliases[%zero]\n"
+                          "  ctjs.set_property %alias[%key], %zero\n  ctjs.return %b\n",
+         .arrays = "a:[]; b:[x]; aliases:[a]",
+         .reads = "aliases[0]=a",
+         .exit = "b -> {b,x}"},
+        "a");
+    run({.what = "saved length and index Numbers survive shrink while a new read sees zero",
+         .body = values + one + "  ctjs.append %zero to %a\n" + read + subtract + shrink +
+                 "  %keys = ctjs.create_array [%zero, %one] {storage_test_id = \"keys\"}\n"
+                 "  %saved = ctjs.get_property %keys[%index]\n"
+                 "  %later = ctjs.get_property %a[%key] {storage_test_id = \"later\"}\n"
+                 "  %fresh = ctjs.get_property %keys[%later]\n"
+                 "  %result = ctjs.create_array [%length, %index, %later, %saved, %fresh] "
+                 "{storage_test_id = \"result\"}\n"
+                 "  ctjs.return %result\n",
+         .arrays =
+             "a:[]; keys:[zero,ctjs.constant]; result:[length,index,later,ctjs.constant,zero]",
+         .reads = "keys[1]=ctjs.constant; keys[0]=zero",
+         .exit = "result -> {result}"});
+    run({.what = "a saved length is not retargeted when subtraction happens after shrink",
+         .body = values + one + "  ctjs.append %zero to %a\n" + read +
+                 "  ctjs.set_property %a[%key], %one\n" + subtract + indexed,
+         .failure = ArrayContentsFailure::MissingElement});
+    run({.what = "a removed slot cannot be read through its saved original index",
+         .body = values + one + read + subtract + shrink +
+                 "  %saved = ctjs.get_property %a[%index]\n  ctjs.return %saved\n",
+         .failure = ArrayContentsFailure::MissingElement});
+    run({.what = "literal append after truncation establishes only its new element",
+         .body = values + read + shrink +
+                 "  ctjs.append %zero to %a\n"
+                 "  %saved = ctjs.get_property %a[%zero]\n  ctjs.return %a\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"});
+    run({.what = "a loaded original Number length is independent of its overwritten slot",
+         .body = values + "  %targets = ctjs.create_array [%zero] {storage_test_id = \"targets\"}\n"
+                          "  %wanted = ctjs.get_property %targets[%zero]\n"
+                          "  ctjs.set_property %targets[%zero], %x\n"
+                          "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .arrays = "a:[]; targets:[x]",
+         .reads = "targets[0]=zero",
+         .exit = "a -> {a}"});
+    run({.what = "forwarded original array key and Number keep their exact identities",
+         .body = values + "  cf.br ^next(%a, %key, %zero : !ctjs.value, !ctjs.value, !ctjs.value)\n"
+                          "^next(%alias: !ctjs.value, %name: !ctjs.value, %wanted: !ctjs.value):\n"
+                          "  ctjs.set_property %alias[%name], %wanted\n  ctjs.return %alias\n",
+         .arrays = "a:[]",
+         .exit = "a -> {a}"});
+    run({.what = "one truncating arm cannot release a child retained by the other arm",
+         .body = values +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^left, ^right\n^left:\n" +
+                 shrink + "  cf.br ^join\n^right:\n  cf.br ^join\n^join:\n  ctjs.return %a\n",
+         .arrays = "a:[] | a:[x]",
+         .exit = "a -> {a}; a -> {a,x}"},
+        "");
+    for (const std::string literal : {"#ctjs.number<4602678819172646912>",  // 0.5
+                                      "#ctjs.number<13830554455654793216>", // -1
+                                      "#ctjs.number<4751297606875873280>",  // 2^32
+                                      "#ctjs.number<4845873199050653696>",  // 2^53
+                                      "#ctjs.number<9218868437227405312>",  // infinity
+                                      "#ctjs.number<18442240474082181120>", // -infinity
+                                      "#ctjs.number<9221120237041090560>",  // NaN
+                                      "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
+                                      "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
+        run({.what = "length truncation requires an independently valid original Number",
+             .body = values + "  %wanted = ctjs.constant " + literal + "\n" +
+                     "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "a valid increasing length remains outside dense truncation",
+         .body = values + "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                          "  ctjs.set_property %a[%key], %two\n  ctjs.return %a\n",
+         .failure = ArrayContentsFailure::MissingElement});
+    for (const std::string wanted : {"%p", "%x", "%length", "%index"}) {
+        run({.what = "computed or opaque length targets gain no truncation authority",
+             .body = values + one + read + subtract + "  ctjs.set_property %a[%key], " + wanted +
+                     "\n  ctjs.return %a\n",
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    const contents_row shrinkCycle{
+        .what = "truncation does not erase the historical cycle obligation",
+        .body = values + "  ctjs.append %a to %a\n" + shrink + "  ctjs.return %a\n",
+        .arrays = "a:[]",
+        .exit = "a -> {a}",
+        .writes = "ctjs.create_array[0]:a[0]=x; ctjs.append[1]:a[1]=a"};
+    if (auto module = parse(shrinkCycle)) {
+        checkArrayContents(*module, shrinkCycle);
+        budgets += checkArrayRetention(
+            *module, {.what = shrinkCycle.what, .body = shrinkCycle.body, .complete = false});
+        ++rows;
+    } else {
+        fail(row{.what = shrinkCycle.what, .body = shrinkCycle.body, .expected = ""},
+             "the historical truncation cycle did not parse");
+    }
+    contents_row wideShrink = originalShrink;
+    std::string removed;
+    for (unsigned i = 0; i < 32; ++i) { removed += "  ctjs.append %zero to %a\n"; }
+    wideShrink.body.insert(wideShrink.body.find("  %length ="), removed);
+    auto narrowShrinkModule = parse(originalShrink);
+    auto wideShrinkModule = parse(wideShrink);
+    if (narrowShrinkModule && wideShrinkModule) {
+        const auto narrow =
+            computeArrayContents(*narrowShrinkModule->getOps<ctjs::FuncOp>().begin());
+        const auto expanded =
+            computeArrayContents(*wideShrinkModule->getOps<ctjs::FuncOp>().begin());
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+            fail(row{.what = "dense shrink charges every removed element",
+                     .body = wideShrink.body,
+                     .expected = ""},
+                 "32 extra elements did not cost one append and one removal each");
+        }
+        check(*wideShrinkModule, wideShrink, "x");
+    } else {
+        fail(row{.what = wideShrink.what, .body = wideShrink.body, .expected = ""},
+             "the wide dense shrink did not parse");
     }
     contents_row wide = branch;
     std::string extra;
@@ -430,7 +586,67 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
              "the live subtracted-index fixture did not parse");
     }
-    std::printf("dense array length: %u rows, %u live states, one wide snapshot, "
+    if (auto module = parse(originalShrink)) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        module->walk([&](ctjs::SetPropertyOp op) { store = op; });
+        const mlir::Value target = store.getObject();
+        const mlir::Value key = store.getKey();
+        const mlir::Value value = store.getValue();
+        auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+        const mlir::Attribute original = literal.getValue();
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        store->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0));
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*module))) {
+            fail(row{.what = originalShrink.what, .body = originalShrink.body, .expected = ""},
+                 "the length-write stale solver did not converge");
+        }
+        const auto inspect = [&](ArrayContentsFailure failure) {
+            contents_row current = originalShrink;
+            current.failure = failure;
+            check(*module, current, "x");
+            const bool complete = failure == ArrayContentsFailure::None;
+            const auto verdicts = computeVerdicts(stale, function);
+            if (verdicts.arrayRetentionComplete != complete ||
+                verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                fail(row{.what = current.what, .body = current.body, .expected = ""},
+                     "stale solver or forged marker supplied length-write authority");
+            }
+            ++liveStates;
+        };
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL));
+        inspect(ArrayContentsFailure::MissingElement);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "0"));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::BigIntAttr::get(&context, "0"));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(original);
+        inspect(ArrayContentsFailure::None);
+        const mlir::Value parameter = function.getBody().front().getArgument(3);
+        store->setOperand(0, parameter);
+        inspect(ArrayContentsFailure::UnknownArray);
+        store->setOperand(0, target);
+        store->setOperand(1, parameter);
+        inspect(ArrayContentsFailure::UnknownIndex);
+        store->setOperand(1, key);
+        store->setOperand(2, parameter);
+        inspect(ArrayContentsFailure::UnknownIndex);
+        store->setOperand(2, value);
+        inspect(ArrayContentsFailure::None);
+    } else {
+        fail(row{.what = originalShrink.what, .body = originalShrink.body, .expected = ""},
+             "the live length-write fixture did not parse");
+    }
+    std::printf("dense array length: %u rows, %u live states, two wide snapshots, "
                 "%zu retention budget cutoffs\n",
                 rows, liveStates, budgets);
 }

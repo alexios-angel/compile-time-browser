@@ -6,7 +6,7 @@
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
 # Measured baseline: 222 functions, 895 observed sites, 35 unclaimed, zero violations;
-# precision 24/172. Original source SHA pins remain in Initialize.cmake.
+# precision 25/172. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
 program 4a20324d7d3db801
@@ -1183,7 +1183,7 @@ alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 18 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 210 denseLengthChanged
-alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 3 obj 1 1 0 0 0 - confined
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 15 arr 1 0 1 0 0 temporaries:1 escapes:returned
 

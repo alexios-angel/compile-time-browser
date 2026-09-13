@@ -36,6 +36,7 @@
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "denseLengthChanged d81feec2016b530c6a2a44b90e88056c93c2d2abeddfed99031cf05379440960"
       "denseLengthIndexed d913f38cdfd97c5412fb3dfeb8a6fac7a056f5cced92f2627e2153cd360d0873"
       "denseIndexSaved 546f22710de37cd120009a46ac98c2b2ddd8f0528c279f3c1044006023823b32"
       "denseIndexLoaded 738ffb514520303b4e71e5820629df78cc57e7b8783b25c857b741cc515ad6fb"

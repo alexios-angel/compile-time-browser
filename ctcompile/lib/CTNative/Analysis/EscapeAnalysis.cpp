@@ -1499,6 +1499,30 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         state.origins[op.getResult(0)] = op.getResult(0);
                         continue;
                     }
+                } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                    const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
+                    if (name && name.getValue() == "length") {
+                        const mlir::Value value = origin(store.getValue());
+                        auto literal =
+                            value ? value.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+                        const auto wanted =
+                            literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())
+                                ? ownArrayIndex(value)
+                                : std::nullopt;
+                        if (!wanted) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
+                        if (*wanted > elements.size()) {
+                            return refuse(ArrayContentsFailure::MissingElement, &op);
+                        }
+                        // Fresh dense arrays own writable length and configurable
+                        // elements; an original Number runs no coercion hook. Keep
+                        // saved origins/lengths and every historical cycle edge.
+                        // ponytail: literal shrink only; growth needs hole evidence.
+                        if (!spend(elements.size() - *wanted)) {
+                            return refuse(ArrayContentsFailure::WorkLimit, &op);
+                        }
+                        elements.resize(*wanted);
+                        continue;
+                    }
                 }
                 auto index = key ? ownArrayIndex(key) : std::nullopt;
                 if (const auto exact = state.lengthNumbers.find(key);
