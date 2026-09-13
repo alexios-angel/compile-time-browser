@@ -102,10 +102,34 @@ void browser::layout_frames() {
                 }
                 const auto txn = doc.read();
                 layout->resolved = layout->styles->resolve_all(txn);
+                // A ROOT WITH `overflow: scroll` ALWAYS HAS ITS SCROLLBARS, and
+                // CSS Values 4 §6.1.2 takes them out of the viewport units - the
+                // page does the same by laying out at the narrower width when
+                // it overflows. The cascade is re-run at the reduced size when
+                // the root asks for one, which is one extra pass on a frame
+                // that asked (viewport-units-scrollbars-compute).
+                float inner_width = width;
+                float inner_height = height;
+                if (const auto root =
+                        layout->resolved.find(ctbrowser::style::engine::key_of(txn.root()));
+                    root != layout->resolved.end() && root->second) {
+                    if (root->second->get(atoms_.intern("overflow-y")) == "scroll") {
+                        inner_width = std::max(0.0f, width - options_.scrollbar_width);
+                    }
+                    if (root->second->get(atoms_.intern("overflow-x")) == "scroll") {
+                        inner_height = std::max(0.0f, height - options_.scrollbar_width);
+                    }
+                }
+                if (inner_width != width || inner_height != height) {
+                    env.viewport_width = inner_width;
+                    env.viewport_height = inner_height;
+                    (void)layout->styles->set_environment(env);
+                    layout->resolved = layout->styles->resolve_all(txn);
+                }
                 ctbrowser::layout::box_builder builder{atoms_, layout->resolved, measure()};
                 layout->boxes = builder.build(txn, txn.root());
                 const ctbrowser::layout::engine eng{measure()};
-                layout->fragments = eng.run(layout->boxes, width, height);
+                layout->fragments = eng.run(layout->boxes, inner_width, inner_height);
                 layout->version = doc.version();
                 layout->style_stamp = each.bindings->style_stamp();
                 layout->width = width;
@@ -113,7 +137,8 @@ void browser::layout_frames() {
                 each.bindings->observe_layout(&layout->fragments);
                 each.bindings->observe_boxes(&layout->boxes);
                 each.bindings->observe_styles(&layout->resolved);
-                each.bindings->observe_viewport(static_cast<int>(width), static_cast<int>(height));
+                each.bindings->observe_viewport(static_cast<int>(inner_width),
+                                                static_cast<int>(inner_height));
                 (void)each.bindings->refresh_wrappers();
             }
             self(self, *each.bindings, layout->fragments);
