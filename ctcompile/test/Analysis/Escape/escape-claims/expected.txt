@@ -5,11 +5,11 @@
 # Unobserved rows replace all six observation fields with unobserved.
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
-# Measured baseline: 212 functions, 856 observed sites, 35 unclaimed, zero violations;
-# precision 19/164. Original source SHA pins remain in Initialize.cmake.
+# Measured baseline: 217 functions, 874 observed sites, 35 unclaimed, zero violations;
+# precision 21/168. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
-program 7d05eff38480ecd8
+program 6853d43115f7a40f
 fn 0 <script>
 alloc 0 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 2 fn 1 0 1 0 0 globals:1 escapes:phase59
@@ -217,9 +217,14 @@ alloc 404 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 406 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 408 fn 1 0 1 0 0 globals:1 escapes:phase59
 alloc 410 fn 1 0 1 0 0 globals:1 escapes:phase59
-alloc 412 arr 1 0 1 0 0 globals:1 escapes:stored_global
-alloc 416 obj 1 0 1 0 0 globals:1 escapes:stored_global
-alloc 3132 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 412 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 414 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 416 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 418 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 420 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 422 arr 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 426 obj 1 0 1 0 0 globals:1 escapes:stored_global
+alloc 3142 fn 1 0 1 0 0 globals:1 escapes:phase59
 fn 1 confinedObject
 alloc 1 obj 1 1 0 0 0 - escapes:passed
 fn 2 confinedArray
@@ -1176,4 +1181,27 @@ fn 210 denseLengthChanged
 alloc 3 obj 1 1 0 0 0 - escapes:stored
 alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
 alloc 15 arr 1 0 1 0 0 temporaries:1 escapes:returned
-fn 211 -
+
+# Original hexadecimal/octal/binary BigInts select dense elements; saved reads
+# retain the child and a saved loaded key retains its original literal origin.
+# String lookalikes remain named properties. Computed BigInt indices remain
+# conservative even where the runtime observes the overwritten child confined.
+fn 211 radixBigIntReleased
+alloc 2 obj 1 1 0 0 0 - confined
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 212 radixBigIntSaved
+alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 19 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 213 radixBigIntLoaded
+alloc 4 obj 1 1 0 0 0 - confined
+alloc 6 arr 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 arr 1 1 0 0 0 - escapes:passed
+alloc 26 arr 1 0 1 0 0 temporaries:1 escapes:returned
+fn 214 radixBigIntString
+alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:stored
+alloc 4 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 215 radixBigIntComputed
+alloc 3 obj 1 1 0 0 0 - escapes:stored
+alloc 5 arr 1 0 1 0 0 temporaries:1 escapes:passed
+fn 216 -

@@ -786,19 +786,27 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
         }
     }
     llvm::StringRef key;
+    unsigned radix = 10;
     if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
         key = string.getValue();
     } else if (auto bigint = llvm::dyn_cast<ctjs::BigIntAttr>(constant.getValue())) {
         // compile/expressions.cpp removes source 'n' before load_bigint. The VM
-        // converts decimal digits to an index without object hooks. Do not strip
+        // converts literal digits to an index without object hooks. Do not strip
         // an attribute suffix: the literal parser rejects it and substitutes 0n.
-        // ponytail: only canonical decimal literals; model other radices separately.
         key = bigint.getText();
+        if (key.consume_front_insensitive("0x")) {
+            radix = 16;
+        } else if (key.consume_front_insensitive("0o")) {
+            radix = 8;
+        } else if (key.consume_front_insensitive("0b")) {
+            radix = 2;
+        }
     }
     std::uint32_t index = 0;
-    if (!key.empty() && key.size() <= 10 && (key.size() == 1 || key.front() != '0') &&
-        llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; }) &&
-        !key.getAsInteger(10, index) && index < 4294967295ULL) {
+    // ponytail: at most 32 nondecimal digits; extend only with charged parsing.
+    if (!key.empty() && key.size() <= (radix == 10 ? 10U : 32U) &&
+        (radix != 10 || key.size() == 1 || key.front() != '0') && !key.getAsInteger(radix, index) &&
+        index < 4294967295ULL) {
         return static_cast<std::size_t>(index);
     }
     return std::nullopt;

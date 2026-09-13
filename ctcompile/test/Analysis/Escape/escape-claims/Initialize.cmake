@@ -36,6 +36,11 @@
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "radixBigIntReleased ac8b2883678afc1d93dd4f23db40ba21d72ab294ffe112300396cd8331af51d9"
+      "radixBigIntSaved 9d6c98f52ae3a6d6e25c9a190a9fef58c4575bb45dc6206c386c8c783b6dbed1"
+      "radixBigIntLoaded adb48e5ee796928c9e789860c9c0fca72b6883ec8ace4b5a40ef78eae1fb9a75"
+      "radixBigIntString b93093564b3f3af6f31225e8ee41ba5fbc858e18dd793ca52b87da1f3b484fe0"
+      "radixBigIntComputed bfa324c84d1278dba4eef9aa54d8a38b288d8160fc6eb22e17ab5f5f8c1f99f7"
       "decimalBigIntReleased f572b6ce1760bdda19f8c9bcaab6043bf9aecb62aca33c6bedf702429d81013d"
       "decimalBigIntSaved 4ffb288368bcc26312f52a0387b0ee49327abc27279d902b1ea49d8a0a713199"
       "decimalBigIntSecond cf024a9f32b6cc1a7774107154d9c40c0c700f12225c92f28a98c0e746c35840"

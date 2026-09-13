@@ -736,7 +736,7 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
              .exit = "a -> {a}; a -> {a}"});
     }
     // BigIntAttr holds the bytecode literal WITHOUT source 'n'. Malformed
-    // attributes and other spellings do not borrow the decimal proof, even
+    // attributes and unsupported spellings cannot borrow an index proof, even
     // where today's VM would substitute zero or parse an equivalent number.
     for (const auto & [spelling, failure] :
          {std::pair{"0", ArrayContentsFailure::None},
@@ -752,9 +752,45 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
           std::pair{"+0", ArrayContentsFailure::UnknownIndex},
           std::pair{"0.0", ArrayContentsFailure::UnknownIndex},
           std::pair{"0e0", ArrayContentsFailure::UnknownIndex},
-          std::pair{"0x0", ArrayContentsFailure::UnknownIndex},
-          std::pair{"0b0", ArrayContentsFailure::UnknownIndex},
-          std::pair{"0o0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x0", ArrayContentsFailure::None},
+          std::pair{"0b0", ArrayContentsFailure::None},
+          std::pair{"0o0", ArrayContentsFailure::None},
+          std::pair{"0X0", ArrayContentsFailure::None},
+          std::pair{"0B0", ArrayContentsFailure::None},
+          std::pair{"0O0", ArrayContentsFailure::None},
+          std::pair{"0x00", ArrayContentsFailure::None},
+          std::pair{"0b00", ArrayContentsFailure::None},
+          std::pair{"0o00", ArrayContentsFailure::None},
+          std::pair{"0x1", ArrayContentsFailure::MissingElement},
+          std::pair{"0b1", ArrayContentsFailure::MissingElement},
+          std::pair{"0o1", ArrayContentsFailure::MissingElement},
+          std::pair{"0xa", ArrayContentsFailure::MissingElement},
+          std::pair{"0XA", ArrayContentsFailure::MissingElement},
+          std::pair{"0xfffffffe", ArrayContentsFailure::MissingElement},
+          std::pair{"0xffffffff", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x100000000", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o37777777776", ArrayContentsFailure::MissingElement},
+          std::pair{"0o37777777777", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o40000000000", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b11111111111111111111111111111110", ArrayContentsFailure::MissingElement},
+          std::pair{"0b11111111111111111111111111111111", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b100000000000000000000000000000000", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0xG", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o8", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b2", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x0n", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o0n", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b0n", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x_0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0o0_0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b0_", ArrayContentsFailure::UnknownIndex},
+          std::pair{"-0x0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x+0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0b 0", ArrayContentsFailure::UnknownIndex},
+          std::pair{"0x000000000000000000000000000000000", ArrayContentsFailure::UnknownIndex},
           std::pair{"0_0", ArrayContentsFailure::UnknownIndex},
           std::pair{"0n", ArrayContentsFailure::UnknownIndex},
           std::pair{"1n", ArrayContentsFailure::UnknownIndex},
@@ -762,7 +798,7 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
           std::pair{"0 ", ArrayContentsFailure::UnknownIndex},
           std::pair{"", ArrayContentsFailure::UnknownIndex}}) {
         for (const bool store : {false, true}) {
-            run({.what = "decimal BigInt reads and writes independently require an existing slot",
+            run({.what = "literal BigInt reads and writes independently require an existing slot",
                  .body = array + "  %index = ctjs.constant #ctjs.bigint<\"" + spelling + "\">\n" +
                          (store ? "  ctjs.set_property %a[%index], %zero\n"
                                 : "  %read = ctjs.get_property %a[%index]\n") +
@@ -814,6 +850,17 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
             original.failure = failure;
             check(*module, original, "x");
             ++liveStates;
+        }
+        // The same bytes are an element key only for BigInt. Forged completion
+        // markers and an earlier successful query cannot authorize String keys.
+        for (const auto spelling : {"0x0", "0X0", "0o0", "0O0", "0b0", "0B0"}) {
+            key.setValueAttr(ctjs::BigIntAttr::get(&context, spelling));
+            original.failure = ArrayContentsFailure::None;
+            check(*module, original, "x");
+            key.setValueAttr(ctjs::StringAttr::get(&context, spelling));
+            original.failure = ArrayContentsFailure::UnknownIndex;
+            check(*module, original, "x");
+            liveStates += 2;
         }
     } else {
         fail(row{.what = original.what, .body = original.body, .expected = ""},

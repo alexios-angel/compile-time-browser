@@ -666,3 +666,49 @@ if (denseLengthNormal[0][0] !== 9 || denseLengthNormal[1] !== 1 ||
     denseLengthComputed[0][0] !== 9 || denseLengthComputed[1] !== 1 ||
     denseLengthWritten[0].length !== 0 || denseLengthWritten[1] !== 1)
     throw "dense array length and saved child witness";
+
+// --- NONDECIMAL BIGINT INDICES: exact slots, saved origins, String separation ---
+function radixBigIntReleased() {
+    var child = {}, items = [child, child, child];
+    items[0x0n] = 7; items[0O1n] = 8; items[0b10n] = 9;
+    return items;
+}
+function radixBigIntSaved() {
+    var child = {}, items = [0, child], saved = items[0B1n];
+    items[0o1n] = 9;
+    return [items, saved, saved === child];
+}
+function radixBigIntLoaded() {
+    var child = {}, items = [child], keys = [0X0n];
+    var key = keys[0]; keys[0] = 1n;
+    items[key] = 9;
+    return [items, key === 0n];
+}
+function radixBigIntString() {
+    var child = {}, items = [child];
+    items["0x0"] = 9;
+    return items;
+}
+function radixBigIntComputed() {
+    var child = {}, items = [child];
+    var key = 0x1n - 0b1n;
+    items[key] = 9;
+    return items;
+}
+var radixBigIntNormal = radixBigIntReleased();
+var radixBigIntRetained = radixBigIntSaved();
+var radixBigIntForwarded = radixBigIntLoaded();
+var radixBigIntNamed = radixBigIntString();
+var radixBigIntCalculated = radixBigIntComputed();
+H.push(radixBigIntNormal); H.push(radixBigIntRetained); H.push(radixBigIntForwarded);
+H.push(radixBigIntNamed); H.push(radixBigIntCalculated);
+if (radixBigIntNormal[0] !== 7 || radixBigIntNormal[1] !== 8 ||
+    radixBigIntNormal[2] !== 9 || radixBigIntNormal.length !== 3 ||
+    radixBigIntRetained[0][0] !== 0 || radixBigIntRetained[0][1] !== 9 ||
+    typeof radixBigIntRetained[1] !== "object" || radixBigIntRetained[1] === null ||
+    Array.isArray(radixBigIntRetained[1]) || radixBigIntRetained[2] !== true ||
+    radixBigIntForwarded[0][0] !== 9 || radixBigIntForwarded[1] !== true ||
+    typeof radixBigIntNamed[0] !== "object" || radixBigIntNamed[0] === null ||
+    radixBigIntNamed["0x0"] !== 9 || radixBigIntNamed.length !== 1 ||
+    radixBigIntCalculated[0] !== 9 || radixBigIntCalculated.length !== 1)
+    throw "nondecimal BigInt index and saved origin witness";
