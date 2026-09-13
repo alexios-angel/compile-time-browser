@@ -546,12 +546,9 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         const auto valid = [&]() {
             HostContractAnalysis host(*module, contract);
             OwnedGlobalRoots owner(*module, contract);
-            check(
-                host.proved() && host.scalarReads().size() == 1 && !owner.proved() &&
-                    owner.reason() == "owned global method table requires unconditional "
-                                      "straight-line operations" &&
-                    scalarReadsEmpty(*module, owner),
-                "valid constant host scope does not erase the separate straight-line owner guard");
+            check(host.proved() && host.scalarReads().size() == 1 && owner.proved() &&
+                      owner.scalarReads().size() == 1 && owner.roots().size() == 1,
+                  "valid constant scopes preserve the complete host and owner scalar evidence");
             if (host.scalarReads().size() == 1) {
                 check(host.scalarReads().front().dependencies.empty(),
                       "constant host scope proof has no published-call dependency");

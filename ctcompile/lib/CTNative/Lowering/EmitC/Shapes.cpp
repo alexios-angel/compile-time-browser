@@ -109,6 +109,9 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
         if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) {
             return methodTableCarrierType(table);
         }
+        if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
+            return closureCarrierType(closure);
+        }
         return carrierType(context, carrierOf(type));
     };
     llvm::StringMap<mlir::Type> stored;

@@ -318,7 +318,7 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     }
     if (table.capturedMap) {
         for (const auto & callback : table.capturedMap->scalarCallbacks) {
-            liftReturnedClosure(callback.closure, callback.function, 0, 1, out, true);
+            lift(callback.function, {callback.closure}, out, true);
         }
     }
     if (table.capturedMap) {

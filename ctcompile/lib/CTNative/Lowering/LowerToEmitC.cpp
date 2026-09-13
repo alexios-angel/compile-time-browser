@@ -107,20 +107,48 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // parameter it became. Doing it after the solve would need a second
         // one.
         liftReport lifted;
-        if (hostContract) {
-            const OwnedGlobalRoots original(module, *hostContract, hostMaxSteps);
+        if (hostContract && hostMaxSteps &&
+            hostContract->moduleSha256 == hostContractFingerprint(module)) {
+            // Local cell/unused receiver normalization needs no host assumptions.
+            // It is speculative: only a complete fresh owner proof can publish it.
+            mlir::OwningOpRef<mlir::ModuleOp> normalized(
+                llvm::cast<mlir::ModuleOp>(module->clone()));
+            closureLifter local{*normalized};
+            local.discardNativeSourceFacts();
+            local.census();
+            liftReport locals;
+            local.unboxCells(locals);
+            normalized->walk([&](ctjs::CreateClosureOp closure) {
+                if (local.whyTargetIsNotLiftable(closure) ||
+                    isUndefinedConstant(closure.getEnclosingThis())) {
+                    return;
+                }
+                mlir::OpBuilder at(closure);
+                closure.getEnclosingThisMutable().assign(ctjs::ConstantOp::create(
+                    at, closure.getLoc(), ctjs::ValueType::get(module.getContext()),
+                    ctjs::UndefinedAttr::get(module.getContext())));
+            });
+            llvm::SmallVector<ctjs::CreateCellOp> dead;
+            normalized->walk([&](ctjs::CreateCellOp cell) {
+                if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
+                    dead.push_back(cell);
+                }
+            });
+            for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+            HostContract normalizedContract = *hostContract;
+            normalizedContract.moduleSha256 = hostContractFingerprint(*normalized);
+            const OwnedGlobalRoots original(*normalized, normalizedContract, hostMaxSteps);
             if (original.proved() && !original.roots().empty()) {
                 // Prepare only the checked table and environment, speculatively.
                 // A stale input never reaches this rewrite. Its internally
                 // derived contract is usable only if the complete live owner
                 // and callable queries succeed again on the transformed IR.
-                mlir::OwningOpRef<mlir::ModuleOp> prepared(
-                    llvm::cast<mlir::ModuleOp>(module->clone()));
-                const OwnedGlobalRoots source(*prepared, *hostContract, hostMaxSteps);
+                mlir::OwningOpRef<mlir::ModuleOp> prepared(std::move(normalized));
+                const OwnedGlobalRoots source(*prepared, normalizedContract, hostMaxSteps);
                 closureLifter preparation{*prepared};
                 std::optional<liftReport> result;
                 if (original.roots().front().methodTable) {
-                    result = preparation.prepareOwnedGlobalMethodTables(source, *hostContract,
+                    result = preparation.prepareOwnedGlobalMethodTables(source, normalizedContract,
                                                                         hostMaxSteps);
                 } else {
                     // Scalar owners need no closure rewrite, but old native
@@ -129,7 +157,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     result = liftReport{};
                 }
                 if (result) {
-                    HostContract transformed = *hostContract;
+                    HostContract transformed = normalizedContract;
                     transformed.moduleSha256 = hostContractFingerprint(*prepared);
                     const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
                     if (checked.proved()) {
@@ -152,6 +180,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             module.getBodyRegion().takeBody(prepared->getBodyRegion());
                             hostContract = std::move(transformed);
                             lifted = *result;
+                            lifted.cells += locals.cells;
                         }
                     }
                 }

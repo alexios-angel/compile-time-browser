@@ -506,6 +506,25 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             // are admitted at entry. Calls, allocation and publication still
             // require their unconditional source positions.
             bool observation = observations.contains(operation);
+            // Pure entry observations may select scalar results, including
+            // comparisons of checked method results. Both arms are censused;
+            // calls, stores and allocations still need unconditional positions.
+            bool scalarObservation =
+                operation->getParentOfType<ctjs::FuncOp>() == entry &&
+                llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::CompareOp,
+                          ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(operation);
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                scalarObservation &= compare.getKind() == ctjs::CompareKind::StrictEq;
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                scalarObservation &= unary.getKind() == ctjs::UnaryKind::Not;
+            }
+            for (auto * parent = operation->getParentOp(); scalarObservation && parent != entry;
+                 parent = parent->getParentOp()) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                scalarObservation = llvm::isa<mlir::scf::IfOp>(parent);
+            }
+            observation |= scalarObservation;
             if (observations.contains(operation->getParentOp())) {
                 observation |=
                     llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, mlir::scf::YieldOp>(

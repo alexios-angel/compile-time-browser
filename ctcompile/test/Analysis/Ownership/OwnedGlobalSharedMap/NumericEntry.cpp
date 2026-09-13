@@ -236,9 +236,13 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
         check(rows == 41,
               "all numeric categories, saved operands and complete-census controls ran");
 
-        const auto validScope = [&](mlir::ModuleOp module, const HostContract & contract) {
+        const auto validScope = [&](mlir::ModuleOp module, const HostContract & contract,
+                                    bool expectedOwner = false) {
             HostContractAnalysis host(module, contract);
             OwnedGlobalRoots owner(module, contract);
+            if (expectedOwner) {
+                return host.proved() && owner.proved() && owner.roots().size() == 1;
+            }
             return host.proved() && !owner.proved() && !owner.exhausted() && empty(module, owner) &&
                    owner.reason() ==
                        "owned global method table requires unconditional straight-line operations";
@@ -354,9 +358,8 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                                        attributes.getStringAttr("number"));
                 });
                 auto contract = requested(*module);
-                check(validScope(*module, contract),
-                      "valid numeric yields prove host categories and retain the exact owner "
-                      "entry-SCF boundary");
+                check(validScope(*module, contract, true),
+                      "valid scalar-only yields preserve the complete host and owner proofs");
                 auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
                 mlir::scf::IfOp branch;
                 for (auto & operation : entry.getBody().front()) {
@@ -385,9 +388,8 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                       "constant conditions and fresh Number reports cannot authorize an invalid "
                       "yield");
                 yield->setOperand(0, original);
-                check(validScope(*module, contract),
-                      "restoring the original yield repairs the host proof and restores the exact "
-                      "owner boundary");
+                check(validScope(*module, contract, true),
+                      "restoring the original yield repairs the host and owner proofs");
                 ++scopeMutations;
                 // Clone the valid i1 producer into the then arm. It cannot
                 // become the enclosing conditional's own condition, even when
@@ -396,7 +398,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                 mlir::OpBuilder builder(branch.getThenRegion().front().getTerminator());
                 auto * localCondition = builder.clone(*originalCondition.getDefiningOp());
                 const auto conditionContract = requested(*module);
-                check(validScope(*module, conditionContract),
+                check(validScope(*module, conditionContract, true),
                       "an unused then-local predicate preserves the original source proof");
                 branch->setOperand(0, localCondition->getResult(0));
                 OwnedGlobalRoots staleCondition(*module, conditionContract);
@@ -413,11 +415,11 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                       "a fresh Number report cannot authorize a conditional's then-only predicate");
                 branch->setOperand(0, originalCondition);
                 check(
-                    validScope(*module, conditionContract),
+                    validScope(*module, conditionContract, true),
                     "restoring the exact original predicate restores the independent source proof");
                 localCondition->erase();
                 check(
-                    validScope(*module, contract),
+                    validScope(*module, contract, true),
                     "removing the temporary predicate restores the original complete fingerprint");
                 ++scopeMutations;
             }
