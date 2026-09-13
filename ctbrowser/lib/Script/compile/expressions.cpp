@@ -1240,6 +1240,9 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));
             proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter, dst,
                                      name, fnreg});
+            // The literal is the accessor's home object (15.4.5 step 3), so
+            // `super.x` inside it resolves through the literal's prototype.
+            emit_define_own(fnreg, "__home", dst, false);
             release_to(mark);
             continue;
         }
@@ -1260,6 +1263,10 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         } else {
             compile_expr(prop.b, v);
         }
+        // A METHOD'S HOME OBJECT IS THE LITERAL (15.4.4 step 2): `super.m()`
+        // in `{ m() { super.m(); } }` starts at Object.prototype or whatever
+        // `__proto__:` set.
+        if (prop.c == 1) { emit_define_own(v, "__home", dst, false); }
         // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
         // which the parser routes the same way so quotes and escapes get
         // cooked by evaluating the literal.

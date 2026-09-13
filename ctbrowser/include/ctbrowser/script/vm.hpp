@@ -249,6 +249,15 @@ struct closure_object final : heap_object {
     // the subclass FUNCTION chains to the superclass function for static ones.
     value proto_link = value::null();
 
+    // WERE THE SYNTHESISED `name` / `length` DELETED? Both are answered off the
+    // compiled function rather than stored (see context::own_property), so
+    // without a memory a `delete f.name` uncovered the same answer again and
+    // `hasOwnProperty("name")` stayed true - the question test262's
+    // verifyProperty asks to decide `name` is configurable. The native_object
+    // flag above has the same story.
+    bool name_erased = false;
+    bool length_erased = false;
+
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a
     // function by INDEX, and the index only means anything in the program it

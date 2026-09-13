@@ -374,8 +374,12 @@ value context::lookup_property(value target, const std::string & name) {
         // to the other undefined it is being tested against - so a nameless
         // class reported a MATCH against anything else with no name.
         if (closure->proto != nullptr) {
-            if (name == "name") { return string(closure->proto->display_name()); }
-            if (name == "length") { return value::number(closure->proto->param_count); }
+            if (name == "name" && !closure->name_erased) {
+                return string(closure->proto->display_name());
+            }
+            if (name == "length" && !closure->length_erased) {
+                return value::number(closure->proto->param_count);
+            }
             // A SLOPPY function's `caller` and `arguments` are null (Annex B's
             // implementation-defined answer, and every browser's); a strict
             // one reaches Function.prototype's %ThrowTypeError% accessor.

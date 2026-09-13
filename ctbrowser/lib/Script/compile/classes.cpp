@@ -25,6 +25,9 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t setter_reg = alloc_reg();
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
     compile_expr(fn_node, setter ? setter_reg : getter);
+    // Its home object, as a named accessor gets one below.
+    proto().emit(
+        instruction{op::set_prop, setter ? setter_reg : getter, name_operand("__home"), target});
     proto().emit(instruction{op::call, callee, 4});
     release_to(mark);
 }
@@ -301,6 +304,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
+            // An accessor has a home object like a method (15.4.5 step 3 /
+            // 15.4.6 step 3): `super.x` inside a getter resolves through it.
+            proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
             continue;
         }
         if (m.b < 0) { continue; }

@@ -342,7 +342,9 @@ void context::store_property(value target, const std::string & name, value v) {
             } else if (!closure->extensible) {
                 store_rejected_ = true;
                 return;
-            } else if ((name == "length" || name == "name") && closure->proto != nullptr) {
+            } else if (((name == "length" && !closure->length_erased) ||
+                        (name == "name" && !closure->name_erased)) &&
+                       closure->proto != nullptr) {
                 // The SYNTHESISED `length` and `name` (own_property answers
                 // them off the compiled function, { false, false, true }) are
                 // not writable: the write is refused, not shadowed by a new
