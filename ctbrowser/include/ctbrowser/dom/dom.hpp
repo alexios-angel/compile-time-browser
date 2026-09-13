@@ -13,6 +13,7 @@
 // guarantees this does and does not make.
 
 #include <ctbrowser/dom/document.hpp>
+#include <ctbrowser/dom/encoding.hpp>
 #include <ctbrowser/dom/html.hpp>
 #include <ctbrowser/dom/node.hpp>
 #include <ctbrowser/dom/tokenizer.hpp>

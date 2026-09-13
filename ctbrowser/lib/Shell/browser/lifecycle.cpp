@@ -69,6 +69,11 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
         parsed = std::move(read.tree);
         xml_error_ = std::move(read.error);
     } else {
+        // What the page DECLARES it is encoded as - the BOM or the <meta>
+        // prescan - is what `document.characterSet` answers; UTF-8 otherwise.
+        if (const std::string declared = prescan_encoding(html); !declared.empty()) {
+            doc_->set_encoding(declared);
+        }
         parsed = parse_html(*doc_, html);
     }
     title_ = extract_title();

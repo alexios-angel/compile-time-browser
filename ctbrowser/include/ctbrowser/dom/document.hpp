@@ -297,6 +297,15 @@ public:
     [[nodiscard]] bool xml() const noexcept { return xml_.load(std::memory_order_acquire); }
     void set_xml(bool on) noexcept { xml_.store(on, std::memory_order_release); }
 
+    // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
+    // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
+    // that is what a page observes anyway); the loader that has the bytes sets
+    // it from the BOM or the `<meta charset>` prescan, and a document nothing
+    // loaded from bytes - made, parsed from a string - is "UTF-8", as the
+    // specifications give those. Set before the tree is built, read after.
+    [[nodiscard]] const std::string & encoding() const noexcept { return encoding_; }
+    void set_encoding(std::string name) { encoding_ = std::move(name); }
+
 private:
     friend class read_txn;
 
@@ -309,6 +318,7 @@ private:
     // FALSE by default: every document this engine has ever built came from the
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     std::atomic<bool> xml_{false};
+    std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
     [[nodiscard]] std::mutex & stripe_of(node_id id) const noexcept {
