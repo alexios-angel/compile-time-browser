@@ -27,6 +27,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;
     for (mlir::BlockArgument parameter : entry.parameters()) { domParameters.insert(parameter); }
+    entry.entry().walk([&](ctjs::ConstantOp constant) {
+        if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
+    });
     entry.entry().walk([&](ctjs::GetPropertyOp read) {
         if (entry.method(read) || entry.isTokenList(read.getResult())) { domReads.insert(read); }
     });
@@ -106,11 +109,45 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
 
 bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domReads.contains(operation)) { return true; } // erased after their calls
+    mlir::OpBuilder at(operation);
+    const auto where = operation->getLoc();
+    const auto optionalString = ec::OpaqueType::get(context, kDOMOptionalStringType);
+    const auto swap = [&](mlir::Value value) {
+        operation->getResult(0).replaceAllUsesWith(value);
+        eraseIfUnused(operation);
+    };
+    const auto null = [&] {
+        return ec::ConstantOp::create(at, where, optionalString,
+                                      ec::OpaqueAttr::get(context, "std::nullopt"));
+    };
+    if (domNulls.contains(operation)) {
+        swap(null());
+        return true;
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+        compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+        (compare.getLhs().getType() == optionalString ||
+         compare.getRhs().getType() == optionalString)) {
+        swap(ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::eq, compare.getLhs(),
+                               compare.getRhs()));
+        return true;
+    }
+    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+        unary && unary.getKind() == ctjs::UnaryKind::Not &&
+        unary.getOperand().getType() == optionalString) {
+        // Presence alone is not JavaScript truthiness: an empty attribute is false.
+        auto present = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
+                                         unary.getOperand(), null());
+        auto nonempty = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
+                                          unary.getOperand(), stringConstant(at, where, ""));
+        auto truthy = ec::LogicalAndOp::create(at, where, at.getI1Type(), present, nonempty);
+        swap(ec::LogicalNotOp::create(at, where, at.getI1Type(), truthy));
+        return true;
+    }
     const auto found = domCalls.find(operation);
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
     const auto & edge = found->second;
-    mlir::OpBuilder at(call);
     llvm::SmallVector<mlir::Value> arguments{edge.element};
     if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.element)); }
     llvm::append_range(arguments, call.getArgs());

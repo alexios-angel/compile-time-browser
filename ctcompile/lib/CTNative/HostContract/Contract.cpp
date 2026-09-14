@@ -316,6 +316,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         closest,
         string,
         boolean,
+        null,
         undefined
     };
     std::vector<ctjs::GetPropertyOp> provedTokens;
@@ -365,6 +366,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     values[constant.getResult()] = Kind::string;
                 } else if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
                     values[constant.getResult()] = Kind::boolean;
+                } else if (llvm::isa<ctjs::NullAttr>(constant.getValue())) {
+                    values[constant.getResult()] = Kind::null;
                 } else if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
                     values[constant.getResult()] = Kind::undefined;
                 } else {
@@ -505,8 +508,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     hasKind(arguments[0], Kind::string)) {
                     provedCalls.push_back(
                         {invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
-                    // Own String or null, with no prototype fallback. Other
-                    // operations do not accept this kind; only return/root do.
+                    // Own String or null, with no prototype fallback.
                     values[invoke.getResult()] = Kind::optionalString;
                     continue;
                 }
@@ -540,18 +542,31 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 refusal = "DOM call arguments lack the supported primitive contract";
                 return;
             }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-                compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                (hasKind(compare.getLhs(), Kind::element) ||
-                 hasKind(compare.getLhs(), Kind::nullableElement)) &&
-                (hasKind(compare.getRhs(), Kind::element) ||
-                 hasKind(compare.getRhs(), Kind::nullableElement))) {
-                values[compare.getResult()] = Kind::boolean;
+            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+                binary && binary.getKind() == ctjs::BinaryKind::Add &&
+                hasKind(binary.getLhs(), Kind::string) && hasKind(binary.getRhs(), Kind::string)) {
+                values[binary.getResult()] = Kind::string;
                 continue;
+            }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                const auto elementIdentity = [&](mlir::Value value) {
+                    return hasKind(value, Kind::element) || hasKind(value, Kind::nullableElement);
+                };
+                const auto stringOrNull = [&](mlir::Value value) {
+                    return hasKind(value, Kind::string) || hasKind(value, Kind::optionalString) ||
+                           hasKind(value, Kind::null);
+                };
+                if ((elementIdentity(compare.getLhs()) && elementIdentity(compare.getRhs())) ||
+                    (stringOrNull(compare.getLhs()) && stringOrNull(compare.getRhs()))) {
+                    values[compare.getResult()] = Kind::boolean;
+                    continue;
+                }
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                 unary && unary.getKind() == ctjs::UnaryKind::Not &&
-                hasKind(unary.getOperand(), Kind::boolean)) {
+                (hasKind(unary.getOperand(), Kind::boolean) ||
+                 hasKind(unary.getOperand(), Kind::optionalString))) {
                 values[unary.getResult()] = Kind::boolean;
                 continue;
             }

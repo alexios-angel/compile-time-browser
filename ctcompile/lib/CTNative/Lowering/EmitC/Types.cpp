@@ -29,6 +29,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (domNulls.contains(v.getDefiningOp())) {
+            v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
+            return;
+        }
         if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && call->second.returnsOptionalString()) {
             v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));

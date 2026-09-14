@@ -35,6 +35,89 @@ WIDE = r"""function readWideName(element) {
 }
 """
 SOURCES = (("read", READ, 1), ("saved", SAVED, 2), ("names", NAMES, 1), ("wide", WIDE, 1))
+BOOLEAN_CASES = {
+    "boolean": ("return !element.getAttribute('x');", "1100"),
+    "truthy": ("return !!element.getAttribute('x');", "0011"),
+    "nullable_equality": ("return element.getAttribute('x') === null;", "1000"),
+    "nullable_inequality": ("return element.getAttribute('x') !== null;", "0111"),
+    "reverse_null_equality": ("return null === element.getAttribute('x');", "1000"),
+    "reverse_null_inequality": ("return null !== element.getAttribute('x');", "0111"),
+    "empty_equality": ("return '' === element.getAttribute('x');", "0100"),
+    "empty_inequality": ("return element.getAttribute('x') !== '';", "1011"),
+    "nul_equality": (r"return element.getAttribute('x') === 'a\0b';", "0010"),
+    "nul_inequality": (r"return 'a\0b' !== element.getAttribute('x');", "1101"),
+    "optional_equality": (
+        "return element.getAttribute('x') === element.getAttribute('missing');",
+        "1000",
+    ),
+    "optional_inequality": (
+        "return element.getAttribute('missing') !== element.getAttribute('x');",
+        "0111",
+    ),
+    "saved_equality": (
+        r"""const saved = element.getAttribute('x');
+  element.setAttribute('x', 'a\0b');
+  return saved === element.getAttribute('x');""",
+        "0010",
+    ),
+    "comparison_force": (
+        """const wanted = element.getAttribute('x') !== null;
+  return element.toggleAttribute('data-force', wanted);""",
+        "0111",
+    ),
+    "null_constants": ("element.getAttribute('x'); return null === null;", "1111"),
+    "string_null": ("element.getAttribute('x'); return 'null' === null;", "0000"),
+    "unused_boolean": ("!element.getAttribute('x'); return true;", "1111"),
+    "computed": (
+        r"""const name = 'data-' + 'copy';
+  element.setAttribute(name, 'wh' + 'ole');
+  const saved = element.getAttribute(name);
+  const key = 'a' + '\0b';
+  const whole = element.getAttribute(key);
+  element.classList.toggle('test-' + 'token', saved === whole);
+  element.removeAttribute(name);
+  return !element.hasAttribute(name);""",
+        "1111",
+    ),
+}
+BOOLEAN_SOURCES = tuple(
+    (name, f"function {name}(element) {{ {body} }}\n", 1)
+    for name, (body, _) in BOOLEAN_CASES.items()
+)
+BOOLEAN_DOUBLE = r"""
+function observationElement(value) {
+  const attributes = {'a\0b': 'whole', a: 'truncated'};
+  if (value !== null) attributes.x = value;
+  return {
+    getAttribute(name) { return attributes[name] === undefined ? null : attributes[name]; },
+    setAttribute(name, text) { attributes[name] = text; },
+    removeAttribute(name) { delete attributes[name]; },
+    hasAttribute(name) { return attributes[name] !== undefined; },
+    toggleAttribute(name, force) {
+      if (force) attributes[name] = '';
+      else delete attributes[name];
+      return force;
+    },
+    classList: {
+      toggle(name, force) {
+        if (name !== 'test-token' || force !== true) throw new Error('incorrect class toggle');
+        return force;
+      }
+    }
+  };
+}
+"""
+BOOLEAN_OBSERVATIONS = "\n".join(
+    f"var booleanObservation{i * 4 + j:03} = {name}(observationElement({value}));"
+    for i, name in enumerate(BOOLEAN_CASES)
+    for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
+)
+BOOLEAN_CHECKS = {
+    "saved_equality": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "comparison_force": 'assert(doc.read().has_attribute(node, atoms.intern("data-force")) == result);',
+    "computed": """assert(!doc.read().has_attribute(node, atoms.intern("data-copy")));
+        assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");""",
+}
 
 # This double supplies only the source's platform methods. Node runs the same
 # entry bodies imported below; real DOM casing/namespaces are checked separately.
@@ -262,11 +345,36 @@ NAMES_RUN = r"""
     }
 """
 
+BOOLEAN_RUN = r"""
+    {
+        @SETUP@
+        auto & atoms = doc.atoms();
+        const auto node = doc.create_element(atoms.intern("button"));
+        const element_ref element{&doc, node};
+        const auto state = atoms.intern("x");
+        assert(doc.set_attribute(node, atoms.intern("a"), "truncated"));
+        assert(doc.set_attribute(node, atoms.intern(std::string_view{"a\0b", 3}), "whole"));
+        for (const auto & value : std::array<std::optional<std::string>, 4>{
+                 std::nullopt, std::string{}, std::string{"a\0b", 3}, std::string{"\xc3\xa9"}}) {
+            if (value) { assert(doc.set_attribute(node, state, *value)); }
+            else { assert(doc.remove_attribute(node, state)); }
+            const auto result = @CALL@;
+            static_assert(std::is_same_v<std::remove_cv_t<decltype(result)>, bool>);
+            @CHECKS@
+            std::cout << (result ? "true\n" : "false\n");
+        }
+    }
+"""
+
 REFUSALS = {
-    "boolean": "return !element.getAttribute('x');",
     "boolean-call": "return Boolean(element.getAttribute('x'));",
     "stringify": "return '' + element.getAttribute('x');",
-    "nullable-equality": "return element.getAttribute('x') === null;",
+    "loose-equality": "return element.getAttribute('x') == null;",
+    "element-equality": "return element.getAttribute('x') === element;",
+    "closest-equality": "return element.getAttribute('x') === element.closest('button');",
+    "object-name": "return element.getAttribute('x' + {});",
+    "object-value": "element.setAttribute('x', 'y' + {}); return true;",
+    "return-null": "element.getAttribute('x'); return null;",
     "set-value": "element.setAttribute('y', element.getAttribute('x')); return true;",
     "dynamic-name": "return element.getAttribute(element.getAttribute('x'));",
     "string-property": "return element.getAttribute('x').length;",
@@ -315,10 +423,29 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
+    boolean_values = [
+        "true" if bit == "1" else "false" for _, bits in BOOLEAN_CASES.values() for bit in bits
+    ]
+    boolean_source = "".join(source for _, source, _ in BOOLEAN_SOURCES)
+    boolean_oracle = boolean_source + BOOLEAN_DOUBLE + BOOLEAN_OBSERVATIONS
     oracle = args.work / "oracle.js"
-    oracle.write_text(READ + SAVED + NAMES + WIDE + ORACLE)
+    oracle.write_text(
+        READ
+        + SAVED
+        + NAMES
+        + WIDE
+        + ORACLE
+        + boolean_oracle
+        + "\n"
+        + "\n".join(
+            f"assert.equal(booleanObservation{i:03}, {value}); console.log(booleanObservation{i:03});"
+            for i, value in enumerate(boolean_values)
+        )
+    )
     expected = run([args.node, str(oracle)]).stdout
-    if expected != "null\n0:\n3:610062\n2:c3a9\n" * 2:
+    if expected != "null\n0:\n3:610062\n2:c3a9\n" * 2 + "".join(
+        value + "\n" for value in boolean_values
+    ):
         raise RuntimeError("source optional String observations were not completed")
     observed = args.work / "vm-oracle.js"
     observed.write_text(
@@ -342,9 +469,11 @@ function makeElement(value) {
     )
     with observed.open("a") as stream:
         stream.write("\nvar nameBytes = readWideName({getAttribute(name) { return name; }});\n")
+        stream.write(boolean_oracle)
     reference = run([args.reference, str(observed)]).stdout
-    encoded = ['nameBytes="%ED%A0%80"\n']
-    for index, line in enumerate(expected.splitlines()):
+    encoded = [f"booleanObservation{i:03}={value}\n" for i, value in enumerate(boolean_values)]
+    encoded.append('nameBytes="%ED%A0%80"\n')
+    for index, line in enumerate(expected.splitlines()[:8]):
         value = (
             "null"
             if line == "null"
@@ -356,7 +485,10 @@ function makeElement(value) {
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    prepared = [(name, *dom.prepare(args, name, source, count)) for name, source, count in SOURCES]
+    prepared = [
+        (name, *dom.prepare(args, name, source, count))
+        for name, source, count in SOURCES + BOOLEAN_SOURCES
+    ]
     for optimize in (False, True):
         modules = {}
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -380,13 +512,20 @@ function makeElement(value) {
                 body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
-                if name in ("names", "wide"):
+                if name in ("names", "wide") or name in BOOLEAN_CASES:
                     setup = (
                         f"{entry}_session session; auto & doc = session.document();"
                         if owned
                         else "atom_table atoms_owner; document doc{atoms_owner};"
                     )
                     call = "session.invoke(element)" if owned else entry + "(element)"
+                    if name in BOOLEAN_CASES:
+                        runs.append(
+                            BOOLEAN_RUN.replace("@SETUP@", setup)
+                            .replace("@CALL@", call)
+                            .replace("@CHECKS@", BOOLEAN_CHECKS.get(name, ""))
+                        )
+                        continue
                     key = (
                         r'std::string_view{"a\0b", 3}'
                         if name == "names"
@@ -448,7 +587,7 @@ function makeElement(value) {
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
     print(
-        f"native DOM Strings: 9 Node/VM observations, 8 GCC/Clang binaries, "
+        f"native DOM Strings: {9 + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {len(REFUSALS) * 4} refusal checks"
     )
 
