@@ -6,6 +6,49 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native DOM String observations, 2026-09-14 UTC
+
+Continued **54082ea6 / e856a6ad**, the completed attribute-read thread named in
+HANDOFF and the **21:33:27 AGENT-SYNC** journal. Both histories, unmerged branches
+and the clean shared tree were checked; the September 7 WIP is already an
+ancestor. Three agents supplied the regression draft, proof audit and next-source
+survey, then reached service limits. Root completed the frozen draft and gates.
+
+**a41b3bc3** proves strict equality/inequality between optional Strings, definite
+Strings and null, plus `!`/`!!` of attribute reads and String + String names/values.
+The existing complete source census still requires exact DOM receivers and source
+order. Null constants are recorded only from that proved synchronous DOM entry;
+the DOM Data provider and generic nullable carriers are unchanged. Generated C++
+uses `std::optional<std::string>`, standard comparisons and `std::string` addition.
+Missing and present-empty values are both false; copied reads keep their value
+through later mutation. No Script dependency or new value model is introduced.
+
+Measured focus: **149-step devbox build / 4/4 CTests in 18.21s PASS**. The String
+gate passed in **18.20s** with **81 Node/VM observations / 8 GCC-Clang binaries /
+80 refusal checks**, both providers, policies and layouts. It retains the original
+read fixtures and the previously refused `!x` and `=== null` bodies, and covers
+saved reads, NUL names, comparison-derived force, empty/null constants and unused
+Boolean results. Host/type tests and the original Button probe also pass; Button's
+**22 Node lifecycle observations and existing interpreter inheritance failure**
+are unchanged. Stable formatting passes **828 C++ / 100 Python / 33 web**;
+`tools/format.sh --check` has the byte-identical pre-existing **nine-file /
+26-diagnostic** pinned-formatter baseline.
+
+The complete default devbox build and CTest gate are **running**, against **1,442
+frozen source inputs**. No complete-suite result is claimed yet. Logs, the frozen
+manifest and gate script are in `/tmp/ctcompile-dom-normalize-20260914/`.
+No browser/runtime files or WPT/test262 expectations changed.
+
+**Exact next boundary:** original Bootstrap `getDataAttribute` at vendor line
+**264** still calls `F` (regex replace, callback, `toLowerCase`) and `M` (branches,
+`Number`, `toString`, `typeof`, URI decoding, JSON and exceptions). The new primitive
+observations are prerequisites; they do not admit either complete helper or their
+composition. Preserve that source normalization. Dataset enumeration and missing-key
+prototype fallback remain separate; inherited/static receivers, derived forwarding,
+lexical `super`, `this.constructor`, retained DOM/config and callbacks still block
+original Button startup and the native application driver. The ctcompile plan is
+unfinished.
+
 ## Native attribute String reads, 2026-09-14 UTC
 
 Continued the completed **0a6f59a5** dataset handoff after checking both histories,

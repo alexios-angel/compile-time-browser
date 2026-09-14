@@ -57,7 +57,7 @@ unknown receivers, and nested control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
-`setAttribute(name, String-or-Boolean)`. Tokens and names come from source strings;
+`setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
 `contains(otherElement)`, `matches(selector)` and `closest(selector)` also
 use proved parameter receivers. Selectors are source strings, parsed by the
@@ -79,8 +79,14 @@ call the public `get_element_attribute` core shared with the VM binding, preserv
 HTML name folding, SVG/XML casing, first qualified-name matching and embedded
 NUL bytes. Read names are not validated as mutation names. The copied result may
 be returned or left unused and survives later mutations or document destruction.
-Boolean coercion, null comparisons, String operations, dynamic names and storage
-into properties remain unproved and refuse; no generic nullable carrier is emitted.
+Strict equality/inequality compares these copied results with null, definite Strings
+or another optional String. `!` and `!!` preserve the difference between presence
+and truthiness: both a missing attribute and an empty attribute are false. These
+Boolean observations can drive existing DOM force arguments. Concatenation accepts
+two definite Strings and uses ordinary `std::string` addition; optional Strings
+are not implicitly coerced into names or values. Loose equality, global `Boolean`
+calls, numeric conversion, branches and property storage still refuse. No generic
+nullable carrier is emitted.
 
 The provider starts with the standard `undefined` binding, independently of
 external script state. Complete source discovery rejects replacement (including
@@ -113,11 +119,11 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares nine observations with Node
-and the ctbrowser VM, then executes eight GCC/Clang clients across both providers,
+The `ctcompile_native_dom_strings` CTest compares copied values and Boolean
+observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-64 source refusals. These clients link DOM/Core only and reject Script symbols
+source refusals for unsupported coercion, control flow, handles and retention. These clients link DOM/Core only and reject Script symbols
 or generic nullable value helpers in the generated code.
 
 ## Owned synchronous sessions
