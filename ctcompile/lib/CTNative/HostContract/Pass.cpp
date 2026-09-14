@@ -80,15 +80,22 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
                 {"reason", slot.reason}});
         }
         llvm::DenseSet<mlir::Operation *> outerKeyObjects;
+        llvm::DenseSet<mlir::Value> outerKeyInputs;
         for (const auto & edge : analysis.callables()) {
             if (!edge.capturedMap) { continue; }
             for (ctjs::CreateObjectOp object : edge.capturedMap->outerKeyObjects) {
                 outerKeyObjects.insert(object);
             }
+            for (mlir::BlockArgument input : edge.capturedMap->outerKeyInputs) {
+                outerKeyInputs.insert(input);
+            }
         }
         const auto outerKeyCount = static_cast<std::int64_t>(outerKeyObjects.size());
         module->setAttr("ctnative.host_outer_key_objects",
                         builder.getI64IntegerAttr(outerKeyCount));
+        module->setAttr(
+            "ctnative.host_outer_key_inputs",
+            builder.getI64IntegerAttr(static_cast<std::int64_t>(outerKeyInputs.size())));
         module->setAttr("ctnative.host_proved", builder.getBoolAttr(analysis.proved()));
         module->setAttr("ctnative.host_reason", builder.getStringAttr(analysis.reason()));
         module->setAttr("ctnative.host_slots", builder.getArrayAttr(slots));
@@ -101,13 +108,28 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
                 signalPassFailure();
                 return;
             }
+            llvm::StringRef provider;
+            switch (contract->provider) {
+            case HostContract::Provider::closedSource: provider = "closed-source-v1"; break;
+            case HostContract::Provider::closedSourceSession:
+                provider = "closed-source-session-v1";
+                break;
+            case HostContract::Provider::ctbrowserDOM: provider = "ctbrowser-dom-v1"; break;
+            case HostContract::Provider::ctbrowserDOMSession:
+                provider = "ctbrowser-dom-session-v1";
+                break;
+            case HostContract::Provider::ctbrowserDOMDataSession:
+                provider = "ctbrowser-dom-data-session-v1";
+                break;
+            }
             llvm::json::Object document{
-                {"provider", "closed-source-v1"},
+                {"provider", provider},
                 {"module_sha256", digest},
                 {"entry", contract->entry},
                 {"proved", analysis.proved()},
                 {"reason", analysis.reason().str()},
                 {"outer_key_objects", outerKeyCount},
+                {"outer_key_inputs", static_cast<std::int64_t>(outerKeyInputs.size())},
                 {"observation_stores", static_cast<std::int64_t>(analysis.observations().size())},
                 {"slots", std::move(jsonSlots)}};
             stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));

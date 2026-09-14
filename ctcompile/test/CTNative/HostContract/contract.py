@@ -155,6 +155,53 @@ def main():
     _, _, result = analyze(args.opt, ir, bad_provider, args.work / "provider", success=False)
     if "unsupported host provider" not in result.stderr:
         raise RuntimeError("unknown provider was not rejected")
+    for provider in ("closed-source-v1", "closed-source-session-v1"):
+        requested = dict(contract, provider=provider)
+        report, _, _ = analyze(args.opt, ir, requested, args.work / provider)
+        if report["provider"] != provider or report["outer_key_inputs"] != 0:
+            raise RuntimeError("host report changed its provider or invented DOM inputs")
+        _, _, result = analyze(
+            args.opt,
+            ir,
+            dict(requested, element_parameters=[0]),
+            args.work / (provider + "-inputs"),
+            success=False,
+        )
+        if "only supported fields" not in result.stderr:
+            raise RuntimeError("source-only provider accepted DOM input declarations")
+    dom_data = dict(contract, provider="ctbrowser-dom-data-session-v1", element_parameters=[0])
+    report, _, _ = analyze(args.opt, ir, dom_data, args.work / "dom-data")
+    if report["proved"] or report["provider"] != dom_data["provider"]:
+        raise RuntimeError("DOM Data report must preserve its provider and reject missing inputs")
+    result = run(
+        [
+            args.opt,
+            str(ir),
+            "--ctnative-specialize-host-prefix=" f"manifest={args.work / 'dom-data.json'}",
+            "-o",
+            "/dev/null",
+        ],
+        success=False,
+    )
+    if "host prefix does not support DOM Data input contracts" not in result.stderr:
+        raise RuntimeError("source prefix analysis accepted a DOM Data input contract")
+    for optimize in (True, False):
+        emitted = args.work / f"dom-data-{optimize}.mlir"
+        result = run(
+            [
+                args.opt,
+                str(ir),
+                "--ctnative-lower-to-emitc="
+                f"host-manifest={args.work / 'dom-data.json'} optimize={str(optimize).lower()}",
+                "-o",
+                str(emitted),
+            ],
+            success=False,
+        )
+        if "requires storage confined to its document owner" not in result.stderr:
+            raise RuntimeError("DOM Data lowering did not explain the missing lifetime proof")
+        if emitted.exists() and emitted.read_text():
+            raise RuntimeError("DOM Data storage refusal emitted a partial native module")
     extra_claim = dict(contract, nonthrowing=True)
     _, _, result = analyze(args.opt, ir, extra_claim, args.work / "claim", success=False)
     if "only supported fields" not in result.stderr:
