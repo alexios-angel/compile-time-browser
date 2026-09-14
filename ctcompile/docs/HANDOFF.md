@@ -34,12 +34,18 @@ the final gate passes. Stable formatting passes **829 C++ / 100 Python / 33 web*
 the required pinned formatter's existing **nine-file / 26-diagnostic** baseline is
 byte-identical. Evidence is in `/tmp/ctcompile-dom-helpers-20260914/`.
 
-The complete **304-step default devbox build and 601 non-lit CTests PASS**,
-with four CTest jobs. The final **176-test lit group is still running** inside the
-602-test gate; no complete-suite pass is claimed yet. DOM entry passed in
-**207.18s**, session in **56.71s**, Strings in **30.97s**, and shared Map ownership
-in **299.44s**. All **1,443 source inputs** remain frozen. No browser/runtime files
-or WPT/test262 expectations changed.
+The complete **304-step build / 602/602 CTests in 1424.60s / 176/176 lit in
+972.63s PASS**, with four CTest jobs. DOM entry passed in **207.18s**, session in
+**56.71s**, Strings in **30.97s**, and shared Map ownership in **299.44s**. All
+**1,443 frozen source hashes** match the local/committed tree and devbox. The final
+log, generated C++ and `measured.json` are retained with the evidence above.
+
+Fresh whole Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7**, and Button
+**4/86** with **22 Node lifecycle observations** and its existing interpreter
+inheritance failure. The complete escape fixture retains **zero violations /
+precision 40/172** and all **1,123** baseline rows. No browser/runtime files or
+WPT/test262 expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** original Bootstrap's outer-scope and object-held helper
 graph remains beyond this local capture-free proof. `F('config')` can only lose its
