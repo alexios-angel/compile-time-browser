@@ -30,14 +30,9 @@ liftReport closureLifter::run() {
     // rewrite: a lifted call is a `ctjs.call_direct`, which `closedAfterLift`
     // does not know, so a decision made after the first lift would differ
     // from the same decision made before it.
-    // THE `new` SITES FIRST, and the ordering is load-bearing. This census
-    // is purely STRUCTURAL - which closures are used as `new` callees and
-    // nowhere else - and asks no question about any shape, so it is safe
-    // this early. It has to be this early: `closedAfterLift` admits a
-    // `ctjs.construct` result as an object, and `argumentCensus`'s fixpoint
-    // asks `closedAfterLift` of every argument. Run after, the instance
-    // would still be a `ctjs.construct` there, read as "not a literal", and
-    // an instance passed to a lifted function would refuse the module.
+    // Index `new` sites before the argument fixpoint. The index routes
+    // diagnostics; makesAnInstance asks the full constructor proof before
+    // treating a constructed argument as a future local object.
     constructorCensus();
     argumentCensus();
     methodCensus();
@@ -421,6 +416,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         }
         llvm::SmallVector<mlir::Value> captured;
         ctjs::CreateClosureOp only = made.front();
+        auto prototype = immutableScalarPrototype(only);
         for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
             captured.push_back(liftedCapture(only, i));
         }
@@ -432,6 +428,12 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // constructor writes through `this`, and `fieldsOf` collects
             // those over the alias group the receiver mark creates.
             auto instance = ctjs::CreateObjectOp::create(at, built.getLoc(), valueType);
+            if (prototype) {
+                for (ctjs::SetPropertyOp field : prototype->fields) {
+                    ctjs::SetPropertyOp::create(at, built.getLoc(), instance.getResult(),
+                                                field.getKey(), field.getValue());
+                }
+            }
             llvm::SmallVector<mlir::Value> arguments(captured);
             arguments.append(built.getArgs().begin(), built.getArgs().end());
             while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
@@ -460,6 +462,13 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             built.erase();
             ++out.calls;
             ++out.constructors;
+        }
+        if (prototype) {
+            auto literal = prototype->attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+            prototype->attachment.erase();
+            for (ctjs::SetPropertyOp field : prototype->fields) { field.erase(); }
+            llvm::erase(objects, literal);
+            literal.erase();
         }
         return;
     }

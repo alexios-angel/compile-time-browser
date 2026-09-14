@@ -371,15 +371,18 @@ struct closureLifter {
     // and `replace` need no constructor case at all: after the rewrite there
     // is no constructor, only a literal and a call that takes its address.
     //
-    // WHAT THIS DELIBERATELY DOES NOT BUILD IS THE PROTOTYPE CHAIN. The VM
-    // gives every instance one (vm/call/construct.cpp, `make_instance` ->
-    // `ensure_prototype`)
-    // and Phase 60 owns turning that into C++ inheritance, so any program that
-    // touches a constructor's `prototype` is refused by name here rather than
-    // compiled to something with no chain at all.
+    // A local immutable scalar prototype can initialize the instance's fields.
+    // Its complete use census excludes observations of property ownership or
+    // prototype identity. Methods and mutable chains still need Stage 60A.
     llvm::SmallVector<ctjs::ConstructOp> allConstructs;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::ConstructOp>> constructsOfTarget;
-    llvm::DenseSet<mlir::Operation *> constructorClosures; // used ONLY as `new` callees
+    llvm::DenseSet<mlir::Operation *> constructorClosures; // diagnostic routing, not admission
+
+    struct scalarPrototype {
+        ctjs::SetPropertyOp attachment;
+        llvm::SmallVector<ctjs::SetPropertyOp> fields;
+    };
+    std::optional<scalarPrototype> immutableScalarPrototype(ctjs::CreateClosureOp c);
 
     // --- THE CENSUS, which is a MEASUREMENT and not a rule ------------------
     //

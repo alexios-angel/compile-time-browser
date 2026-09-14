@@ -28,21 +28,15 @@ bool closureLifter::closedAfterLift(mlir::Value object) {
 // the IR the rewrite is about to produce, exactly as `closedAfterLift`
 // itself is for a method call.
 //
-// ONLY FOR A CALLEE THIS PASS HAS PROVED, which is what
-// `constructorClosures` holds and why that census runs first: a construct
-// whose callee is opaque is not going to become a literal, and admitting
-// one here would be a shape claim about an object the VM allocates.
+// Ask the complete constructor proof, not just the diagnostic census. Its
+// shape check reads objectSlotsOf without recursing here; argumentCensus's
+// shrinking fixpoint removes any slots whose constructor dependencies fail.
 bool closureLifter::makesAnInstance(mlir::Value object) {
     auto built = object.getDefiningOp<ctjs::ConstructOp>();
     if (!built) { return false; }
     auto closure = built.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
     if (!closure || !constructorClosures.contains(closure.getOperation())) { return false; }
-    // AND NOTHING BUT `new` USES IT. `constructorClosures` is every closure
-    // a `new` names, so that the prototype clause can be REACHED and name
-    // itself; this predicate is a different claim - that the rewrite will
-    // actually happen - and a closure used anywhere else cannot support it.
-    return llvm::all_of(closure.getResult().getUsers(),
-                        [](mlir::Operation * user) { return llvm::isa<ctjs::ConstructOp>(user); });
+    return !whyNotLiftableConstructor(closure);
 }
 
 // THE USE-LIST HALF OF CONDITION 1, ASKED WITHOUT THE QUESTION OF WHAT MADE

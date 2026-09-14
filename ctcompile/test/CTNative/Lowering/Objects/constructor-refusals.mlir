@@ -16,6 +16,7 @@
 // wrong object, because such a module verifies and compiles clean.
 
 // RUN: split-file %s %t
+// RUN: python3 %S/constructor_refusals.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.controls
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/returns-object.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RETURNS
@@ -25,9 +26,6 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/opaque-callee.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=OPAQUE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prototype-written.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=PROTOTYPE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unwritten-key.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=UNWRITTEN
@@ -78,16 +76,10 @@
 // OPAQUE-SAME: ctnative.not_native
 // OPAQUE-NOT: emitc.class
 
-// --- GUARD 5: THE CONSTRUCTOR'S `prototype` IS WRITTEN -----------------------
-//
-// REFUSED BY NAME, and deferred to the plan's Stage 60A immutability proof
-// rather than compiled. The VM gives every instance a prototype
-// (`make_instance` -> `ensure_prototype`), so a program that puts a method on
-// `Shape.prototype` and calls it would compile, here, to a struct with no such
-// member at all. Naming the clause is what stops that being discovered by a
-// wrong answer.
-//
-// PROTOTYPE: ctnative.not_native = "a closure used as a value: its constructor's `prototype` is read or written, which is a prototype chain this slice does not build - Stage 60A's immutability proof owns it"
+// The original prototype-written.js stays byte-for-byte as a source oracle;
+// the bounded immutable scalar proof admits it in prototype-scalars.mlir.
+// The Python driver checks actual inherited method reads and scalar mutations
+// below. Each source has its own refusal under both optimization policies.
 
 // --- AND THE ONE PROTOTYPE READ THAT REALLY DOES DIVERGE ---------------------
 //
@@ -180,3 +172,101 @@ function open_instance(k) {
     return b[String(k)] + b.n;
 }
 var a = open_instance(1);
+
+//--- inherited-call.js
+function inherited_call() {
+    var Shape = function () {};
+    Shape.prototype = {
+        kind: 7,
+        read: function () { return this.kind; }
+    };
+    var t = new Shape();
+    return t.read();
+}
+var a = inherited_call();
+
+//--- default-prototype.js
+function default_prototype() {
+    var Shape = function () {};
+    Shape.prototype.kind = 7;
+    var t = new Shape();
+    return t.kind;
+}
+var a = default_prototype();
+
+//--- late-mutation.js
+function late_mutation() {
+    var Shape = function () {};
+    Shape.prototype = {kind: 7};
+    var t = new Shape();
+    Shape.prototype.kind = 9;
+    return t.kind;
+}
+var a = late_mutation();
+
+//--- alias-mutation.js
+function alias_mutation() {
+    var Shape = function () {};
+    Shape.prototype = {kind: 7};
+    var alias = Shape.prototype;
+    var t = new Shape();
+    alias.kind = 11;
+    return t.kind;
+}
+var a = alias_mutation();
+
+//--- helper-mutation.js
+function mutate(prototype) { prototype.kind = 13; }
+function helper_mutation() {
+    var Shape = function () {};
+    Shape.prototype = {kind: 7};
+    var alias = Shape.prototype;
+    var t = new Shape();
+    mutate(alias);
+    return t.kind;
+}
+var a = helper_mutation();
+
+//--- prototype-replacement.js
+function prototype_replacement() {
+    var Shape = function () {};
+    Shape.prototype = {kind: 7};
+    var old = new Shape();
+    Shape.prototype = {kind: 9};
+    var fresh = new Shape();
+    return old.kind * 10 + fresh.kind;
+}
+var a = prototype_replacement();
+
+//--- mutable-class-helper.js
+// Node does not invoke this VM implementation hook: a=0 there, a=1 in the VM.
+// Two writes keep the hook's global identity unresolved; dropping its call by
+// spelling alone loses the replacement's observable effect.
+__ctbrowser_class_defined = function first(value) {};
+function mutable_class_helper() {
+    var calls = 0;
+    __ctbrowser_class_defined = function replacement(value) {
+        calls = calls + 1;
+    };
+    class Shape {}
+    return calls;
+}
+var a = mutable_class_helper();
+
+//--- new-target.js
+function new_target() {
+    var Shape = function () { this.kind = new.target ? 7 : 2; };
+    var instance = new Shape();
+    return instance.kind;
+}
+var a = new_target();
+
+//--- constructor-argument.js
+function constructor_argument() {
+    var First = function () { this.kind = 1; };
+    var Second = function (callee) { this.kind = typeof callee === "function" ? 7 : 0; };
+    var first = new First();
+    var second = new Second(First);
+    return first.kind * second.kind;
+}
+var a = constructor_argument();

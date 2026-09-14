@@ -81,21 +81,57 @@ std::optional<std::string> closureLifter::whyConstructorReturnsAnObject(ctjs::Fu
     return bad;
 }
 
-// GUARD 5: nothing may touch the constructor function's `prototype`.
-//
-// SHADOWED THE SAME WAY, AND KEPT FOR THE SAME REASON. Removing it leaves
-// `prototype-written.js` refused by the mixed-use clause below - "it is
-// used as a constructor and also reaches `ctjs.set_property`" - which is
-// true and tells a reader nothing about what to do next. This one names
-// Stage 60A.
-//
-// Refused BY NAME rather than falling through to the generic "used as a
-// value elsewhere", because the work item behind it is a specific one: the
-// plan's Stage 60A immutability proof, which is what turns a prototype
-// table into a base class. Without it an instance here has NO chain, so a
-// program that writes `X.prototype.m = ...` and calls `o.m()` would compile
-// to a struct with no `m` at all.
+// Recompute from live uses. Copying primitive fields preserves reads and own
+// writes only when neither the prototype nor property ownership is observable.
+// ponytail: one same-block literal replacement; methods/chains need Stage 60A.
+std::optional<closureLifter::scalarPrototype> closureLifter::immutableScalarPrototype(
+    ctjs::CreateClosureOp c) {
+    scalarPrototype proof;
+    for (mlir::OpOperand & use : c.getResult().getUses()) {
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner())) {
+            if (use.getOperandNumber() < 2 && made.getCallee() == c.getResult() &&
+                made.getNewTarget() == c.getResult()) {
+                continue;
+            }
+            return std::nullopt;
+        }
+        auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (!set || use.getOperandNumber() != 0 || ctjs::constantKey(set.getKey()) != "prototype" ||
+            proof.attachment || set->getBlock() != c->getBlock()) {
+            return std::nullopt;
+        }
+        proof.attachment = set;
+    }
+    if (!proof.attachment) { return std::nullopt; }
+    auto literal = proof.attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+    if (!literal || literal->getBlock() != c->getBlock()) { return std::nullopt; }
+    llvm::StringSet<> keys;
+    for (mlir::OpOperand & use : literal.getResult().getUses()) {
+        if (use.getOwner() == proof.attachment && use.getOperandNumber() == 2) { continue; }
+        auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (!set || use.getOperandNumber() != 0 || set->getBlock() != c->getBlock() ||
+            !set->isBeforeInBlock(proof.attachment) ||
+            !set.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+            return std::nullopt;
+        }
+        const auto key = ctjs::constantKey(set.getKey());
+        if (key.empty() || key == "__proto__" || !keys.insert(key).second) { return std::nullopt; }
+        proof.fields.push_back(set);
+    }
+    const auto sites = constructsOfTarget.find(targetOf(c));
+    if (sites == constructsOfTarget.end() || sites->second.empty()) { return std::nullopt; }
+    for (ctjs::ConstructOp made : sites->second) {
+        if (made.getCallee() != c.getResult() || made->getBlock() != c->getBlock() ||
+            !proof.attachment->isBeforeInBlock(made)) {
+            return std::nullopt;
+        }
+    }
+    return proof;
+}
+
+// Other prototype accesses retain the precise Stage 60A diagnostic.
 std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClosureOp c) {
+    if (immutableScalarPrototype(c)) { return std::nullopt; }
     for (mlir::Operation * user : c.getResult().getUsers()) {
         llvm::StringRef key;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
@@ -128,21 +164,25 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     // GUARD 5, before the generic clauses, so the diagnostic names the
     // prototype rather than whatever else the read happens to be.
     if (const std::optional<std::string> why = whyPrototypeIsTouched(c)) { return why; }
-    // AND THE CLOSURE IS USED FOR NOTHING BUT `new`. One ctjs.func is one
-    // C++ signature, so a body that is a free function at one site and a
-    // constructor at another needs two.
-    //
-    // `new X(a)` USES THE CLOSURE TWICE ON ONE OPERATION - as the callee
-    // AND as new.target, which is what the VM pushes for a construct - so
-    // this counts operations and not operands.
-    for (mlir::Operation * user : c.getResult().getUsers()) {
-        if (!llvm::isa<ctjs::ConstructOp>(user)) {
+    // Aside from the proved prototype attachment, every operand use must be
+    // its own callee/new.target pair. Passing the closure as an argument to
+    // another constructor is still an escape.
+    const auto prototype = immutableScalarPrototype(c);
+    for (mlir::OpOperand & use : c.getResult().getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (prototype && user == prototype->attachment) { continue; }
+        auto made = llvm::dyn_cast<ctjs::ConstructOp>(user);
+        if (!made || use.getOperandNumber() >= 2 || made.getCallee() != c.getResult() ||
+            made.getNewTarget() != c.getResult()) {
             return ("it is used as a constructor and also reaches `" +
                     user->getName().getStringRef() +
                     "` - one ctjs.func is one C++ signature, and a body that is a free "
                     "function at one site and a constructor at another needs two")
                 .str();
         }
+    }
+    if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
+        return "its constructor uses new.target, whose function identity this lift does not carry";
     }
     // GUARD 2: `this` never escapes the constructor, and every use of it is
     // a constant-key access. Word for word the receiver carrier's
