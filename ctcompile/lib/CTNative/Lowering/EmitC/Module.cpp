@@ -66,8 +66,10 @@ void lowering::finish() {
                                                       ownedGlobals.keys().end());
         llvm::sort(ownerNames);
         for (llvm::StringRef name : ownerNames) {
-            if (!domDataSession.empty()) {
-                const auto & storage = ownedGlobalStoragePlans.front();
+            if (!domDataSession.empty() && llvm::isa<ec::PointerType>(ownedGlobals.lookup(name))) {
+                const auto & storage =
+                    *llvm::find_if(ownedGlobalStoragePlans,
+                                   [&](const auto & plan) { return plan.binding == name; });
                 ec::VerbatimOp::create(b, module.getLoc(),
                                        b.getStringAttr(storage.className + " g_" + name.str() +
                                                        "{};\n" + storage.className + " * reset_g_" +
@@ -77,7 +79,7 @@ void lowering::finish() {
             }
             auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
                                                ownedGlobals.lookup(name), mlir::Attribute{}, false,
-                                               true, false);
+                                               domDataSession.empty(), false);
             global->setAttr("ctnative.provenance", b.getStringAttr("owning global " + name.str()));
         }
         for (ec::FuncOp f : lowered) {
@@ -307,8 +309,8 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
         }
     }
-    if (domDataSession.empty() &&
-        (!methodTables.empty() || !callableBuilders.empty() || !callableBodies.empty())) {
+    if ((domDataSession.empty() && !methodTables.empty()) || !callableBuilders.empty() ||
+        !callableBodies.empty()) {
         for (llvm::StringRef header : {"functional", "memory", "utility"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }

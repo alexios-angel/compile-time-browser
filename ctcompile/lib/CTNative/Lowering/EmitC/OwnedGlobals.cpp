@@ -54,24 +54,24 @@ bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {
     const auto found = ownedGlobalOperations.find(operation);
     if (found == ownedGlobalOperations.end()) { return false; }
     const auto & storage = ownedGlobalStoragePlans[found->second];
+    const bool memberRoot = !domDataSession.empty() && llvm::isa<ec::PointerType>(storage.type);
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     mlir::Value result;
     if (llvm::isa<ctjs::CreateObjectOp>(operation)) {
         result = callWithConstValueOperands(
                      at, where, mlir::TypeRange{storage.type},
-                     at.getStringAttr(domDataSession.empty()
-                                          ? "std::make_shared<" + storage.className + ">"
-                                          : "reset_g_" + storage.binding),
+                     at.getStringAttr(memberRoot ? "reset_g_" + storage.binding
+                                                 : "std::make_shared<" + storage.className + ">"),
                      mlir::ValueRange{})
                      .getResult(0);
     } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
-        if (domDataSession.empty()) {
+        if (!memberRoot) {
             ec::AssignOp::create(at, where, lvalueOfGlobal(at, where, storage.binding),
                                  store.getValue());
         }
     } else if (llvm::isa<ctjs::LoadGlobalOp>(operation)) {
-        if (domDataSession.empty()) {
+        if (!memberRoot) {
             result = ec::LoadOp::create(at, where, storage.type,
                                         lvalueOfGlobal(at, where, storage.binding));
         } else {

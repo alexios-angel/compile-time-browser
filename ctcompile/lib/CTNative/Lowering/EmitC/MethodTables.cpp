@@ -103,6 +103,8 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
 }
 
 void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda) {
+    // DOM callbacks and their observations stay inside the nonmovable owner.
+    namedLambda &= domDataSession.empty();
     const auto target = environmentTarget(made);
     auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         made, mlir::FlatSymbolRefAttr::get(context, target));
@@ -165,8 +167,9 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         builder += callableTypeSpelling(typeOf(capture)) + " " + captureNames[i];
     }
     builder += ") {\n  return [";
+    if (!domDataSession.empty()) { builder += "this"; }
     for (size_t i = 0; i < captures; ++i) {
-        if (i) { builder += ", "; }
+        if (i || !domDataSession.empty()) { builder += ", "; }
         const auto & slot = captureNames[i];
         builder += slot + " = std::move(" + slot + ")";
     }

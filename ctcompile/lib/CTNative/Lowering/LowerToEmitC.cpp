@@ -140,21 +140,53 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
             hostContract = std::move(*parsed);
         }
+        const auto normalizeOwnedSource = [](mlir::ModuleOp candidate) {
+            closureLifter local{candidate};
+            local.discardNativeSourceFacts();
+            local.census();
+            liftReport locals;
+            local.unboxCells(locals);
+            candidate.walk([&](ctjs::CreateClosureOp closure) {
+                if (local.whyTargetIsNotLiftable(closure) ||
+                    isUndefinedConstant(closure.getEnclosingThis())) {
+                    return;
+                }
+                mlir::OpBuilder at(closure);
+                closure.getEnclosingThisMutable().assign(ctjs::ConstantOp::create(
+                    at, closure.getLoc(), ctjs::ValueType::get(candidate.getContext()),
+                    ctjs::UndefinedAttr::get(candidate.getContext())));
+            });
+            llvm::SmallVector<ctjs::CreateCellOp> dead;
+            candidate.walk([&](ctjs::CreateCellOp cell) {
+                if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
+                    dead.push_back(cell);
+                }
+            });
+            for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+            return locals;
+        };
         const bool domData = hostContract && hostContract->provider ==
                                                  HostContract::Provider::ctbrowserDOMDataSession;
         if (domData) {
-            const OwnedGlobalRoots source(module, *hostContract, hostMaxSteps);
+            if (hostContract->moduleSha256 != hostContractFingerprint(module)) {
+                module.emitError(
+                    "native DOM Data source: host contract module fingerprint mismatch");
+                return signalPassFailure();
+            }
+            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
+            normalizeOwnedSource(*prepared);
+            HostContract transformed = *hostContract;
+            transformed.moduleSha256 = hostContractFingerprint(*prepared);
+            const OwnedGlobalRoots source(*prepared, transformed, hostMaxSteps);
             if (!source.proved()) {
                 module.emitError() << "native DOM Data source: " << source.reason();
                 return signalPassFailure();
             }
-            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
             if (auto wrapper = source.wrapper()) {
                 prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
             }
             prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
-            HostContract transformed = *hostContract;
             transformed.moduleSha256 = hostContractFingerprint(*prepared);
             const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
             if (!checked.proved()) {
@@ -270,28 +302,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             // It is speculative: only a complete fresh owner proof can publish it.
             mlir::OwningOpRef<mlir::ModuleOp> normalized(
                 llvm::cast<mlir::ModuleOp>(module->clone()));
-            closureLifter local{*normalized};
-            local.discardNativeSourceFacts();
-            local.census();
-            liftReport locals;
-            local.unboxCells(locals);
-            normalized->walk([&](ctjs::CreateClosureOp closure) {
-                if (local.whyTargetIsNotLiftable(closure) ||
-                    isUndefinedConstant(closure.getEnclosingThis())) {
-                    return;
-                }
-                mlir::OpBuilder at(closure);
-                closure.getEnclosingThisMutable().assign(ctjs::ConstantOp::create(
-                    at, closure.getLoc(), ctjs::ValueType::get(module.getContext()),
-                    ctjs::UndefinedAttr::get(module.getContext())));
-            });
-            llvm::SmallVector<ctjs::CreateCellOp> dead;
-            normalized->walk([&](ctjs::CreateCellOp cell) {
-                if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
-                    dead.push_back(cell);
-                }
-            });
-            for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+            const auto locals = normalizeOwnedSource(*normalized);
             HostContract normalizedContract = *hostContract;
             normalizedContract.moduleSha256 = hostContractFingerprint(*normalized);
             const OwnedGlobalRoots original(*normalized, normalizedContract, hostMaxSteps);
@@ -605,8 +616,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.groups = &groups;
         if (domData) {
             if (!admittedGlobals || !admittedGlobals->proved() ||
-                accepted.size() != functions.size() || admittedGlobals->roots().size() != 1 ||
-                !admittedGlobals->objectReads().empty()) {
+                accepted.size() != functions.size()) {
                 module.emitError("native DOM Data requires complete family admission");
                 return signalPassFailure();
             }
