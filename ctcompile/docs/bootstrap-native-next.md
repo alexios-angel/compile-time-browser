@@ -37,6 +37,20 @@ a single session and proving document-domain key provenance remain the next boun
 The registered `ctcompile_native_data_session` gate uses the same pinned Data
 probe, with direct call order, typed Node/VM observations and lifetime checks.
 
+The compiler now separately records complete-family `outerKeyObjects`: source
+allocations used only as direct outer Map keys, with every actual use and named
+alias rechecked. Payloads, child keys, field uses, transport and outer snapshots
+exclude that role; ordinary owning-object admission remains. The pinned Data
+probe has three such allocations (`element`, `other`, `absent`), excluding its
+payload. This is source-use evidence, not DOM provenance or permission to retain
+an externally supplied handle. Recovery commits `722ddd82` and `cb76be27` passed
+the full **562/562 CTest / 168/168 lit** gate on 2026-09-14. The generated Data
+probe remains byte-identical, and full Bootstrap admission remains **19/574**.
+The next boundary remains explicit DOM inputs and the atoms/document/Data lifetime
+owner. Independent escape work should recognize direct arrays after SCF removes
+invariant array parameters, then measure a preserved overwrite/read-only-loop
+fixture through the existing consumer before widening alias ownership.
+
 ## What is measured
 
 | Gate | What it establishes | What remains outside it |

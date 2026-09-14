@@ -6,6 +6,78 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Outer-key provenance and structured-loop recovery, 2026-09-14 UTC
+
+Resumed six dirty compiler files at **ef764cf8**, identified in the 03:39:01
+AGENT-SYNC journal and explicitly abandoned by the 03:42:08 loop exit.
+The September 7 WIP was already an ancestor. Three agents split loop recovery,
+key tests and ownership review; two hit service limits, and root completed the
+key implementation, tests, integration and gates. Recovery was committed first.
+
+**722ddd82** shares the existing read-only zero/+1 own-length certificate between
+CFG and single-block `scf.while`. Initial values, condition arguments, backedges
+and results transport exact aliases and scalar snapshots simultaneously. Zero-trip,
+sequential loops, enclosing structured branches and result-to-CFG transport are
+covered. Mutation, repeated allocation, nested loop control, uncertain induction,
+unsafe reads and incomplete budgets refuse. The structured matrix has **34 rows**,
+including **22 new rows**. This is analysis evidence; native loop/alias admission
+and a preserved vendor emission gain still need their own consumer proof.
+Focused **85-step build / escape arrays and complete oracle 2/2 PASS in 1.88s**.
+
+**cb76be27** derives `HostCapturedMap.outerKeyObjects` from the completed family
+and every use of each caller allocation and named alias. Only direct outer Map
+key uses qualify; a sibling payload/child-key use, field access, parameter
+transport or outer-key snapshot excludes the allocation. Fluent outer `set`
+aliases are followed within the shared budget. Child snapshots remain distinct.
+The ordinary owning-object contract is preserved when the narrower role fails.
+Every owning family revalidates the same source-ordered allocation list.
+
+Host diagnostics and final native owner reports expose a count, never authority.
+The unchanged Data probe proves exactly **three** key allocations (`element`,
+`other`, `absent`), excluding its payload. Forged counts are rederived. The Data
+measurement runs after the existing private preparation and final live ownership
+check; raw unprepared host analysis retains its refusal. No new DOM input type,
+external handle permission or lifetime owner is introduced.
+
+Focused ownership **237.18s**, then expanded **6-step rebuild / 239.08s PASS**;
+corrected native Data **3-step rebuild / 1/1 PASS in 30.93s** (test 30.91s).
+Data retains the pinned **3218-byte source / 7/7 functions / 23 direct calls /
+19 Node/VM observations**, both policies/layouts/GCC/Clang, compile-clean,
+no Script and ASan/UBSan saved-child/payload lifetimes. Stable formatter
+**823 C++ / 89 Python / 33 web PASS**; the required pinned output matches the
+prior nine-file / 26-diagnostic baseline exactly.
+
+Final standard devbox gate: **282-step build / 562/562 CTests PASS in 1234.62s**,
+including **168/168 lit in 873.73s**. Native Data **53.28s**, native DOM **268.91s**,
+and exhaustive shared-Map ownership **342.85s** under full load. All **1415 frozen
+inputs** match local/devbox. The 34 structured rows exercise **1769 budget cutoffs**.
+The generated Data probe is byte-identical to the previous output: **48,583 bytes /
+981 lines**, excluding appended test assertions. Evidence:
+`/tmp/ctcompile-key-recovery/` (`measured.json`, `size.json`, full/focused logs and
+generated C++). No browser source/runtime changes, WPT/test262 score remeasurement
+or push.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes. Native DOM remains **18 entries / 42 refusals**. The unchanged
+complete escape fixture/snapshot remains **222 functions / 861 claims / 895 observed
+sites / 35 unclaimed / zero violations / 40 of 172 precision**.
+
+**Exact next native boundary:** explicit DOM input provenance and a nonmovable
+owner declaring atoms, document, then Data. The new allocation role is not DOM
+provenance and cannot substitute for it. Revalidate every external key's complete
+family and document domain; preserve document plus full node identity across
+detachment, and reject foreign owners before dereferencing them. Then original
+component construction/disposal, retained callbacks and the native application driver.
+**Exact next escape boundary:** first recognize a dominating direct array in the
+counted contents certificate after SCF preparation removes invariant array phis.
+A called overwrite plus read-only loop can then exercise the existing native
+contents consumer without new alias carriers. Measure that preserved fixture
+before broader structured/CFG alias ownership or a vendor gain. Read-only review
+found that `denseIndexPaths` also hits branch allocation, nested elements and
+returned-array ownership; relaxing its direct-use check alone is insufficient.
+This next slice was surveyed, not implemented or measured. DOM-backed Data and
+full Bootstrap startup remain absent.
+
 ## Structured contents recovery and direct Data members, 2026-09-14 UTC
 
 Resumed three dirty escape files at **1a0d533d**, identified in the 02:54 UTC
