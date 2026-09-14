@@ -467,7 +467,49 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
                     parameters.push_back(argument);
                 }
             }
-            if (parameters.empty() || !closedCallableProblem(function, module).empty()) { return; }
+            if (parameters.empty()) { return; }
+            if (!closedCallableProblem(function, module).empty()) {
+                // Method lifting removes the callable reads, but leaves its
+                // original stores until emission. Recheck that EVERY numeric
+                // closure use is now unobservable storage: neither the local
+                // literal nor any borrowed alias may still read that key.
+                // A `ctnative.method` annotation alone proves none of this.
+                const auto index = functionIndex(function);
+                if (!index) { return; }
+                bool closed = true;
+                module.walk([&](ctjs::CreateClosureOp made) {
+                    if (!closed || made.getFunction() < 0 ||
+                        static_cast<unsigned>(made.getFunction()) != *index) {
+                        return;
+                    }
+                    for (mlir::OpOperand & use : made.getResult().getUses()) {
+                        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                        auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                        if (!store || use.getOperandNumber() != 2 ||
+                            !store.getObject().getDefiningOp<ctjs::CreateObjectOp>()) {
+                            closed = false;
+                            return;
+                        }
+                        const auto aliases = groups.find(store.getObject());
+                        if (aliases == groups.end() ||
+                            !llvm::all_of(aliases->second, hasClosedShape)) {
+                            closed = false;
+                            return;
+                        }
+                        const auto key = constantKey(store.getKey());
+                        for (mlir::Value alias : aliases->second) {
+                            for (mlir::Operation * user : alias.getUsers()) {
+                                auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                                if (load && constantKey(load.getKey()) == key) {
+                                    closed = false;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+                if (!closed) { return; }
+            }
             // Numeric closure identities are checked above; symbol uses must
             // also be a complete census of ordinary direct calls. Each slot
             // retains its actual operands, never the receiver schema group.

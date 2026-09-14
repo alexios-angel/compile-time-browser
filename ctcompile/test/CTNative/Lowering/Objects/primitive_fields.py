@@ -26,6 +26,11 @@ def main():
         "borrowed-saved": 137,
         "borrowed-multiple": 151,
         "borrowed-method": 5,
+        "method-saved": 137,
+        "method-multiple": 15,
+        "method-missing": 12,
+        "method-mixed": 14,
+        "method-identity": 1,
         "borrowed-parameters": 1441,
         "borrowed-before": 12,
         "borrowed-missing": 21,
@@ -53,6 +58,9 @@ def main():
             "borrowed-equality",
             "borrowed-saved",
             "borrowed-multiple",
+            "borrowed-method",
+            "method-saved",
+            "method-multiple",
             "borrowed-parameters",
         ):
             checked += check_native(args, source, name, expected)

@@ -278,6 +278,8 @@ private:
         fieldStoreSites_;
     // Complete direct call sites for closed private object parameters. Every
     // member's uses preserve its shape, and callable values cannot escape.
+    // Residual method stores qualify only when their whole closed alias group
+    // has no remaining read of the callable's key after method lifting.
     // Presence still checks each actual operand's stores in its own caller.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Operation *, 2>> objectParameterCallSites_;
     /// For the dominance question above. Built lazily per region by MLIR and

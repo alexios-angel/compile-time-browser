@@ -62,18 +62,12 @@ var m1 = mixed();
 
 // --- THE CLASSES ------------------------------------------------------------
 //
-// `{x: 4, bump: <fn>}` in `both` shares the `ctn_x` template with `{x: 4}` in
-// `passed`. Exact caller initialization proves a double in `passed`; the
-// stored method in `both` still needs nullable storage. Two sites instantiate
-// one class template with those two carriers. The method field is not part of
-// the shape key, and an argument adds no field either. CHECK-NEXT pins each
-// class to exactly its data, so a member for the method - or for a pointer, if
-// a future carrier ever tried to store one - fails the line after.
-//
+// `{x: 4, bump: <fn>}` in `both` shares the exact `ctn_x` class with
+// `{x: 4}` in `passed`. Complete callable-use and initialization checks prove
+// double storage for both. The erased method adds no runtime member.
 // CHECK:      emitc.class @ctn_x
-// CHECK-SAME: (2 sites, 2 instantiations)
-// CHECK-SAME: ctnative.template_params = ["T0"]
-// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"T0">
+// CHECK-SAME: (2 sites)
+// CHECK-NEXT:   emitc.field @x : f64
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_a
 // CHECK-NEXT:   emitc.field @a : f64
@@ -92,10 +86,10 @@ var m1 = mixed();
 // `emitc.address_of` the receiver uses, through the same lambda, which is what
 // stops the two drifting into two spellings of one thing.
 //
-// ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x<double> *)`.
+// ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x *)`.
 // CHECK:      emitc.func @passed_1
-// CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x<double>">>
-// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<double>">>) -> f64
+// CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x">>
+// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
 // CHECK:        emitc.member_of_ptr
 
 // --- THE RECEIVER AND AN ARGUMENT, ON ONE LITERAL ---------------------------
@@ -108,10 +102,10 @@ var m1 = mixed();
 // the method field by name.
 //
 // CHECK:      emitc.func @both_3
-// CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>
-// CHECK:        address_of %[[OBJ]] : !emitc.lvalue<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>
-// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>, %arg1: f64) -> f64
-// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>) -> f64
+// CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
+// CHECK:        address_of %[[OBJ]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
+// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: f64) -> f64
+// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
 
 // --- TWO OBJECT PARAMETERS OF TWO SHAPES ------------------------------------
 //

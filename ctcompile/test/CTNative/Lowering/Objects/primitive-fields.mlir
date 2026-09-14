@@ -200,3 +200,50 @@ var a = length();
 //--- unknown-property.js
 function property() { var value = {text: "abc"}; return value.text.other === void 0 ? 0 : 1; }
 var a = property();
+
+//--- method-saved.js
+function method_saved() {
+    var value = {text: "a\0b", read: function () {
+        var saved = this.text;
+        this.text = "changed";
+        return saved === "a\0b" && this.text === "changed" ?
+            saved.length * 10 + this.text.length : 0;
+    }};
+    return value.read() + (value.text === "changed" ? 100 : 0);
+}
+var a = method_saved();
+
+//--- method-multiple.js
+function method_multiple() {
+    var read = function () { return this.text.length; };
+    var first = {text: "x", read: read}, second = {text: "three", read: read};
+    return first.read() * 10 + second.read();
+}
+var a = method_multiple();
+
+//--- method-missing.js
+function method_missing() {
+    var read = function () { return this.text === void 0 ? 1 : 2; };
+    var first = {read: read}, second = {text: "three", read: read};
+    return first.read() * 10 + second.read();
+}
+var a = method_missing();
+
+//--- method-mixed.js
+function method_mixed() {
+    var value = {text: "x", read: function () {
+        var saved = this.text;
+        this.text = 4;
+        return saved.length * 10 + this.text;
+    }};
+    return value.read();
+}
+var a = method_mixed();
+
+//--- method-identity.js
+function method_identity() {
+    var value = {text: "x", read: function () { return this.text.length; }};
+    var saved = value.read;
+    return value.read() === 1 && saved === value.read ? 1 : 0;
+}
+var a = method_identity();
