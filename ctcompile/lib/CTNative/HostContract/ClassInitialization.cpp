@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 namespace ctcompile::ctnative {
@@ -18,6 +19,9 @@ struct classInitialization {
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> constructors;
+    llvm::DenseSet<mlir::Operation *> methods;
+    llvm::DenseSet<mlir::Operation *> methodCalls;
+    llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> bindings;
 
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
@@ -48,23 +52,44 @@ struct classInitialization {
         }
         return store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     }
-    bool fieldsOnly(mlir::Value object) {
+    bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
+                    bool instance = false) {
         for (mlir::OpOperand & use : object.getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && instance) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (use.getOperandNumber() == 1 && read && read.getObject() == object &&
+                    read.getResult().hasOneUse() &&
+                    methodKeys.contains(ctjs::constantKey(read.getKey()))) {
+                    methodCalls.insert(call);
+                    continue;
+                }
+            }
             mlir::Value key;
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
             if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
                 return refuse("class receiver escapes or observes a prototype/descriptor");
             }
+            if (methodKeys.contains(ctjs::constantKey(key))) {
+                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                auto call = read && read.getResult().hasOneUse()
+                                ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
+                                : ctjs::CallOp{};
+                if (!instance || !call || call.getCallee() != read.getResult() ||
+                    call.getReceiver() != object) {
+                    return refuse(
+                        "class method is observed, shadowed or accessed by its constructor");
+                }
+            }
         }
         return true;
     }
 
-    // ponytail: empty, local base prototypes only; methods and inherited home
-    // objects need their own complete receiver/prototype proof before widening.
+    // ponytail: local base methods with field-only receivers; inheritance and
+    // chained method calls need a complete receiver/home proof before widening.
     bool examine(ctjs::CallOp call) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
@@ -86,11 +111,10 @@ struct classInitialization {
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
                 if (use.getOperandNumber() >= 2 || made.getCallee() != closure.getResult() ||
                     made.getNewTarget() != closure.getResult() ||
-                    made->getBlock() != call->getBlock() || !call->isBeforeInBlock(made) ||
-                    !fieldsOnly(made.getResult())) {
+                    made->getBlock() != call->getBlock() || !call->isBeforeInBlock(made)) {
                     return refuse("class construction escapes or lacks exact local new.target");
                 }
-                instances.push_back(made);
+                if (use.getOperandNumber() == 0) { instances.push_back(made); }
                 continue;
             }
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
@@ -115,18 +139,88 @@ struct classInitialization {
             backedge.getObject() != prototype.getResult()) {
             return refuse("class setup needs its exact fresh prototype, constructor and home");
         }
+        llvm::StringSet<> methodKeys;
+        llvm::SmallVector<ctjs::SetPropertyOp> definitions;
         for (mlir::OpOperand & use : prototype.getResult().getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if ((op == attachment || op == home) && use.getOperandNumber() == 2) { continue; }
             if (op == backedge && use.getOperandNumber() == 0) { continue; }
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            return refuse("class prototype is observed, mutated or contains methods");
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+                return refuse("class prototype is observed or mutated outside initialization");
+            }
+            if (use.getOperandNumber() == 2 && ctjs::constantKey(write.getKey()) == "__home") {
+                continue; // Rechecked against the exact method closure below.
+            }
+            if (use.getOperandNumber() != 0 || !ctjs::ordinaryKey(write.getKey()) ||
+                !methodKeys.insert(ctjs::constantKey(write.getKey())).second) {
+                return refuse("class prototype needs unique ordinary method definitions");
+            }
+            definitions.push_back(write);
+        }
+        llvm::DenseSet<mlir::Operation *> methodHomes;
+        for (ctjs::SetPropertyOp definition : definitions) {
+            auto method = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            auto fn = target(method);
+            if (!step() || !fn || method->getBlock() != call->getBlock() ||
+                !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis()) ||
+                !method.getUpvalues().empty()) {
+                return refuse("class method needs a local ordinary capture-free closure");
+            }
+            ctjs::SetPropertyOp methodHome;
+            for (mlir::OpOperand & use : method.getResult().getUses()) {
+                if (!step()) { return false; }
+                auto * op = use.getOwner();
+                if (op == definition && use.getOperandNumber() == 2) { continue; }
+                if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+                auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+                if (methodHome || !write || use.getOperandNumber() != 0 ||
+                    ctjs::constantKey(write.getKey()) != "__home" ||
+                    write.getValue() != prototype.getResult() ||
+                    write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+                    return refuse("class method identity or lexical home escapes initialization");
+                }
+                methodHome = write;
+            }
+            auto & block = fn.getBody().front();
+            if (!methodHome || !block.getArgument(ctjs::arg_callee).use_empty() ||
+                !block.getArgument(ctjs::arg_new_target).use_empty() ||
+                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys)) {
+                return refuse("class method observes its identity, home or another method");
+            }
+            methods.insert(fn);
+            methodHomes.insert(methodHome);
+            setup.insert(methodHome);
+            setup.insert(definition);
+            for (ctjs::ConstructOp made : instances) {
+                if (!step()) { return false; }
+                bindings.emplace_back(made, definition);
+            }
+        }
+        for (mlir::OpOperand & use : prototype.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (use.getOperandNumber() == 2 && use.getOwner() != attachment &&
+                use.getOwner() != home && !methodHomes.contains(use.getOwner())) {
+                return refuse("class prototype reaches an unrelated lexical home");
+            }
+        }
+        for (ctjs::ConstructOp made : instances) {
+            if (!fieldsOnly(made.getResult(), methodKeys, true)) { return false; }
+        }
+        if (!definitions.empty()) {
+            for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
+                if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                    return refuse(
+                        "class method initialization needs a primitive constructor return");
+                }
+            }
         }
         auto & entry = function.getBody().front();
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
-            !fieldsOnly(entry.getArgument(ctjs::arg_receiver))) {
+            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys)) {
             return refuse(
                 "class constructor observes new.target, lexical home or receiver identity");
         }
@@ -153,10 +247,16 @@ struct classInitialization {
                     "class initialization requires complete capture-free source functions");
             }
         }
+        llvm::DenseSet<int64_t> createdFunctions;
         auto walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (op->hasAttr("ctjs.skipped")) {
                 refuse("class initialization cannot omit source functions");
+                return mlir::WalkResult::interrupt();
+            }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                closure && !createdFunctions.insert(closure.getFunction()).second) {
+                refuse("class initialization requires unique source closure creation sites");
                 return mlir::WalkResult::interrupt();
             }
             if (op->getNumRegions() && op != module.getOperation() &&
@@ -186,7 +286,7 @@ struct classInitialization {
         // Reject the whole module, including suffixes and uncalled bodies.
         walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (setup.contains(op) || llvm::is_contained(calls, op)) {
+            if (setup.contains(op) || methodCalls.contains(op) || llvm::is_contained(calls, op)) {
                 return mlir::WalkResult::advance();
             }
             bool accepted =
@@ -196,7 +296,7 @@ struct classInitialization {
                           ctjs::TruthyOp, ctjs::FromBoolOp>(op);
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
-                accepted = constructors.contains(fn) ||
+                accepted = constructors.contains(fn) || methods.contains(fn) ||
                            (block.getNumArguments() == 3 &&
                             block.getArgument(ctjs::arg_receiver).use_empty() &&
                             block.getArgument(ctjs::arg_new_target).use_empty());
@@ -213,8 +313,8 @@ struct classInitialization {
                 auto closure = sourceClosure(call.getCalleeValue());
                 accepted = target(closure) && call.getTarget() == target(closure) &&
                            !constructors.contains(target(closure)) &&
-                           undefined(call.getReceiver()) && undefined(call.getNewTarget()) &&
-                           call.getArgs().empty();
+                           !methods.contains(target(closure)) && undefined(call.getReceiver()) &&
+                           undefined(call.getNewTarget()) && call.getArgs().empty();
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
                 accepted = constructors.contains(
@@ -275,6 +375,12 @@ struct CTNativeSpecializeClassInitializationPass
         // All current-IR checks precede the first mutation. Nothing inferred
         // from report attributes authorizes removal, even on a repeated run.
         module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        for (auto [instance, definition] : proof.bindings) {
+            mlir::OpBuilder at(instance);
+            at.setInsertionPointAfter(instance);
+            ctjs::SetPropertyOp::create(at, definition.getLoc(), instance.getResult(),
+                                        definition.getKey(), definition.getValue());
+        }
         for (ctjs::CallOp call : proof.calls) { call.erase(); }
         for (mlir::Operation * op : proof.setup) { op->erase(); }
         module.walk([&](ctjs::LoadGlobalOp load) {

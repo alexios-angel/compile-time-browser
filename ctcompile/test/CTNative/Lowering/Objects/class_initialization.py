@@ -10,7 +10,7 @@ import subprocess
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
 from CTNative.harness import find_compilers, run
-from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper
+from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 from Target.Cpp.harness import FLAGS
 
 # The implementation hook and inherited static getter have separate Node/VM
@@ -19,6 +19,17 @@ OBSERVATIONS = {
     "empty": (7, 7),
     "number": (92, 92),
     "method": (92, 92),
+    "method-arguments": (3737, 3737),
+    "method-empty": (7, 7),
+    "method-shadow": (9, 9),
+    "method-extracted": (1, 1),
+    "method-constructor-read": (1, 1),
+    "method-constructor-write": (9, 9),
+    "method-self-replace": (79, 79),
+    "method-duplicate": (9, 9),
+    "method-captured": (7, 7),
+    "method-dynamic": (7, 7),
+    "method-return-object": (9, 9),
     "helper-override": (0, 1),
     "helper-late": (0, 1),
     "helper-global-alias": (0, 1),
@@ -30,8 +41,44 @@ OBSERVATIONS = {
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
 }
-POSITIVES = {"empty", "number"}
+POSITIVES = {"empty", "number", "method", "method-arguments", "method-empty"}
 PREPARATION = "--ctnative-specialize-class-initialization="
+
+
+def check_constructed_methods(args):
+    checked = refused = 0
+    for name, expected in {
+        "plain-method": 7,
+        "plain-before-store": None,
+        "plain-borrowed-write": 9,
+        "plain-self-replace": 79,
+        "plain-constructor-write": 7,
+        "plain-detached": 1,
+    }.items():
+        source = args.fixtures / f"{name}.js"
+        for command in ([args.node, "-e", NODE, str(source)], [args.reference, str(source)]):
+            result = run(command, success=expected is not None)
+            if expected is not None and result.stdout != f"a={expected}\n":
+                raise RuntimeError(f"{name}: constructed method observation changed")
+        if name == "plain-method":
+            checked += check_native(args, source, name, expected)
+            continue
+        raw = args.work / f"{name}.raw.mlir"
+        run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
+        functions = len(FUNCTION.findall(raw.read_text()))
+        for optimize in (False, True):
+            result = run(
+                [
+                    args.opt,
+                    str(raw),
+                    "--ctjs-resolve-globals",
+                    "--ctjs-lift-to-scf",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                ]
+            )
+            check_refusal(name, result.stdout, functions)
+            refused += 1
+    return checked, refused
 
 
 def check_refusal(name, text, functions):
@@ -70,7 +117,7 @@ def prepare(args, name, source, manifest, *, success, options=""):
     return output
 
 
-def check_proof_inputs(args, source, manifest, prepared):
+def check_proof_inputs(args, source, manifest, prepared, name):
     text = source.read_text()
     nested = args.work / "nested.mlir"
     changed, count = re.subn(
@@ -90,6 +137,24 @@ def check_proof_inputs(args, source, manifest, prepared):
         "nested",
         nested,
         dict(manifest, module_sha256=host.fingerprint(args.opt, nested)),
+        success=False,
+    )
+    duplicate = args.work / "duplicate-closure.mlir"
+    changed, count = re.subn(
+        r"(^[ \t]*)%\w+( = ctjs.create_closure[^\n]*\n)",
+        r"\g<0>\1%duplicate\2",
+        text,
+        count=1,
+        flags=re.M,
+    )
+    if count != 1:
+        raise RuntimeError("duplicate closure control could not find its creation")
+    duplicate.write_text(changed)
+    prepare(
+        args,
+        "duplicate-closure",
+        duplicate,
+        dict(manifest, module_sha256=host.fingerprint(args.opt, duplicate)),
         success=False,
     )
     forged = args.work / "forged.mlir"
@@ -117,7 +182,7 @@ def check_proof_inputs(args, source, manifest, prepared):
             [
                 args.opt,
                 str(source),
-                PREPARATION + f"manifest={args.work / 'empty.json'} max-steps={limit}",
+                PREPARATION + f"manifest={args.work / (name + '.json')} max-steps={limit}",
                 "-o",
                 str(output),
             ],
@@ -189,7 +254,7 @@ def main():
     refusals = 0
     preparation_refusals = 0
     checked = 0
-    cutoff = 0
+    cutoffs = {}
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)])
@@ -232,8 +297,9 @@ def main():
             ):
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
-            cutoff = check_proof_inputs(args, structured, manifest, prepared)
-            preparation_refusals += 3
+        if name in ("empty", "method"):
+            cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
+            preparation_refusals += 4
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
             run(
@@ -263,10 +329,14 @@ def main():
                     ]
                 )
                 checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+    plain_checked, plain_refused = check_constructed_methods(args)
     print(
         f"class initialization controls: {len(OBSERVATIONS)} source observations, "
         f"{checked} native executions, {refusals} unprepared refusals, "
-        f"{preparation_refusals} preparation refusals, first complete budget {cutoff}"
+        f"{preparation_refusals} preparation refusals, first complete budgets {cutoffs}"
+    )
+    print(
+        f"constructed method controls: {plain_checked} native executions, {plain_refused} refusals"
     )
 
 

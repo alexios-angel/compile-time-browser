@@ -342,29 +342,70 @@ std::string closureLifter::whyNotAnObjectArgument(mlir::Operation * call, unsign
 }
 
 void closureLifter::methodCensus() {
-    for (ctjs::CreateObjectOp object : objects) {
-        if (!closedAfterLift(object.getResult())) { continue; }
+    llvm::DenseSet<mlir::Operation *> instanceStores;
+    for (ctjs::ConstructOp built : allConstructs) {
+        if (!closedAfterLift(built.getResult())) { continue; }
+        for (mlir::Operation * user : built.getResult().getUsers()) {
+            auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            if (!set || set.getObject() != built.getResult() ||
+                !set.getValue().getDefiningOp<ctjs::CreateClosureOp>() ||
+                set->getBlock() != built->getBlock()) {
+                continue;
+            }
+            // Every method binding precedes every observation. This also
+            // excludes argument aliases, whose writes need a separate proof.
+            const bool initialized =
+                llvm::all_of(built.getResult().getUses(), [&](mlir::OpOperand & use) {
+                    auto * op = use.getOwner();
+                    if (use.getOperandNumber() == 0 && llvm::isa<ctjs::SetPropertyOp>(op)) {
+                        return true;
+                    }
+                    return op->getBlock() == set->getBlock() && set->isBeforeInBlock(op) &&
+                           ((use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(op)) ||
+                            (use.getOperandNumber() == 1 && llvm::isa<ctjs::CallOp>(op)));
+                });
+            if (initialized) { instanceStores.insert(set); }
+        }
+    }
+    const auto collect = [&](mlir::Value object, bool constructed) {
+        if (!closedAfterLift(object)) { return; }
         llvm::StringMap<unsigned> writes;
         llvm::StringMap<methodField> fields;
-        for (mlir::Operation * user : object.getResult().getUsers()) {
+        for (mlir::Operation * user : object.getUsers()) {
             auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
-            if (!set || set.getObject() != object.getResult()) { continue; }
+            if (!set || set.getObject() != object) { continue; }
             ++writes[ctjs::constantKey(set.getKey())];
             if (auto made = set.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                if (constructed && !instanceStores.contains(set)) { continue; }
                 fields[ctjs::constantKey(set.getKey())] = methodField{set, made};
             }
         }
-        llvm::StringMap<methodField> & into = methodsOf[object.getResult()];
+        llvm::StringMap<methodField> & into = methodsOf[object];
         for (const auto & entry : fields) {
             // A KEY WRITTEN TWICE IS NOT A METHOD, whatever the second
             // write holds: `o.f = g` after `var o = {f: h}` makes the
             // callee depend on which store ran, which is exactly what
             // condition 2 forbids. The key is simply not admitted, and the
             // call through it stays a ctjs.call - refused by name below.
-            if (writes[entry.first()] == 1) { into[entry.first()] = entry.second; }
+            if (writes[entry.first()] != 1) { continue; }
+            bool stable = true;
+            if (constructed) {
+                // ponytail: a whole-module key census conservatively includes
+                // unrelated objects; use an alias proof if that ceiling matters.
+                // In particular, constructor and borrowed receiver writes count.
+                module.walk([&](ctjs::SetPropertyOp set) {
+                    const auto key = ctjs::constantKey(set.getKey());
+                    if (key.empty() || (key == entry.first() && !instanceStores.contains(set))) {
+                        stable = false;
+                    }
+                });
+            }
+            if (stable) { into[entry.first()] = entry.second; }
         }
-        behind[object.getResult()].push_back(object.getResult());
-    }
+        behind[object].push_back(object);
+    };
+    for (ctjs::CreateObjectOp object : objects) { collect(object.getResult(), false); }
+    for (ctjs::ConstructOp built : allConstructs) { collect(built.getResult(), true); }
     // THE FIXPOINT OVER THE RECEIVER CHAIN. `this.other()` inside a method
     // has `%arg0` for a receiver, and `%arg0` names whatever the call sites
     // pass - which is only known once those call sites resolve. One round

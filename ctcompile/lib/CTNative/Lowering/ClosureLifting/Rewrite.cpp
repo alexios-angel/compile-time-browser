@@ -494,6 +494,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         }
         for (methodCall at : callsOfTarget[target.getOperation()]) {
             mlir::OpBuilder builder(at.call);
+            // Constructor lifting may already have replaced and erased the
+            // receiver recorded by the census. The live call tracks that RAUW.
+            at.receiver = at.call.getReceiver();
             const mlir::Value undefined = ctjs::ConstantOp::create(
                 builder, at.call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
             llvm::SmallVector<mlir::Value> arguments(captured);

@@ -139,3 +139,164 @@ function descriptor() {
     return Object.keys(Shape.prototype).length;
 }
 var a = descriptor();
+
+//--- method-arguments.js
+function method_arguments() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        adjust(delta, scale) { this.n = this.n * scale + delta; return this.n; }
+    }
+    var first = new Shape(1), second = new Shape(2);
+    var left = first.adjust(1, 2), right = second.adjust(1, 3);
+    return left * 1000 + right * 100 + first.n * 10 + second.n;
+}
+var a = method_arguments();
+
+//--- method-empty.js
+function method_empty() {
+    class Shape { write(n) { this.n = n; return this.n; } }
+    return new Shape().write(7);
+}
+var a = method_empty();
+
+//--- method-shadow.js
+function method_shadow() {
+    class Shape { read() { return 7; } }
+    var instance = new Shape();
+    instance.read = function () { return 9; };
+    return instance.read();
+}
+var a = method_shadow();
+
+//--- method-extracted.js
+function method_extracted() {
+    class Shape { read() { return 7; } }
+    var instance = new Shape();
+    var saved = instance.read;
+    return saved === instance.read ? 1 : 0;
+}
+var a = method_extracted();
+
+//--- method-constructor-read.js
+function method_constructor_read() {
+    class Shape {
+        constructor() { this.n = typeof this.read === "function" ? 1 : 0; }
+        read() { return this.n; }
+    }
+    return new Shape().read();
+}
+var a = method_constructor_read();
+
+//--- method-constructor-write.js
+function method_constructor_write() {
+    class Shape {
+        constructor() { this.read = function () { return 9; }; }
+        read() { return 7; }
+    }
+    return new Shape().read();
+}
+var a = method_constructor_write();
+
+//--- method-self-replace.js
+function method_self_replace() {
+    class Shape {
+        read() { this.read = function () { return 9; }; return 7; }
+    }
+    var instance = new Shape();
+    return instance.read() * 10 + instance.read();
+}
+var a = method_self_replace();
+
+//--- method-duplicate.js
+function method_duplicate() {
+    class Shape { read() { return 7; } read() { return 9; } }
+    return new Shape().read();
+}
+var a = method_duplicate();
+
+//--- method-captured.js
+function method_captured() {
+    var n = 7;
+    class Shape { read() { return n; } }
+    return new Shape().read();
+}
+var a = method_captured();
+
+//--- method-dynamic.js
+function method_dynamic() {
+    class Shape { constructor() { this.n = 7; } read(k) { return this[k]; } }
+    return new Shape().read("n");
+}
+var a = method_dynamic();
+
+// A constructor's replacement object never inherits the class's methods.
+//--- method-return-object.js
+function method_return_object() {
+    class Shape {
+        constructor() { return {read: function () { return 9; }}; }
+        read() { return 7; }
+    }
+    return new Shape().read();
+}
+var a = method_return_object();
+
+// The ordinary lowering must independently prove method initialization and
+// reject mutations even when no class preparation pass supplied the source.
+//--- plain-method.js
+function plain_method() {
+    function Shape() { this.n = 7; }
+    var instance = new Shape();
+    instance.read = function () { return this.n; };
+    return instance.read();
+}
+var a = plain_method();
+
+//--- plain-before-store.js
+function plain_before_store() {
+    function Shape() {}
+    var instance = new Shape();
+    var result = instance.read();
+    instance.read = function () { return 7; };
+    return result;
+}
+var a = plain_before_store();
+
+//--- plain-borrowed-write.js
+function plain_borrowed_write() {
+    function Shape() {}
+    var instance = new Shape();
+    instance.read = function () { return 7; };
+    var replace = function (value) { value.read = function () { return 9; }; };
+    replace(instance);
+    return instance.read();
+}
+var a = plain_borrowed_write();
+
+//--- plain-self-replace.js
+function plain_self_replace() {
+    function Shape() {}
+    var instance = new Shape();
+    instance.read = function () { this.read = function () { return 9; }; return 7; };
+    return instance.read() * 10 + instance.read();
+}
+var a = plain_self_replace();
+
+//--- plain-constructor-write.js
+function plain_constructor_write() {
+    function Shape() { this.read = 0; }
+    var instance = new Shape();
+    instance.read = function () { return 7; };
+    return instance.read();
+}
+var a = plain_constructor_write();
+
+//--- plain-detached.js
+function plain_detached() {
+    function Shape() {}
+    var instance = new Shape();
+    instance.read = function () { return 7; };
+    var called = instance.read();
+    var saved = instance.read;
+    return called === 7 && saved === instance.read ? 1 : 0;
+}
+var a = plain_detached();

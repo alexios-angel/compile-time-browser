@@ -54,16 +54,24 @@ ctjs-opt prepared.mlir \
   --ctnative-lower-to-emitc -o native.mlir
 ```
 
-The bounded census admits only local base constructors with an empty fresh
-prototype, its constructor back-reference and the constructor's lexical home.
-Every instance and constructor receiver must have only ordinary constant-key
-field accesses. Every call stays within the supplied source; unresolved bindings,
-dynamic keys, reflection, captured functions and nested regions fail closed.
-The pass removes only the unused helper call and those three unobservable setup
-writes, after every check succeeds. It also discards supplied native reports.
-Ordinary native constructor/type/ownership admission then runs independently.
+The bounded census admits local base constructors and fresh prototypes with
+unique ordinary methods. Methods have no captures, identity or lexical-home
+observations; their receivers only read and write ordinary scalar fields.
+Every instance method read must feed its own receiver call. A constructor cannot
+read or write method keys and must return a primitive constant when methods exist.
+This excludes replacement return objects before any method bindings move.
+Every call stays within the supplied source; unresolved bindings, dynamic keys,
+reflection, captured functions and nested regions fail closed.
 
-Methods, inheritance, executable field initializer closures, observable
+After every check succeeds, the pass removes the unused helper and unobservable
+prototype/home setup, then installs each method immediately after construction.
+It also discards supplied native reports. Ordinary native constructor, method,
+type and ownership admission run independently. The method census verifies
+initialization order and conservatively rejects any other write to a method key
+anywhere in the module. Native construction owns its local struct by value;
+method calls become ordinary free functions with borrowed receiver pointers.
+
+Chained methods, inheritance, executable field initializer closures, observable
 constructor identity, prototype mutation and retained receivers still refuse.
 The pass does not yet compose with the DOM Data session or prepare the original
 Bootstrap Button. The original mutable-helper and inherited-getter runtime
